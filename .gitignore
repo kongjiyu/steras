@@ -1,41 +1,34 @@
-# Dependencies
+# =====================================================================
+# STERAS — .gitignore
+# =====================================================================
+
+# ----- Dependencies -----
 node_modules/
 **/node_modules/
+jspm_packages/
 
-# Build outputs
+# ----- Build outputs -----
 dist/
 build/
+lib/
+out/
 **/dist/
 **/build/
+**/lib/
+**/out/
 **/.vite/
+*.tsbuildinfo
+**/*.tsbuildinfo
+# Explicit patterns — **/lib/ alone didn't match functions/lib/ on macOS git 2.50
+functions/lib/
+frontend/lib/
 
-# Firebase
-.firebase/
-firebase-debug.log
-firestore-debug.log
-ui-debug.log
-*-debug.log
+# ----- Test coverage -----
+coverage/
+.nyc_output/
+**/coverage/
 
-# Environment
-.env
-.env.local
-.env.*.local
-functions/.env
-frontend/.env
-!frontend/.env.example
-!functions/.env.example
-!docs/.env.example
-
-# IDE
-.vscode/
-!.vscode/settings.json.example
-.idea/
-*.swp
-*.swo
-.DS_Store
-Thumbs.db
-
-# Logs
+# ----- Logs -----
 logs/
 *.log
 npm-debug.log*
@@ -43,25 +36,81 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+*.tgz
 
-# Test coverage
-coverage/
-.nyc_output/
+# ----- Environment & secrets -----
+# Real env files (with actual secrets) — never commit
+.env
+.env.local
+.env.*.local
+.env.development.local
+.env.test.local
+.env.production.local
+.envrc
+functions/.env
+functions/.env.local
+functions/.env.*.local
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+.runtimeconfig.json
+# Allow the templates to be committed
+!frontend/.env.example
+!functions/.env.example
+!.env.example
+!docs/.env.example
 
-# TypeScript
-*.tsbuildinfo
-**/*.tsbuildinfo
+# ----- Firebase -----
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+*-debug.log
+.firebase/hosting.*.cache
+firestore-debug.log.*
 
-# OS
+# ----- IDE / Editor -----
+.vscode/
+!.vscode/settings.json.example
+.idea/
+*.swp
+*.swo
+*~
+*.bak
+*.orig
+*.rej
 .DS_Store
+**/.DS_Store
+.AppleDouble
+.LSOverride
 ._*
 .Spotlight-V100
 .Trashes
 ehthumbs.db
 [Tt]humbs.db
+Desktop.ini
+$RECYCLE.BIN/
 
-# Misc
+# ----- Cache / temp -----
 .cache/
 .parcel-cache/
+.eslintcache
+.stylelintcache
 .turbo/
+.rpt2_cache/
+.rts2_cache_cjs/
+.tsbuildinfo
+*.tmp
+*.temp
+
+# ----- OS -----
+ehthumbs.db
+[Tt]humbs.db
+$RECYCLE.BIN/
+
+# ----- Misc -----
 *.local
+*.pid
+*.seed
+*.pid.lock
+.history/
