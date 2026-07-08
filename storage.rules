@@ -1,0 +1,42 @@
+rules_version = '2';
+
+// =====================================================================
+// STERAS Cloud Storage Security Rules
+// =====================================================================
+// - Event-related documents (permits, insurance, etc.) go under
+//   /event_documents/{eventId}/{fileName}
+// - Only the event organizer (owner) and authorities can read
+// - Organizer can upload to their own event's folder
+// - Authority can read all event documents
+// =====================================================================
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAuthority() {
+      return isSignedIn() &&
+             firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'authority';
+    }
+
+    // Event documents (permits, insurance certificates, etc.)
+    match /event_documents/{eventId}/{fileName} {
+      // Read: organizer (owner) or any authority
+      allow read: if isSignedIn() && (isAuthority()
+                 || firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizerId == request.auth.uid);
+      // Write: organizer (owner), 10MB max, common file types
+      allow write: if isSignedIn()
+                   && firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizerId == request.auth.uid
+                   && request.resource.size < 10 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*|application/pdf');
+    }
+
+    // Default deny everything else
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

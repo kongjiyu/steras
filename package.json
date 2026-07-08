@@ -1,0 +1,34 @@
+{
+  "name": "steras",
+  "version": "0.1.0",
+  "private": true,
+  "description": "STERAS — Smart Tourism Event Risk & Approval System (Malaysia)",
+  "workspaces": [
+    "frontend",
+    "functions"
+  ],
+  "scripts": {
+    "dev": "npm --workspace frontend run dev",
+    "build": "npm --workspace frontend run build && npm --workspace functions run build",
+    "build:frontend": "npm --workspace frontend run build",
+    "build:functions": "npm --workspace functions run build",
+    "typecheck": "npm --workspace frontend run typecheck && npm --workspace functions run typecheck",
+    "emulators": "firebase emulators:start",
+    "deploy": "npm run build && firebase deploy",
+    "deploy:functions": "npm --workspace functions run build && firebase deploy --only functions",
+    "deploy:hosting": "npm --workspace frontend run build && firebase deploy --only hosting",
+    "lint": "npm --workspace frontend run lint"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "steras",
+    "tourism",
+    "event-permit",
+    "firebase",
+    "ai-risk-assessment",
+    "malaysia"
+  ],
+  "license": "UNLICENSED"
+}

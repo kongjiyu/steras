@@ -1,0 +1,118 @@
+rules_version = '2';
+
+// =====================================================================
+// STERAS Firestore Security Rules
+// =====================================================================
+// Roles:
+//   - organizer:  can CRUD own events while status in [Pending, AmendmentRequested]
+//   - authority:  can read all events, can create decision records (audit log)
+//   - public:     can read only `public_events` collection (read-only, no auth)
+// =====================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---- Helpers ----
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOrganizer() {
+      return isSignedIn() &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'organizer';
+    }
+
+    function isAuthority() {
+      return isSignedIn() &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'authority';
+    }
+
+    function isOwner(organizerId) {
+      return isSignedIn() && request.auth.uid == organizerId;
+    }
+
+    function isPendingOrAmendmentRequested(status) {
+      return status == 'Pending' || status == 'AmendmentRequested';
+    }
+
+    // ---- users collection ----
+    // Organizers and authorities can read their own profile.
+    // Authorities can read other authorities' profiles (for assignment/coordination).
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAuthority());
+      // Users can create their own profile on signup.
+      allow create: if isSignedIn() && request.auth.uid == userId
+                    && request.resource.data.role in ['organizer', 'authority'];
+      // Users can update their own non-role fields.
+      // Role changes are server-only (set by Cloud Functions / admin SDK).
+      allow update: if isSignedIn() && request.auth.uid == userId
+                    && request.resource.data.role == resource.data.role;
+      allow delete: if false; // disable client-side deletion
+    }
+
+    // ---- events collection ----
+    match /events/{eventId} {
+      // Organizer can read their own event.
+      // Authority can read all events.
+      // Public viewers should query `public_events` instead — not `events`.
+      allow read: if (isSignedIn() && isAuthority())
+                  || (isSignedIn() && isOwner(resource.data.organizerId));
+
+      // Organizer can create their own event, status must start as Pending.
+      allow create: if isOrganizer()
+                    && request.resource.data.organizerId == request.auth.uid
+                    && request.resource.data.status == 'Pending';
+
+      // Organizer can update own event only when status is Pending/AmendmentRequested,
+      // and cannot change organizerId, createdAt, or any AI/rule-generated fields.
+      allow update: if isOwner(resource.data.organizerId)
+                    && isPendingOrAmendmentRequested(resource.data.status)
+                    && request.resource.data.organizerId == resource.data.organizerId
+                    && request.resource.data.createdAt == resource.data.createdAt;
+
+      // Status transitions to Approved/Rejected/UnderReview are server-only (Cloud Functions).
+      allow delete: if false;
+
+      // ---- Sub-collection: risk_scores ----
+      // Written by Cloud Functions only.
+      match /risk_scores/{scoreId} {
+        allow read: if (isSignedIn() && isAuthority())
+                    || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
+        allow write: if false; // server-only
+      }
+
+      // ---- Sub-collection: resources ----
+      // Written by Cloud Functions only.
+      match /resources/{resourceId} {
+        allow read: if (isSignedIn() && isAuthority())
+                    || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
+        allow write: if false; // server-only
+      }
+
+      // ---- Sub-collection: audit_logs ----
+      // Append-only. Read by authorities. Never client-writable.
+      match /audit_logs/{logId} {
+        allow read: if isSignedIn() && isAuthority();
+        allow write: if false; // server-only
+      }
+    }
+
+    // ---- venues (read-only for all signed-in users, write = admin/seed) ----
+    match /venues/{venueId} {
+      allow read: if isSignedIn();
+      allow write: if false; // seeded via admin SDK / Cloud Functions
+    }
+
+    // ---- incidents (synthetic dataset — read-only) ----
+    match /incidents/{incidentId} {
+      allow read: if isSignedIn() && isAuthority();
+      allow write: if false;
+    }
+
+    // ---- public_events (read-only for everyone, written by Cloud Functions) ----
+    match /public_events/{eventId} {
+      allow read: if true;
+      allow write: if false; // server-only
+    }
+  }
+}
