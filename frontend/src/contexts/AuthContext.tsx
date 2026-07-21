@@ -4,24 +4,24 @@ import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  deleteUser,
   signOut as fbSignOut,
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db, isFirebaseConfigured } from '../config/firebase';
-import { COLLECTIONS, UserProfile, UserRole, AuthorityType } from '@shared/types';
+import { COLLECTIONS, UserProfile } from '@shared/types';
+import { buildOrganizerProfile } from './authProfile';
 
 interface AuthContextValue {
   user: FirebaseUser | null;
   profile: UserProfile | null;
   loading: boolean;
   configured: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
+  signIn: (email: string, password: string) => Promise<UserProfile | null>;
   signUp: (params: {
     email: string;
     password: string;
     name: string;
-    role: UserRole;
-    authorityType?: AuthorityType;
     phone?: string;
   }) => Promise<void>;
   signOut: () => Promise<void>;
@@ -44,7 +44,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return snap.data() as UserProfile;
       }
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.error('[Auth] Failed to fetch profile:', err);
     }
     return null;
@@ -70,31 +69,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signIn = async (email: string, password: string) => {
-    await signInWithEmailAndPassword(auth, email, password);
+    const credential = await signInWithEmailAndPassword(auth, email, password);
+    const nextProfile = await fetchProfile(credential.user.uid);
+    setUser(credential.user);
+    setProfile(nextProfile);
+    return nextProfile;
   };
 
   const signUp: AuthContextValue['signUp'] = async (params) => {
-    const { email, password, name, role, authorityType, phone } = params;
+    const { email, password, name, phone } = params;
     const cred = await createUserWithEmailAndPassword(auth, email, password);
     const uid = cred.user.uid;
     const now = Date.now();
 
-    const newProfile: UserProfile = {
+    const newProfile = buildOrganizerProfile({
       uid,
       name,
       email,
-      role,
-      authorityType,
       phone,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    await setDoc(doc(db, COLLECTIONS.USERS, uid), {
-      ...newProfile,
-      // Store serverTimestamp as well for server-side sorting consistency
-      _serverCreatedAt: serverTimestamp(),
+      now,
     });
+
+    try {
+      await setDoc(doc(db, COLLECTIONS.USERS, uid), {
+        ...newProfile,
+        // Store serverTimestamp as well for server-side sorting consistency
+        _serverCreatedAt: serverTimestamp(),
+      });
+    } catch (profileError) {
+      // Authentication is created before the Firestore profile. Compensate on
+      // failure so the email is not left occupied by an unusable account.
+      try {
+        await deleteUser(cred.user);
+      } catch (cleanupError) {
+        console.error('[Auth] Failed to remove incomplete account:', cleanupError);
+      }
+      throw profileError;
+    }
     setProfile(newProfile);
   };
 

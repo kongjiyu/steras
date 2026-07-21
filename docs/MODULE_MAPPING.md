@@ -1,116 +1,86 @@
-# Module Mapping & Build Status
+# Module Mapping and Build Status
 
-> Per PRD §8: **Module 1 → 2 → 3 → 4 → 5**
+> Architecture source: `steras-prd.md` v2.1. Delivery sequence: Module 1 -> 2 -> 3 -> 4 -> 5.
 
-## Status legend
-- ✅ **Scaffolded** — base files exist, type-safe, ready for logic
-- 🟡 **Wired** — real Firestore / API calls in place, but key logic still placeholder
-- ⏳ **Pending** — not yet started by lead
+## Status Legend
 
----
+- **Ready:** implemented against the v2.1 contract and covered by an initial quality gate.
+- **In progress:** partially wired; exit criteria are not complete.
+- **Pending:** scheduled in `docs/IMPLEMENTATION_PLAN.md`.
 
-## Module 1 — Event Management
-**Lead:** Requirement Lead · **Support:** Project Manager
+## Foundation - In Progress
 
-| File | Status | Notes |
-|------|--------|-------|
-| `frontend/src/pages/organizer/NewEvent.tsx` | ✅ | Full form with all PRD fields |
-| `frontend/src/pages/organizer/MyEvents.tsx` | ✅ | Real-time Firestore listener + status filter |
-| `frontend/src/pages/organizer/EventDetail.tsx` | ✅ | Shows event + risk + resources side-by-side |
-| `firestore.rules` | ✅ | Role-based access enforced |
+| Area | Status | Notes |
+|---|---|---|
+| npm workspaces and TypeScript | Ready | Frontend and Functions share `shared/types.ts` |
+| ESLint, Vitest, Testing Library | Ready | Root `npm run check` is the quality gate |
+| GitHub Actions | Ready | Typecheck, lint, tests, and build |
+| Emulator integration tests | Ready | 15 Firestore/Storage authorization and workflow tests are active |
+| Firebase staging | Ready | Singapore Firestore/Storage/Functions, Auth, Hosting, and secrets on `linkos-496505` |
 
-## Module 2 — Smart Risk Assessment
-**Lead:** Programmer · **Support:** Design Lead (scoring formula + AI prompt)
+## Module 1 - Event Management
 
-| File | Status | Notes |
-|------|--------|-------|
-| `functions/src/engines/ruleBased.ts` | ✅ | All 5 sub-scorers, weighted sum, deterministic |
-| `functions/src/engines/aiPredictor.ts` | ✅ | Anthropic SDK, structured JSON output, prompt versioning |
-| `functions/src/triggers/onEventCreated.ts` | ✅ | Auto-runs on new event |
-| `functions/src/utils/weather.ts` | ✅ | OpenWeather integration with fallback |
-| `functions/src/utils/holidays.ts` | ✅ | Malaysian public holiday list (2025-2026) |
+| Area | Status | Primary Files |
+|---|---|---|
+| Event form and list | Ready | New/edit form, draft filters, and real-time list |
+| Immutable versions | Ready | Transactional `events/{id}/versions/vN` submission |
+| Document upload | Ready | Version-scoped PDF/image upload with 10 MB limit |
+| Draft/submit/withdraw | Ready | Server-mediated submit and withdraw commands |
+| Amendment/resubmit | Ready | v2 preservation and decision invalidation are emulator-tested |
 
-**TODO from lead:**
-- Replace `getRiskLevel` thresholds if team agrees on different bands
-- Add more detailed venue history lookup (proper venueId join)
-- Add one-call API for severe weather alerts (currently proxy)
+## Module 2 - Smart Risk Assessment
 
-## Module 3 — Safety Resource Recommendation
-**Lead:** Design Lead · **Support:** Programmer (formula impl)
+| Area | Status | Primary Files |
+|---|---|---|
+| Deterministic baseline | Ready | `functions/src/engines/ruleBased.ts` |
+| MiniMax bounded refinement | Ready | Strict allowlist/schema, nine-second timeout, fallback, and bounded cache |
+| Final score and fallback | Ready | `functions/src/triggers/onEventCreated.ts` |
+| Version idempotency | Ready | Transaction claim/lease and deterministic audit IDs are concurrency-tested |
+| Weather/history hardening | Ready | One Call forecast cache/fallback freshness plus stable venue incident lookup |
 
-| File | Status | Notes |
-|------|--------|-------|
-| `functions/src/engines/resourceCalculator.ts` | ✅ | All 7 resource types from PRD table |
-| Confidence flag | ✅ | `confidenceLevel: 'estimate'` set, awaiting authority validation |
+## Module 3 - Resource Recommendation
 
-**TODO from lead:**
-- Replace prototype formulas with authority-validated values (per PRD table footnote)
-- Add resource override workflow for amendment
+| Area | Status | Primary Files |
+|---|---|---|
+| Seven prototype formulas | Ready | `functions/src/engines/resourceCalculator.ts` |
+| Formula provenance | Ready | `ResourceRecommendation.formulaVersion` |
+| Authority validation/override | Ready | Transactional server command, provenance, history, and review UI |
 
-## Module 4 — Authority Dashboard
-**Lead:** Programmer · **Support:** Design Lead (UI/UX), Tester
+## Module 4 - Authority Review
 
-| File | Status | Notes |
-|------|--------|-------|
-| `frontend/src/pages/authority/ReviewQueue.tsx` | ✅ | Real-time pending queue |
-| `frontend/src/pages/authority/AuthorityEventReview.tsx` | ✅ | AI vs Rule side-by-side, decision buttons, audit log |
-| `frontend/src/components/ui/RiskBadge.tsx` | ✅ | Color-coded risk level |
-| `functions/src/triggers/onDecisionMade.ts` | ✅ | Audit log + public_events publish on approval |
+| Area | Status | Primary Files |
+|---|---|---|
+| Dashboard and queue | Ready | Assigned-agency queue is bounded with search, sorting, counts, and pagination |
+| Assessment provenance UI | Ready | Final, baseline, adjustment, sub-scores |
+| Evidence and history | Ready | Assigned-only downloads, immutable versions, and decision rationales |
+| Multi-authority decisions | Ready | Version-specific current decisions plus append-only history |
+| Transactional publication | Ready | Unanimous approval publishes sanitized immutable-version data |
 
-**TODO from lead:**
-- Move status transitions to Cloud Function (currently client-side update — bypasses rules via "decidedBy" field; refactor to call `manualRecompute`-style HTTP endpoint)
-- Add filter UI (by risk level, event type, date) — currently basic
+## Module 5 - Analytics and Public Views
 
-## Module 5 — Analytics & Reporting
-**Lead:** Tester · **Support:** Programmer (chart integration)
+| Area | Status | Primary Files |
+|---|---|---|
+| Required analytics charts | Ready | Assigned-agency applications/approvals, final risk, and baseline-versus-final |
+| Public approved events | Ready | Sanitized calendar search/filter/grouping and real-time detail |
+| CSV export and date filters | Ready | PII-safe export with spreadsheet-injection protection |
+| Advanced analytics | Pending | High-risk venues/types, resource trends, and per-authority turnaround |
 
-| File | Status | Notes |
-|------|--------|-------|
-| `frontend/src/pages/authority/Analytics.tsx` | 🟡 | 3 charts wired (agreement, risk level, avg over time) |
-| Chart.js + react-chartjs-2 | ✅ | Installed |
-| CSV / PDF export | ⏳ | Not yet |
-| "Top risky venues" | ⏳ | Not yet |
-| "Most disagreed applications" | ⏳ | Not yet |
+## Firestore Contract
 
-**TODO from lead:**
-- Optimize: replace `collection(COLLECTIONS.RISK_SCORES)` collection scan with `collectionGroup` + indexes
-- Add CSV export button (suggest `papaparse` lib)
-- Add date range filter
+| Path | Contract | Client Writes |
+|---|---|---|
+| `users/{uid}` | `UserProfile` | own safe profile fields |
+| `events/{eventId}` | `EventRecord` | draft commands only |
+| `events/{eventId}/versions/{versionId}` | `EventVersion` | server submission command |
+| `events/{eventId}/assessments/{assessmentId}` | `AssessmentRecord` processing/failed/ready lifecycle | server only |
+| `events/{eventId}/resources/{resourceId}` | `ResourceRecommendation` | server only |
+| `events/{eventId}/decisions/{decisionId}` | `AuthorityDecision` | server only |
+| `events/{eventId}/audit_logs/{auditId}` | `AuditLog` | server only, append-only |
+| `public_events/{eventId}` | `PublicEvent` | server only, public read |
 
----
+## Immediate Next Work
 
-## Firestore Schema
-
-| Collection | Doc shape | Server-only writes |
-|------------|-----------|-------------------|
-| `users` | `UserProfile` | role changes |
-| `events` | `EventRecord` | status transitions (Pending → ...) |
-| `events/{id}/risk_scores` | `RiskScoreRecord` | ✅ (Cloud Function) |
-| `events/{id}/resources` | `ResourceRecommendation` | ✅ (Cloud Function) |
-| `events/{id}/audit_logs` | `AuditLog` | ✅ (Cloud Function, append-only) |
-| `venues` | `Venue` | ✅ (seed script) |
-| `incidents` | `Incident` | ✅ (seed script) |
-| `public_events` | `PublicEvent` | ✅ (on Approved) |
-
-See `firestore.rules` for full access matrix.
-
----
-
-## External APIs
-
-| API | Used for | Cost control |
-|-----|----------|--------------|
-| MiniMax M3 (Anthropic-compatible) | AI risk + resource prediction | 1000 calls/day cap; cache identical requests in Cloud Function |
-| OpenWeather | Weather forecast (5-day free tier) | 1000 calls/day; 30-min in-memory cache |
-
-Both have a graceful-degrade path: if either fails, the system runs rule-based only and shows a warning to the authority.
-
----
-
-## Open Questions (from PRD §16)
-
-1. **AI prompt detail level** → Current system prompt is detailed but not overlong. Tune via `promptVersion` field.
-2. **MiniMax cost monitoring** → Suggest Firebase budget alert at 50%/80% (set in Google Cloud Console).
-3. **Firebase project setup** → Need Google Cloud account access; whoever has it should run `firebase use --add`.
-4. **Test data** → Seed script at `functions/src/seed/seedVenues.ts` covers 10 venues. Expand to 20-30.
-5. **AI vs rule-based UI prominence** → Current UI shows both side-by-side. Authority can scan the disagreement banner for outliers.
+1. Automate the full organizer, authority, amendment, and public golden paths with Playwright.
+2. Seed the complete Phase 8 venue, incident, event, and failure-scenario dataset.
+3. Complete Edge and Safari keyboard verification and close accessibility findings.
+4. Add App Check/abuse controls, retention policy, budget alerts, and backup rehearsal.

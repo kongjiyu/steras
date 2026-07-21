@@ -4,10 +4,9 @@ rules_version = '2';
 // STERAS Cloud Storage Security Rules
 // =====================================================================
 // - Event-related documents (permits, insurance, etc.) go under
-//   /event_documents/{eventId}/{fileName}
-// - Only the event organizer (owner) and authorities can read
+//   /event_documents/{eventId}/{versionId}/{fileName}
+// - Only the event organizer and assigned authorities can read
 // - Organizer can upload to their own event's folder
-// - Authority can read all event documents
 // =====================================================================
 
 service firebase.storage {
@@ -23,15 +22,39 @@ service firebase.storage {
     }
 
     // Event documents (permits, insurance certificates, etc.)
-    match /event_documents/{eventId}/{fileName} {
-      // Read: organizer (owner) or any authority
-      allow read: if isSignedIn() && (isAuthority()
-                 || firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizerId == request.auth.uid);
-      // Write: organizer (owner), 10MB max, common file types
-      allow write: if isSignedIn()
-                   && firestore.get(/databases/(default)/documents/events/$(eventId)).data.organizerId == request.auth.uid
-                   && request.resource.size < 10 * 1024 * 1024
-                   && request.resource.contentType.matches('image/.*|application/pdf');
+    function eventRecord(eventId) {
+      return firestore.get(/databases/(default)/documents/events/$(eventId)).data;
+    }
+
+    function ownsEvent(eventId) {
+      return isSignedIn() && eventRecord(eventId).organizerId == request.auth.uid;
+    }
+
+    function isAssignedAuthority(eventId) {
+      return isAuthority()
+             && eventRecord(eventId).requiredAuthorities.hasAny([
+               firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.authorityType
+             ]);
+    }
+
+    function isEditableVersion(eventId, versionId) {
+      return eventRecord(eventId).status in ['Draft', 'AmendmentRequested']
+             && eventRecord(eventId).editableVersionId == versionId;
+    }
+
+    match /event_documents/{eventId}/{versionId}/{fileName} {
+      // Read: organizer (owner) or authority assigned to this application.
+      allow read: if isSignedIn() && (isAssignedAuthority(eventId) || ownsEvent(eventId));
+      // Only the currently editable version accepts organizer file changes.
+      allow create: if ownsEvent(eventId)
+                    && isEditableVersion(eventId, versionId)
+                    && resource == null
+                    && fileName.matches('[A-Za-z0-9._-]{1,200}')
+                    && request.resource.size > 0
+                    && request.resource.size <= 10 * 1024 * 1024
+                    && request.resource.contentType.matches('image/(jpeg|png|webp)|application/pdf');
+      allow update: if false;
+      allow delete: if ownsEvent(eventId) && isEditableVersion(eventId, versionId);
     }
 
     // Default deny everything else

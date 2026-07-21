@@ -1,601 +1,563 @@
-# **STERAS — Product Requirements Document (PRD) v2.0**
+---
+project: STERAS - Smart Tourism Event Risk Assessment System
+course: BMSE3004 Collaborative Development
+version: 2.1
+date: 2026-07-13
+status: Architecture-aligned draft for team review
+team_size: 5 members
+tech_stack: React + Firebase + MiniMax M3
+---
 
-**For: All 5 team members — read this before splitting work.**
+# STERAS - Product Requirements Document (PRD) v2.1
 
-**TL;DR: STERAS helps Malaysian authorities (PDRM, Bomba, KKM, DBKL) approve tourism event permits faster using AI prediction (MiniMax M3) \+ rule-based scoring for risk \+ auto-recommended resources. Firebase for backend. Not for tourists. Web app.**
+**For:** All five team members. This document is the implementation source of truth.
+
+**TL;DR:** STERAS helps Malaysian authorities assess and approve tourism event permits using a layered hybrid architecture. A deterministic rule engine calculates an auditable baseline and sub-scores. MiniMax M3 consumes those outputs plus bounded, non-personal event context to explain the assessment and propose a limited upward adjustment. The server validates the result and exposes one final risk score with full provenance.
 
 ---
 
-## **1\. Project Overview**
+## 1. Product Overview
 
-### **What**
+### Problem
 
-**STERAS is a B2B/B2G web application that:**
+Visit Malaysia 2026 targets 35.6 million tourist arrivals. More festivals, concerts, fairs, cultural events, and sporting events increase the workload for organizers and authorities. Current event risk and resource planning can rely on inconsistent manual judgement, incomplete context, and non-standard calculations.
 
-1. **Event organizers submit event details through an online portal (venue, expected attendance, event type, date, duration)**  
-2. **System automatically retrieves contextual data — weather forecasts (OpenWeather API), proximity to Malaysian public holidays, venue history**  
-3. **System runs two parallel risk assessment engines:**  
-   * **AI predictor (MiniMax M3) — contextual reasoning \+ natural language explanation**  
-   * **Rule-based engine — deterministic scoring per WHO/PDRM/Bomba standards**  
-4. **System compares AI and rule-based scores; if they agree → high confidence; if they disagree by \>= 15 points → flag for manual review**  
-5. **System recommends resource allocation (police, medical teams, ambulances, toilets, security, fire officers) using standards from WHO Mass Gathering Guidelines \+ PDRM \+ Bomba**  
-6. **Authority officers (PDRM/Bomba/KKM/DBKL) review applications through real-time dashboard (Firebase Firestore listeners), then Approve/Reject/Request Amendment**  
-7. **Analytics dashboard tracks trends in event submissions, risk distributions, and resource utilisation**
+STERAS addresses:
 
-### **Why this exists (problem statement)**
+1. Inconsistent risk assessment between reviewers.
+2. Manual resource calculations that are difficult to reproduce.
+3. Limited use of weather, venue capacity, holidays, and incident history.
+4. Weak auditability between submitted evidence, assessment, and decision.
 
-**Malaysia is promoting Visit Malaysia 2026 (VM2026), with a target of attracting 35.6 million tourist arrivals and organising more festivals, concerts, cultural events, and fairs nationwide. The increasing volume of tourism events creates proportionate pressure on event safety and operational coordination. Currently, the assessment of event risk and the planning of safety resources rely heavily on manual judgement by individual authority officers, often without comprehensive data on historical incidents, real-time conditions, or standardised benchmarks. This leads to:**
+### Product Scope
 
-1. **Inconsistent risk assessment — Different officers apply different thresholds.**  
-2. **Insufficient safety resource planning — Manual calculations prone to error and omission.**  
-3. **Lack of data-driven decision support — Historical patterns, weather, venue history not leveraged.**  
-4. **Operational consequences — Overcrowding, delayed emergency response, preventable safety incidents (e.g., the Pavilion KL EDM concert death in 2018).**
+STERAS is a B2B/B2G web application that:
 
-### **What it's NOT**
+1. Lets organizers submit and track event applications.
+2. Retrieves weather, holiday, venue, and incident context.
+3. Calculates deterministic risk sub-scores and a baseline score.
+4. Uses MiniMax M3 to explain the baseline and identify bounded compound-risk adjustments.
+5. Recommends safety resources using transparent prototype formulas.
+6. Lets assigned authorities approve, reject, or request amendments.
+7. Publishes basic information about fully approved events.
+8. Provides operational analytics from assessment and decision records.
 
-* **❌ Not a tourist-facing app**  
-* **❌ Not a marketplace (no booking, no transactions)**  
-* **❌ Not a trip planner**  
-* **❌ Not using crowd detection / image processing (banned by lecturer)**  
-* **❌ Not ML-trained on our data — uses prompt-engineered LLM (MiniMax M3) \+ rule-based fallback**  
-* **❌ Not pure AI black box — always paired with rule-based deterministic scoring for auditability**
+### Non-Goals
 
-### **SDG alignment**
+- No ticketing, payments, bookings, or tourism itinerary planning.
+- No crowd detection, image processing, IoT, or live sensor streams.
+- No custom-trained machine-learning model.
+- No direct integration with production PDRM, Bomba, KKM, MOTAC, or local-authority systems.
+- No native mobile application or multi-language support for the MVP.
 
-* **SDG 8: Better resource allocation → decent work for event staff**  
-* **SDG 11: Safer events → sustainable cities**  
-* **SDG 12: Right-sized resources → responsible consumption (no waste, no shortage)**
+### SDG Alignment
 
----
-
-## **2\. User Roles**
-
-**STERAS has 3 user types:**
-
-### **Role A — Event Organizer**
-
-* **Creates account, submits event applications**  
-* **Views own submission status (Pending / Approved / Rejected / Amendment Requested)**  
-* **Receives recommendations to improve submission**  
-* **Receives real-time dashboard status updates, with Firebase Cloud Messaging as an optional enhancement**
-
-### **Role B — Authority Reviewer**
-
-* **One of: PDRM officer, Bomba officer, KKM officer, DBKL officer, MOTAC officer**  
-* **Reviews pending applications in real-time dashboard**  
-* **Sees BOTH AI prediction AND rule-based score (for trust \+ audit)**  
-* **Actions: Approve / Reject / Request Amendment**  
-* **All decisions logged with timestamp \+ authority ID \+ AI-vs-rule agreement flag**
-
-### **Role C — Public Viewer (read-only)**
-
-* **Sees approved events calendar (for tourism awareness)**  
-* **No login required**  
-* **Helps public know which events are safety-approved**
+- **SDG 8:** safer and better-planned work for event personnel.
+- **SDG 11:** safer public events and cities.
+- **SDG 12:** right-sized resources that reduce shortages and waste.
 
 ---
 
-## **3\. System Architecture (high-level)**
+## 2. Users and Permissions
 
-**┌─────────────────────────────────────────────────────────┐**
+### Event Organizer
 
-**│                    STERAS Web App                       │**
+- Registers and signs in.
+- Creates, edits, submits, withdraws, and resubmits owned applications.
+- Can edit only while an application is `Draft` or `AmendmentRequested`; a submitted `Pending` version is immutable and may only be withdrawn.
+- Views the latest assessment, resource recommendation, amendment request, and decision status for owned applications.
+- Receives real-time in-app status updates. FCM push notifications are optional for the MVP.
 
-**├─────────────────────────────────────────────────────────┤**
+### Authority Reviewer
 
-**│  FRONTEND (React 18 \+ Vite \+ Tailwind CSS)             │**
+- Belongs to one authority type: `PDRM`, `BOMBA`, `KKM`, `DBKL`, or `MOTAC`.
+- Reads applications assigned to their authority type.
+- Reviews the final risk score, baseline provenance, AI explanation, documents, and resources.
+- Records `Approved`, `Rejected`, or `AmendmentRequested` with a mandatory rationale.
+- Cannot edit organizer-submitted event data or overwrite audit records.
 
-**│  ┌───────────┬───────────────┬─────────────────┐      │**
+### Public Viewer
 
-**│  │ Organizer │   Authority   │   Public        │      │**
-
-**│  │ Portal    │   Dashboard   │   Calendar      │      │**
-
-**│  └─────┬─────┴───────┬───────┴────────┬────────┘      │**
-
-**│        │             │                │               │**
-
-**│        └─────────────┴────────────────┘               │**
-
-**│              │ Firebase JS SDK \+ react-firebase-hooks  │**
-
-**├─────────────┼──────────────────────────────────────────┤**
-
-**│  FIREBASE BACKEND-AS-A-SERVICE                       │**
-
-**│  ┌────────────────────────────────────────────────┐ │**
-
-**│  │ Firebase Authentication (organizer/authority)  │ │**
-
-**│  │ Firebase Cloud Functions (Node.js 22\)          │ │**
-
-**│  │  ├─ AI Predictor → calls MiniMax M3 API       │ │**
-
-**│  │  ├─ Rule-Based Engine (deterministic)          │ │**
-
-**│  │  └─ Disagreement Detector                       │ │**
-
-**│  │ Firebase Firestore (NoSQL)                     │ │**
-
-**│  │  ├─ events / risk\_scores / resources / audit\_log│ │**
-
-**│  │ Firebase Cloud Storage (uploaded documents)     │ │**
-
-**│  └────────────────────────────────────────────────┘ │**
-
-**├─────────────────────────────────────────────────────────┤**
-
-**│  EXTERNAL APIs                                           │**
-
-**│  ├─ MiniMax M3 (Anthropic-compatible) — AI prediction │**
-
-**│  └─ OpenWeather API — weather forecast data            │**
-
-**└─────────────────────────────────────────────────────────┘**
-
-### **Hybrid AI \+ Rules Architecture (key design decision)**
-
-**A distinctive feature of STERAS is its hybrid risk assessment architecture combining AI prediction with deterministic rule-based scoring. This design:**
-
-* **AI Predictor (MiniMax M3): Provides contextual reasoning with natural language explanation, e.g., "Large outdoor crowd with severe weather forecast significantly increases risk of crowd crush and weather-related incidents."**  
-* **Rule-Based Engine: Always runs the deterministic answer using WHO/PDRM/Bomba standards.**  
-* **Disagreement Detector: If AI and rule-based scores differ by \>= 15 points, the application is flagged for manual review by a senior authority.**
-
-**This hybrid design addresses three concerns:**
-
-1. **Audit trail — Authority decisions need justification. Rule-based outputs are deterministic and explainable.**  
-2. **AI hallucination mitigation — Per academic reviews of LLM applications in safety-critical domains, AI models can produce inconsistent or fabricated recommendations. The rule-based engine provides a ground-truth check.**  
-3. **Lecturer fit — Per Lecture 1 commentary, the lecturer favors "prediction-based solutions", making AI prediction a strong fit, while the rule-based component provides the deterministic accuracy expected of a safety tool.**
+- Does not require authentication.
+- Reads only fully approved records from `public_events`.
+- Sees event name, type, venue, date, and approving authorities.
+- Does not see contact details, uploaded documents, internal risk evidence, or audit logs.
 
 ---
 
-## **4\. The 5 Modules — What Each Does**
+## 3. Layered Risk Architecture
 
-### **Module 1: Event Management (Owner: Requirement Lead)**
+### Processing Sequence
 
-**Purpose: Organizer submits event application \+ tracks status.**
+```text
+Validated event input
+  -> contextual data retrieval
+  -> deterministic rule-based assessment
+  -> MiniMax M3 explanation and bounded adjustment proposal
+  -> server-side validation
+  -> final risk assessment
+  -> deterministic resource recommendation
+  -> immutable audit snapshot
+```
 
-**Features:**
+The rule engine and AI do **not** run as independent competing scorers. The rule engine is the deterministic baseline. MiniMax M3 is an explanation and refinement layer. Authority users see one final score and can inspect how it was produced.
 
-* **Event submission form (event name, type, venue, address, GPS, capacity, expected attendance, start/end datetime, description, organizer contact)**  
-* **Manual venue input (Google Places API auto-fill is optional / nice-to-have)**  
-* **My Events dashboard (status: Pending / Under Review / Approved / Rejected / Amendment Requested)**  
-* **Edit / withdraw application (only if Pending)**  
-* **Real-time status updates via Firestore listeners**
+### Layer 1: Deterministic Baseline
 
-**Inputs (per event):**  
- **| Field | Type | Required |**  
- **|---|---|---|**  
- **| Event name | text | Yes |**  
- **| Event type | dropdown | Yes |**  
- **| Venue name | text | Yes |**  
- **| Venue address | text | Yes |**  
- **| Venue GPS | lat/lng | Optional (auto-fill from address) |**  
- **| Venue capacity | number | Yes |**  
- **| Expected attendance | number | Yes |**  
- **| Start datetime | datetime | Yes |**  
- **| End datetime | datetime | Yes |**  
- **| Description | textarea | Optional |**  
- **| Organizer name | text | Yes |**  
- **| Organizer contact | phone \+ email | Yes |**
+Each raw sub-score is an integer from 0 to 100:
 
-**Outputs: Event record stored in Firestore, triggers Module 2 \+ 3 (Cloud Functions).**
+```text
+baselineScore = round(
+  0.30 * weatherScore
+  + 0.25 * crowdScore
+  + 0.20 * venueScore
+  + 0.15 * historyScore
+  + 0.10 * holidayScore
+)
+```
 
----
+The system stores both raw sub-scores and weighted contributions. Every sub-score includes a short evidence description and source timestamp.
 
-### **Module 2: Smart Risk Assessment (Owner: Programmer)**
+Risk levels are consistent across the product:
 
-**Purpose: Calculate risk score using two parallel engines (AI \+ rules) \+ detect disagreement.**
+- `Low`: 0-39
+- `Medium`: 40-69
+- `High`: 70-100
 
-**Inputs (from Module 1 \+ external data):**
+### Layer 2: MiniMax M3 Refinement
 
-* **Event details (attendance, type, venue, duration)**  
-* **Weather forecast (OpenWeather API)**  
-* **Public holiday proximity (auto-detect from JSON file)**  
-* **Day of week (weekend \= higher risk)**  
-* **Historical incident lookup (Firestore collection of past incidents per venue / event type)**  
-* **Venue capacity utilization (attendance / capacity ratio)**
+MiniMax M3 receives:
 
-**Rule-based scoring formula (deterministic, always runs):**
+- The five rule-based sub-scores and weighted contributions.
+- The baseline score and risk level.
+- Non-personal event context required to explain compound risk: event type, attendance, capacity utilization, indoor/outdoor status, coverage, duration, weather summary, holiday proximity, and anonymized incident summary.
+- Curated standard identifiers and descriptions supplied by the server.
 
-**risk\_score \= 0.30 × weather\_score**
+It must not receive organizer contact details, uploaded documents, user IDs, or unrelated free-text personal data.
 
-           **\+ 0.25 × crowd\_score**
+The AI returns structured JSON:
 
-           **\+ 0.20 × venue\_score**
+```json
+{
+  "proposedAdjustment": 0,
+  "reasoning": "Explanation tied to named sub-scores and evidence.",
+  "compoundEffects": ["weather_and_outdoor_crowd"],
+  "keyConcerns": ["thunderstorm", "near_capacity"],
+  "citedEvidenceKeys": ["weather", "crowd", "venue"]
+}
+```
 
-           **\+ 0.15 × history\_score**
+`proposedAdjustment` must be an integer from 0 to 15. The server, not the model, calculates:
 
-           **\+ 0.10 × holiday\_score**
+```text
+validatedAdjustment = clamp(proposedAdjustment, 0, 15)
+finalScore = clamp(baselineScore + validatedAdjustment, baselineScore, 100)
+finalRiskLevel = levelFor(finalScore)
+```
 
-**AI prediction (MiniMax M3 prompt):**
+If the output is invalid, references missing evidence, times out, or the API is unavailable, `validatedAdjustment` becomes `0`; the baseline remains the final score and the record is marked `aiStatus: unavailable | invalid`.
 
-**System: You are an event safety risk assessment expert for Malaysian tourism events.**
+### MiniMax Integration Contract
 
-**Output structured JSON with risk\_level (Low/Medium/High), risk\_score (0-100),**
+- Target model: `MiniMax-M3`.
+- M3 was officially released on 1 June 2026 and is available through MiniMax API services.
+- The deployed model ID is configured through `MINIMAX_MODEL`, not hardcoded across the codebase.
+- The deployment process must verify the configured ID using MiniMax's Models API because product announcements and compatibility documentation may update at different times.
+- API credentials must be stored in Firebase Secrets / Google Secret Manager, never in the frontend or repository.
+- Prompt version, model ID, request timestamp, validated input hash, parsed output, and validation result are logged for audit. Hidden model reasoning is not required or stored.
 
-**reasoning, key\_concerns, and recommended\_resources.**
-
-**User: { event details \+ weather \+ holiday \+ venue history }**
-
-**Assistant: {**
-
-  **"risk\_level": "High",**
-
-  **"risk\_score": 78,**
-
-  **"reasoning": "...",**
-
-  **"key\_concerns": \["thunderstorm", "outdoor\_uncovered", "high\_attendance"\],**
-
-  **"recommended\_resources": { "police": 25, "medical": 6, "ambulances": 2, ... }**
-
-**}**
-
-**Outputs:**
-
-* **AI risk score (with reasoning) \+ Rule-based risk score**  
-* **Disagreement flag (if |AI \- Rule| \>= 15\)**  
-* **Triggers Module 3 for resource calculation**
+Official source: https://www.minimax.io/blog/minimax-m3
 
 ---
 
-### **Module 3: Safety Resource Recommendation (Owner: Design Lead)**
+## 4. Functional Modules
 
-**Purpose: Recommend resource allocation based on risk \+ attendance \+ WHO/PDRM/Bomba standards.**
+### Module 1: Event Management
 
-**Inputs (from Module 1 \+ Module 2):**
+**Owner:** Requirement Lead
 
-* **Event details (attendance, type, venue capacity)**  
-* **Risk score (from Module 2 — both AI and rule-based, plus disagreement flag)**
+Organizer capabilities:
 
-**Resource formulas (cite real standards):**
+- Create and save a draft application.
+- Submit a complete application.
+- Edit or withdraw an application while permitted by its status.
+- Respond to amendment requests and resubmit.
+- Track authority decisions in real time.
+- Upload PDF or image evidence up to 10 MB per file.
 
-| Resource | Formula | Standard |
-| ----- | ----- | ----- |
-| **Police officers** | **max(2, attendance ÷ 250\) \+ (10 if risk=High)** | **Prototype formula adapted from mass gathering safety benchmarks; final values require authority validation** |
-| **Medical teams** | **max(1, attendance ÷ 1000\) \+ (1 if risk=High)** | **WHO Mass Gathering Guidelines / prototype benchmark** |
-| **Ambulances on-site** | **max(1, attendance ÷ 5000\)** | **Prototype formula adapted from emergency planning benchmarks; final values require authority validation** |
-| **Portable toilets** | **attendance ÷ 50 (women) \+ attendance ÷ 75 (men)** | **Standard event planning benchmark** |
-| **Waste bins** | **attendance ÷ 100** | **Event management best-practice estimate** |
-| **Security personnel** | **attendance ÷ 100 (general) \+ (event type multiplier: concert=2x)** | **Crowd management benchmark; final values require authority validation** |
-| **Fire safety officers** | **max(1, attendance ÷ 500\) \+ (1 if indoor)** | **Prototype formula adapted from fire safety planning benchmarks; final values require authority validation** |
+Required event fields:
 
-**AI-augmented recommendation (optional override):**
+| Field | Type |
+|---|---|
+| Event name and type | text + enum |
+| Venue name and address | text |
+| Coordinates | lat/lng; required before assessment |
+| Venue capacity | positive integer |
+| Expected attendance | positive integer, not above declared capacity without warning |
+| Environment | indoor / outdoor / mixed |
+| Coverage | covered / partially covered / uncovered |
+| Seating | seated / standing / mixed |
+| Start and end datetime | valid future range |
+| Event description | optional, maximum 2,000 characters |
+| Organizer name, email, phone | required, private |
+| Emergency-plan summary | required, maximum 2,000 characters |
 
-* **If AI and rule-based agree → use rule-based answer**  
-* **If AI and rule-based disagree significantly → present BOTH to authority for manual decision**  
-* **AI's `recommended_resources` field overrides only with explicit authority approval**
+Submitting or resubmitting creates a new immutable assessment version. Previous assessments remain available to authorities for audit.
 
-**Outputs:**
+### Module 2: Smart Risk Assessment
 
-* **Recommended resource list with quantities \+ standards reference**  
-* **Confidence flag (if standards are estimates vs official)**  
-* **Saved as part of event record for audit**
+**Owner:** Programmer
 
----
+Inputs:
 
-### **Module 4: Authority Dashboard (Owner: Programmer \+ Design Lead)**
+- Validated event fields from Module 1.
+- OpenWeather forecast and retrieval timestamp.
+- Malaysian public-holiday proximity.
+- Venue capacity and synthetic incident history.
+- Curated rule and standard version.
 
-**Purpose: Authority reviews pending applications \+ makes decisions (with AI \+ rule-based comparison).**
+Outputs:
 
-**Features:**
+- Baseline score, level, five sub-scores, weighted contributions, and evidence.
+- AI adjustment, explanation, key concerns, compound effects, and status.
+- Final score and level.
+- Assessment version, timestamps, prompt version, and data-source freshness.
 
-* **Login (Firebase Auth, role-based: only Authority users)**  
-* **Pending Applications queue (Firestore real-time listener)**  
-* **Application detail view:**  
-  * **Organizer info \+ event details (read-only)**  
-  * **AI Risk Analysis with reasoning**  
-  * **Rule-Based Risk Score (for comparison)**  
-  * **Disagreement Flag (if AI and rule-based differ by \>= 15)**  
-  * **Resource Recommendations (with standards cited)**  
-  * **Decision buttons: Approve / Reject / Request Amendment**  
-* **Amendment form (free text \+ specific resource changes suggested)**  
-* **Decision history per event (audit log)**  
-* **Filter by risk level / event type / date**  
-* **Search by organizer name or event name**
+The pipeline is idempotent for an assessment version. Duplicate triggers must not create multiple active assessments.
 
-**Decision workflow:**
+### Module 3: Safety Resource Recommendation
 
-1. **Authority opens application**  
-2. **Sees AI risk \+ reasoning \+ rule-based score side-by-side**  
-3. **If agreement → high confidence, quick decision**  
-4. **If disagreement → reads AI reasoning, checks venue history, may request amendment**  
-5. **Makes decision (Approve / Reject / Request Amendment)**  
-6. **System updates organizer dashboard status in real time; optional FCM notification if implemented**  
-7. **Decision logged with timestamp \+ authority ID \+ AI-vs-rule agreement status**
+**Owner:** Design Lead, supported by Programmer
 
----
+Resource calculations use the validated **final risk level** and attendance. For the MVP, all formulas are explicitly labelled **prototype heuristics pending authority validation**.
 
-### **Module 5: Analytics & Reporting (Owner: Tester)**
+| Resource | Prototype Formula |
+|---|---|
+| Police officers | `max(2, ceil(attendance / 250)) + 10 if High` |
+| Medical teams | `max(1, ceil(attendance / 1000)) + 1 if High` |
+| Ambulances | `max(1, ceil(attendance / 5000))` |
+| Portable toilets | `ceil(attendance / 50) + ceil(attendance / 75)` |
+| Waste bins | `ceil(attendance / 100)` |
+| Security | `ceil(attendance / 100) * eventTypeMultiplier` |
+| Fire officers | `max(1, ceil(attendance / 500)) + 1 if indoor` |
 
-**Purpose: Show trends \+ statistics for future planning.**
+Requirements:
 
-**Features:**
+- Store formula version, inputs, output, and confidence `prototype` or `authorityValidated`.
+- Show source notes without claiming an unverified formula is an official WHO/PDRM/Bomba requirement.
+- AI may explain resource implications but cannot automatically override deterministic quantities.
+- An authority override requires a quantity, rationale, reviewer ID, timestamp, and previous value.
 
-* **Dashboard with charts (Chart.js):**  
-  * **Events approved per month (line chart)**  
-  * **AI vs Rule-based agreement rate (pie chart — % agree / % disagree)**  
-  * **Average risk score over time (line chart)**  
-  * **Risk level distribution (pie chart: Low / Medium / High)**  
-  * **Most common event types (bar chart)**  
-  * **Resource recommendations vs actual usage comparison**  
-* **Filter by date range / event type / risk level**  
-* **Export to CSV / PDF**  
-* **"Top risky venues" list (most flagged for high risk)**  
-* **"Most disagreed applications" list (where AI and rule-based diverged — for authority training)**
+### Module 4: Authority Review and Approval
 
----
+**Owner:** Programmer, supported by Design Lead and Tester
 
-## **5\. User Flows (Key Scenarios)**
+The review workspace provides:
 
-### **Flow 1: Organizer submits event**
+- Real-time assigned application queue.
+- Search by event or organizer.
+- Filters for authority, status, risk level, event type, and date.
+- Event details, private organizer details, submitted evidence, and version history.
+- Final risk score as the primary value.
+- Expandable baseline, sub-scores, weighted contributions, AI adjustment, and cited evidence.
+- Resource recommendation and any authority overrides.
+- Approve, Reject, and Request Amendment actions with mandatory rationale.
 
-1. **Organizer logs in (Firebase Auth)**  
-2. **Clicks "New Event"**  
-3. **Fills form (Module 1\)**  
-4. **Submits → event goes to Pending in Firestore**  
-5. **Cloud Function triggers: weather fetch \+ AI prediction \+ rule-based scoring**  
-6. **Organizer sees "AI: 78 (High) | Rule: 72 (High) | Agreement: Yes | Recommended: 8 police, 2 medical teams, 40 toilets"**  
-7. **Organizer waits for authority decision**  
-8. **Authority reviews (Flow 2\)**  
-9. **Organizer sees real-time status update in the dashboard**  
-10. **If FCM is implemented, organizer also receives a push notification**
+#### Multi-Authority Decision Rule
 
-### **Flow 2: Authority reviews application**
+Each application stores `requiredAuthorities`, configured from event type and location for the prototype dataset.
 
-1. **Authority logs in (Firebase Auth)**  
-2. **Sees Pending Applications queue (Firestore real-time, no refresh needed)**  
-3. **Filters by risk level \= High (shows 3 events)**  
-4. **Clicks on event \#1**  
-5. **Sees full details: organizer \+ event \+ AI risk (with reasoning) \+ rule-based score \+ resources \+ standards**  
-6. **Notices AI \= 85, Rule \= 70 (disagreement of 15 — flagged for manual review)**  
-7. **Reads AI reasoning: "Venue has had 2 medical emergencies in past 6 months, and recent heavy rain may affect temporary outdoor structures"**  
-8. **Checks venue history (Firestore sub-collection)**  
-9. **Decides "AI is right, request amendment" → clicks "Request Amendment"**  
-10. **Fills form: "Reduce police to 8, increase medical to 3, require pre-event roof inspection"**  
-11. **Submits amendment request**  
-12. **Organizer sees the amendment request in the dashboard and can resubmit; optional FCM notification if implemented**
+- Each required authority has one current decision per application version.
+- Any `Rejected` decision makes the application `Rejected`.
+- Any `AmendmentRequested` decision makes it `AmendmentRequested` and blocks remaining approval.
+- The application becomes `Approved` only when every required authority has approved the same assessment version.
+- Resubmission invalidates prior approvals for the changed version and starts a new review cycle.
+- A transaction or server function prevents conflicting concurrent decisions.
 
-### **Flow 3: Public sees approved events**
+### Module 5: Analytics and Reporting
 
-1. **Public visits STERAS homepage (no login)**  
-2. **Sees calendar of approved events (Firestore public read-only collection)**  
-3. **Clicks on event → sees basic info (name, venue, date, "Safety-approved by PDRM")**  
-4. **(Optional) Sees aggregate risk stats for that event type**
+**Owner:** Tester, supported by Programmer
 
----
+MVP analytics include at least three charts:
 
-## **6\. Data Sources**
+- Applications and approvals by month.
+- Final risk-level distribution.
+- Average baseline score versus final score over time.
 
-### **Real (external APIs)**
+Additional analytics:
 
-* **✅ Weather: OpenWeather API (free tier, 1000 calls/day)**  
-* **✅ AI Prediction: MiniMax M3 API (Anthropic-compatible, in `~/.hermes/.env`)**
+- Average and distribution of validated AI adjustments.
+- AI fallback/invalid-output rate.
+- Event types and venues associated with high final risk.
+- Recommended resources by event type.
+- Approval turnaround time by authority.
+- CSV export; PDF export is optional.
 
-### **Synthetic (for prototype)**
-
-* **🟡 Historical incident data: Generate synthetic dataset based on realistic distributions**  
-* **🟡 Venue database: Start with 20-30 sample venues**
-
-### **Manual input**
-
-* **🟡 Organizer provides venue, attendance, etc.**  
-* **🟡 Authority reviews \+ decides**  
-* **🟡 Standards reference table (manually curated from WHO/PDRM/Bomba docs)**
+Analytics must never expose organizer contact details or document content.
 
 ---
 
-## **7\. Firestore Data Model & Access Control**
+## 5. Application State Machine
 
-### **Core collections**
+```text
+Draft
+  -> Pending
+  -> UnderReview
+       |-> Approved
+       |-> Rejected
+       `-> AmendmentRequested
+             `-> Pending (resubmitted as a new version)
 
-| Collection | Purpose | Key fields |
-| ----- | ----- | ----- |
-| **users** | Stores registered user profiles and role metadata | **uid, name, email, role, authorityType, createdAt** |
-| **events** | Main event application records submitted by organizers | **eventId, organizerId, eventDetails, status, createdAt, updatedAt** |
-| **events/{eventId}/risk\_scores** | Stores AI and rule-based risk results for each event | **aiScore, ruleScore, riskLevel, disagreementFlag, aiReasoning, promptVersion** |
-| **events/{eventId}/resources** | Stores recommended safety resource quantities | **police, medicalTeams, ambulances, toilets, security, fireOfficers, confidenceLevel** |
-| **events/{eventId}/audit\_logs** | Immutable history of authority decisions and system actions | **action, actorId, actorRole, timestamp, previousStatus, newStatus, notes** |
-| **venues** | Prototype venue database for lookup and history linkage | **venueId, name, address, capacity, location, riskNotes** |
-| **incidents** | Synthetic historical incident data for prototype scoring | **incidentId, venueId, eventType, incidentType, severity, date** |
-| **public\_events** | Read-only approved event calendar for public viewers, if implemented | **eventName, venueName, date, publicStatus** |
+Draft | Pending -> Withdrawn
+```
 
-### **Access control rules**
+Rules:
 
-* **Organizers can create events and read/update only their own events while status is Pending or Amendment Requested.**  
-* **Authority users can read submitted event applications and create decision records, but cannot directly edit immutable audit logs.**  
-* **Public viewers can read only approved public event summaries from `public_events`; they cannot access organizer contact details, AI prompts, audit logs, or internal risk reasoning.**  
-* **Cloud Functions are responsible for writing risk scores, resource recommendations, audit logs, and status transitions that require server-side validation.**  
-* **Firestore Security Rules enforce role-based access using Firebase Auth custom claims or a trusted `users` role document.**
-
----
-
-## **8\. Module Dependencies (Build Order)**
-
-**Module 1 (Event Mgmt) → Module 2 (Risk) → Module 3 (Resources) → Module 4 (Dashboard) → Module 5 (Analytics)**
-
-**Recommended build order:**
-
-1. **Module 1 (event form \+ Firestore schema)**  
-2. **Module 2 (AI \+ rule-based engines, Cloud Functions)**  
-3. **Module 3 (resource formula engine)**  
-4. **Module 4 (authority dashboard \+ real-time listeners)**  
-5. **Module 5 (analytics — last because depends on data from others)**
+- Only organizers create drafts and submit owned applications.
+- `Pending` begins assessment processing.
+- `UnderReview` begins when the first assigned authority opens or claims the current version.
+- Authority decisions are server-mediated and append-only.
+- Approved records are copied to `public_events` only after all required approvals.
+- Failed AI processing does not block review; the baseline score is used with a visible warning.
 
 ---
 
-## **9\. Team Role Assignments (UNCHANGED from v1)**
+## 6. Key User Flows
+
+### Organizer Submission
+
+1. Organizer creates and validates an application.
+2. Submission creates application version 1 with status `Pending`.
+3. Server retrieves contextual data and computes the baseline.
+4. MiniMax M3 proposes a bounded adjustment and explanation.
+5. Server validates and stores the final assessment and resources.
+6. Organizer sees processing status and then the final result summary.
+7. Assigned authorities receive the application in real time.
+
+### Authority Review
+
+1. Reviewer opens an assigned application version.
+2. Reviewer sees the final score, explanation, and provenance.
+3. Reviewer verifies event documents and resources.
+4. Reviewer approves, rejects, or requests amendment with rationale.
+5. Server writes the decision and immutable audit record in one transaction.
+6. Overall status is recomputed from all required-authority decisions.
+7. Organizer receives an in-app update; optional FCM is sent when configured.
+
+### Amendment and Resubmission
+
+1. Organizer reads authority-specific amendment reasons.
+2. Organizer changes permitted fields and resubmits.
+3. The system creates a new application version and assessment version.
+4. Previous decisions remain visible but no longer count toward approval.
+
+### Public Event View
+
+1. Public viewer opens the approved-events calendar.
+2. The page reads only from `public_events`.
+3. Viewer sees non-sensitive event details and approving authorities.
+
+---
+
+## 7. Data Sources
+
+### External
+
+- MiniMax M3 API for bounded explanation and refinement.
+- OpenWeather API for scheduled forecast context.
+- Static versioned Malaysian public-holiday data.
+
+### Synthetic Prototype Data
+
+- 20-30 Malaysian venues.
+- Venue and event-type incident history clearly labelled synthetic.
+- Required-authority mappings for demo event types and locations.
+
+### Manual and Curated
+
+- Organizer event input and documents.
+- Authority decisions and resource overrides.
+- Versioned scoring rules and standard notes reviewed by the team.
+
+---
+
+## 8. Firestore Data Model
+
+```text
+users/{uid}
+events/{eventId}
+events/{eventId}/versions/{versionId}
+events/{eventId}/assessments/{assessmentId}
+events/{eventId}/resources/{resourceId}
+events/{eventId}/decisions/{decisionId}
+events/{eventId}/audit_logs/{auditId}
+venues/{venueId}
+incidents/{incidentId}
+public_events/{eventId}
+```
+
+### Risk Assessment Contract
+
+```text
+RiskAssessment {
+  eventId, versionId, assessmentId,
+  ruleVersion,
+  subScores: { weather, crowd, venue, history, holiday },
+  weightedContributions,
+  baselineScore, baselineRiskLevel,
+  ai: { model, promptVersion, status, proposedAdjustment,
+        validatedAdjustment, reasoning, compoundEffects,
+        keyConcerns, citedEvidenceKeys },
+  finalScore, finalRiskLevel,
+  sourceTimestamps,
+  inputHash,
+  createdAt
+}
+```
+
+### Access Control
+
+- Organizer: own profile, owned events, and permitted versions only.
+- Authority: applications assigned to their authority type and their supporting records.
+- Public: `public_events` only.
+- Assessments, decisions, resources, audit logs, roles, and publication records are server-written.
+- Audit logs are append-only and cannot be updated or deleted by clients.
+
+---
+
+## 9. Technology Stack
+
+### Frontend
+
+- React 18, Vite, TypeScript, Tailwind CSS.
+- Firebase JS SDK and `react-firebase-hooks`.
+- Chart.js for analytics.
+
+### Backend
+
+- Firebase Authentication.
+- Cloud Functions for Firebase using Node.js 22.
+- Firestore, Cloud Storage, and optional Firebase Cloud Messaging.
+- Firebase Emulator Suite for local integration testing.
+
+### AI and External APIs
+
+- MiniMax M3, model ID configured by environment and verified during deployment.
+- MiniMax standard API or a compatibility endpoint that explicitly lists M3 at integration time.
+- OpenWeather forecast API.
+- Server-side secrets through Firebase Secrets / Google Secret Manager.
+
+---
+
+## 10. Security, Privacy, and Reliability
+
+- Do not send PII, contact details, uploaded files, or user IDs to MiniMax.
+- Validate and length-limit all free-text fields before storage and AI use.
+- Validate AI JSON against a strict schema; never trust model-calculated final scores.
+- Set AI timeout, retry, and rate limits. Maximum one automatic retry per assessment version.
+- Cache weather by coordinates and forecast window; cache AI by input hash and prompt version.
+- Record data-source timestamps and show stale-data warnings.
+- Store secrets only in server-side secret management.
+- Define and document retention for applications, documents, AI records, and audit logs before deployment.
+- Test Firestore and Storage rules with Firebase Emulator Suite.
+
+---
+
+## 11. MVP Acceptance Criteria
+
+- Organizer can register, sign in, submit a valid event, and see status without refreshing.
+- Invalid capacity, date, coordinates, or required fields are rejected with clear messages.
+- One submission creates exactly one active assessment version despite duplicate triggers.
+- Baseline calculation is deterministic for identical inputs and rule version.
+- Final score is always between the baseline and `min(baseline + 15, 100)`.
+- AI failure produces a usable baseline assessment within 15 seconds and shows a warning.
+- Successful external assessment completes within 60 seconds for the demo environment.
+- Authority can inspect provenance and record one rationale-backed decision.
+- Concurrent or duplicate authority actions do not produce conflicting current decisions.
+- Overall approval requires all configured authorities for the same version.
+- Resubmission creates a new version and invalidates prior approvals without deleting history.
+- Every assessment, resource override, and decision creates an audit record.
+- Public users cannot read private events, contacts, assessments, documents, or audit logs.
+- Analytics provides at least three charts without exposing PII.
+- Core flows work on current Chrome, Edge, and Safari at desktop and 390px mobile width.
+
+### Nice-to-Have
+
+- FCM push notification after decisions.
+- PDF analytics export.
+- Google Places address and coordinates assistance.
+
+---
+
+## 12. Build Order and Ownership
+
+1. **Module 1:** input schema, event versions, authentication, and Firestore rules.
+2. **Module 2:** deterministic scoring, MiniMax refinement, validation, and audit.
+3. **Module 3:** resource formulas, versioning, and override workflow.
+4. **Module 4:** real-time queue, provenance UI, decisions, and multi-authority status.
+5. **Module 5:** analytics based on stable assessment and decision records.
 
 | Module | Lead | Support |
-| ----- | ----- | ----- |
-| **Module 1: Event Management** | **Requirement Lead** | **Project Manager (for stakeholder interview)** |
-| **Module 2: Smart Risk Assessment** | **Programmer** | **Design Lead (scoring formula \+ AI prompt design)** |
-| **Module 3: Safety Resource Recommendation** | **Design Lead** | **Programmer (formula implementation)** |
-| **Module 4: Authority Dashboard** | **Programmer** | **Design Lead (UI/UX), Tester** |
-| **Module 5: Analytics & Reporting** | **Tester** | **Programmer (chart integration)** |
+|---|---|---|
+| Event Management | Requirement Lead | Project Manager |
+| Smart Risk Assessment | Programmer | Design Lead |
+| Resource Recommendation | Design Lead | Programmer |
+| Authority Review | Programmer | Design Lead, Tester |
+| Analytics | Tester | Programmer |
 
 ---
 
-## **10\. Tech Stack (REVISED — Firebase \+ AI)**
+## 13. Timeline
 
-### **Frontend**
-
-* **React 18 \+ Vite (fast dev experience)**  
-* **Tailwind CSS (rapid styling)**  
-* **Firebase JS SDK \+ react-firebase-hooks (real-time listeners)**  
-* **Chart.js (analytics module)**
-
-### **Backend (Firebase Backend-as-a-Service)**
-
-* **Firebase Authentication (email/password, OAuth)**  
-* **Firebase Cloud Functions (Node.js 22 runtime)**  
-* **Firebase Firestore (NoSQL document database, real-time)**  
-* **Firebase Cloud Storage (uploaded documents)**  
-* **Firebase Cloud Messaging (optional push notifications; nice-to-have)**
-
-### **AI / External APIs**
-
-* **MiniMax M3 (Anthropic-compatible LLM) for risk \+ resource prediction**  
-* **OpenWeather API for weather forecast data**  
-* **Static JSON file for Malaysian public holidays**
-
-### **Dev Tools**
-
-* **Git \+ GitHub (version control)**  
-* **VS Code (code editor)**  
-* **Firebase Emulator Suite (local testing)**  
-* **Postman (API testing for Cloud Functions)**  
-* **@anthropic-ai/sdk (works with MiniMax's Anthropic-compatible API)**
+| Week | Deliverable |
+|---|---|
+| 3 | Proposal presentation |
+| 4-5 | Modules 1-2 vertical slice |
+| 6-7 | Modules 3-4 and emulator integration |
+| 8 | Checkpoint 1 and architecture review |
+| 9-10 | Module 5 and cross-browser testing |
+| 11-12 | Security-rule tests, bug fixes, documentation, demo data |
+| 13 | Project demo |
+| 14 | Final assessment documentation due 17 Sep 2026, 11:59 PM |
 
 ---
 
-## **11\. Constraints & Non-Goals**
-
-### **Hard constraints**
-
-* **❌ No image processing / crowd detection (banned by lecturer)**  
-* **❌ No real ML model (use prompt-engineered LLM only)**  
-* **❌ No IoT / hardware (pure software)**  
-* **❌ No real-time data streams (historical/scheduled data only)**
-
-### **Out of scope (for MVP)**
-
-* **Real payment integration**  
-* **Real SMS/email notifications (MVP uses in-app status updates; Firebase Cloud Messaging is nice-to-have)**  
-* **Multi-language support (English only)**  
-* **Mobile app (web only)**  
-* **Advanced user roles / permissions (3 simple roles)**  
-* **Real PDRM/Bomba system integration (mock data only)**
-
-### **Hybrid AI \+ Rules design rules**
-
-* **⚠️ AI prediction NEVER replaces rule-based — it augments**  
-* **⚠️ Disagreement \>= 15 points → flag for manual review (no auto-decision)**  
-* **⚠️ All AI outputs logged with prompt \+ response for audit**  
-* **⚠️ Rule-based engine always computes the deterministic answer (ground truth)**
-
----
-
-## **12\. Success Criteria (for proposal \+ Week 13 demo)**
-
-### **Must-have (MVP)**
-
-* **Organizer can register, login, submit event**  
-* **System calculates BOTH AI risk score \+ rule-based score**  
-* **System flags disagreement \>= 15 points**  
-* **System recommends resource quantities with standards cited**  
-* **Authority can review application \+ see AI reasoning \+ rule-based score side-by-side**  
-* **Authority can Approve/Reject/Amend**  
-* **Audit log captures all authority decisions**  
-* **Analytics dashboard with at least 3 charts (including AI vs rule agreement rate)**  
-* **Real-time updates via Firestore listeners (no manual refresh needed)**  
-* **Works on Chrome / Edge / Safari**  
-* **Mobile-responsive**
-
-### **Nice-to-have (if time permits)**
-
-* **FCM push notifications to organizer on decision**  
-* **Public calendar view (no login)**  
-* **CSV export of analytics**  
-* **Sample dataset of 10-20 events for demo**
-
-### **Will NOT have (out of scope)**
-
-* **Real PDRM database integration**  
-* **Real-time crowd monitoring**  
-* **Native mobile app**  
-* **Multi-tenancy**  
-* **Multi-language support**
-
----
-
-## **13\. Timeline (8-week rough plan — UNCHANGED)**
-
-| Week | Milestone |
-| ----- | ----- |
-| **Week 3** | **Proposal presentation** |
-| **Week 4-5** | **Module 1 \+ 2 build (event form \+ AI \+ rule-based engines)** |
-| **Week 6-7** | **Module 3 \+ 4 build (resources \+ authority dashboard with real-time listeners)** |
-| **Week 8** | **Checkpoint 1 (lecturer review)** |
-| **Week 9-10** | **Module 5 (analytics) \+ integration testing** |
-| **Week 11-12** | **Bug fixes \+ documentation \+ demo prep** |
-| **Week 13** | **Project Demo presentation** |
-| **Week 14** | **Final Assessment Documentation (due 17 Sep 2026, 11:59 PM)** |
-
----
-
-## **14\. Risks & Mitigations (REVISED)**
+## 14. Risks and Mitigations
 
 | Risk | Mitigation |
-| ----- | ----- |
-| **AI hallucination / inconsistency** | **Rule-based engine always provides ground truth; disagreements \>= 15 flagged for manual review** |
-| **MiniMax API cost overrun** | **Cloud Function rate limits (max 1000 calls/day); cache repeated identical requests** |
-| **MiniMax API downtime** | **Rule-based engine continues working without AI; system degrades gracefully** |
-| **Firebase quota exceeded** | **Monitor usage; set budget alerts at 50%/80% of planned prototype budget/quota** |
-| **Firestore NoSQL denormalization complexity** | **Design collections carefully; use sub-collections for related data (e.g., risk\_scores as sub-collection of events)** |
-| **AI prompt engineering iteration** | **Allocate extra time in Week 4-5 for prompt tuning; test with 20+ sample events** |
-| **Real PDRM/Bomba system integration** | **Out of scope; use mock data for prototype** |
+|---|---|
+| MiniMax API or model-ID change | Environment-configured model; deployment-time Models API check; baseline fallback |
+| Invalid or hallucinated AI output | Strict schema, evidence-key validation, 0-15 server clamp |
+| Weather/API downtime | Cached context, source timestamps, deterministic fallback |
+| Duplicate Firestore triggers | Input hash, version idempotency key, transactional active record |
+| Concurrent authority decisions | Server transaction and one current decision per authority/version |
+| Unverified resource ratios | Label as prototype; version formulas; require authority validation |
+| Firebase quota or cost overrun | Caching, rate limits, budget alerts, emulator-first testing |
+| Privacy leakage to external AI | Explicit allowlist of non-PII AI fields and audit of request payload |
 
 ---
 
-## **15\. References (verified open-access papers)**
+## 15. References and Design Sources
 
-### **Risk Assessment Theory**
-
-1. **Arbon, P., Bridgewater, F., & Smith, C. (2011). *Mass-gathering event risk scoring model: A score to predict risk level and medical usage rate during metropolitan mass gatherings.* Prehospital and Disaster Medicine, 26(Suppl. 1), s109. [https://doi.org/10.1017/s1049023x11002585](https://doi.org/10.1017/s1049023x11002585) — PDF in vault (`papers_pdf/Arbon_2011_MG_Risk_Scoring.pdf`)**  
-2. **Khalid, S., et al. (2022). *Crowd risk prediction in a spiritually motivated crowd.* Safety Science, 154, 105857\. [https://doi.org/10.1016/j.ssci.2022.105857](https://doi.org/10.1016/j.ssci.2022.105857) — PDF in vault (`papers_pdf/Crowd_Risk_Prediction_2022.pdf`)**
-
-### **AI \+ Rule-Based Hybrid**
-
-3. **Ryan, M. (2026). *Behavior rule architecture: Rule-based governance of AI system behavior.* TechRxiv. [https://doi.org/10.31224/6681](https://doi.org/10.31224/6681) — PDF in vault (`papers_pdf/Rule_Based_AI_Governance.pdf`)**  
-4. **Vassilev, V., & Bogdanova, M. (2026). *An integrated GNN-LLM framework for automated task-level safety risk assessment.* SSRN. [https://doi.org/10.2139/ssrn.6532324](https://doi.org/10.2139/ssrn.6532324)**
-
-### **Firebase**
-
-5. **Chang, J. (2020). *firebase: Integrates 'Google Firebase' authentication, storage, and 'Analytics' into R* (R package documentation). CRAN. [https://cran.r-project.org/web/packages/firebase/firebase.pdf](https://cran.r-project.org/web/packages/firebase/firebase.pdf) — PDF in vault (`papers_pdf/firebase_R_package_doc.pdf`)**  
-6. **Khan, A., et al. (2023). *Design monitoring and control of dam gate based on Visual Studio with Google Firebase real-time database*. Universal Journal of Physics and Application, 10(2), 1062\. [https://doi.org/10.21070/ups.1062](https://doi.org/10.21070/ups.1062) — PDF in vault (`papers_pdf/Firebase_Dam_Gate_Visual_Studio.pdf`)**  
-7. **Wijaya, Y. (2023). *About "Golden Race DB" development (NoSQL DBMS) as an alternative of Google Firebase*. Herald of Science, 26(4), 498-517. [https://doi.org/10.26907/1562-5419-2023-26-4-498-517](https://doi.org/10.26907/1562-5419-2023-26-4-498-517) — PDF in vault (`papers_pdf/Golden_Race_NoSQL_Alternative.pdf`)**
-
-### **Web Application Architecture**
-
-8. **Pandey, R., et al. (2024). *MERN (MongoDB, Express-JS, React-JS, Node-JS) stack web-based themefied educational platform*. Educational Administration: Theory and Practice, 30(5), 3035\. [https://doi.org/10.53555/kuey.v30i5.3035](https://doi.org/10.53555/kuey.v30i5.3035) — PDF in vault (`papers_pdf/MERN_Stack_Educational.pdf`)**  
-9. **Tarasov, K. (2018). *React framework (creating a web application with React Native)*. International Journal of Recent Trends in Engineering and Research, 4(11), 4176\. [https://doi.org/10.23883/ijrter.2018.4176.npvsn](https://doi.org/10.23883/ijrter.2018.4176.npvsn)**
-
-### **Weather API**
-
-10. **Rohmah, S., et al. (2025). *Real-time weather forecast website using OpenWeather API*. Scientific Journal of Artificial Intelligence and Blockchain Technology, 2(3), 207\. [https://doi.org/10.63345/sjaibt.v2.i3.207](https://doi.org/10.63345/sjaibt.v2.i3.207) — PDF in vault (`papers_pdf/OpenWeather_Real_Time.pdf`)**
+1. Tourism Malaysia. *Launch of Visit Malaysia 2026 Campaign: A Milestone for Tourism Growth.* https://www.tourism.gov.my/index.php/media/view/launch-of-visit-malaysia-2026-campaign-a-milestone-for-tourism-growth
+2. World Health Organization. *Managing health risks during mass gatherings.* https://www.who.int/activities/managing-health-risks-during-mass-gatherings
+3. Revello, A., & Marzio, A. (2011). *Mass-Gathering Event Risk Scoring Model: A Score to Predict Risk Level and Medical Usage Rate during Metropolitan Mass Gatherings.* Prehospital and Disaster Medicine, 26(S1), s76. https://doi.org/10.1017/S1049023X11002585
+4. Khalid, S., et al. (2022). *Crowd risk prediction in a spiritually motivated crowd.* Safety Science, 154, 105857. https://doi.org/10.1016/j.ssci.2022.105857
+5. Tsai, S. (2026). *Behavior Rule Architecture: Rule-Based Governance of AI System Behavior.* Engineering Archive. https://doi.org/10.31224/6681. Used as an AI-governance analogy, not as an event-risk scoring standard.
+6. MiniMax. *MiniMax M3: Frontier Coding, 1M Context, Native Multimodality - All in One Model.* https://www.minimax.io/blog/minimax-m3
+7. Firebase. *Get started with Cloud Functions for Firebase.* https://firebase.google.com/docs/functions/get-started
+8. OpenWeather. *One Call API 3.0.* https://openweathermap.org/api/one-call-3
 
 ---
 
-## **16\. Open Questions (to discuss with team)**
+## 16. Open Decisions Before Module 3 Sign-Off
 
-1. **AI prompt strategy: How detailed should the system prompt be? Recommend a "role \+ standards \+ JSON format" template that all queries follow.**  
-2. **MiniMax cost monitoring: Who monitors API usage daily? Set up budget alerts?**  
-3. **Firebase project setup: Who creates the Firebase project? Need Google Cloud account access.**  
-4. **Test data: Need 20-30 sample event applications for testing. Generate or use real (anonymized) past events?**  
-5. **AI vs rule-based authority interface: How prominently do we show the two scores side-by-side? Or hide rule-based behind a "show details" toggle?**
+1. Obtain authority or lecturer validation for each resource formula and source note.
+2. Finalize the event-type/location mapping to `requiredAuthorities` for the demo dataset.
+3. Confirm the exact M3 API model ID and endpoint using the team's MiniMax account and Models API.
+4. Approve the 20-30 event synthetic dataset and document its generation assumptions.
+5. Decide whether FCM remains optional after the core real-time in-app flow is complete.
 
 ---
 
-**End of PRD v2.0. Next step: team review, then start Module 1 build.**
+**Next implementation milestone:** complete one emulator-tested vertical slice from organizer submission through deterministic baseline, validated MiniMax M3 refinement, resource recommendation, and one authority decision.

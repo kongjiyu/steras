@@ -8,7 +8,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.writeAuditLog = writeAuditLog;
 const firebase_admin_1 = require("firebase-admin");
-const types_1 = require("@shared/types");
+const types_1 = require("../../../shared/types");
 async function writeAuditLog(eventId, action, actorId, data = {}) {
     const log = {
         id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -17,10 +17,11 @@ async function writeAuditLog(eventId, action, actorId, data = {}) {
         actorId,
         actorRole: data.actorRole ?? 'system',
         timestamp: Date.now(),
-        previousStatus: data.previousStatus,
-        newStatus: data.newStatus,
-        notes: data.notes,
-        metadata: data.metadata,
+        ...(data.versionId ? { versionId: data.versionId } : {}),
+        ...(data.previousStatus ? { previousStatus: data.previousStatus } : {}),
+        ...(data.newStatus ? { newStatus: data.newStatus } : {}),
+        ...(data.notes ? { notes: data.notes } : {}),
+        ...(data.metadata ? { metadata: data.metadata } : {}),
     };
     await (0, firebase_admin_1.firestore)()
         .collection(types_1.COLLECTIONS.EVENTS)

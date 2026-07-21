@@ -4,8 +4,8 @@ rules_version = '2';
 // STERAS Firestore Security Rules
 // =====================================================================
 // Roles:
-//   - organizer:  can CRUD own events while status in [Pending, AmendmentRequested]
-//   - authority:  can read all events, can create decision records (audit log)
+//   - organizer:  can edit own Draft or AmendmentRequested applications
+//   - authority:  can read only applications assigned to their agency
 //   - public:     can read only `public_events` collection (read-only, no auth)
 // =====================================================================
 
@@ -31,68 +31,118 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == organizerId;
     }
 
-    function isPendingOrAmendmentRequested(status) {
-      return status == 'Pending' || status == 'AmendmentRequested';
+    function isAssignedAuthority(eventId) {
+      return isAuthority()
+             && get(/databases/$(database)/documents/events/$(eventId)).data.requiredAuthorities.hasAny([
+               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.authorityType
+             ]);
+    }
+
+    function isEditable(status) {
+      return status == 'Draft' || status == 'AmendmentRequested';
     }
 
     // ---- users collection ----
     // Organizers and authorities can read their own profile.
     // Authorities can read other authorities' profiles (for assignment/coordination).
     match /users/{userId} {
-      allow read: if isSignedIn() && (request.auth.uid == userId || isAuthority());
+      allow read: if isSignedIn() && (request.auth.uid == userId
+                    || (isAuthority() && resource.data.role == 'authority'));
       // Users can create their own profile on signup.
       allow create: if isSignedIn() && request.auth.uid == userId
-                    && request.resource.data.role in ['organizer', 'authority'];
+                    && request.resource.data.role == 'organizer'
+                    && request.resource.data.uid == request.auth.uid
+                    && request.resource.data.keys().hasOnly([
+                      'uid', 'name', 'email', 'role', 'phone',
+                      'createdAt', 'updatedAt', '_serverCreatedAt'
+                    ]);
       // Users can update their own non-role fields.
       // Role changes are server-only (set by Cloud Functions / admin SDK).
       allow update: if isSignedIn() && request.auth.uid == userId
-                    && request.resource.data.role == resource.data.role;
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                      'name', 'email', 'phone', 'updatedAt'
+                    ]);
       allow delete: if false; // disable client-side deletion
     }
 
     // ---- events collection ----
     match /events/{eventId} {
       // Organizer can read their own event.
-      // Authority can read all events.
+      // Assigned authorities can read applications for their agency.
       // Public viewers should query `public_events` instead — not `events`.
-      allow read: if (isSignedIn() && isAuthority())
+      allow read: if (isSignedIn() && isAuthority()
+                       && resource.data.requiredAuthorities.hasAny([
+                         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.authorityType
+                       ]))
                   || (isSignedIn() && isOwner(resource.data.organizerId));
 
-      // Organizer can create their own event, status must start as Pending.
+      // Drafts are client-created. Submission and resubmission are server-only.
       allow create: if isOrganizer()
                     && request.resource.data.organizerId == request.auth.uid
-                    && request.resource.data.status == 'Pending';
+                    && request.resource.data.status == 'Draft'
+                    && request.resource.data.currentVersionNumber == 0
+                    && request.resource.data.editableVersionId == 'v1'
+                    && request.resource.data.draftDocumentPaths.size() == 0
+                    && request.resource.data.requiredAuthorities.size() == 0;
 
-      // Organizer can update own event only when status is Pending/AmendmentRequested,
-      // and cannot change organizerId, createdAt, or any AI/rule-generated fields.
+      // Submitted Pending versions are immutable. Generated pointers and status
+      // transitions are server-owned.
       allow update: if isOwner(resource.data.organizerId)
-                    && isPendingOrAmendmentRequested(resource.data.status)
+                    && isEditable(resource.data.status)
                     && request.resource.data.organizerId == resource.data.organizerId
-                    && request.resource.data.createdAt == resource.data.createdAt;
+                    && request.resource.data.createdAt == resource.data.createdAt
+                    && request.resource.data.status == resource.data.status
+                    && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+                      'currentVersionId', 'currentAssessmentId', 'currentResourceId',
+                      'requiredAuthorities', 'currentVersionNumber', 'editableVersionId',
+                      'submittedAt'
+                    ]);
 
       // Status transitions to Approved/Rejected/UnderReview are server-only (Cloud Functions).
       allow delete: if false;
 
-      // ---- Sub-collection: risk_scores ----
-      // Written by Cloud Functions only.
-      match /risk_scores/{scoreId} {
-        allow read: if (isSignedIn() && isAuthority())
+      match /versions/{versionId} {
+        allow read: if (isSignedIn() && isAssignedAuthority(eventId))
                     || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
-        allow write: if false; // server-only
+        allow write: if false;
+      }
+
+      match /assessments/{assessmentId} {
+        allow read: if (isSignedIn() && isAssignedAuthority(eventId))
+                    || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
+        allow write: if false;
       }
 
       // ---- Sub-collection: resources ----
       // Written by Cloud Functions only.
       match /resources/{resourceId} {
-        allow read: if (isSignedIn() && isAuthority())
+        allow read: if (isSignedIn() && isAssignedAuthority(eventId))
                     || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
         allow write: if false; // server-only
+      }
+
+      match /decisions/{decisionId} {
+        allow read: if (isSignedIn() && isAssignedAuthority(eventId))
+                    || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
+        allow write: if false;
+      }
+
+      match /decision_history/{historyId} {
+        allow read: if (isSignedIn() && isAssignedAuthority(eventId))
+                    || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
+        allow write: if false;
+      }
+
+      match /resource_overrides/{overrideId} {
+        allow read: if (isSignedIn() && isAssignedAuthority(eventId))
+                    || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
+        allow write: if false;
       }
 
       // ---- Sub-collection: audit_logs ----
       // Append-only. Read by authorities. Never client-writable.
       match /audit_logs/{logId} {
-        allow read: if isSignedIn() && isAuthority();
+        allow read: if isSignedIn() && isAssignedAuthority(eventId);
         allow write: if false; // server-only
       }
     }

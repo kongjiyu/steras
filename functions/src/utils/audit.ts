@@ -21,10 +21,11 @@ export async function writeAuditLog(
     actorId,
     actorRole: (data.actorRole as UserRole) ?? 'system',
     timestamp: Date.now(),
-    previousStatus: data.previousStatus,
-    newStatus: data.newStatus,
-    notes: data.notes,
-    metadata: data.metadata,
+    ...(data.versionId ? { versionId: data.versionId } : {}),
+    ...(data.previousStatus ? { previousStatus: data.previousStatus } : {}),
+    ...(data.newStatus ? { newStatus: data.newStatus } : {}),
+    ...(data.notes ? { notes: data.notes } : {}),
+    ...(data.metadata ? { metadata: data.metadata } : {}),
   };
   await firestore()
     .collection(COLLECTIONS.EVENTS)

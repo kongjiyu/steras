@@ -1,19 +1,20 @@
 import { FormEvent, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
-import { AuthorityType, UserRole } from '@shared/types';
+import AuthShell from '../../components/layout/AuthShell';
+import { getRoleHome } from '../../routing';
+import { authErrorMessage } from '../../contexts/authErrors';
 
 export default function RegisterPage() {
-  const { signUp, configured } = useAuth();
+  const { user, profile, signUp, configured } = useAuth();
   const navigate = useNavigate();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [phone, setPhone] = useState('');
-  const [role, setRole] = useState<UserRole>('organizer');
-  const [authorityType, setAuthorityType] = useState<AuthorityType>('PDRM');
   const [submitting, setSubmitting] = useState(false);
+  const existingSessionHome = user ? getRoleHome(profile?.role) : null;
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -23,91 +24,54 @@ export default function RegisterPage() {
         email,
         password,
         name,
-        role,
-        authorityType: role === 'authority' ? authorityType : undefined,
-        phone: phone || undefined,
+        ...(phone.trim() ? { phone: phone.trim() } : {}),
       });
       toast.success('Account created.');
-      navigate(role === 'organizer' ? '/organizer' : '/authority', { replace: true });
+      navigate('/organizer', { replace: true });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Registration failed';
-      toast.error(msg);
+      toast.error(authErrorMessage(err));
     } finally {
       setSubmitting(false);
     }
   };
 
+  if (existingSessionHome && !submitting) return <Navigate to={existingSessionHome} replace />;
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
-      <div className="card w-full max-w-lg">
-        <div className="card-body">
-          <h1 className="text-2xl font-bold text-slate-900">Create your STERAS account</h1>
+    <AuthShell>
+      <div className="w-full border-t-4 border-brand-700 bg-[#fffdf8] px-5 py-7 shadow-[0_16px_40px_rgba(63,77,29,0.08)] sm:px-8 sm:py-8">
+          <p className="page-eyebrow">Organizer registration</p>
+          <h1 className="font-display text-2xl font-bold tracking-[-0.025em] text-ink-900">Create your STERAS account</h1>
+          <p className="mt-2 text-sm leading-6 text-ink-500">Start a verified application for a Malaysian tourism event.</p>
 
           {!configured && (
-            <div className="mt-4 p-3 rounded bg-amber-50 border border-amber-200 text-sm text-amber-800">
+            <div className="mt-5 rounded-md border border-gold-300 bg-gold-50 p-3 text-sm text-gold-600">
               Firebase is not configured. See <code>README.md</code> → Setup.
             </div>
           )}
 
           <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+            <p className="rounded-md border border-[#dce3c6] bg-brand-50 p-3 text-sm leading-6 text-brand-800">Public registration creates an organizer account. Authority accounts are provisioned separately by the project administrator.</p>
+
             <div>
-              <label className="block text-sm font-medium text-slate-700">I am a…</label>
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                {(['organizer', 'authority'] as UserRole[]).map((r) => (
-                  <button
-                    key={r}
-                    type="button"
-                    onClick={() => setRole(r)}
-                    className={
-                      'px-3 py-2 rounded-md border text-sm font-medium ' +
-                      (role === r
-                        ? 'bg-brand-50 border-brand-500 text-brand-700'
-                        : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50')
-                    }
-                  >
-                    {r === 'organizer' ? 'Event Organizer' : 'Authority Reviewer'}
-                  </button>
-                ))}
-              </div>
+              <label htmlFor="name" className="field-label">Full name</label>
+              <input id="name" autoComplete="name" required value={name} onChange={(e) => setName(e.target.value)} className="input" />
             </div>
 
             <div>
-              <label htmlFor="name" className="block text-sm font-medium text-slate-700">Full name</label>
-              <input id="name" required value={name} onChange={(e) => setName(e.target.value)} className="input mt-1" />
+              <label htmlFor="email" className="field-label">Email address</label>
+              <input id="email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="input" />
             </div>
 
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-slate-700">Email</label>
-              <input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="input mt-1" />
+              <label htmlFor="password" className="field-label">Password</label>
+              <input id="password" type="password" autoComplete="new-password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} className="input" />
+              <p className="mt-1.5 text-xs text-ink-500">Use at least 6 characters.</p>
             </div>
 
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-slate-700">Password</label>
-              <input id="password" type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} className="input mt-1" />
-            </div>
-
-            {role === 'authority' && (
-              <div>
-                <label htmlFor="auth" className="block text-sm font-medium text-slate-700">Authority</label>
-                <select
-                  id="auth"
-                  value={authorityType}
-                  onChange={(e) => setAuthorityType(e.target.value as AuthorityType)}
-                  className="input mt-1"
-                >
-                  {(['PDRM', 'BOMBA', 'KKM', 'DBKL', 'MOTAC'] as AuthorityType[]).map((a) => (
-                    <option key={a} value={a}>{a}</option>
-                  ))}
-                </select>
-                <p className="mt-1 text-xs text-slate-500">
-                  Note: authority accounts typically require admin approval. This is a prototype.
-                </p>
-              </div>
-            )}
-
-            <div>
-              <label htmlFor="phone" className="block text-sm font-medium text-slate-700">Phone (optional)</label>
-              <input id="phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className="input mt-1" placeholder="+60 12-345 6789" />
+              <label htmlFor="phone" className="field-label">Phone <span className="font-normal text-ink-400">(optional)</span></label>
+              <input id="phone" type="tel" autoComplete="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className="input" placeholder="+60 12-345 6789" />
             </div>
 
             <button type="submit" disabled={submitting || !configured} className="btn-primary w-full">
@@ -115,12 +79,11 @@ export default function RegisterPage() {
             </button>
           </form>
 
-          <p className="mt-4 text-sm text-slate-600 text-center">
+          <p className="mt-6 border-t border-[#e3dacb] pt-5 text-center text-sm text-ink-500">
             Already have an account?{' '}
             <Link to="/login" className="text-brand-600 hover:text-brand-700 font-medium">Sign in</Link>
           </p>
-        </div>
       </div>
-    </div>
+    </AuthShell>
   );
 }

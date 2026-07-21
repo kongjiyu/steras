@@ -1,11 +1,9 @@
 "use strict";
-/**
- * STERAS — Shared TypeScript types & enums
- * Used by both frontend (src/) and Cloud Functions (functions/src/).
- * Pure types only — no runtime imports.
- */
+/** Shared runtime-free contracts used by the React app and Cloud Functions. */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DISAGREEMENT_THRESHOLD = exports.COLLECTIONS = exports.EVENT_STATUSES = exports.EVENT_TYPES = void 0;
+exports.MAX_AI_ADJUSTMENT = exports.RESOURCE_FORMULA_VERSION = exports.RULE_VERSION = exports.COLLECTIONS = exports.EVENT_STATUSES = exports.EVENT_TYPES = void 0;
+exports.riskLevelFor = riskLevelFor;
+exports.finalScoreFor = finalScoreFor;
 exports.EVENT_TYPES = [
     { value: 'concert', label: 'Concert / Music' },
     { value: 'festival', label: 'Festival' },
@@ -18,6 +16,7 @@ exports.EVENT_TYPES = [
     { value: 'other', label: 'Other' },
 ];
 exports.EVENT_STATUSES = [
+    { value: 'Draft', label: 'Draft', color: 'gray' },
     { value: 'Pending', label: 'Pending', color: 'amber' },
     { value: 'UnderReview', label: 'Under Review', color: 'blue' },
     { value: 'AmendmentRequested', label: 'Amendment Requested', color: 'orange' },
@@ -25,19 +24,34 @@ exports.EVENT_STATUSES = [
     { value: 'Rejected', label: 'Rejected', color: 'red' },
     { value: 'Withdrawn', label: 'Withdrawn', color: 'gray' },
 ];
-// =====================================================================
-// FIRESTORE COLLECTION NAMES (constants — never hardcode strings elsewhere)
-// =====================================================================
 exports.COLLECTIONS = {
     USERS: 'users',
     EVENTS: 'events',
-    RISK_SCORES: 'risk_scores',
+    VERSIONS: 'versions',
+    ASSESSMENTS: 'assessments',
     RESOURCES: 'resources',
+    DECISIONS: 'decisions',
+    DECISION_HISTORY: 'decision_history',
+    RESOURCE_OVERRIDES: 'resource_overrides',
     AUDIT_LOGS: 'audit_logs',
     VENUES: 'venues',
     INCIDENTS: 'incidents',
     PUBLIC_EVENTS: 'public_events',
 };
-// Disagreement threshold per PRD §4 (Module 2)
-exports.DISAGREEMENT_THRESHOLD = 15;
+exports.RULE_VERSION = '2026-07-v1';
+exports.RESOURCE_FORMULA_VERSION = '2026-07-prototype-v1';
+exports.MAX_AI_ADJUSTMENT = 15;
+function riskLevelFor(score) {
+    if (score >= 70)
+        return 'High';
+    if (score >= 40)
+        return 'Medium';
+    return 'Low';
+}
+function finalScoreFor(baselineScore, proposedAdjustment) {
+    const baseline = Math.max(0, Math.min(100, Math.round(baselineScore)));
+    const validatedAdjustment = Math.max(0, Math.min(exports.MAX_AI_ADJUSTMENT, Math.round(proposedAdjustment)));
+    const finalScore = Math.min(100, baseline + validatedAdjustment);
+    return { validatedAdjustment, finalScore, finalRiskLevel: riskLevelFor(finalScore) };
+}
 //# sourceMappingURL=types.js.map

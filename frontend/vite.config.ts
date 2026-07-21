@@ -26,11 +26,12 @@ export default defineConfig(({ mode }) => {
       sourcemap: mode !== 'production',
       rollupOptions: {
         output: {
-          manualChunks: {
-            // Split vendor libs into separate chunks for better caching.
-            'vendor-firebase': ['firebase/app', 'firebase/auth', 'firebase/firestore', 'firebase/storage'],
-            'vendor-react': ['react', 'react-dom', 'react-router-dom'],
-            'vendor-charts': ['chart.js', 'react-chartjs-2'],
+          manualChunks(id) {
+            if (!id.includes('node_modules')) return undefined;
+            if (id.includes('/firebase/') || id.includes('/@firebase/')) return 'vendor-firebase';
+            if (id.includes('/chart.js/') || id.includes('/react-chartjs-2/')) return 'vendor-charts';
+            if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/react-router')) return 'vendor-react';
+            return undefined;
           },
         },
       },

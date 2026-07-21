@@ -1,41 +1,66 @@
 "use strict";
-/**
- * Malaysian public holiday detection.
- *
- * For prototype: hard-coded list of major holidays. For production, swap with
- * a maintained JSON file (e.g. sourced from gov.my) loaded at function init.
- */
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.HOLIDAY_DATA_UPDATED_AT = exports.HOLIDAY_SOURCE_URL = exports.HOLIDAY_DATA_VERSION = void 0;
+exports.getHolidayContext = getHolidayContext;
 exports.isMalaysianPublicHoliday = isMalaysianPublicHoliday;
 exports.isWeekendDate = isWeekendDate;
-const HOLIDAYS_2026 = [
-    '2026-01-01', // New Year's Day
-    '2026-02-01', '2026-02-02', // Chinese New Year (placeholder dates — confirm with calendar)
-    '2026-03-21', // Awal Ramadan (estimate)
-    '2026-04-15', // Good Friday (estimate)
-    '2026-05-01', // Labour Day
-    '2026-05-31', // Wesak Day (estimate)
-    '2026-06-01', // Agong's Birthday
-    '2026-06-17', // Hari Raya Aidiladha (estimate)
-    '2026-08-31', // Merdeka Day
-    '2026-09-16', // Malaysia Day
-    '2026-11-08', // Deepavali (estimate)
-    '2026-12-25', // Christmas
-];
-const HOLIDAYS_2025 = [
-    '2025-01-01', '2025-01-29', '2025-01-30', '2025-02-11',
-    '2025-03-31', '2025-04-01', '2025-05-01', '2025-05-12',
-    '2025-06-02', '2025-06-07', '2025-06-17', '2025-08-31',
-    '2025-09-16', '2025-10-20', '2025-12-25',
-];
-const ALL_HOLIDAYS = new Set([...HOLIDAYS_2025, ...HOLIDAYS_2026]);
+exports.HOLIDAY_DATA_VERSION = 'bkpp-2026-v1';
+exports.HOLIDAY_SOURCE_URL = 'https://www.kabinet.gov.my/storage/2025/08/HKA-2026.pdf';
+exports.HOLIDAY_DATA_UPDATED_AT = Date.UTC(2026, 6, 13);
+const HOLIDAYS = new Map([
+    ['2026-02-17', 'Chinese New Year'],
+    ['2026-02-18', 'Chinese New Year'],
+    ['2026-03-21', 'Hari Raya Aidilfitri'],
+    ['2026-03-22', 'Hari Raya Aidilfitri'],
+    ['2026-05-01', 'Labour Day'],
+    ['2026-05-27', 'Hari Raya Qurban'],
+    ['2026-05-31', 'Wesak Day'],
+    ['2026-06-01', "Yang di-Pertuan Agong's Birthday"],
+    ['2026-06-02', 'Replacement public holiday'],
+    ['2026-06-17', 'Awal Muharam'],
+    ['2026-08-25', 'Maulidur Rasul'],
+    ['2026-08-31', 'National Day'],
+    ['2026-09-16', 'Malaysia Day'],
+    ['2026-11-08', 'Deepavali'],
+    ['2026-12-25', 'Christmas Day'],
+]);
+function getHolidayContext(epochMs) {
+    validateTimestamp(epochMs);
+    const localDate = malaysiaDate(epochMs);
+    for (const distance of [0, -1, 1]) {
+        const candidate = shiftIsoDate(localDate, distance);
+        const holidayName = HOLIDAYS.get(candidate);
+        if (holidayName) {
+            return {
+                isHolidayOrAdjacent: true,
+                holidayName,
+                distanceDays: distance,
+                localDate,
+                sourceVersion: exports.HOLIDAY_DATA_VERSION,
+                sourceTimestamp: exports.HOLIDAY_DATA_UPDATED_AT,
+            };
+        }
+    }
+    return { isHolidayOrAdjacent: false, localDate, sourceVersion: exports.HOLIDAY_DATA_VERSION, sourceTimestamp: exports.HOLIDAY_DATA_UPDATED_AT };
+}
 function isMalaysianPublicHoliday(epochMs) {
-    const d = new Date(epochMs);
-    const iso = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
-    return ALL_HOLIDAYS.has(iso);
+    return getHolidayContext(epochMs).isHolidayOrAdjacent;
 }
 function isWeekendDate(epochMs) {
-    const day = new Date(epochMs).getUTCDay();
-    return day === 0 || day === 6;
+    validateTimestamp(epochMs);
+    const weekday = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kuala_Lumpur', weekday: 'short' }).format(epochMs);
+    return weekday === 'Sat' || weekday === 'Sun';
+}
+function validateTimestamp(epochMs) {
+    if (!Number.isFinite(epochMs))
+        throw new Error('Holiday timestamp must be finite.');
+}
+function malaysiaDate(epochMs) {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kuala_Lumpur', year: 'numeric', month: '2-digit', day: '2-digit' }).format(epochMs);
+}
+function shiftIsoDate(isoDate, days) {
+    const date = new Date(`${isoDate}T00:00:00Z`);
+    date.setUTCDate(date.getUTCDate() + days);
+    return date.toISOString().slice(0, 10);
 }
 //# sourceMappingURL=holidays.js.map

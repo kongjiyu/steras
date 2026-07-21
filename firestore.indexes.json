@@ -4,6 +4,7 @@
       "collectionGroup": "events",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "requiredAuthorities", "arrayConfig": "CONTAINS" },
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
@@ -14,20 +15,6 @@
       "fields": [
         { "fieldPath": "eventDetails.type", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "events",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "eventDetails.startDatetime", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "audit_logs",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "timestamp", "order": "DESCENDING" }
       ]
     }
   ],

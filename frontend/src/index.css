@@ -3,54 +3,195 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --motion-duration-feedback: 120ms;
+    --motion-duration-state: 220ms;
+    --motion-duration-panel: 420ms;
+    --motion-duration-entrance: 560ms;
+    --motion-ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+    --motion-ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+    --motion-ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
   html {
-    font-family: 'Inter', system-ui, sans-serif;
+    font-family: 'Source Sans 3', system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
   body {
-    @apply bg-slate-50 text-slate-900;
+    @apply m-0 bg-cream-50 text-ink-800;
+    min-width: 320px;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+    @apply text-ink-800;
   }
 }
 
 @layer components {
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none;
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50;
   }
   .btn-primary {
-    @apply btn bg-brand-600 text-white hover:bg-brand-700 focus:ring-brand-500;
+    @apply btn bg-brand-600 text-cream-50 hover:bg-brand-700;
   }
   .btn-secondary {
-    @apply btn bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 focus:ring-brand-500;
+    @apply btn border border-ink-200 bg-[#fffdf8] text-ink-700 hover:border-brand-300 hover:bg-cream-50;
   }
   .btn-danger {
     @apply btn bg-red-600 text-white hover:bg-red-700 focus:ring-red-500;
   }
   .btn-success {
-    @apply btn bg-green-600 text-white hover:bg-green-700 focus:ring-green-500;
+    @apply btn bg-status-approved text-white hover:bg-green-700 focus:ring-green-500;
   }
 
   .input {
-    @apply block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm placeholder:text-slate-400 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:bg-slate-50;
+    @apply block min-h-11 w-full rounded-md border border-ink-200 bg-[#fffdf8] px-3 py-2 text-base text-ink-800 shadow-sm placeholder:text-ink-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 disabled:bg-cream-100 disabled:text-ink-500 sm:text-sm;
   }
 
   .card {
-    @apply rounded-lg border border-slate-200 bg-white shadow-sm;
+    @apply rounded-lg border border-[#ded5c5] bg-[#fffdf8] shadow-card;
   }
   .card-header {
-    @apply px-6 py-4 border-b border-slate-200;
+    @apply flex items-center justify-between border-b border-[#e3dacb] px-4 py-4 sm:px-6;
   }
   .card-body {
-    @apply p-6;
+    @apply p-4 sm:p-6;
   }
 
   .badge {
-    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+    @apply inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-semibold;
   }
-  .badge-amber  { @apply badge bg-amber-100 text-amber-800; }
-  .badge-blue   { @apply badge bg-blue-100 text-blue-800; }
-  .badge-orange { @apply badge bg-orange-100 text-orange-800; }
-  .badge-green  { @apply badge bg-green-100 text-green-800; }
-  .badge-red    { @apply badge bg-red-100 text-red-800; }
-  .badge-gray   { @apply badge bg-slate-100 text-slate-800; }
+  .badge-amber   { @apply badge bg-gold-100 text-gold-600; }
+  .badge-orange  { @apply badge bg-orange-100 text-orange-700; }
+  .badge-green   { @apply badge bg-green-100 text-status-approved; }
+  .badge-red     { @apply badge bg-red-100 text-status-rejected; }
+  .badge-blue    { @apply badge bg-brand-50 text-brand-700; }
+  .badge-gray    { @apply badge bg-ink-100 text-ink-600; }
+
+  .risk-meter {
+    @apply inline-flex shrink-0 items-center gap-2 whitespace-nowrap font-extrabold uppercase tracking-[0.055em];
+    line-height: 1.2;
+  }
+
+  .risk-meter--default {
+    @apply text-[11px];
+  }
+
+  .risk-meter--compact {
+    @apply gap-1.5 text-[10px];
+  }
+
+  .risk-meter__ticks {
+    display: inline-flex;
+    height: 0.7rem;
+    flex: none;
+    align-items: flex-end;
+    gap: 2px;
+  }
+
+  .risk-meter__tick {
+    display: block;
+    width: 4px;
+    border-radius: 1px 1px 0 0;
+    background: currentColor;
+    opacity: 0.22;
+  }
+
+  .risk-meter--compact .risk-meter__tick {
+    width: 3px;
+  }
+
+  .risk-meter__tick:nth-child(1) {
+    height: 0.28rem;
+  }
+
+  .risk-meter__tick:nth-child(2) {
+    height: 0.46rem;
+  }
+
+  .risk-meter__tick:nth-child(3) {
+    height: 0.68rem;
+  }
+
+  .risk-meter__tick.is-active {
+    opacity: 1;
+  }
+
+  .risk-meter--surface.risk-meter--low {
+    @apply text-risk-low-text;
+  }
+
+  .risk-meter--surface.risk-meter--medium {
+    @apply text-risk-medium-text;
+  }
+
+  .risk-meter--surface.risk-meter--high {
+    @apply text-risk-high-text;
+  }
+
+  .risk-meter--inverse.risk-meter--low {
+    @apply text-risk-low-inverse;
+  }
+
+  .risk-meter--inverse.risk-meter--medium {
+    @apply text-risk-medium-inverse;
+  }
+
+  .risk-meter--inverse.risk-meter--high {
+    @apply text-risk-high-inverse;
+  }
+
+  .risk-meter--inverse .risk-meter__tick:not(.is-active) {
+    opacity: 0.3;
+  }
+
+  .kpi-card {
+    @apply card flex flex-col gap-2 p-5;
+  }
+
+  .page-shell {
+    @apply mx-auto w-full max-w-[1440px] px-5 py-7 sm:px-8 sm:py-10;
+  }
+
+  .page-eyebrow {
+    @apply mb-2 text-xs font-bold uppercase tracking-[0.08em] text-gold-600;
+  }
+
+  .section-title {
+    @apply font-display text-base font-bold text-ink-800 sm:text-lg;
+  }
+
+  .field-label {
+    @apply mb-1.5 block text-sm font-semibold text-ink-700;
+  }
+
+  .panel-divider {
+    @apply border-t border-[#e3dacb] pt-6;
+  }
+}
+
+@layer utilities {
+  .page-enter > * {
+    animation: steras-enter var(--motion-duration-entrance) var(--motion-ease-out-expo) both;
+  }
+
+  .page-enter > *:nth-child(2) { animation-delay: 70ms; }
+  .page-enter > *:nth-child(3) { animation-delay: 120ms; }
+
+  @keyframes steras-enter {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      scroll-behavior: auto !important;
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
 }
