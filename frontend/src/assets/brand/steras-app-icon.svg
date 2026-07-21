@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">STERAS app icon</title>
+  <desc id="desc">The STERAS shield in white and gold on an olive background.</desc>
+  <rect width="512" height="512" rx="92" fill="#627820"/>
+  <g transform="translate(64 54) scale(3)">
+    <g fill="none" stroke="#FFFDF7" stroke-linecap="round" stroke-linejoin="round">
+      <path stroke-width="6" d="M64 6C51 20 37 25 23 26v31c0 29 16 50 41 62 25-12 41-33 41-62V26C91 25 77 20 64 6Z"/>
+      <path stroke-width="4" d="M27 92c12 10 24 17 37 23 13-6 25-13 37-23"/>
+    </g>
+    <path fill="#F0C340" d="M64 17l4.8 17.1L83 25l-9.2 14.2L91 42l-17.2 4.8L83 61l-14.2-9.2L64 69l-4.8-17.2L45 61l9.2-14.2L37 42l17.2-2.8L45 25l14.2 9.1Z"/>
+    <g fill="#FFFDF7">
+      <path d="M27 91h74v7H27zM31 72h8v19h-8zm1-6h6v6h-6zm2-10h2v10h-2zm9 13h8v22h-8zm1-7h6v7h-6zm2-11h2v11h-2zM30 77h22v3H30zm1-9h20v2H31zM55 75h19v16H55zM57 72c1-8 14-8 15 0Zm7-10 2 6h-4ZM52 82h25v3H52zm7-12h3v21h-3zm8 0h3v21h-3zM79 84h19v7H79zm2-3h15v3H81zM82 78h2v13h-2zm11 0h2v13h-2zM84 76c3-4 6-4 9 0l-1 2c-2-2-5-2-7 0ZM96 62h4v29h-4zm-3 8h10v4H93zm4-13h2v5h-2zm1-9 3 9h-6ZM24 91c7-7 13-8 20 0zm45 0c8-8 15-8 23 0z"/>
+    </g>
+  </g>
+</svg>

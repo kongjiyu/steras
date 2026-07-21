@@ -1,180 +1,261 @@
-/**
- * Module 2 — AI Risk Predictor (PRD §4)
- *
- * Wraps MiniMax M3 (Anthropic-compatible LLM) for contextual risk reasoning.
- * Always returns structured JSON. Logs raw prompt+response for audit.
- */
-
+import { createHash } from 'node:crypto';
 import Anthropic from '@anthropic-ai/sdk';
-import { EventRecord, AIRiskScore, WeatherContext, RiskLevel } from '@shared/types';
+import {
+  AIRefinement,
+  DeterministicBaseline,
+  EvidenceKey,
+  EventRecord,
+  MAX_AI_ADJUSTMENT,
+  WeatherContext,
+} from '@shared/types';
+import { DEFAULT_MINIMAX_BASE_URL, DEFAULT_MINIMAX_MODEL } from '../config/minimax';
 
-const MODEL = process.env.MINIMAX_MODEL ?? 'MiniMax-M3';
-const PROMPT_VERSION = 'v1.0'; // bump when system prompt changes
+export { DEFAULT_MINIMAX_BASE_URL, DEFAULT_MINIMAX_MODEL } from '../config/minimax';
+export const PROMPT_VERSION = 'v2.3.0';
+export const AI_TIMEOUT_MS = 9_000;
+const MAX_RESPONSE_CHARS = 16_000;
+const CACHE_TTL_MS = 6 * 60 * 60 * 1_000;
+const MAX_CACHE_ENTRIES = 200;
+const EVIDENCE_KEYS = new Set<EvidenceKey>(['weather', 'crowd', 'venue', 'history', 'holiday']);
+const RESPONSE_KEYS = new Set(['proposedAdjustment', 'reasoning', 'compoundEffects', 'keyConcerns', 'citedEvidenceKeys']);
+const CACHE = new Map<string, { value: AIRefinement; expiresAt: number }>();
 
-/**
- * @param apiKey  MiniMax M3 API key (from env / secret)
- * @param event   the event record
- * @param weather weather context
- * @param isHoliday, isWeekend context flags
- */
+interface AIRefinementPayload {
+  proposedAdjustment: number;
+  reasoning: string;
+  compoundEffects: string[];
+  keyConcerns: string[];
+  citedEvidenceKeys: EvidenceKey[];
+}
+
+interface AIRequest {
+  model: string;
+  system: string;
+  user: string;
+  maxTokens: number;
+}
+
+interface PredictOptions {
+  model?: string;
+  baseURL?: string;
+  now?: number;
+  timeoutMs?: number;
+  request?: (request: AIRequest) => Promise<string>;
+}
+
+export class AIRefinementError extends Error {
+  constructor(public readonly kind: 'invalid' | 'timeout' | 'unavailable', message: string) {
+    super(message);
+    this.name = 'AIRefinementError';
+  }
+}
+
 export async function predictWithAI(
   apiKey: string,
   event: EventRecord,
   weather: WeatherContext,
   isHoliday: boolean,
   isWeekend: boolean,
-): Promise<AIRiskScore> {
-  const client = new Anthropic({ apiKey });
+  baseline: DeterministicBaseline,
+  options: PredictOptions = {},
+): Promise<AIRefinement> {
+  const now = options.now ?? Date.now();
+  const timeoutMs = options.timeoutMs ?? AI_TIMEOUT_MS;
+  const model = options.model ?? process.env.MINIMAX_MODEL ?? DEFAULT_MINIMAX_MODEL;
+  const user = buildAllowedInput(event, weather, isHoliday, isWeekend, baseline);
+  const cacheKey = createHash('sha256').update(JSON.stringify({ model, promptVersion: PROMPT_VERSION, user })).digest('hex');
+  const cached = CACHE.get(cacheKey);
+  if (cached && cached.expiresAt > now) return { ...cached.value, cacheStatus: 'hit' };
 
-  const userMessage = buildUserPrompt(event, weather, isHoliday, isWeekend);
-  const systemPrompt = buildSystemPrompt();
-
-  const response = await client.messages.create({
-    model: MODEL,
-    max_tokens: 1024,
-    system: systemPrompt,
-    messages: [
-      {
-        role: 'user',
-        content: userMessage,
-      },
-    ],
-  });
-
-  // Extract text content (Anthropic SDK returns content as array of blocks).
-  const text = response.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map((b) => b.text)
-    .join('\n');
-
-  // Parse JSON from the response. Be defensive — LLM might wrap in code fences.
-  const jsonText = extractJson(text);
-  let parsed: Partial<AIRiskScore>;
+  let text: string;
   try {
-    parsed = JSON.parse(jsonText);
-  } catch {
-    throw new Error(
-      `[AI Predictor] Failed to parse LLM JSON response. Raw text: ${text.slice(0, 500)}`,
-    );
+    if (options.request) {
+      text = await withTimeout(options.request({ model, system: buildSystemPrompt(), user, maxTokens: 800 }), timeoutMs);
+    } else {
+      const client = new Anthropic({
+        apiKey,
+        baseURL: options.baseURL ?? process.env.MINIMAX_BASE_URL ?? DEFAULT_MINIMAX_BASE_URL,
+        timeout: timeoutMs,
+        maxRetries: 0,
+      });
+      const response = await client.messages.create({
+        model,
+        max_tokens: 800,
+        temperature: 1,
+        system: buildSystemPrompt(),
+        messages: [{ role: 'user', content: user }],
+      });
+      text = response.content
+        .filter((block): block is Anthropic.TextBlock => block.type === 'text')
+        .map((block) => block.text)
+        .join('\n');
+    }
+  } catch (error) {
+    if (error instanceof AIRefinementError) throw error;
+    const message = error instanceof Error ? error.message : 'Unknown MiniMax failure';
+    const isTimeout = error instanceof Error && (error.name === 'AbortError' || /timeout|timed out/i.test(error.message));
+    throw new AIRefinementError(isTimeout ? 'timeout' : 'unavailable', message);
   }
 
-  // Validate required fields; fall back to safe defaults if missing.
-  const riskScore = clampInt(parsed.riskScore ?? 0, 0, 100);
-  const riskLevel: RiskLevel = parsed.riskLevel ?? toRiskLevel(riskScore);
-
-  return {
-    riskLevel,
-    riskScore,
-    reasoning: parsed.reasoning ?? 'No reasoning provided by AI.',
-    keyConcerns: Array.isArray(parsed.keyConcerns) ? parsed.keyConcerns : [],
-    recommendedResources: parsed.recommendedResources ?? {},
-    rawResponse: text,
-    model: MODEL,
+  const parsed = parseAIRefinement(text);
+  const value: AIRefinement = {
+    model,
     promptVersion: PROMPT_VERSION,
-    generatedAt: Date.now(),
+    status: 'success',
+    ...parsed,
+    validatedAdjustment: parsed.proposedAdjustment,
+    cacheStatus: 'miss',
+    generatedAt: now,
   };
+  if (CACHE.size >= MAX_CACHE_ENTRIES) CACHE.delete(CACHE.keys().next().value as string);
+  CACHE.set(cacheKey, { value, expiresAt: now + CACHE_TTL_MS });
+  return value;
 }
 
-// =====================================================================
-// Prompts
-// =====================================================================
-
-function buildSystemPrompt(): string {
-  return `You are an event safety risk assessment expert for Malaysian tourism events.
-
-Your task: given event details, weather forecast, public-holiday context, and venue history, produce a structured JSON risk assessment that Malaysian authorities (PDRM, Bomba, KKM, DBKL) can use to inform their decision.
-
-Always respond with ONLY a valid JSON object (no prose, no markdown fences) with these exact fields:
-{
-  "riskLevel": "Low" | "Medium" | "High",
-  "riskScore": <integer 0-100>,
-  "reasoning": "<2-4 sentence explanation grounded in the inputs>",
-  "keyConcerns": [<string>, ...],  // 1-5 short tags, e.g. "thunderstorm", "over_capacity", "high_attendance", "outdoor_uncovered", "public_holiday"
-  "recommendedResources": {        // best-guess resource counts
-    "police": <integer>,
-    "medicalTeams": <integer>,
-    "ambulances": <integer>,
-    "toilets": <integer>,
-    "security": <integer>,
-    "fireOfficers": <integer>,
-    "wasteBins": <integer>
-  }
-}
-
-Risk calibration:
-- 0-29: Low — small indoor event, mild weather, no concerning history
-- 30-59: Medium — moderate crowd, mixed signals, weekend or near-holiday
-- 60-100: High — large outdoor crowd, severe weather, over-capacity, recent incidents, public holiday
-
-Use Malaysian public-holiday and WHO Mass Gathering guidelines as your reference standards. Be specific, not generic.`;
-}
-
-function buildUserPrompt(
+export async function refineWithAIOrFallback(
+  apiKey: string,
   event: EventRecord,
   weather: WeatherContext,
   isHoliday: boolean,
   isWeekend: boolean,
-): string {
-  return JSON.stringify(
-    {
-      event: {
-        name: event.eventDetails.name,
-        type: event.eventDetails.type,
-        venueName: event.eventDetails.venueName,
-        venueAddress: event.eventDetails.venueAddress,
-        venueCapacity: event.eventDetails.venueCapacity,
-        expectedAttendance: event.eventDetails.expectedAttendance,
-        utilization: event.eventDetails.venueCapacity > 0
-          ? +(event.eventDetails.expectedAttendance / event.eventDetails.venueCapacity).toFixed(2)
-          : null,
-        startDatetime: new Date(event.eventDetails.startDatetime).toISOString(),
-        endDatetime: new Date(event.eventDetails.endDatetime).toISOString(),
-        durationHours: +(
-          (event.eventDetails.endDatetime - event.eventDetails.startDatetime) /
-          3600000
-        ).toFixed(1),
-        description: event.eventDetails.description ?? null,
-      },
-      context: {
-        weather: {
-          forecast: weather.forecast,
-          temperatureC: weather.temperature,
-          humidityPct: weather.humidity,
-          windSpeedMs: weather.windSpeed,
-          precipitationProbabilityPct: weather.precipitationProbability,
-          severeAlert: weather.severeAlert,
-        },
-        isPublicHoliday: isHoliday,
-        isWeekend,
-      },
-    },
-    null,
-    2,
-  );
+  baseline: DeterministicBaseline,
+  predictor: typeof predictWithAI = predictWithAI,
+): Promise<AIRefinement> {
+  if (!apiKey) return unavailableAIRefinement('unavailable', 'MiniMax was not configured; the deterministic baseline is final.');
+  try {
+    return await predictor(apiKey, event, weather, isHoliday, isWeekend, baseline);
+  } catch (error) {
+    const kind = error instanceof AIRefinementError ? error.kind : 'unavailable';
+    const invalid = kind === 'invalid';
+    return unavailableAIRefinement(
+      invalid ? 'invalid' : 'unavailable',
+      `${invalid ? 'Invalid MiniMax output' : kind === 'timeout' ? 'MiniMax timed out' : 'MiniMax unavailable'}; deterministic baseline used.`,
+    );
+  }
 }
 
-// =====================================================================
-// Helpers
-// =====================================================================
+export function unavailableAIRefinement(status: 'unavailable' | 'invalid', reasoning: string): AIRefinement {
+  return {
+    model: process.env.MINIMAX_MODEL ?? DEFAULT_MINIMAX_MODEL,
+    promptVersion: PROMPT_VERSION,
+    status,
+    proposedAdjustment: 0,
+    validatedAdjustment: 0,
+    reasoning,
+    compoundEffects: [],
+    keyConcerns: [],
+    citedEvidenceKeys: [],
+    cacheStatus: 'not-applicable',
+    generatedAt: Date.now(),
+  };
+}
+
+export function parseAIRefinement(text: string): AIRefinementPayload {
+  if (text.length > MAX_RESPONSE_CHARS) throw new AIRefinementError('invalid', 'MiniMax response exceeds the allowed size.');
+  let value: unknown;
+  try {
+    value = JSON.parse(extractJson(text));
+  } catch {
+    throw new AIRefinementError('invalid', 'MiniMax response is not valid JSON.');
+  }
+  if (!isRecord(value)) throw new AIRefinementError('invalid', 'MiniMax response must be a JSON object.');
+  const unknownKeys = Object.keys(value).filter((key) => !RESPONSE_KEYS.has(key));
+  if (unknownKeys.length > 0) throw new AIRefinementError('invalid', `MiniMax response contains unsupported fields: ${unknownKeys.join(', ')}.`);
+  const proposedAdjustment = value.proposedAdjustment;
+  if (!Number.isInteger(proposedAdjustment) || (proposedAdjustment as number) < 0 || (proposedAdjustment as number) > MAX_AI_ADJUSTMENT) {
+    throw new AIRefinementError('invalid', `proposedAdjustment must be an integer from 0 to ${MAX_AI_ADJUSTMENT}.`);
+  }
+  if (typeof value.reasoning !== 'string' || value.reasoning.trim().length === 0 || value.reasoning.length > 2_000) {
+    throw new AIRefinementError('invalid', 'reasoning must be a non-empty string of at most 2,000 characters.');
+  }
+  const compoundEffects = readStringArray(value.compoundEffects, 'compoundEffects');
+  const keyConcerns = readStringArray(value.keyConcerns, 'keyConcerns');
+  const citedEvidenceKeys = readStringArray(value.citedEvidenceKeys, 'citedEvidenceKeys');
+  if (!citedEvidenceKeys.every((key): key is EvidenceKey => EVIDENCE_KEYS.has(key as EvidenceKey))) {
+    throw new AIRefinementError('invalid', 'citedEvidenceKeys contains an unknown evidence key.');
+  }
+  return { proposedAdjustment: proposedAdjustment as number, reasoning: value.reasoning.trim(), compoundEffects, keyConcerns, citedEvidenceKeys };
+}
+
+export function buildAllowedInput(
+  event: EventRecord,
+  weather: WeatherContext,
+  isHoliday: boolean,
+  isWeekend: boolean,
+  baseline: DeterministicBaseline,
+): string {
+  const details = event.eventDetails;
+  return JSON.stringify({
+    event: {
+      type: details.type,
+      expectedAttendance: details.expectedAttendance,
+      venueCapacity: details.venueCapacity,
+      capacityUtilization: details.venueCapacity > 0 ? details.expectedAttendance / details.venueCapacity : null,
+      environment: details.environment,
+      coverage: details.coverage,
+      seating: details.seating,
+      durationHours: Math.max(0, details.endDatetime - details.startDatetime) / 3_600_000,
+    },
+    context: { weather, isHoliday, isWeekend },
+    baseline: {
+      subScores: baseline.subScores,
+      weightedContributions: baseline.weightedContributions,
+      score: baseline.baselineScore,
+      riskLevel: baseline.baselineRiskLevel,
+      evidence: baseline.evidence,
+    },
+  });
+}
+
+export function clearAICache(): void {
+  CACHE.clear();
+}
+
+function buildSystemPrompt(): string {
+  return `You refine a deterministic safety assessment for Malaysian tourism events. The baseline is authoritative. Identify only compound risks supported by the supplied evidence.
+
+Return only one JSON object matching this exact shape:
+{"proposedAdjustment":0,"reasoning":"Concise evidence-based explanation.","compoundEffects":[],"keyConcerns":[],"citedEvidenceKeys":[]}
+
+Schema rules:
+- proposedAdjustment: integer from 0 to ${MAX_AI_ADJUSTMENT}
+- reasoning: non-empty string
+- compoundEffects: array of strings; use [] when none
+- keyConcerns: array of strings; use [] when none
+- citedEvidenceKeys: array containing only weather, crowd, venue, history, or holiday; use [] when none
+
+Do not add fields, Markdown, a final score, or resource quantities.`;
+}
 
 function extractJson(text: string): string {
-  // Strip markdown code fences if present.
-  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenceMatch) return fenceMatch[1].trim();
-  // Find first { ... last }.
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenced) return fenced[1].trim();
   const first = text.indexOf('{');
   const last = text.lastIndexOf('}');
-  if (first >= 0 && last > first) return text.slice(first, last + 1);
-  return text.trim();
+  return first >= 0 && last > first ? text.slice(first, last + 1) : text.trim();
 }
 
-function clampInt(n: number, lo: number, hi: number) {
-  const i = Math.round(n);
-  return Math.max(lo, Math.min(hi, i));
+function readStringArray(value: unknown, field: string): string[] {
+  if (!Array.isArray(value) || value.length > 10 || !value.every((item) => typeof item === 'string' && item.length > 0 && item.length <= 100)) {
+    throw new AIRefinementError('invalid', `${field} must be an array of at most 10 non-empty short strings.`);
+  }
+  return value;
 }
 
-function toRiskLevel(score: number): RiskLevel {
-  if (score >= 60) return 'High';
-  if (score >= 30) return 'Medium';
-  return 'Low';
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeout = setTimeout(() => reject(new AIRefinementError('timeout', `MiniMax request timed out after ${timeoutMs}ms.`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

@@ -2,30 +2,39 @@
   "name": "@steras/functions",
   "version": "0.1.0",
   "private": true,
-  "main": "lib/index.js",
+  "main": "lib/functions/src/index.js",
   "engines": {
     "node": "22"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && tsc-alias",
     "build:watch": "tsc --watch",
     "serve": "npm run build && firebase emulators:start --only functions",
     "shell": "npm run build && firebase functions:shell",
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
+    "seed:authority": "npm run build && node lib/functions/src/seed/seedAuthority.js",
+    "seed:venues:staging": "npm run build && node lib/functions/src/seed/seedVenues.js",
+    "verify:minimax": "npm run build && node --env-file=../.env lib/functions/src/scripts/verifyMiniMaxModel.js",
+    "uat:staging": "npm run build && node --env-file=../frontend/.env lib/functions/src/scripts/runStagingUat.js",
+    "uat:fallback": "npm run build && node --env-file=../frontend/.env lib/functions/src/scripts/verifyStagingFallback.js",
     "typecheck": "tsc --noEmit",
-    "lint": "echo 'lint TBD'"
+    "lint": "eslint src --ext ts --report-unused-disable-directives --max-warnings 0",
+    "test": "vitest run --config vitest.config.mts",
+    "test:rules": "vitest run --config vitest.rules.config.mts",
+    "test:watch": "vitest --config vitest.config.mts",
+    "test:coverage": "vitest run --config vitest.config.mts --coverage"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
     "axios": "^1.7.9",
-    "firebase-admin": "^12.7.0",
-    "firebase-functions": "^6.2.0"
+    "firebase-admin": "^13.10.0",
+    "firebase-functions": "^7.2.5"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "tsc-alias": "^1.9.1",
     "typescript": "^5.6.3"
-  },
-  "private": true
+  }
 }

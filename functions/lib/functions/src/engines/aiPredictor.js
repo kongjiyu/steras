@@ -1,156 +1,223 @@
 "use strict";
-/**
- * Module 2 — AI Risk Predictor (PRD §4)
- *
- * Wraps MiniMax M3 (Anthropic-compatible LLM) for contextual risk reasoning.
- * Always returns structured JSON. Logs raw prompt+response for audit.
- */
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.AIRefinementError = exports.AI_TIMEOUT_MS = exports.PROMPT_VERSION = exports.DEFAULT_MINIMAX_MODEL = exports.DEFAULT_MINIMAX_BASE_URL = void 0;
 exports.predictWithAI = predictWithAI;
+exports.refineWithAIOrFallback = refineWithAIOrFallback;
+exports.unavailableAIRefinement = unavailableAIRefinement;
+exports.parseAIRefinement = parseAIRefinement;
+exports.buildAllowedInput = buildAllowedInput;
+exports.clearAICache = clearAICache;
+const node_crypto_1 = require("node:crypto");
 const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
-const MODEL = process.env.MINIMAX_MODEL ?? 'MiniMax-M3';
-const PROMPT_VERSION = 'v1.0'; // bump when system prompt changes
-/**
- * @param apiKey  MiniMax M3 API key (from env / secret)
- * @param event   the event record
- * @param weather weather context
- * @param isHoliday, isWeekend context flags
- */
-async function predictWithAI(apiKey, event, weather, isHoliday, isWeekend) {
-    const client = new sdk_1.default({ apiKey });
-    const userMessage = buildUserPrompt(event, weather, isHoliday, isWeekend);
-    const systemPrompt = buildSystemPrompt();
-    const response = await client.messages.create({
-        model: MODEL,
-        max_tokens: 1024,
-        system: systemPrompt,
-        messages: [
-            {
-                role: 'user',
-                content: userMessage,
-            },
-        ],
-    });
-    // Extract text content (Anthropic SDK returns content as array of blocks).
-    const text = response.content
-        .filter((b) => b.type === 'text')
-        .map((b) => b.text)
-        .join('\n');
-    // Parse JSON from the response. Be defensive — LLM might wrap in code fences.
-    const jsonText = extractJson(text);
-    let parsed;
+const types_1 = require("../../../shared/types");
+const minimax_1 = require("../config/minimax");
+var minimax_2 = require("../config/minimax");
+Object.defineProperty(exports, "DEFAULT_MINIMAX_BASE_URL", { enumerable: true, get: function () { return minimax_2.DEFAULT_MINIMAX_BASE_URL; } });
+Object.defineProperty(exports, "DEFAULT_MINIMAX_MODEL", { enumerable: true, get: function () { return minimax_2.DEFAULT_MINIMAX_MODEL; } });
+exports.PROMPT_VERSION = 'v2.3.0';
+exports.AI_TIMEOUT_MS = 9_000;
+const MAX_RESPONSE_CHARS = 16_000;
+const CACHE_TTL_MS = 6 * 60 * 60 * 1_000;
+const MAX_CACHE_ENTRIES = 200;
+const EVIDENCE_KEYS = new Set(['weather', 'crowd', 'venue', 'history', 'holiday']);
+const RESPONSE_KEYS = new Set(['proposedAdjustment', 'reasoning', 'compoundEffects', 'keyConcerns', 'citedEvidenceKeys']);
+const CACHE = new Map();
+class AIRefinementError extends Error {
+    kind;
+    constructor(kind, message) {
+        super(message);
+        this.kind = kind;
+        this.name = 'AIRefinementError';
+    }
+}
+exports.AIRefinementError = AIRefinementError;
+async function predictWithAI(apiKey, event, weather, isHoliday, isWeekend, baseline, options = {}) {
+    const now = options.now ?? Date.now();
+    const timeoutMs = options.timeoutMs ?? exports.AI_TIMEOUT_MS;
+    const model = options.model ?? process.env.MINIMAX_MODEL ?? minimax_1.DEFAULT_MINIMAX_MODEL;
+    const user = buildAllowedInput(event, weather, isHoliday, isWeekend, baseline);
+    const cacheKey = (0, node_crypto_1.createHash)('sha256').update(JSON.stringify({ model, promptVersion: exports.PROMPT_VERSION, user })).digest('hex');
+    const cached = CACHE.get(cacheKey);
+    if (cached && cached.expiresAt > now)
+        return { ...cached.value, cacheStatus: 'hit' };
+    let text;
     try {
-        parsed = JSON.parse(jsonText);
+        if (options.request) {
+            text = await withTimeout(options.request({ model, system: buildSystemPrompt(), user, maxTokens: 800 }), timeoutMs);
+        }
+        else {
+            const client = new sdk_1.default({
+                apiKey,
+                baseURL: options.baseURL ?? process.env.MINIMAX_BASE_URL ?? minimax_1.DEFAULT_MINIMAX_BASE_URL,
+                timeout: timeoutMs,
+                maxRetries: 0,
+            });
+            const response = await client.messages.create({
+                model,
+                max_tokens: 800,
+                temperature: 1,
+                system: buildSystemPrompt(),
+                messages: [{ role: 'user', content: user }],
+            });
+            text = response.content
+                .filter((block) => block.type === 'text')
+                .map((block) => block.text)
+                .join('\n');
+        }
     }
-    catch {
-        throw new Error(`[AI Predictor] Failed to parse LLM JSON response. Raw text: ${text.slice(0, 500)}`);
+    catch (error) {
+        if (error instanceof AIRefinementError)
+            throw error;
+        const message = error instanceof Error ? error.message : 'Unknown MiniMax failure';
+        const isTimeout = error instanceof Error && (error.name === 'AbortError' || /timeout|timed out/i.test(error.message));
+        throw new AIRefinementError(isTimeout ? 'timeout' : 'unavailable', message);
     }
-    // Validate required fields; fall back to safe defaults if missing.
-    const riskScore = clampInt(parsed.riskScore ?? 0, 0, 100);
-    const riskLevel = parsed.riskLevel ?? toRiskLevel(riskScore);
+    const parsed = parseAIRefinement(text);
+    const value = {
+        model,
+        promptVersion: exports.PROMPT_VERSION,
+        status: 'success',
+        ...parsed,
+        validatedAdjustment: parsed.proposedAdjustment,
+        cacheStatus: 'miss',
+        generatedAt: now,
+    };
+    if (CACHE.size >= MAX_CACHE_ENTRIES)
+        CACHE.delete(CACHE.keys().next().value);
+    CACHE.set(cacheKey, { value, expiresAt: now + CACHE_TTL_MS });
+    return value;
+}
+async function refineWithAIOrFallback(apiKey, event, weather, isHoliday, isWeekend, baseline, predictor = predictWithAI) {
+    if (!apiKey)
+        return unavailableAIRefinement('unavailable', 'MiniMax was not configured; the deterministic baseline is final.');
+    try {
+        return await predictor(apiKey, event, weather, isHoliday, isWeekend, baseline);
+    }
+    catch (error) {
+        const kind = error instanceof AIRefinementError ? error.kind : 'unavailable';
+        const invalid = kind === 'invalid';
+        return unavailableAIRefinement(invalid ? 'invalid' : 'unavailable', `${invalid ? 'Invalid MiniMax output' : kind === 'timeout' ? 'MiniMax timed out' : 'MiniMax unavailable'}; deterministic baseline used.`);
+    }
+}
+function unavailableAIRefinement(status, reasoning) {
     return {
-        riskLevel,
-        riskScore,
-        reasoning: parsed.reasoning ?? 'No reasoning provided by AI.',
-        keyConcerns: Array.isArray(parsed.keyConcerns) ? parsed.keyConcerns : [],
-        recommendedResources: parsed.recommendedResources ?? {},
-        rawResponse: text,
-        model: MODEL,
-        promptVersion: PROMPT_VERSION,
+        model: process.env.MINIMAX_MODEL ?? minimax_1.DEFAULT_MINIMAX_MODEL,
+        promptVersion: exports.PROMPT_VERSION,
+        status,
+        proposedAdjustment: 0,
+        validatedAdjustment: 0,
+        reasoning,
+        compoundEffects: [],
+        keyConcerns: [],
+        citedEvidenceKeys: [],
+        cacheStatus: 'not-applicable',
         generatedAt: Date.now(),
     };
 }
-// =====================================================================
-// Prompts
-// =====================================================================
-function buildSystemPrompt() {
-    return `You are an event safety risk assessment expert for Malaysian tourism events.
-
-Your task: given event details, weather forecast, public-holiday context, and venue history, produce a structured JSON risk assessment that Malaysian authorities (PDRM, Bomba, KKM, DBKL) can use to inform their decision.
-
-Always respond with ONLY a valid JSON object (no prose, no markdown fences) with these exact fields:
-{
-  "riskLevel": "Low" | "Medium" | "High",
-  "riskScore": <integer 0-100>,
-  "reasoning": "<2-4 sentence explanation grounded in the inputs>",
-  "keyConcerns": [<string>, ...],  // 1-5 short tags, e.g. "thunderstorm", "over_capacity", "high_attendance", "outdoor_uncovered", "public_holiday"
-  "recommendedResources": {        // best-guess resource counts
-    "police": <integer>,
-    "medicalTeams": <integer>,
-    "ambulances": <integer>,
-    "toilets": <integer>,
-    "security": <integer>,
-    "fireOfficers": <integer>,
-    "wasteBins": <integer>
-  }
+function parseAIRefinement(text) {
+    if (text.length > MAX_RESPONSE_CHARS)
+        throw new AIRefinementError('invalid', 'MiniMax response exceeds the allowed size.');
+    let value;
+    try {
+        value = JSON.parse(extractJson(text));
+    }
+    catch {
+        throw new AIRefinementError('invalid', 'MiniMax response is not valid JSON.');
+    }
+    if (!isRecord(value))
+        throw new AIRefinementError('invalid', 'MiniMax response must be a JSON object.');
+    const unknownKeys = Object.keys(value).filter((key) => !RESPONSE_KEYS.has(key));
+    if (unknownKeys.length > 0)
+        throw new AIRefinementError('invalid', `MiniMax response contains unsupported fields: ${unknownKeys.join(', ')}.`);
+    const proposedAdjustment = value.proposedAdjustment;
+    if (!Number.isInteger(proposedAdjustment) || proposedAdjustment < 0 || proposedAdjustment > types_1.MAX_AI_ADJUSTMENT) {
+        throw new AIRefinementError('invalid', `proposedAdjustment must be an integer from 0 to ${types_1.MAX_AI_ADJUSTMENT}.`);
+    }
+    if (typeof value.reasoning !== 'string' || value.reasoning.trim().length === 0 || value.reasoning.length > 2_000) {
+        throw new AIRefinementError('invalid', 'reasoning must be a non-empty string of at most 2,000 characters.');
+    }
+    const compoundEffects = readStringArray(value.compoundEffects, 'compoundEffects');
+    const keyConcerns = readStringArray(value.keyConcerns, 'keyConcerns');
+    const citedEvidenceKeys = readStringArray(value.citedEvidenceKeys, 'citedEvidenceKeys');
+    if (!citedEvidenceKeys.every((key) => EVIDENCE_KEYS.has(key))) {
+        throw new AIRefinementError('invalid', 'citedEvidenceKeys contains an unknown evidence key.');
+    }
+    return { proposedAdjustment: proposedAdjustment, reasoning: value.reasoning.trim(), compoundEffects, keyConcerns, citedEvidenceKeys };
 }
-
-Risk calibration:
-- 0-29: Low — small indoor event, mild weather, no concerning history
-- 30-59: Medium — moderate crowd, mixed signals, weekend or near-holiday
-- 60-100: High — large outdoor crowd, severe weather, over-capacity, recent incidents, public holiday
-
-Use Malaysian public-holiday and WHO Mass Gathering guidelines as your reference standards. Be specific, not generic.`;
-}
-function buildUserPrompt(event, weather, isHoliday, isWeekend) {
+function buildAllowedInput(event, weather, isHoliday, isWeekend, baseline) {
+    const details = event.eventDetails;
     return JSON.stringify({
         event: {
-            name: event.eventDetails.name,
-            type: event.eventDetails.type,
-            venueName: event.eventDetails.venueName,
-            venueAddress: event.eventDetails.venueAddress,
-            venueCapacity: event.eventDetails.venueCapacity,
-            expectedAttendance: event.eventDetails.expectedAttendance,
-            utilization: event.eventDetails.venueCapacity > 0
-                ? +(event.eventDetails.expectedAttendance / event.eventDetails.venueCapacity).toFixed(2)
-                : null,
-            startDatetime: new Date(event.eventDetails.startDatetime).toISOString(),
-            endDatetime: new Date(event.eventDetails.endDatetime).toISOString(),
-            durationHours: +((event.eventDetails.endDatetime - event.eventDetails.startDatetime) /
-                3600000).toFixed(1),
-            description: event.eventDetails.description ?? null,
+            type: details.type,
+            expectedAttendance: details.expectedAttendance,
+            venueCapacity: details.venueCapacity,
+            capacityUtilization: details.venueCapacity > 0 ? details.expectedAttendance / details.venueCapacity : null,
+            environment: details.environment,
+            coverage: details.coverage,
+            seating: details.seating,
+            durationHours: Math.max(0, details.endDatetime - details.startDatetime) / 3_600_000,
         },
-        context: {
-            weather: {
-                forecast: weather.forecast,
-                temperatureC: weather.temperature,
-                humidityPct: weather.humidity,
-                windSpeedMs: weather.windSpeed,
-                precipitationProbabilityPct: weather.precipitationProbability,
-                severeAlert: weather.severeAlert,
-            },
-            isPublicHoliday: isHoliday,
-            isWeekend,
+        context: { weather, isHoliday, isWeekend },
+        baseline: {
+            subScores: baseline.subScores,
+            weightedContributions: baseline.weightedContributions,
+            score: baseline.baselineScore,
+            riskLevel: baseline.baselineRiskLevel,
+            evidence: baseline.evidence,
         },
-    }, null, 2);
+    });
 }
-// =====================================================================
-// Helpers
-// =====================================================================
+function clearAICache() {
+    CACHE.clear();
+}
+function buildSystemPrompt() {
+    return `You refine a deterministic safety assessment for Malaysian tourism events. The baseline is authoritative. Identify only compound risks supported by the supplied evidence.
+
+Return only one JSON object matching this exact shape:
+{"proposedAdjustment":0,"reasoning":"Concise evidence-based explanation.","compoundEffects":[],"keyConcerns":[],"citedEvidenceKeys":[]}
+
+Schema rules:
+- proposedAdjustment: integer from 0 to ${types_1.MAX_AI_ADJUSTMENT}
+- reasoning: non-empty string
+- compoundEffects: array of strings; use [] when none
+- keyConcerns: array of strings; use [] when none
+- citedEvidenceKeys: array containing only weather, crowd, venue, history, or holiday; use [] when none
+
+Do not add fields, Markdown, a final score, or resource quantities.`;
+}
 function extractJson(text) {
-    // Strip markdown code fences if present.
-    const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (fenceMatch)
-        return fenceMatch[1].trim();
-    // Find first { ... last }.
+    const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fenced)
+        return fenced[1].trim();
     const first = text.indexOf('{');
     const last = text.lastIndexOf('}');
-    if (first >= 0 && last > first)
-        return text.slice(first, last + 1);
-    return text.trim();
+    return first >= 0 && last > first ? text.slice(first, last + 1) : text.trim();
 }
-function clampInt(n, lo, hi) {
-    const i = Math.round(n);
-    return Math.max(lo, Math.min(hi, i));
+function readStringArray(value, field) {
+    if (!Array.isArray(value) || value.length > 10 || !value.every((item) => typeof item === 'string' && item.length > 0 && item.length <= 100)) {
+        throw new AIRefinementError('invalid', `${field} must be an array of at most 10 non-empty short strings.`);
+    }
+    return value;
 }
-function toRiskLevel(score) {
-    if (score >= 60)
-        return 'High';
-    if (score >= 30)
-        return 'Medium';
-    return 'Low';
+async function withTimeout(promise, timeoutMs) {
+    let timeout;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise((_, reject) => {
+                timeout = setTimeout(() => reject(new AIRefinementError('timeout', `MiniMax request timed out after ${timeoutMs}ms.`)), timeoutMs);
+            }),
+        ]);
+    }
+    finally {
+        if (timeout)
+            clearTimeout(timeout);
+    }
+}
+function isRecord(value) {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 //# sourceMappingURL=aiPredictor.js.map

@@ -1,0 +1,12 @@
+[
+  {
+    "origin": [
+      "https://linkos-496505.web.app",
+      "http://localhost:5173",
+      "http://localhost:5000"
+    ],
+    "method": ["GET", "HEAD"],
+    "responseHeader": ["Content-Type", "Content-Length", "Content-Disposition"],
+    "maxAgeSeconds": 3600
+  }
+]

@@ -1,80 +1,76 @@
 "use strict";
-/**
- * Seed script for synthetic venues + incidents dataset.
- *
- * Usage:
- *   cd functions && npm run build
- *   node lib/seed/seedVenues.js
- *
- * Or invoke via Firebase emulator:
- *   firebase emulators:start
- *
- * The dataset is the "synthetic historical incident data" the PRD §6 calls for.
- * Generated based on realistic distributions for a Malaysian tourism context.
- */
 Object.defineProperty(exports, "__esModule", { value: true });
-const firebase_admin_1 = require("firebase-admin");
 const app_1 = require("firebase-admin/app");
-const types_1 = require("@shared/types");
-(0, app_1.initializeApp)();
+const firestore_1 = require("firebase-admin/firestore");
+const types_1 = require("../../../shared/types");
+const app = (0, app_1.initializeApp)({
+    credential: (0, app_1.applicationDefault)(),
+    projectId: process.env.FIREBASE_PROJECT_ID ?? process.env.GCLOUD_PROJECT ?? 'linkos-496505',
+});
 const VENUES = [
-    { name: 'Axiata Arena', address: 'Bukit Jalil, KL', capacity: 16000, location: { lat: 3.057, lng: 101.691 }, riskNotes: 'Indoor arena, multiple exits' },
-    { name: 'Merdeka Square', address: 'KL City Centre', capacity: 50000, location: { lat: 3.148, lng: 101.694 }, riskNotes: 'Open field, no shade' },
-    { name: 'KLCC Park', address: 'KLCC, KL', capacity: 30000, location: { lat: 3.157, lng: 101.711 }, riskNotes: 'Urban park, near hospital' },
-    { name: 'Putrajaya Square', address: 'Presint 1, Putrajaya', capacity: 40000, location: { lat: 2.943, lng: 101.690 }, riskNotes: 'Wide open plaza' },
-    { name: 'Penang Esplanade', address: 'Georgetown, Penang', capacity: 20000, location: { lat: 5.424, lng: 100.328 }, riskNotes: 'Coastal, weather-exposed' },
-    { name: 'Johor Bahru Persada', address: 'Johor Bahru', capacity: 15000, location: { lat: 1.465, lng: 103.756 } },
-    { name: 'MAEPS Serdang', address: 'Serdang, Selangor', capacity: 25000, location: { lat: 2.998, lng: 101.704 }, riskNotes: 'Convention + expo space' },
-    { name: 'Sunway Lagoon', address: 'Subang Jaya', capacity: 12000, location: { lat: 3.071, lng: 101.605 } },
-    { name: 'Stadium Bukit Jalil', address: 'Bukit Jalil, KL', capacity: 87411, location: { lat: 3.054, lng: 101.692 }, riskNotes: 'Stadium, controlled access' },
-    { name: 'Padang Ipoh', address: 'Ipoh, Perak', capacity: 20000, location: { lat: 4.595, lng: 101.083 } },
-    // Add more venues up to 20-30 per PRD §6.
+    { name: 'Axiata Arena', address: 'Bukit Jalil, Kuala Lumpur', capacity: 16_000, location: { lat: 3.057, lng: 101.691 }, riskNotes: 'Indoor arena, multiple exits' },
+    { name: 'Dataran Merdeka', address: 'Kuala Lumpur City Centre', capacity: 50_000, location: { lat: 3.148, lng: 101.694 }, riskNotes: 'Open field with limited shade' },
+    { name: 'KLCC Park', address: 'KLCC, Kuala Lumpur', capacity: 30_000, location: { lat: 3.157, lng: 101.711 }, riskNotes: 'Urban park near major roads' },
+    { name: 'Dataran Putrajaya', address: 'Presint 1, Putrajaya', capacity: 40_000, location: { lat: 2.943, lng: 101.69 }, riskNotes: 'Wide open plaza' },
+    { name: 'Penang Esplanade', address: 'George Town, Penang', capacity: 20_000, location: { lat: 5.424, lng: 100.328 }, riskNotes: 'Coastal and weather exposed' },
+    { name: 'Persada Johor', address: 'Johor Bahru, Johor', capacity: 15_000, location: { lat: 1.465, lng: 103.756 } },
+    { name: 'MAEPS Serdang', address: 'Serdang, Selangor', capacity: 25_000, location: { lat: 2.998, lng: 101.704 }, riskNotes: 'Convention and expo grounds' },
+    { name: 'Sunway Lagoon', address: 'Bandar Sunway, Selangor', capacity: 12_000, location: { lat: 3.071, lng: 101.605 } },
+    { name: 'National Stadium Bukit Jalil', address: 'Bukit Jalil, Kuala Lumpur', capacity: 87_411, location: { lat: 3.054, lng: 101.692 }, riskNotes: 'Large stadium with controlled access' },
+    { name: 'Padang Ipoh', address: 'Ipoh, Perak', capacity: 20_000, location: { lat: 4.595, lng: 101.083 } },
+    { name: 'MITEC', address: 'Segambut, Kuala Lumpur', capacity: 20_000, location: { lat: 3.18, lng: 101.665 }, riskNotes: 'Large indoor exhibition venue' },
+    { name: 'Kuala Lumpur Convention Centre', address: 'KLCC, Kuala Lumpur', capacity: 8_000, location: { lat: 3.153, lng: 101.713 } },
+    { name: 'Setia SPICE Arena', address: 'Bayan Lepas, Penang', capacity: 10_000, location: { lat: 5.329, lng: 100.28 } },
+    { name: 'Stadium Darul Makmur', address: 'Kuantan, Pahang', capacity: 40_000, location: { lat: 3.808, lng: 103.324 } },
+    { name: 'Stadium Hang Jebat', address: 'Krubong, Melaka', capacity: 40_000, location: { lat: 2.309, lng: 102.239 } },
+    { name: 'Sabah International Convention Centre', address: 'Kota Kinabalu, Sabah', capacity: 5_000, location: { lat: 5.99, lng: 116.078 } },
+    { name: 'Borneo Convention Centre Kuching', address: 'Kuching, Sarawak', capacity: 5_000, location: { lat: 1.561, lng: 110.401 } },
+    { name: 'Stadium Sultan Mizan Zainal Abidin', address: 'Kuala Nerus, Terengganu', capacity: 50_000, location: { lat: 5.383, lng: 103.104 } },
+    { name: 'Dataran Bandaraya Johor Bahru', address: 'Johor Bahru, Johor', capacity: 15_000, location: { lat: 1.464, lng: 103.75 }, riskNotes: 'Open civic square' },
+    { name: 'Langkawi International Convention Centre', address: 'Langkawi, Kedah', capacity: 3_000, location: { lat: 6.303, lng: 99.722 } },
+    { name: 'Stadium Tuanku Abdul Rahman', address: 'Paroi, Negeri Sembilan', capacity: 45_000, location: { lat: 2.716, lng: 101.943 }, riskNotes: 'Large open stadium with regional road access' },
+    { name: 'Kompleks Sukan Negara Shah Alam', address: 'Shah Alam, Selangor', capacity: 15_000, location: { lat: 3.082, lng: 101.544 } },
+    { name: 'Dewan Jubli Perak', address: 'Kangar, Perlis', capacity: 2_500, location: { lat: 6.441, lng: 100.199 } },
+    { name: 'Sultan Muhammad IV Stadium', address: 'Kota Bharu, Kelantan', capacity: 22_000, location: { lat: 6.126, lng: 102.239 }, riskNotes: 'Urban stadium with constrained surrounding roads' },
+    { name: 'Labuan International Sea Sports Complex', address: 'Labuan Federal Territory', capacity: 5_000, location: { lat: 5.277, lng: 115.242 }, riskNotes: 'Coastal outdoor venue exposed to marine weather' },
 ];
-const INCIDENT_TYPES = ['medical_emergency', 'crowd_surge', 'weather_evacuation', 'fire_alarm', 'lost_child', 'fainting', 'heat_exhaustion', 'slip_fall'];
+const INCIDENT_TYPES = ['medical_emergency', 'crowd_surge', 'weather_evacuation', 'fire_alarm', 'lost_child', 'heat_exhaustion', 'slip_fall'];
 const EVENT_TYPES = ['concert', 'festival', 'sports', 'cultural', 'religious', 'exhibition', 'fair', 'conference'];
-function generateIncidents(venueId, venueName, count) {
-    const incidents = [];
-    const now = Date.now();
-    for (let i = 0; i < count; i++) {
-        const daysAgo = Math.floor(Math.random() * 365 * 2); // last 2 years
-        const type = INCIDENT_TYPES[Math.floor(Math.random() * INCIDENT_TYPES.length)];
-        const et = EVENT_TYPES[Math.floor(Math.random() * EVENT_TYPES.length)];
-        const sev = ['low', 'low', 'low', 'medium', 'medium', 'high'][Math.floor(Math.random() * 6)];
-        incidents.push({
-            venueId, // using name as id for synthetic; production uses real venueId
-            eventType: et,
-            incidentType: type,
-            severity: sev,
-            date: now - daysAgo * 86400_000,
-            description: `${type} during ${et} event at ${venueName}`,
-        });
-    }
-    return incidents;
+const SEVERITIES = ['low', 'low', 'low', 'medium', 'medium', 'high'];
+function stableVenueId(name) {
+    return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+function generateIncidents(venueId, venueName, venueIndex) {
+    const count = (venueIndex * 7 + 3) % 13;
+    return Array.from({ length: count }, (_, index) => {
+        const incidentType = INCIDENT_TYPES[(venueIndex + index * 3) % INCIDENT_TYPES.length];
+        const eventType = EVENT_TYPES[(venueIndex * 2 + index) % EVENT_TYPES.length];
+        return {
+            venueId,
+            eventType,
+            incidentType,
+            severity: SEVERITIES[(venueIndex + index) % SEVERITIES.length],
+            date: Date.UTC(2024 + ((venueIndex + index) % 2), (venueIndex * 3 + index) % 12, 1 + ((index * 5) % 27)),
+            description: `${incidentType} during ${eventType} event at ${venueName}`,
+        };
+    });
 }
 async function seed() {
-    const db = (0, firebase_admin_1.firestore)();
-    // 1. Seed venues.
-    for (const v of VENUES) {
-        const ref = db.collection(types_1.COLLECTIONS.VENUES).doc();
-        const venue = { ...v, venueId: ref.id };
-        await ref.set(venue);
-        // eslint-disable-next-line no-console
-        console.log(`[seed] Venue: ${venue.name} (${venue.venueId})`);
-        // 2. Seed synthetic incidents for this venue (0-12 per venue, biased by type).
-        const baseIncidents = Math.floor(Math.random() * 13); // 0-12
-        const incidents = generateIncidents(venue.name, venue.name, baseIncidents);
-        for (const inc of incidents) {
-            await db.collection(types_1.COLLECTIONS.INCIDENTS).add(inc);
+    const db = (0, firestore_1.getFirestore)(app);
+    for (const [venueIndex, value] of VENUES.entries()) {
+        const venueId = stableVenueId(value.name);
+        const incidents = generateIncidents(venueId, value.name, venueIndex);
+        const venue = { ...value, venueId, incidentCount: incidents.length };
+        await db.collection(types_1.COLLECTIONS.VENUES).doc(venueId).set(venue);
+        for (const [index, incident] of incidents.entries()) {
+            await db.collection(types_1.COLLECTIONS.INCIDENTS).doc(`${venueId}-${String(index + 1).padStart(2, '0')}`).set(incident);
         }
-        // eslint-disable-next-line no-console
-        console.log(`[seed]   → ${incidents.length} incidents`);
+        console.log(`[seed] ${venue.name}: ${incidents.length} incidents`);
     }
-    // eslint-disable-next-line no-console
-    console.log(`[seed] Done. ${VENUES.length} venues seeded.`);
+    console.log(`[seed] Done. ${VENUES.length} stable venues seeded.`);
 }
-seed().catch((err) => {
-    // eslint-disable-next-line no-console
-    console.error('[seed] failed:', err);
+seed().catch((error) => {
+    console.error('[seed] failed:', error);
     process.exit(1);
 });
 //# sourceMappingURL=seedVenues.js.map

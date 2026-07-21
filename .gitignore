@@ -93,6 +93,7 @@ $RECYCLE.BIN/
 
 # ----- Cache / temp -----
 .cache/
+.playwright-cli/
 .parcel-cache/
 .eslintcache
 .stylelintcache

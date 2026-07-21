@@ -1,36 +1,19 @@
-/**
- * STERAS — Shared TypeScript types & enums
- * Used by both frontend (src/) and Cloud Functions (functions/src/).
- * Pure types only — no runtime imports.
- */
-
-// =====================================================================
-// USER ROLES
-// =====================================================================
+/** Shared runtime-free contracts used by the React app and Cloud Functions. */
 
 export type UserRole = 'organizer' | 'authority' | 'public';
 
-export type AuthorityType =
-  | 'PDRM' // Royal Malaysia Police
-  | 'BOMBA' // Fire & Rescue
-  | 'KKM' // Ministry of Health
-  | 'DBKL' // Kuala Lumpur City Hall
-  | 'MOTAC'; // Ministry of Tourism, Arts & Culture
+export type AuthorityType = 'PDRM' | 'BOMBA' | 'KKM' | 'DBKL' | 'MOTAC';
 
 export interface UserProfile {
   uid: string;
   name: string;
   email: string;
   role: UserRole;
-  authorityType?: AuthorityType; // only for role === 'authority'
+  authorityType?: AuthorityType;
   phone?: string;
-  createdAt: number; // epoch ms
+  createdAt: number;
   updatedAt: number;
 }
-
-// =====================================================================
-// EVENT TYPES
-// =====================================================================
 
 export type EventType =
   | 'concert'
@@ -55,19 +38,17 @@ export const EVENT_TYPES: { value: EventType; label: string }[] = [
   { value: 'other', label: 'Other' },
 ];
 
-// =====================================================================
-// EVENT STATUS
-// =====================================================================
-
 export type EventStatus =
-  | 'Pending' // submitted, awaiting AI/rules + authority review
-  | 'UnderReview' // an authority has opened it
-  | 'AmendmentRequested' // authority wants changes
+  | 'Draft'
+  | 'Pending'
+  | 'UnderReview'
+  | 'AmendmentRequested'
   | 'Approved'
   | 'Rejected'
-  | 'Withdrawn'; // organizer pulled it
+  | 'Withdrawn';
 
 export const EVENT_STATUSES: { value: EventStatus; label: string; color: string }[] = [
+  { value: 'Draft', label: 'Draft', color: 'gray' },
   { value: 'Pending', label: 'Pending', color: 'amber' },
   { value: 'UnderReview', label: 'Under Review', color: 'blue' },
   { value: 'AmendmentRequested', label: 'Amendment Requested', color: 'orange' },
@@ -76,28 +57,34 @@ export const EVENT_STATUSES: { value: EventStatus; label: string; color: string 
   { value: 'Withdrawn', label: 'Withdrawn', color: 'gray' },
 ];
 
-// =====================================================================
-// EVENT (Module 1)
-// =====================================================================
-
 export interface VenueLocation {
   lat: number;
   lng: number;
 }
 
+export type EventEnvironment = 'indoor' | 'outdoor' | 'mixed';
+export type VenueCoverage = 'covered' | 'partially_covered' | 'uncovered';
+export type SeatingType = 'seated' | 'standing' | 'mixed';
+
 export interface EventDetails {
   name: string;
   type: EventType;
+  venueId?: string;
   venueName: string;
   venueAddress: string;
   venueLocation?: VenueLocation;
   venueCapacity: number;
   expectedAttendance: number;
-  startDatetime: number; // epoch ms
-  endDatetime: number; // epoch ms
+  environment: EventEnvironment;
+  coverage: VenueCoverage;
+  seating: SeatingType;
+  startDatetime: number;
+  endDatetime: number;
   description?: string;
+  emergencyPlanSummary: string;
   organizerName: string;
-  organizerContact: string; // phone or email
+  organizerEmail: string;
+  organizerPhone: string;
 }
 
 export interface EventRecord {
@@ -105,68 +92,139 @@ export interface EventRecord {
   organizerId: string;
   eventDetails: EventDetails;
   status: EventStatus;
+  currentVersionId?: string;
+  currentVersionNumber: number;
+  currentAssessmentId?: string;
+  currentResourceId?: string;
+  editableVersionId?: string | null;
+  draftDocumentPaths: string[];
+  requiredAuthorities: AuthorityType[];
   createdAt: number;
   updatedAt: number;
-  // Populated by Cloud Functions / Module 2:
-  riskScoreId?: string;
-  resourceId?: string;
-  decidedBy?: string; // authority uid
-  decidedAt?: number;
+  submittedAt?: number;
 }
 
-// =====================================================================
-// RISK SCORE (Module 2)
-// =====================================================================
+export interface EventVersion {
+  versionId: string;
+  eventId: string;
+  versionNumber: number;
+  eventDetails: EventDetails;
+  documentPaths: string[];
+  submittedBy: string;
+  submittedAt: number;
+  inputHash: string;
+  supersededAt?: number;
+}
 
 export type RiskLevel = 'Low' | 'Medium' | 'High';
+export type AssessmentStatus = 'processing' | 'ready' | 'failed';
+export type AIStatus = 'success' | 'unavailable' | 'invalid';
 
 export interface WeatherContext {
-  forecast: string; // e.g. "Thunderstorm"
-  temperature: number; // °C
-  humidity: number; // %
-  windSpeed: number; // m/s
-  precipitationProbability: number; // %
+  forecast: string;
+  temperature: number;
+  humidity: number;
+  windSpeed: number;
+  precipitationProbability: number;
   severeAlert: boolean;
 }
 
-export interface AIRiskScore {
-  riskLevel: RiskLevel;
-  riskScore: number; // 0-100
-  reasoning: string;
-  keyConcerns: string[];
-  recommendedResources: Partial<ResourceRecommendation>; // AI's resource suggestion
-  rawResponse?: string; // raw LLM output for audit
-  model: string; // e.g. "MiniMax-M3"
-  promptVersion: string; // for prompt-engineering audit trail
-  generatedAt: number;
+export type ContextFreshness = 'fresh' | 'stale' | 'fallback';
+
+export interface WeatherSnapshot {
+  data: WeatherContext;
+  source: 'openweather' | 'cache' | 'fallback';
+  freshness: ContextFreshness;
+  fetchedAt: number;
+  expiresAt: number;
+  forecastFor: number;
 }
 
-export interface RuleBasedScore {
-  weatherScore: number; // 0-100, weighted 30%
-  crowdScore: number; // 0-100, weighted 25%
-  venueScore: number; // 0-100, weighted 20%
-  historyScore: number; // 0-100, weighted 15%
-  holidayScore: number; // 0-100, weighted 10%
-  total: number; // 0-100, weighted sum
-  riskLevel: RiskLevel;
+export interface IncidentSnapshot {
+  incidents: Incident[];
+  venueId?: string;
+  matched: boolean;
+  fetchedAt: number;
+}
+
+export type EvidenceKey = 'weather' | 'crowd' | 'venue' | 'history' | 'holiday';
+
+export interface ScoreEvidence {
+  key: EvidenceKey;
+  description: string;
+  sourceTimestamp: number;
+}
+
+export interface RiskSubScores {
+  weather: number;
+  crowd: number;
+  venue: number;
+  history: number;
+  holiday: number;
+}
+
+export interface WeightedContributions {
+  weather: number;
+  crowd: number;
+  venue: number;
+  history: number;
+  holiday: number;
+}
+
+export interface DeterministicBaseline {
+  subScores: RiskSubScores;
+  weightedContributions: WeightedContributions;
+  baselineScore: number;
+  baselineRiskLevel: RiskLevel;
+  evidence: ScoreEvidence[];
+  ruleVersion: string;
   computedAt: number;
 }
 
-export interface RiskScoreRecord {
-  id: string; // sub-collection doc id
+export interface AIRefinement {
+  model: string;
+  promptVersion: string;
+  status: AIStatus;
+  proposedAdjustment: number;
+  validatedAdjustment: number;
+  reasoning: string;
+  compoundEffects: string[];
+  keyConcerns: string[];
+  citedEvidenceKeys: EvidenceKey[];
+  cacheStatus: 'hit' | 'miss' | 'not-applicable';
+  generatedAt: number;
+}
+
+export interface RiskAssessment extends DeterministicBaseline {
+  assessmentId: string;
   eventId: string;
-  ai: AIRiskScore;
-  rule: RuleBasedScore;
-  disagreementFlag: boolean; // |ai.score - rule.total| >= 15
-  disagreementDelta?: number;
+  versionId: string;
+  status: 'ready';
+  ai: AIRefinement;
+  finalScore: number;
+  finalRiskLevel: RiskLevel;
+  sourceTimestamps: Record<string, number>;
+  contextStatuses: Record<string, string>;
+  inputHash: string;
   createdAt: number;
 }
 
-// =====================================================================
-// RESOURCE RECOMMENDATION (Module 3)
-// =====================================================================
+export interface AssessmentJob {
+  assessmentId: string;
+  eventId: string;
+  versionId: string;
+  status: 'processing' | 'failed';
+  inputHash: string;
+  claimId: string;
+  claimedAt: number;
+  leaseExpiresAt: number;
+  error?: string;
+  createdAt: number;
+}
 
-export interface ResourceRecommendation {
+export type AssessmentRecord = RiskAssessment | AssessmentJob;
+
+export interface ResourceQuantities {
   police: number;
   medicalTeams: number;
   ambulances: number;
@@ -174,23 +232,45 @@ export interface ResourceRecommendation {
   wasteBins: number;
   security: number;
   fireOfficers: number;
-  confidenceLevel: 'estimate' | 'official'; // 'estimate' = prototype formula; 'official' = authority-validated
-  source: 'rule-based' | 'ai' | 'manual'; // which engine produced this
+}
+
+export interface ResourceRecommendation extends ResourceQuantities {
+  resourceId: string;
+  eventId: string;
+  versionId: string;
+  assessmentId: string;
+  formulaVersion: string;
+  confidenceLevel: 'prototype' | 'authorityValidated';
   notes?: string;
+  overriddenBy?: string;
+  overrideRationale?: string;
+  overriddenAt?: number;
   computedAt: number;
 }
 
-// =====================================================================
-// AUDIT LOG (Module 4 + general)
-// =====================================================================
+export type DecisionValue = 'Approved' | 'Rejected' | 'AmendmentRequested';
+
+export interface AuthorityDecision {
+  decisionId: string;
+  eventId: string;
+  versionId: string;
+  authorityType: AuthorityType;
+  decision: DecisionValue;
+  rationale: string;
+  reviewerId: string;
+  decidedAt: number;
+  current: boolean;
+}
 
 export type AuditAction =
   | 'event_created'
   | 'event_updated'
+  | 'event_submitted'
   | 'event_withdrawn'
   | 'status_changed'
   | 'risk_score_computed'
   | 'resource_recommended'
+  | 'resource_overridden'
   | 'amendment_requested'
   | 'authority_reviewed'
   | 'decision_made'
@@ -199,6 +279,7 @@ export type AuditAction =
 export interface AuditLog {
   id: string;
   eventId: string;
+  versionId?: string;
   action: AuditAction;
   actorId: string;
   actorRole: UserRole | 'system';
@@ -206,13 +287,8 @@ export interface AuditLog {
   previousStatus?: EventStatus;
   newStatus?: EventStatus;
   notes?: string;
-  // Optional context blob
   metadata?: Record<string, unknown>;
 }
-
-// =====================================================================
-// VENUE & INCIDENTS (Synthetic data for Module 2)
-// =====================================================================
 
 export interface Venue {
   venueId: string;
@@ -221,7 +297,6 @@ export interface Venue {
   capacity: number;
   location: VenueLocation;
   riskNotes?: string;
-  // Optional reference to past incidents (synthetic)
   incidentCount?: number;
 }
 
@@ -229,18 +304,15 @@ export interface Incident {
   incidentId: string;
   venueId: string;
   eventType: EventType;
-  incidentType: string; // e.g. "medical_emergency", "crowd_crush", "weather_evacuation"
+  incidentType: string;
   severity: 'low' | 'medium' | 'high';
   date: number;
   description?: string;
 }
 
-// =====================================================================
-// PUBLIC EVENT (Module 3 — read-only calendar for public viewers)
-// =====================================================================
-
 export interface PublicEvent {
   eventId: string;
+  versionId: string;
   eventName: string;
   venueName: string;
   eventType: EventType;
@@ -250,20 +322,34 @@ export interface PublicEvent {
   publicStatus: 'approved';
 }
 
-// =====================================================================
-// FIRESTORE COLLECTION NAMES (constants — never hardcode strings elsewhere)
-// =====================================================================
-
 export const COLLECTIONS = {
   USERS: 'users',
   EVENTS: 'events',
-  RISK_SCORES: 'risk_scores',
+  VERSIONS: 'versions',
+  ASSESSMENTS: 'assessments',
   RESOURCES: 'resources',
+  DECISIONS: 'decisions',
+  DECISION_HISTORY: 'decision_history',
+  RESOURCE_OVERRIDES: 'resource_overrides',
   AUDIT_LOGS: 'audit_logs',
   VENUES: 'venues',
   INCIDENTS: 'incidents',
   PUBLIC_EVENTS: 'public_events',
 } as const;
 
-// Disagreement threshold per PRD §4 (Module 2)
-export const DISAGREEMENT_THRESHOLD = 15;
+export const RULE_VERSION = '2026-07-v1';
+export const RESOURCE_FORMULA_VERSION = '2026-07-prototype-v1';
+export const MAX_AI_ADJUSTMENT = 15;
+
+export function riskLevelFor(score: number): RiskLevel {
+  if (score >= 70) return 'High';
+  if (score >= 40) return 'Medium';
+  return 'Low';
+}
+
+export function finalScoreFor(baselineScore: number, proposedAdjustment: number) {
+  const baseline = Math.max(0, Math.min(100, Math.round(baselineScore)));
+  const validatedAdjustment = Math.max(0, Math.min(MAX_AI_ADJUSTMENT, Math.round(proposedAdjustment)));
+  const finalScore = Math.min(100, baseline + validatedAdjustment);
+  return { validatedAdjustment, finalScore, finalRiskLevel: riskLevelFor(finalScore) };
+}

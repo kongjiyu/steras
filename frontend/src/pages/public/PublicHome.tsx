@@ -1,62 +1,52 @@
 import { Link } from 'react-router-dom';
-import PageHeader from '../../components/ui/PageHeader';
+import { CalendarDays, FileCheck2, ShieldCheck } from 'lucide-react';
+import PublicHeader from '../../components/layout/PublicHeader';
+import heroUrl from '../../assets/imagery/public-event-hero.webp';
+
+const capabilities = [
+  { icon: FileCheck2, title: 'Auditable assessment', body: 'One deterministic baseline, one bounded M3 adjustment, and one authoritative final risk.' },
+  { icon: ShieldCheck, title: 'Coordinated approval', body: 'Required agencies review the same immutable application version with recorded rationale.' },
+  { icon: CalendarDays, title: 'Trusted public register', body: 'Only unanimously approved events appear in the public tourism calendar.' },
+];
 
 export default function PublicHome() {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-brand-50 to-white">
-      {/* Hero */}
-      <header className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex justify-between items-center">
-        <div className="flex items-center gap-2">
-          <div className="w-9 h-9 rounded bg-brand-600 text-white flex items-center justify-center font-bold">S</div>
-          <span className="font-bold text-slate-900 text-lg">STERAS</span>
-        </div>
-        <nav className="flex items-center gap-3">
-          <Link to="/calendar" className="text-sm font-medium text-slate-700 hover:text-slate-900">
-            Public Calendar
-          </Link>
-          <Link to="/login" className="btn-secondary !py-1.5">Sign in</Link>
-        </nav>
-      </header>
-
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 sm:py-24">
-        <PageHeader
-          title="Safer Tourism Events, Faster Approvals"
-          description="STERAS uses AI prediction + rule-based risk assessment to help Malaysian authorities (PDRM, Bomba, KKM, DBKL) review and approve tourism event permits with confidence."
-        />
-
-        <div className="mt-8 flex flex-wrap gap-3">
-          <Link to="/calendar" className="btn-primary">View Approved Events</Link>
-          <Link to="/register" className="btn-secondary">Organizer Sign-up</Link>
-        </div>
-
-        {/* 3 pillars */}
-        <div className="mt-16 grid md:grid-cols-3 gap-6">
-          {[
-            {
-              title: 'Hybrid AI + Rule-Based',
-              body: 'AI prediction paired with deterministic rule-based scoring. If they disagree by ≥15 points, the application is flagged for manual review.',
-            },
-            {
-              title: 'Real-time Dashboard',
-              body: 'Authority officers see new applications the moment they\'re submitted. No refresh needed — Firestore listeners push updates live.',
-            },
-            {
-              title: 'Standards-traced Resources',
-              body: 'Recommended police, medical, ambulance and toilet counts reference WHO Mass Gathering Guidelines, PDRM and Bomba benchmarks.',
-            },
-          ].map((f) => (
-            <div key={f.title} className="card">
-              <div className="card-body">
-                <h3 className="font-semibold text-slate-900">{f.title}</h3>
-                <p className="mt-2 text-sm text-slate-600">{f.body}</p>
+    <div className="min-h-screen bg-cream-50">
+      <PublicHeader />
+      <main>
+        <section className="relative isolate min-h-[32rem] overflow-hidden border-b border-[#d9cdb8] sm:min-h-[38rem] lg:min-h-[min(44rem,calc(100svh-8rem))]">
+          <img src={heroUrl} alt="Malaysian cultural performers at a tourism event in Kuala Lumpur" className="absolute inset-0 -z-20 h-full w-full object-cover object-center" />
+          <div className="absolute inset-y-0 left-0 -z-10 w-full bg-[#fffdf7]/90 sm:w-[68%] lg:w-[55%]" />
+          <div className="mx-auto flex min-h-[inherit] max-w-6xl items-center px-5 py-12 sm:px-8">
+            <div className="max-w-xl">
+              <p className="text-xs font-bold uppercase text-gold-600">Smart Tourism Event Risk &amp; Approval System</p>
+              <h1 className="mt-4 font-display text-4xl font-bold leading-tight text-ink-900 sm:text-5xl">Safer tourism events, clearer approvals</h1>
+              <p className="mt-5 max-w-lg text-base leading-7 text-ink-600">STERAS helps Malaysian organizers and authorities assess risk, coordinate evidence-based decisions, and publish trusted approved events.</p>
+              <div className="mt-8 flex flex-wrap gap-3">
+                <Link to="/calendar" className="btn-primary">View approved events</Link>
+                <Link to="/register" className="btn-secondary">Organizer sign-up</Link>
               </div>
             </div>
-          ))}
-        </div>
+          </div>
+        </section>
 
-        <p className="mt-16 text-center text-xs text-slate-500">
-          STERAS v0.1.0 — Prototype for Visit Malaysia 2026 · Module integration in progress
-        </p>
+        <section className="mx-auto max-w-6xl px-5 py-10 sm:px-8 sm:py-14" aria-labelledby="capabilities-title">
+          <div className="grid gap-8 border-b border-[#d9cdb8] pb-10 md:grid-cols-[1fr_2fr]">
+            <div>
+              <p className="text-xs font-bold uppercase text-gold-600">One review system</p>
+              <h2 id="capabilities-title" className="mt-2 font-display text-2xl font-bold text-ink-900">From application to public confidence</h2>
+            </div>
+            <div className="grid gap-7 sm:grid-cols-3">
+              {capabilities.map(({ icon: Icon, title, body }) => (
+                <article key={title}>
+                  <Icon size={22} className="text-brand-600" aria-hidden="true" />
+                  <h3 className="mt-3 text-sm font-semibold text-ink-800">{title}</h3>
+                  <p className="mt-2 text-sm leading-6 text-ink-500">{body}</p>
+                </article>
+              ))}
+            </div>
+          </div>
+        </section>
       </main>
     </div>
   );

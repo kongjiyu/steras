@@ -13,11 +13,19 @@
     "build:frontend": "npm --workspace frontend run build",
     "build:functions": "npm --workspace functions run build",
     "typecheck": "npm --workspace frontend run typecheck && npm --workspace functions run typecheck",
+    "test": "npm --workspace frontend run test && npm --workspace functions run test",
+    "test:rules": "firebase emulators:exec --only firestore,storage --project steras-test \"npm --workspace functions run test:rules\"",
+    "test:coverage": "npm --workspace frontend run test:coverage && npm --workspace functions run test:coverage",
     "emulators": "firebase emulators:start",
     "deploy": "npm run build && firebase deploy",
     "deploy:functions": "npm --workspace functions run build && firebase deploy --only functions",
+    "verify:minimax": "npm --workspace functions run verify:minimax",
+    "seed:staging": "npm --workspace functions run seed:venues:staging",
+    "uat:staging": "npm --workspace functions run uat:staging",
+    "uat:fallback": "npm --workspace functions run uat:fallback",
     "deploy:hosting": "npm --workspace frontend run build && firebase deploy --only hosting",
-    "lint": "npm --workspace frontend run lint"
+    "lint": "npm --workspace frontend run lint && npm --workspace functions run lint",
+    "check": "npm run typecheck && npm run lint && npm run test && npm run build"
   },
   "engines": {
     "node": ">=20"
@@ -30,5 +38,15 @@
     "ai-risk-assessment",
     "malaysia"
   ],
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "@vitest/coverage-v8": "^4.1.10",
+    "eslint": "^8.57.1",
+    "eslint-plugin-react-hooks": "^4.6.2",
+    "eslint-plugin-react-refresh": "^0.4.14",
+    "vitest": "^4.1.10"
+  }
 }

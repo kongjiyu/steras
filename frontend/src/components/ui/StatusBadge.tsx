@@ -2,6 +2,7 @@ import { EventStatus } from '@shared/types';
 import Badge from './Badge';
 
 const STATUS_COLOR: Record<EventStatus, 'amber' | 'blue' | 'orange' | 'green' | 'red' | 'gray'> = {
+  Draft: 'gray',
   Pending: 'amber',
   UnderReview: 'blue',
   AmendmentRequested: 'orange',
@@ -11,6 +12,7 @@ const STATUS_COLOR: Record<EventStatus, 'amber' | 'blue' | 'orange' | 'green' | 
 };
 
 const STATUS_LABEL: Record<EventStatus, string> = {
+  Draft: 'Draft',
   Pending: 'Pending',
   UnderReview: 'Under Review',
   AmendmentRequested: 'Amendment Requested',
