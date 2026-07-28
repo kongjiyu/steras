@@ -66,47 +66,57 @@ async function runRiskAndResourcePipeline(eventId, now = Date.now()) {
         return { status: 'skipped', eventId, versionId, reason: 'already-claimed-or-ready' };
     try {
         const assessedEvent = { ...event, eventDetails: version.eventDetails };
-        const [weather, incidentContext] = await Promise.all([
+        const [weather, incidentHistory, venueContext] = await Promise.all([
             (0, weather_1.fetchWeather)(version.eventDetails.venueLocation, version.eventDetails.venueName, version.eventDetails.startDatetime, { apiKey: secrets_1.OPENWEATHER_API_KEY.value() }),
-            (0, ruleBased_1.fetchIncidentsForVenue)(version.eventDetails.venueId, version.eventDetails.venueName),
+            (0, ruleBased_1.fetchHistoricalContext)(assessedEvent),
+            (0, ruleBased_1.fetchVenueContext)(version.eventDetails.venueId, version.eventDetails.venueName, version.eventDetails.venueCapacity),
         ]);
-        const holiday = (0, holidays_1.getHolidayContext)(version.eventDetails.startDatetime);
-        const isWeekend = (0, holidays_1.isWeekendDate)(version.eventDetails.startDatetime);
+        const calendar = (0, holidays_1.getCalendarContext)(version.eventDetails.startDatetime);
+        const contextSnapshot = {
+            weather,
+            calendar,
+            venue: venueContext,
+            incidentHistory,
+        };
         const computedAt = Date.now();
-        const baseline = await (0, ruleBased_1.computeRuleBased)(assessedEvent, weather.data, holiday.isHolidayOrAdjacent, isWeekend, incidentContext.incidents, computedAt, { weather: weather.fetchedAt, history: incidentContext.fetchedAt, holiday: holiday.sourceTimestamp }, incidentContext.matched);
+        const officialResult = (0, ruleBased_1.computeCategoryBasedAssessment)(assessedEvent, contextSnapshot, computedAt);
         const apiKey = secrets_1.MINIMAX_API_KEY.value();
-        let ai = await (0, aiPredictor_1.refineWithAIOrFallback)(apiKey, assessedEvent, weather.data, holiday.isHolidayOrAdjacent, isWeekend, baseline);
-        const { validatedAdjustment, finalScore, finalRiskLevel } = (0, types_1.finalScoreFor)(baseline.baselineScore, ai.validatedAdjustment);
-        ai = { ...ai, validatedAdjustment };
+        const aiAdvisory = await (0, aiPredictor_1.analyseWithAIOrFallback)(apiKey, assessedEvent, contextSnapshot, officialResult);
         const createdAt = Date.now();
         const assessment = {
             assessmentId: versionId,
             eventId,
             versionId,
             status: 'ready',
-            ...baseline,
-            ai,
-            finalScore,
-            finalRiskLevel,
-            sourceTimestamps: { weather: weather.fetchedAt, holiday: holiday.sourceTimestamp, incidents: incidentContext.fetchedAt },
+            ...officialResult,
+            aiAdvisory,
+            contextSnapshot,
+            sourceTimestamps: { weather: weather.fetchedAt, holiday: calendar.sourceTimestamp, venue: venueContext.fetchedAt, incidents: incidentHistory.fetchedAt },
             contextStatuses: {
                 weather: `${weather.source}:${weather.freshness}`,
-                holiday: holiday.sourceVersion,
-                incidents: incidentContext.matched ? 'matched' : 'unmatched',
-                ai: ai.cacheStatus,
+                holiday: calendar.sourceVersion,
+                venue: venueContext.matched ? 'matched' : 'unmatched',
+                incidents: incidentHistory.matched ? 'matched' : 'unmatched',
+                ai: aiAdvisory.cacheStatus,
             },
             inputHash,
             createdAt,
         };
+        const resourceCalculation = (0, resourceCalculator_1.computeResources)(version.eventDetails, officialResult);
         const resources = {
             resourceId: versionId,
             eventId,
             versionId,
             assessmentId: versionId,
-            ...(0, resourceCalculator_1.computeResources)(version.eventDetails, assessment.finalRiskLevel),
+            ...resourceCalculation.quantities,
+            rationales: resourceCalculation.rationales,
+            items: resourceCalculation.items,
             formulaVersion: types_1.RESOURCE_FORMULA_VERSION,
+            guidelineVersion: types_1.RESOURCE_GUIDELINE_VERSION,
+            guidelineStatus: 'prototype',
+            aiConsiderations: aiAdvisory.resourceConsiderations,
             confidenceLevel: 'prototype',
-            notes: 'Prototype heuristics pending authority validation.',
+            notes: 'Prototype category mappings and resource guidance pending team and authority validation.',
             computedAt: createdAt,
         };
         const finalized = await db.runTransaction(async (transaction) => {
@@ -125,17 +135,28 @@ async function runRiskAndResourcePipeline(eventId, now = Date.now()) {
             transaction.update(eventReference, { currentAssessmentId: versionId, currentResourceId: versionId, updatedAt: createdAt });
             transaction.set(eventReference.collection(types_1.COLLECTIONS.AUDIT_LOGS).doc(`${versionId}-risk-score-computed`), {
                 id: `${versionId}-risk-score-computed`, eventId, versionId, action: 'risk_score_computed', actorId: 'system', actorRole: 'system', timestamp: createdAt,
-                metadata: { baselineScore: baseline.baselineScore, aiStatus: ai.status, aiCacheStatus: ai.cacheStatus, model: ai.model, promptVersion: ai.promptVersion, validatedAdjustment, finalScore, inputHash },
+                metadata: {
+                    officialScore: officialResult.officialScore,
+                    officialRiskLevel: officialResult.officialRiskLevel,
+                    categorySchemaVersion: officialResult.categorySchemaVersion,
+                    scoringLogicVersion: officialResult.scoringLogicVersion,
+                    aiStatus: aiAdvisory.status,
+                    aiCacheStatus: aiAdvisory.cacheStatus,
+                    model: aiAdvisory.model,
+                    promptVersion: aiAdvisory.promptVersion,
+                    responseSchemaVersion: aiAdvisory.responseSchemaVersion,
+                    inputHash,
+                },
             });
             transaction.set(eventReference.collection(types_1.COLLECTIONS.AUDIT_LOGS).doc(`${versionId}-resource-recommended`), {
                 id: `${versionId}-resource-recommended`, eventId, versionId, action: 'resource_recommended', actorId: 'system', actorRole: 'system', timestamp: createdAt,
-                metadata: { resourceId: versionId, formulaVersion: types_1.RESOURCE_FORMULA_VERSION },
+                metadata: { resourceId: versionId, formulaVersion: types_1.RESOURCE_FORMULA_VERSION, guidelineVersion: types_1.RESOURCE_GUIDELINE_VERSION, guidelineStatus: 'prototype' },
             });
             return true;
         });
         if (!finalized)
             return { status: 'skipped', eventId, versionId, reason: 'claim-lost-or-version-changed' };
-        firebase_functions_1.logger.info(`[assessment] ${eventId}/${versionId}: baseline=${baseline.baselineScore}, adjustment=${validatedAdjustment}, final=${finalScore}`);
+        firebase_functions_1.logger.info(`[assessment] ${eventId}/${versionId}: official=${officialResult.officialScore}/${officialResult.officialRiskLevel}, ai=${aiAdvisory.status}`);
         return { status: 'processed', eventId, versionId };
     }
     catch (error) {
@@ -144,7 +165,15 @@ async function runRiskAndResourcePipeline(eventId, now = Date.now()) {
     }
 }
 function processingHash(versionInputHash) {
-    return (0, node_crypto_1.createHash)('sha256').update(JSON.stringify({ versionInputHash, ruleVersion: types_1.RULE_VERSION, promptVersion: aiPredictor_1.PROMPT_VERSION, formulaVersion: types_1.RESOURCE_FORMULA_VERSION })).digest('hex');
+    return (0, node_crypto_1.createHash)('sha256').update(JSON.stringify({
+        versionInputHash,
+        categorySchemaVersion: types_1.CATEGORY_SCHEMA_VERSION,
+        scoringLogicVersion: types_1.SCORING_LOGIC_VERSION,
+        promptVersion: aiPredictor_1.PROMPT_VERSION,
+        aiResponseSchemaVersion: aiPredictor_1.AI_RESPONSE_SCHEMA_VERSION,
+        formulaVersion: types_1.RESOURCE_FORMULA_VERSION,
+        guidelineVersion: types_1.RESOURCE_GUIDELINE_VERSION,
+    })).digest('hex');
 }
 async function markFailed(reference, claimId, inputHash, error) {
     const db = (0, firebase_admin_1.firestore)();

@@ -5,19 +5,24 @@ import { onDocumentCreated, onDocumentUpdated } from 'firebase-functions/v2/fire
 import {
   AssessmentJob,
   AssessmentRecord,
+  CATEGORY_SCHEMA_VERSION,
   COLLECTIONS,
   EventRecord,
   EventVersion,
   RESOURCE_FORMULA_VERSION,
-  RULE_VERSION,
+  RESOURCE_GUIDELINE_VERSION,
+  SCORING_LOGIC_VERSION,
   ResourceRecommendation,
   RiskAssessment,
-  finalScoreFor,
 } from '@shared/types';
-import { PROMPT_VERSION, refineWithAIOrFallback } from '../engines/aiPredictor';
+import { AI_RESPONSE_SCHEMA_VERSION, PROMPT_VERSION, analyseWithAIOrFallback } from '../engines/aiPredictor';
 import { computeResources } from '../engines/resourceCalculator';
-import { computeRuleBased, fetchIncidentsForVenue } from '../engines/ruleBased';
-import { getHolidayContext, isWeekendDate } from '../utils/holidays';
+import {
+  computeCategoryBasedAssessment,
+  fetchHistoricalContext,
+  fetchVenueContext,
+} from '../engines/ruleBased';
+import { getCalendarContext } from '../utils/holidays';
 import { fetchWeather } from '../utils/weather';
 import { ASSESSMENT_SECRETS, MINIMAX_API_KEY, OPENWEATHER_API_KEY } from '../config/secrets';
 import { FUNCTION_REGION } from '../config/runtime';
@@ -79,58 +84,58 @@ export async function runRiskAndResourcePipeline(eventId: string, now = Date.now
 
   try {
     const assessedEvent: EventRecord = { ...event, eventDetails: version.eventDetails };
-    const [weather, incidentContext] = await Promise.all([
+    const [weather, incidentHistory, venueContext] = await Promise.all([
       fetchWeather(version.eventDetails.venueLocation, version.eventDetails.venueName, version.eventDetails.startDatetime, { apiKey: OPENWEATHER_API_KEY.value() }),
-      fetchIncidentsForVenue(version.eventDetails.venueId, version.eventDetails.venueName),
+      fetchHistoricalContext(assessedEvent),
+      fetchVenueContext(version.eventDetails.venueId, version.eventDetails.venueName, version.eventDetails.venueCapacity),
     ]);
-    const holiday = getHolidayContext(version.eventDetails.startDatetime);
-    const isWeekend = isWeekendDate(version.eventDetails.startDatetime);
+    const calendar = getCalendarContext(version.eventDetails.startDatetime);
+    const contextSnapshot = {
+      weather,
+      calendar,
+      venue: venueContext,
+      incidentHistory,
+    };
     const computedAt = Date.now();
-    const baseline = await computeRuleBased(
-      assessedEvent,
-      weather.data,
-      holiday.isHolidayOrAdjacent,
-      isWeekend,
-      incidentContext.incidents,
-      computedAt,
-      { weather: weather.fetchedAt, history: incidentContext.fetchedAt, holiday: holiday.sourceTimestamp },
-      incidentContext.matched,
-    );
+    const officialResult = computeCategoryBasedAssessment(assessedEvent, contextSnapshot, computedAt);
 
     const apiKey = MINIMAX_API_KEY.value();
-    let ai = await refineWithAIOrFallback(apiKey, assessedEvent, weather.data, holiday.isHolidayOrAdjacent, isWeekend, baseline);
-
-    const { validatedAdjustment, finalScore, finalRiskLevel } = finalScoreFor(baseline.baselineScore, ai.validatedAdjustment);
-    ai = { ...ai, validatedAdjustment };
+    const aiAdvisory = await analyseWithAIOrFallback(apiKey, assessedEvent, contextSnapshot, officialResult);
     const createdAt = Date.now();
     const assessment: RiskAssessment = {
       assessmentId: versionId,
       eventId,
       versionId,
       status: 'ready',
-      ...baseline,
-      ai,
-      finalScore,
-      finalRiskLevel,
-      sourceTimestamps: { weather: weather.fetchedAt, holiday: holiday.sourceTimestamp, incidents: incidentContext.fetchedAt },
+      ...officialResult,
+      aiAdvisory,
+      contextSnapshot,
+      sourceTimestamps: { weather: weather.fetchedAt, holiday: calendar.sourceTimestamp, venue: venueContext.fetchedAt, incidents: incidentHistory.fetchedAt },
       contextStatuses: {
         weather: `${weather.source}:${weather.freshness}`,
-        holiday: holiday.sourceVersion,
-        incidents: incidentContext.matched ? 'matched' : 'unmatched',
-        ai: ai.cacheStatus,
+        holiday: calendar.sourceVersion,
+        venue: venueContext.matched ? 'matched' : 'unmatched',
+        incidents: incidentHistory.matched ? 'matched' : 'unmatched',
+        ai: aiAdvisory.cacheStatus,
       },
       inputHash,
       createdAt,
     };
+    const resourceCalculation = computeResources(version.eventDetails, officialResult);
     const resources: ResourceRecommendation = {
       resourceId: versionId,
       eventId,
       versionId,
       assessmentId: versionId,
-      ...computeResources(version.eventDetails, assessment.finalRiskLevel),
+      ...resourceCalculation.quantities,
+      rationales: resourceCalculation.rationales,
+      items: resourceCalculation.items,
       formulaVersion: RESOURCE_FORMULA_VERSION,
+      guidelineVersion: RESOURCE_GUIDELINE_VERSION,
+      guidelineStatus: 'prototype',
+      aiConsiderations: aiAdvisory.resourceConsiderations,
       confidenceLevel: 'prototype',
-      notes: 'Prototype heuristics pending authority validation.',
+      notes: 'Prototype category mappings and resource guidance pending team and authority validation.',
       computedAt: createdAt,
     };
 
@@ -148,16 +153,27 @@ export async function runRiskAndResourcePipeline(eventId: string, now = Date.now
       transaction.update(eventReference, { currentAssessmentId: versionId, currentResourceId: versionId, updatedAt: createdAt });
       transaction.set(eventReference.collection(COLLECTIONS.AUDIT_LOGS).doc(`${versionId}-risk-score-computed`), {
         id: `${versionId}-risk-score-computed`, eventId, versionId, action: 'risk_score_computed', actorId: 'system', actorRole: 'system', timestamp: createdAt,
-        metadata: { baselineScore: baseline.baselineScore, aiStatus: ai.status, aiCacheStatus: ai.cacheStatus, model: ai.model, promptVersion: ai.promptVersion, validatedAdjustment, finalScore, inputHash },
+        metadata: {
+          officialScore: officialResult.officialScore,
+          officialRiskLevel: officialResult.officialRiskLevel,
+          categorySchemaVersion: officialResult.categorySchemaVersion,
+          scoringLogicVersion: officialResult.scoringLogicVersion,
+          aiStatus: aiAdvisory.status,
+          aiCacheStatus: aiAdvisory.cacheStatus,
+          model: aiAdvisory.model,
+          promptVersion: aiAdvisory.promptVersion,
+          responseSchemaVersion: aiAdvisory.responseSchemaVersion,
+          inputHash,
+        },
       });
       transaction.set(eventReference.collection(COLLECTIONS.AUDIT_LOGS).doc(`${versionId}-resource-recommended`), {
         id: `${versionId}-resource-recommended`, eventId, versionId, action: 'resource_recommended', actorId: 'system', actorRole: 'system', timestamp: createdAt,
-        metadata: { resourceId: versionId, formulaVersion: RESOURCE_FORMULA_VERSION },
+        metadata: { resourceId: versionId, formulaVersion: RESOURCE_FORMULA_VERSION, guidelineVersion: RESOURCE_GUIDELINE_VERSION, guidelineStatus: 'prototype' },
       });
       return true;
     });
     if (!finalized) return { status: 'skipped', eventId, versionId, reason: 'claim-lost-or-version-changed' };
-    logger.info(`[assessment] ${eventId}/${versionId}: baseline=${baseline.baselineScore}, adjustment=${validatedAdjustment}, final=${finalScore}`);
+    logger.info(`[assessment] ${eventId}/${versionId}: official=${officialResult.officialScore}/${officialResult.officialRiskLevel}, ai=${aiAdvisory.status}`);
     return { status: 'processed', eventId, versionId };
   } catch (error) {
     await markFailed(assessmentReference, claimId, inputHash, error);
@@ -166,7 +182,15 @@ export async function runRiskAndResourcePipeline(eventId: string, now = Date.now
 }
 
 function processingHash(versionInputHash: string): string {
-  return createHash('sha256').update(JSON.stringify({ versionInputHash, ruleVersion: RULE_VERSION, promptVersion: PROMPT_VERSION, formulaVersion: RESOURCE_FORMULA_VERSION })).digest('hex');
+  return createHash('sha256').update(JSON.stringify({
+    versionInputHash,
+    categorySchemaVersion: CATEGORY_SCHEMA_VERSION,
+    scoringLogicVersion: SCORING_LOGIC_VERSION,
+    promptVersion: PROMPT_VERSION,
+    aiResponseSchemaVersion: AI_RESPONSE_SCHEMA_VERSION,
+    formulaVersion: RESOURCE_FORMULA_VERSION,
+    guidelineVersion: RESOURCE_GUIDELINE_VERSION,
+  })).digest('hex');
 }
 
 async function markFailed(reference: FirebaseFirestore.DocumentReference, claimId: string, inputHash: string, error: unknown): Promise<void> {

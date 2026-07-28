@@ -30,7 +30,7 @@ function record(id: string, status: EventRecord['status'], risk?: RiskLevel, upd
       organizerPhone: '+601',
     },
   };
-  const assessment = risk ? { finalRiskLevel: risk } as RiskAssessment : undefined;
+  const assessment = risk ? { officialRiskLevel: risk } as RiskAssessment : undefined;
   return { event, assessment };
 }
 

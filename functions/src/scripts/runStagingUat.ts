@@ -13,6 +13,7 @@ import {
   ResourceRecommendation,
   RiskAssessment,
   UserProfile,
+  riskLevelFor,
 } from '@shared/types';
 
 type ScenarioName = 'approval' | 'rejection' | 'amendment' | 'withdrawal';
@@ -34,7 +35,7 @@ interface ScenarioResult {
   finalStatus: EventRecord['status'];
   versions: number;
   publicPublished: boolean;
-  assessment?: { baseline: number; adjustment: number; final: number; aiStatus: string };
+  assessment?: { officialScore: number; officialRiskLevel: string; categories: number; aiStatus: string };
 }
 
 const projectId = process.env.FIREBASE_PROJECT_ID ?? 'linkos-496505';
@@ -221,8 +222,11 @@ async function submitAndAssess(context: ScenarioContext, expectedVersionId: stri
   if (submission.versionId !== expectedVersionId) throw new Error(`Expected ${expectedVersionId}, received ${submission.versionId}.`);
   const event = await waitForAssessment(context.eventId, submission.versionId);
   const assessment = await assessmentFor(context.eventId, submission.versionId);
-  if (assessment.finalScore < assessment.baselineScore || assessment.finalScore > Math.min(assessment.baselineScore + 15, 100)) {
-    throw new Error(`Assessment bounds failed for ${context.eventId}/${submission.versionId}.`);
+  if (!Number.isInteger(assessment.officialScore) || assessment.officialScore < 0 || assessment.officialScore > 100
+    || assessment.officialRiskLevel !== riskLevelFor(assessment.officialScore)
+    || assessment.categoryAssignments.length === 0
+    || assessment.aiAdvisory.label !== 'advisory') {
+    throw new Error(`Category assessment contract failed for ${context.eventId}/${submission.versionId}.`);
   }
   if (event.requiredAuthorities.join(',') !== authorityTypes.join(',')) {
     throw new Error(`Unexpected authorities: ${event.requiredAuthorities.join(', ')}.`);
@@ -367,10 +371,10 @@ function requiredAuthority(authorities: Map<AuthorityType, ProvisionedUser>, aut
 
 function assessmentSummary(assessment: RiskAssessment) {
   return {
-    baseline: assessment.baselineScore,
-    adjustment: assessment.ai.validatedAdjustment,
-    final: assessment.finalScore,
-    aiStatus: assessment.ai.status,
+    officialScore: assessment.officialScore,
+    officialRiskLevel: assessment.officialRiskLevel,
+    categories: assessment.categoryAssignments.length,
+    aiStatus: assessment.aiAdvisory.status,
   };
 }
 

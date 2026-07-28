@@ -17,6 +17,25 @@ describe('weather context', () => {
     expect(weather).toMatchObject({ forecast: 'Thunderstorm', temperature: 32, humidity: 88, windSpeed: 4.4, precipitationProbability: 82, severeAlert: true });
   });
 
+  it('parses the subscription-free 5-day forecast shape', () => {
+    const weather = parseWeatherResponse({
+      list: [{
+        dt: forecastFor / 1_000,
+        main: { temp: 31.2, humidity: 84 },
+        wind: { speed: 5.6 },
+        pop: 0.7,
+        weather: [{ main: 'Rain' }],
+      }],
+    }, forecastFor);
+    expect(weather).toMatchObject({
+      forecast: 'Rain',
+      temperature: 31,
+      humidity: 84,
+      windSpeed: 5.6,
+      precipitationProbability: 70,
+    });
+  });
+
   it('returns fresh cache and stale cache when refresh fails', async () => {
     const location = { lat: 3.139, lng: 101.687 };
     const request = async () => ({ daily: [{ dt: forecastFor / 1_000, temp: { day: 30 }, humidity: 80, wind_speed: 3, pop: 0.5, weather: [{ main: 'Rain' }] }] });
@@ -26,7 +45,7 @@ describe('weather context', () => {
   });
 
   it('does not invent Kuala Lumpur coordinates when location is absent', async () => {
-    expect(await fetchWeather(undefined, 'Unknown', forecastFor, { now: 100, apiKey: 'test' })).toMatchObject({ source: 'fallback', freshness: 'fallback' });
+    expect(await fetchWeather(undefined, 'Unknown', forecastFor, { now: 100, apiKey: 'test' })).toMatchObject({ source: 'fallback', freshness: 'unavailable' });
   });
 
   it('retries one transient request failure', async () => {

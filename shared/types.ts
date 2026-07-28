@@ -66,6 +66,28 @@ export type EventEnvironment = 'indoor' | 'outdoor' | 'mixed';
 export type VenueCoverage = 'covered' | 'partially_covered' | 'uncovered';
 export type SeatingType = 'seated' | 'standing' | 'mixed';
 
+export interface EventRiskProfile {
+  vulnerableAttendeesPercent?: number;
+  standingAttendeesPercent?: number;
+  internationalAttendees?: boolean;
+  alcoholServed?: boolean;
+  foodServed?: boolean;
+  freeDrinkingWater?: boolean;
+  ticketedEntry?: boolean;
+  overnightAccommodation?: boolean;
+  pyrotechnics?: boolean;
+  temporaryStructures?: boolean;
+  rivalryOrTensionExpected?: boolean;
+  crowdManagementPlan?: boolean;
+  trafficManagementPlan?: boolean;
+  severeWeatherPlan?: boolean;
+  medicalPlan?: boolean;
+  evacuationPlanTested?: boolean;
+  authorityCoordinationConfirmed?: boolean;
+  nearestHospitalTravelMinutes?: number;
+  verifiedControlIds?: string[];
+}
+
 export interface EventDetails {
   name: string;
   type: EventType;
@@ -82,6 +104,7 @@ export interface EventDetails {
   endDatetime: number;
   description?: string;
   emergencyPlanSummary: string;
+  riskProfile?: EventRiskProfile;
   organizerName: string;
   organizerEmail: string;
   organizerPhone: string;
@@ -119,6 +142,21 @@ export interface EventVersion {
 export type RiskLevel = 'Low' | 'Medium' | 'High';
 export type AssessmentStatus = 'processing' | 'ready' | 'failed';
 export type AIStatus = 'success' | 'unavailable' | 'invalid';
+export type AssessmentReadiness = 'complete' | 'provisional' | 'insufficient_data';
+export type ComplianceStatus = 'pass' | 'review_required' | 'blocked';
+export type ConfidenceLevel = 'low' | 'medium' | 'high';
+export type EvidenceQuality = 'official' | 'verified' | 'declared' | 'stale' | 'missing';
+export type HazardDomain =
+  | 'crowd'
+  | 'venue_fire'
+  | 'weather_environment'
+  | 'public_health'
+  | 'food_water_sanitation'
+  | 'medical_capacity'
+  | 'security_cbrn'
+  | 'transport_accessibility';
+export type ControlStatus = 'verified' | 'declared' | 'absent' | 'unknown';
+export type ControlAxis = 'likelihood' | 'severity';
 
 export interface WeatherContext {
   forecast: string;
@@ -129,11 +167,11 @@ export interface WeatherContext {
   severeAlert: boolean;
 }
 
-export type ContextFreshness = 'fresh' | 'stale' | 'fallback';
+export type ContextFreshness = 'fresh' | 'stale' | 'fallback' | 'not_assessable_yet' | 'unavailable';
 
 export interface WeatherSnapshot {
   data: WeatherContext;
-  source: 'openweather' | 'cache' | 'fallback';
+  source: 'met-malaysia' | 'openweather' | 'cache' | 'fallback';
   freshness: ContextFreshness;
   fetchedAt: number;
   expiresAt: number;
@@ -147,62 +185,195 @@ export interface IncidentSnapshot {
   fetchedAt: number;
 }
 
-export type EvidenceKey = 'weather' | 'crowd' | 'venue' | 'history' | 'holiday';
+export type EvidenceKey =
+  | 'weather'
+  | 'crowd'
+  | 'venue'
+  | 'history'
+  | 'holiday'
+  | 'public_health'
+  | 'sanitation'
+  | 'medical'
+  | 'security'
+  | 'transport'
+  | 'compliance';
+
+export interface CalendarContextSnapshot {
+  localDate: string;
+  dayOfWeek: string;
+  isWeekend: boolean;
+  isHolidayOrAdjacent: boolean;
+  holidayName?: string;
+  holidayDistanceDays?: -1 | 0 | 1;
+  sourceVersion: string;
+  sourceTimestamp: number;
+}
+
+export interface VenueContextSnapshot {
+  matched: boolean;
+  venueId?: string;
+  submittedCapacity: number;
+  registeredCapacity?: number;
+  capacityDifference?: number;
+  verifiedSafeCapacity?: number;
+  jurisdiction?: string;
+  fireCertificateStatus?: Venue['fireCertificateStatus'];
+  fireCertificateExpiresAt?: number;
+  emergencyAccessVerified?: boolean;
+  nearestHospitalTravelMinutes?: number;
+  riskNotes?: string;
+  fetchedAt: number;
+}
+
+export interface HistoricalIncidentContextSnapshot {
+  matched: boolean;
+  venueId?: string;
+  incidentIds: string[];
+  total: number;
+  bySeverity: Record<Incident['severity'], number>;
+  historicalEventIds?: string[];
+  historicalEventCount?: number;
+  totalAttendance?: number;
+  totalAttendeeHours?: number;
+  patientPresentationRatePerThousand?: number;
+  hospitalTransferRatePerThousand?: number;
+  incidentRatePerThousandAttendeeHours?: number;
+  comparableEvents?: ComparableHistoricalEvent[];
+  lookbackStart?: number;
+  syntheticEvidence?: boolean;
+  fetchedAt: number;
+}
+
+export interface AssessmentContextSnapshot {
+  weather: WeatherSnapshot;
+  calendar: CalendarContextSnapshot;
+  venue: VenueContextSnapshot;
+  incidentHistory: HistoricalIncidentContextSnapshot;
+}
 
 export interface ScoreEvidence {
   key: EvidenceKey;
   description: string;
   sourceTimestamp: number;
+  source: string;
+  status: string;
+  quality?: EvidenceQuality;
+  confidenceScore?: number;
 }
 
-export interface RiskSubScores {
-  weather: number;
-  crowd: number;
-  venue: number;
-  history: number;
-  holiday: number;
+export type CategorySchemaStatus = 'prototype' | 'authorityValidated';
+
+export interface ControlEvidence {
+  controlId: string;
+  status: ControlStatus;
+  affects: ControlAxis;
+  evidenceId?: string;
+  source?: string;
 }
 
-export interface WeightedContributions {
-  weather: number;
-  crowd: number;
-  venue: number;
-  history: number;
-  holiday: number;
+export interface HazardAssessment {
+  hazardId: string;
+  hazardName: string;
+  domain: HazardDomain;
+  inherentLikelihood: 1 | 2 | 3 | 4 | 5;
+  inherentSeverity: 1 | 2 | 3 | 4 | 5;
+  inherentMatrixScore: number;
+  controls: ControlEvidence[];
+  residualLikelihood: 1 | 2 | 3 | 4 | 5;
+  residualSeverity: 1 | 2 | 3 | 4 | 5;
+  residualMatrixScore: number;
+  riskLevel: RiskLevel;
+  evidenceKeys: EvidenceKey[];
+  missingData: string[];
+  guidelineChecks: string[];
 }
 
-export interface DeterministicBaseline {
-  subScores: RiskSubScores;
-  weightedContributions: WeightedContributions;
-  baselineScore: number;
-  baselineRiskLevel: RiskLevel;
+export interface HazardDomainSummary {
+  domain: HazardDomain;
+  name: string;
+  score: number;
+  matrixScore: number;
+  riskLevel: RiskLevel;
+  dominantHazardId: string;
+  confidenceScore: number;
+  confidenceLevel: ConfidenceLevel;
+}
+
+export interface ComplianceCheck {
+  checkId: string;
+  name: string;
+  status: ComplianceStatus;
+  authority: AuthorityType;
+  jurisdiction: string;
+  rationale: string;
+  evidenceKeys: EvidenceKey[];
+  guidelineReference: string;
+}
+
+export interface CategoryAssignment {
+  categoryId: string;
+  categoryName: string;
+  score: number;
+  riskLevel: RiskLevel;
+  weight: number;
+  weightedContribution: number;
+  rationale: string;
+  evidenceKeys: EvidenceKey[];
+  guidelineChecks: string[];
+}
+
+export interface DeterministicCategoryResult {
+  categoryAssignments: CategoryAssignment[];
+  officialScore: number;
+  officialRiskLevel: RiskLevel;
   evidence: ScoreEvidence[];
-  ruleVersion: string;
+  categorySchemaVersion: string;
+  scoringLogicVersion: string;
+  categorySchemaStatus: CategorySchemaStatus;
+  assessmentReadiness?: AssessmentReadiness;
+  complianceStatus?: ComplianceStatus;
+  complianceChecks?: ComplianceCheck[];
+  hazards?: HazardAssessment[];
+  domainSummaries?: HazardDomainSummary[];
+  officialMatrixScore?: number;
+  dataConfidenceScore?: number;
+  dataConfidenceLevel?: ConfidenceLevel;
+  manualReviewRequired?: boolean;
   computedAt: number;
 }
 
-export interface AIRefinement {
+export interface AIAdvisoryCategoryAnalysis {
+  categoryId: string;
+  advisoryBand: RiskLevel;
+  explanation: string;
+  evidenceReferences: EvidenceKey[];
+  keyConcerns: string[];
+  resourceConsiderations: string[];
+}
+
+export interface AIAdvisoryAnalysis {
   model: string;
   promptVersion: string;
+  responseSchemaVersion: string;
   status: AIStatus;
-  proposedAdjustment: number;
-  validatedAdjustment: number;
-  reasoning: string;
-  compoundEffects: string[];
+  label: 'advisory';
+  overallBand?: RiskLevel;
+  overallExplanation: string;
+  categories: AIAdvisoryCategoryAnalysis[];
   keyConcerns: string[];
+  resourceConsiderations: string[];
   citedEvidenceKeys: EvidenceKey[];
   cacheStatus: 'hit' | 'miss' | 'not-applicable';
   generatedAt: number;
 }
 
-export interface RiskAssessment extends DeterministicBaseline {
+export interface RiskAssessment extends DeterministicCategoryResult {
   assessmentId: string;
   eventId: string;
   versionId: string;
   status: 'ready';
-  ai: AIRefinement;
-  finalScore: number;
-  finalRiskLevel: RiskLevel;
+  aiAdvisory: AIAdvisoryAnalysis;
+  contextSnapshot: AssessmentContextSnapshot;
   sourceTimestamps: Record<string, number>;
   contextStatuses: Record<string, string>;
   inputHash: string;
@@ -234,12 +405,36 @@ export interface ResourceQuantities {
   fireOfficers: number;
 }
 
+export interface ResourceRationale {
+  resource: keyof ResourceQuantities;
+  baselineQuantity: number;
+  factors: string[];
+  guidelineReferences: string[];
+}
+
+export interface ResourceRecommendationItem {
+  resource: keyof ResourceQuantities;
+  baseline: number;
+  planningRange: { min: number; max: number };
+  assumptions: string[];
+  riskModifiers: string[];
+  confidence: 'prototype' | 'low' | 'medium' | 'authorityValidated';
+  guidelineReferences: string[];
+  reviewingAuthority: AuthorityType;
+  authorityReviewRequired: boolean;
+}
+
 export interface ResourceRecommendation extends ResourceQuantities {
   resourceId: string;
   eventId: string;
   versionId: string;
   assessmentId: string;
   formulaVersion: string;
+  guidelineVersion: string;
+  guidelineStatus: CategorySchemaStatus;
+  rationales: Record<keyof ResourceQuantities, ResourceRationale>;
+  items?: ResourceRecommendationItem[];
+  aiConsiderations: string[];
   confidenceLevel: 'prototype' | 'authorityValidated';
   notes?: string;
   overriddenBy?: string;
@@ -296,18 +491,89 @@ export interface Venue {
   address: string;
   capacity: number;
   location: VenueLocation;
+  jurisdiction?: string;
+  usableAreaM2?: number;
+  fixedSeats?: number;
+  verifiedSafeCapacity?: number;
+  exitCount?: number;
+  totalExitWidthMm?: number;
+  fireCertificateStatus?: 'valid' | 'expired' | 'not_required' | 'unknown';
+  fireCertificateExpiresAt?: number;
+  nearestHospitalTravelMinutes?: number;
+  emergencyAccessVerified?: boolean;
+  synthetic?: boolean;
+  datasetVersion?: string;
   riskNotes?: string;
   incidentCount?: number;
 }
 
 export interface Incident {
   incidentId: string;
+  eventId?: string;
+  eventVersionId?: string;
   venueId: string;
   eventType: EventType;
   incidentType: string;
   severity: 'low' | 'medium' | 'high';
   date: number;
+  status?: 'verified' | 'under_review' | 'rejected';
+  assessmentEligible?: boolean;
+  outcome?: {
+    injured: number;
+    hospitalized: number;
+    fatalities: number;
+    evacuated: number;
+  };
+  verifiedBy?: string;
+  verifiedAt?: number;
+  synthetic?: boolean;
+  datasetVersion?: string;
   description?: string;
+}
+
+export interface HistoricalEventOutcome {
+  historicalEventId: string;
+  venueId: string;
+  eventType: EventType;
+  startDatetime: number;
+  endDatetime: number;
+  attendance: number;
+  registeredCapacity: number;
+  environment: EventEnvironment;
+  coverage: VenueCoverage;
+  seating: SeatingType;
+  controlsVerified: string[];
+  resourcesPlanned: Partial<ResourceQuantities>;
+  resourcesActuallyUsed: Partial<ResourceQuantities>;
+  outcomes: {
+    patientPresentations: number;
+    hospitalTransfers: number;
+    ambulanceActivations: number;
+    crowdIncidents: number;
+    securityIncidents: number;
+    weatherInterruptions: number;
+    nearMisses: number;
+    fatalities: number;
+  };
+  incidentIds: string[];
+  completed: true;
+  assessmentEligible: boolean;
+  afterActionFindings: string[];
+  synthetic: boolean;
+  datasetVersion: string;
+}
+
+export interface ComparableHistoricalEvent {
+  historicalEventId: string;
+  venueId: string;
+  eventType: EventType;
+  attendance: number;
+  attendeeHours: number;
+  similarityScore: number;
+  patientPresentations: number;
+  hospitalTransfers: number;
+  incidentCount: number;
+  synthetic: boolean;
 }
 
 export interface PublicEvent {
@@ -334,12 +600,16 @@ export const COLLECTIONS = {
   AUDIT_LOGS: 'audit_logs',
   VENUES: 'venues',
   INCIDENTS: 'incidents',
+  HISTORICAL_EVENTS: 'historical_events',
+  DATASET_MANIFESTS: 'dataset_manifests',
   PUBLIC_EVENTS: 'public_events',
 } as const;
 
-export const RULE_VERSION = '2026-07-v1';
-export const RESOURCE_FORMULA_VERSION = '2026-07-prototype-v1';
-export const MAX_AI_ADJUSTMENT = 15;
+export const CATEGORY_SCHEMA_VERSION = '2026-07-24-all-hazards-v2';
+export const SCORING_LOGIC_VERSION = '2026-07-24-hirarc-residual-v2';
+export const CATEGORY_SCHEMA_STATUS: CategorySchemaStatus = 'prototype';
+export const RESOURCE_FORMULA_VERSION = '2026-07-24-prototype-range-v3';
+export const RESOURCE_GUIDELINE_VERSION = '2026-07-24-malaysia-research-v2';
 
 export function riskLevelFor(score: number): RiskLevel {
   if (score >= 70) return 'High';
@@ -347,9 +617,8 @@ export function riskLevelFor(score: number): RiskLevel {
   return 'Low';
 }
 
-export function finalScoreFor(baselineScore: number, proposedAdjustment: number) {
-  const baseline = Math.max(0, Math.min(100, Math.round(baselineScore)));
-  const validatedAdjustment = Math.max(0, Math.min(MAX_AI_ADJUSTMENT, Math.round(proposedAdjustment)));
-  const finalScore = Math.min(100, baseline + validatedAdjustment);
-  return { validatedAdjustment, finalScore, finalRiskLevel: riskLevelFor(finalScore) };
+export function hirarcRiskLevelFor(matrixScore: number): RiskLevel {
+  if (matrixScore >= 15) return 'High';
+  if (matrixScore >= 5) return 'Medium';
+  return 'Low';
 }

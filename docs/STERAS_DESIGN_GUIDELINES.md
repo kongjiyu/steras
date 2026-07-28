@@ -14,7 +14,7 @@ Authority workspaces use the **Civic Observatory** expression of this language: 
 
 ## 2. Core Principles
 
-1. **Final risk first.** Show the authoritative final score before its baseline and bounded M3 adjustment.
+1. **Official category result first.** Show the deterministic score and category profile before clearly labelled advisory M3 analysis.
 2. **Evidence over decoration.** Provenance, files, versions, and agency decisions are easier to find than visual effects.
 3. **Warm but operational.** Cream surfaces and gold accents add civic warmth while dense workflows remain crisp.
 4. **Semantic color has meaning.** Red, amber, and green communicate risk or status, never decoration alone.
@@ -109,8 +109,8 @@ Workflow status and assessed risk are related but not interchangeable:
 - Keep the numeric score adjacent to the meter. Do not place it inside the component or replace it with a generic filled badge.
 
 ```tsx
-<RiskMeter level={assessment.finalRiskLevel} size="compact" />
-<RiskMeter level={assessment.finalRiskLevel} size="compact" tone="inverse" />
+<RiskMeter level={assessment.officialRiskLevel} size="compact" />
+<RiskMeter level={assessment.officialRiskLevel} size="compact" tone="inverse" />
 ```
 
 ### Forms
@@ -121,13 +121,13 @@ Labels stay above fields. Required state, help, and errors are explicit. Inputs 
 
 Always present risk in this order:
 
-1. **Final risk score and RiskMeter level** as the dominant result.
-2. **Deterministic baseline** with rule version and source timestamps.
-3. **M3 bounded adjustment** shown as `+0` to `+15`, with status and concise evidence-based reasoning.
-4. **Five deterministic sub-scores:** weather, crowd, venue, history, holiday.
-5. **Recommended resources** and authority validation state.
+1. **Official deterministic score and RiskMeter level** as the dominant result.
+2. **Category profile:** assignment, score, weight, contribution, schema version, and rationale.
+3. **Context evidence:** source, freshness/match status, and timestamps.
+4. **M3 advisory analysis:** visibly labelled advisory, with status, explanations, and evidence references.
+5. **Recommended resources:** indicative quantities, rationale, versions, and authority validation state.
 
-Never show a separate AI score, AI-versus-rule disagreement, robot icon, or agreement percentage. MiniMax refines the baseline; it does not compete with it.
+Never imply that AI changed the official score, authorised a resource quantity, or made a decision. Agreement percentages belong only in M5 monitoring reports, not in an individual assessment result.
 
 ## 8. Imagery and Malaysian Identity
 
@@ -155,7 +155,7 @@ Use the shared quart, quint, and expo ease-out curves. Prefer opacity and transf
 ## 11. Responsive and Accessibility
 
 - Design and verify at 390px, tablet, and desktop.
-- Preserve final risk, status, evidence, and decision actions on mobile.
+- Preserve official risk, status, evidence, and decision actions on mobile.
 - In event rows and hero lockups, keep the full event name and stack the risk meter and score below it when horizontal space is limited.
 - Stack complex review columns; do not shrink desktop grids until text becomes unreadable.
 - Keep mobile authority navigation above the safe area and retain at least 44px touch targets.

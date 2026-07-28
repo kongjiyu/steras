@@ -57,7 +57,7 @@ async function seedProfilesAndEvent() {
     await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer' });
     await setDoc(doc(db, 'users/authority-1'), { role: 'authority', authorityType: 'PDRM' });
     await setDoc(doc(db, 'events/event-1'), { organizerId: 'organizer-1', status: 'Pending', requiredAuthorities: ['PDRM'] });
-    await setDoc(doc(db, 'events/event-1/assessments/v1'), { finalScore: 50 });
+    await setDoc(doc(db, 'events/event-1/assessments/v1'), { officialScore: 50 });
     await setDoc(doc(db, 'public_events/event-1'), { eventName: 'Public Event' });
   });
 }
@@ -168,7 +168,7 @@ describe('Firestore security rules', () => {
     await seedProfilesAndEvent();
     const db = environment.authenticatedContext('organizer-1').firestore();
     await assertSucceeds(getDoc(doc(db, 'events/event-1/assessments/v1')));
-    await assertFails(setDoc(doc(db, 'events/event-1/assessments/v1'), { finalScore: 1 }));
+    await assertFails(setDoc(doc(db, 'events/event-1/assessments/v1'), { officialScore: 1 }));
   });
 
   it('allows assigned authorities to read applications and rejects unassigned authorities', async () => {
@@ -273,6 +273,22 @@ describe('Firestore security rules', () => {
     const db = environment.unauthenticatedContext().firestore();
     await assertSucceeds(getDoc(doc(db, 'public_events/event-1')));
     await assertFails(getDoc(doc(db, 'events/event-1')));
+  });
+
+  it('limits historical evidence and dataset manifests to authority reviewers', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer' });
+      await setDoc(doc(db, 'users/authority-1'), { role: 'authority', authorityType: 'KKM' });
+      await setDoc(doc(db, 'historical_events/history-1'), { synthetic: true });
+      await setDoc(doc(db, 'dataset_manifests/demo-v1'), { synthetic: true });
+    });
+    const authorityDb = environment.authenticatedContext('authority-1').firestore();
+    const organizerDb = environment.authenticatedContext('organizer-1').firestore();
+    await assertSucceeds(getDoc(doc(authorityDb, 'historical_events/history-1')));
+    await assertSucceeds(getDoc(doc(authorityDb, 'dataset_manifests/demo-v1')));
+    await assertFails(getDoc(doc(organizerDb, 'historical_events/history-1')));
+    await assertFails(getDoc(doc(environment.unauthenticatedContext().firestore(), 'dataset_manifests/demo-v1')));
   });
 });
 

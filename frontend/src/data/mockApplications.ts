@@ -34,9 +34,8 @@ export interface Application {
   expectedAttendance: number;
   status: ApplicationStatus;
   riskLevel: RiskLevel;
-  baselineScore: number;    // 0-100 deterministic baseline
-  aiAdjustment: number;     // validated 0-15 upward adjustment
-  finalScore: number;       // baseline + validated adjustment, capped at 100
+  officialScore: number;    // 0-100 deterministic category-based result
+  aiAdvisoryBand?: RiskLevel;
   submittedAt: string;      // ISO
   authorityType?: 'PDRM' | 'Bomba' | 'KKM' | 'DBKL' | 'MOTAC';
 }
@@ -55,9 +54,8 @@ export const mockApplications: Application[] = [
     expectedAttendance: 35000,
     status: 'pending',
     riskLevel: 'high',
-    baselineScore: 68,
-    aiAdjustment: 4,
-    finalScore: 72,
+    officialScore: 72,
+    aiAdvisoryBand: 'high',
     submittedAt: '2026-03-01T09:14:00Z',
     authorityType: 'PDRM',
   },
@@ -73,9 +71,8 @@ export const mockApplications: Application[] = [
     expectedAttendance: 5200,
     status: 'under_review',
     riskLevel: 'medium',
-    baselineScore: 45,
-    aiAdjustment: 5,
-    finalScore: 50,
+    officialScore: 50,
+    aiAdvisoryBand: 'medium',
     submittedAt: '2026-03-22T11:02:00Z',
     authorityType: 'PDRM',
   },
@@ -91,9 +88,8 @@ export const mockApplications: Application[] = [
     expectedAttendance: 12000,
     status: 'approved',
     riskLevel: 'low',
-    baselineScore: 25,
-    aiAdjustment: 3,
-    finalScore: 28,
+    officialScore: 28,
+    aiAdvisoryBand: 'low',
     submittedAt: '2026-02-12T07:45:00Z',
     authorityType: 'DBKL',
   },
@@ -109,9 +105,8 @@ export const mockApplications: Application[] = [
     expectedAttendance: 8500,
     status: 'pending',
     riskLevel: 'high',
-    baselineScore: 65,
-    aiAdjustment: 5,
-    finalScore: 70,
+    officialScore: 70,
+    aiAdvisoryBand: 'high',
     submittedAt: '2026-04-18T14:30:00Z',
     authorityType: 'Bomba',
   },
@@ -127,9 +122,8 @@ export const mockApplications: Application[] = [
     expectedAttendance: 6200,
     status: 'rejected',
     riskLevel: 'high',
-    baselineScore: 60,
-    aiAdjustment: 15,
-    finalScore: 75,
+    officialScore: 75,
+    aiAdvisoryBand: 'high',
     submittedAt: '2026-04-02T08:00:00Z',
     authorityType: 'Bomba',
   },
@@ -145,9 +139,8 @@ export const mockApplications: Application[] = [
     expectedAttendance: 18000,
     status: 'pending',
     riskLevel: 'medium',
-    baselineScore: 48,
-    aiAdjustment: 4,
-    finalScore: 52,
+    officialScore: 52,
+    aiAdvisoryBand: 'medium',
     submittedAt: '2026-05-15T10:20:00Z',
     authorityType: 'PDRM',
   },
@@ -163,9 +156,8 @@ export const mockApplications: Application[] = [
     expectedAttendance: 25000,
     status: 'pending',
     riskLevel: 'medium',
-    baselineScore: 50,
-    aiAdjustment: 4,
-    finalScore: 54,
+    officialScore: 54,
+    aiAdvisoryBand: 'medium',
     submittedAt: '2026-06-22T09:00:00Z',
     authorityType: 'MOTAC',
   },
@@ -181,9 +173,8 @@ export const mockApplications: Application[] = [
     expectedAttendance: 9100,
     status: 'amend',
     riskLevel: 'medium',
-    baselineScore: 42,
-    aiAdjustment: 3,
-    finalScore: 45,
+    officialScore: 45,
+    aiAdvisoryBand: 'medium',
     submittedAt: '2026-05-30T16:00:00Z',
     authorityType: 'Bomba',
   },
@@ -200,10 +191,6 @@ export const mockKpis = (apps: Application[]) => {
   const mediumRisk = apps.filter((a) => a.riskLevel === 'medium').length;
   const lowRisk = apps.filter((a) => a.riskLevel === 'low').length;
 
-  const averageAdjustment = apps.length
-    ? Math.round((apps.reduce((sum, application) => sum + application.aiAdjustment, 0) / apps.length) * 10) / 10
-    : 0;
-
   return {
     total,
     pending,
@@ -213,6 +200,5 @@ export const mockKpis = (apps: Application[]) => {
     highRisk,
     mediumRisk,
     lowRisk,
-    averageAdjustment,
   };
 };

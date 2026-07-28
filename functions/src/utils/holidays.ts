@@ -1,3 +1,5 @@
+import { CalendarContextSnapshot } from '@shared/types';
+
 export const HOLIDAY_DATA_VERSION = 'bkpp-2026-v1';
 export const HOLIDAY_SOURCE_URL = 'https://www.kabinet.gov.my/storage/2025/08/HKA-2026.pdf';
 export const HOLIDAY_DATA_UPDATED_AT = Date.UTC(2026, 6, 13);
@@ -57,6 +59,21 @@ export function isWeekendDate(epochMs: number): boolean {
   validateTimestamp(epochMs);
   const weekday = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kuala_Lumpur', weekday: 'short' }).format(epochMs);
   return weekday === 'Sat' || weekday === 'Sun';
+}
+
+export function getCalendarContext(epochMs: number): CalendarContextSnapshot {
+  const holiday = getHolidayContext(epochMs);
+  const dayOfWeek = new Intl.DateTimeFormat('en-MY', { timeZone: 'Asia/Kuala_Lumpur', weekday: 'long' }).format(epochMs);
+  return {
+    localDate: holiday.localDate,
+    dayOfWeek,
+    isWeekend: dayOfWeek === 'Saturday' || dayOfWeek === 'Sunday',
+    isHolidayOrAdjacent: holiday.isHolidayOrAdjacent,
+    ...(holiday.holidayName ? { holidayName: holiday.holidayName } : {}),
+    ...(holiday.distanceDays !== undefined ? { holidayDistanceDays: holiday.distanceDays } : {}),
+    sourceVersion: holiday.sourceVersion,
+    sourceTimestamp: holiday.sourceTimestamp,
+  };
 }
 
 function validateTimestamp(epochMs: number): void {

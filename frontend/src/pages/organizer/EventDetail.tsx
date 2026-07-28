@@ -8,8 +8,11 @@ import { db, functions, isFirebaseConfigured } from '../../config/firebase';
 import toast from 'react-hot-toast';
 import EmptyState from '../../components/ui/EmptyState';
 import PageHeader from '../../components/ui/PageHeader';
-import RiskMeter from '../../components/ui/RiskMeter';
 import StatusBadge from '../../components/ui/StatusBadge';
+import AIAdvisory from '../../components/m2/AIAdvisory';
+import CategoryProfile from '../../components/m2/CategoryProfile';
+import ResourceRecommendationView from '../../components/m2/ResourceRecommendation';
+import { isCurrentResourceRecommendation, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
 
 export default function EventDetail() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -18,6 +21,8 @@ export default function EventDetail() {
   const [assessment, setAssessment] = useState<RiskAssessment | null>(null);
   const [assessmentStatus, setAssessmentStatus] = useState<AssessmentRecord['status'] | null>(null);
   const [resources, setResources] = useState<ResourceRecommendation | null>(null);
+  const [legacyAssessment, setLegacyAssessment] = useState(false);
+  const [legacyResources, setLegacyResources] = useState(false);
   const [loading, setLoading] = useState(true);
   const [withdrawing, setWithdrawing] = useState(false);
   const [loadError, setLoadError] = useState('');
@@ -46,6 +51,8 @@ export default function EventDetail() {
       setAssessment(null);
       setAssessmentStatus(null);
       setResources(null);
+      setLegacyAssessment(false);
+      setLegacyResources(false);
       return;
     }
     setAssessment(null);
@@ -55,11 +62,14 @@ export default function EventDetail() {
     const unsubscribeAssessment = onSnapshot(doc(eventReference, COLLECTIONS.ASSESSMENTS, versionId), (snapshot) => {
       const record = snapshot.data() as AssessmentRecord | undefined;
       setAssessmentStatus(record?.status ?? null);
-      setAssessment(record?.status === 'ready' ? record as RiskAssessment : null);
+      setAssessment(isCurrentRiskAssessment(record) ? record : null);
+      setLegacyAssessment(record?.status === 'ready' && !isCurrentRiskAssessment(record));
       setSupportingDataError('');
     }, () => setSupportingDataError('Assessment or resource data could not be refreshed.'));
     const unsubscribeResources = onSnapshot(doc(eventReference, COLLECTIONS.RESOURCES, versionId), (snapshot) => {
-      setResources(snapshot.exists() ? snapshot.data() as ResourceRecommendation : null);
+      const record = snapshot.data();
+      setResources(isCurrentResourceRecommendation(record) ? record : null);
+      setLegacyResources(snapshot.exists() && !isCurrentResourceRecommendation(record));
     }, () => setSupportingDataError('Assessment or resource data could not be refreshed.'));
     return () => {
       unsubscribeAssessment();
@@ -114,20 +124,12 @@ export default function EventDetail() {
         </section>
 
         <section className="card">
-          <div className="card-header"><div><h2 className="section-title">Final risk assessment</h2><p className="mt-1 text-xs text-ink-500">Authoritative result for the current submitted version</p></div></div>
+          <div className="card-header"><div><h2 className="section-title">Official category assessment</h2><p className="mt-1 text-xs text-ink-500">Deterministic result for the current submitted version</p></div></div>
           <div className="card-body">
-            {!assessment ? <p className="text-sm text-ink-500">{!event.currentVersionId ? 'No assessment has been created for this application.' : assessmentStatus === 'failed' ? 'Assessment could not be completed. It can be retried by an authority.' : 'Assessment is processing.'}</p> : (
-              <div className="space-y-5 text-sm">
-                <div className="flex flex-wrap items-end justify-between gap-3 border-b border-[#e3dacb] pb-5">
-                  <RiskMeter level={assessment.finalRiskLevel} />
-                  <div><strong className="font-display text-4xl font-bold tabular-nums text-ink-900">{assessment.finalScore}</strong><span className="ml-1 text-ink-500">/ 100</span></div>
-                </div>
-                <div className="grid grid-cols-2 gap-3 rounded-md bg-cream-50 p-3">
-                  <Metric label="Deterministic baseline" value={assessment.baselineScore} />
-                  <Metric label="M3 bounded adjustment" value={`+${assessment.ai.validatedAdjustment}`} />
-                </div>
-                <div><p className="text-xs font-semibold uppercase tracking-[0.06em] text-ink-500">Assessment reasoning</p><p className="mt-2 leading-6 text-ink-700">{assessment.ai.reasoning}</p></div>
-                {assessment.ai.status !== 'success' && <p className="rounded-md border border-gold-200 bg-gold-50 p-3 text-gold-600">M3 refinement was unavailable. The deterministic baseline was used.</p>}
+            {!assessment ? <p className="text-sm text-ink-500">{!event.currentVersionId ? 'No assessment has been created for this application.' : legacyAssessment ? 'This version has a legacy assessment and must be recomputed before the current result can be shown.' : assessmentStatus === 'failed' ? 'Assessment could not be completed. It can be retried by an authority.' : 'Assessment is processing.'}</p> : (
+              <div className="space-y-5">
+                <CategoryProfile assessment={assessment} density="compact" />
+                <AIAdvisory advisory={assessment.aiAdvisory} officialRiskLevel={assessment.officialRiskLevel} showCategories={false} />
               </div>
             )}
           </div>
@@ -136,17 +138,8 @@ export default function EventDetail() {
         <section className="card lg:col-span-2">
           <div className="card-header"><div><h2 className="section-title">Recommended resources</h2><p className="mt-1 text-xs text-ink-500">Operational quantities linked to the current assessment</p></div></div>
           <div className="card-body">
-            {!resources ? <p className="text-sm text-ink-500">{event.currentVersionId ? 'Resources appear after assessment.' : 'No resource recommendation has been created for this application.'}</p> : (
-              <div className="grid grid-cols-2 gap-x-5 gap-y-0 text-sm sm:grid-cols-4">
-                <Resource label="Police" value={resources.police} />
-                <Resource label="Medical teams" value={resources.medicalTeams} />
-                <Resource label="Ambulances" value={resources.ambulances} />
-                <Resource label="Toilets" value={resources.toilets} />
-                <Resource label="Security" value={resources.security} />
-                <Resource label="Fire officers" value={resources.fireOfficers} />
-                <Resource label="Waste bins" value={resources.wasteBins} />
-                <Metric label="Confidence" value={resources.confidenceLevel} />
-              </div>
+            {!resources ? <p className="text-sm text-ink-500">{legacyResources ? 'This version has a legacy resource record and must be recomputed before quantities can be shown.' : event.currentVersionId ? 'Resources appear after assessment.' : 'No resource recommendation has been created for this application.'}</p> : (
+              <ResourceRecommendationView recommendation={resources} />
             )}
           </div>
         </section>
@@ -157,12 +150,4 @@ export default function EventDetail() {
 
 function Row({ label, value }: { label: string; value: string }) {
   return <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3 py-3"><span className="text-ink-500">{label}</span><span className="break-words font-medium text-ink-800">{value}</span></div>;
-}
-
-function Metric({ label, value }: { label: string; value: string | number }) {
-  return <div><div className="text-xs text-ink-500">{label}</div><div className="mt-0.5 font-semibold tabular-nums text-ink-900">{value}</div></div>;
-}
-
-function Resource({ label, value }: { label: string; value: number }) {
-  return <div className="border-b border-[#e3dacb] py-4"><div className="text-xs text-ink-500">{label}</div><div className="mt-1 font-display text-2xl font-bold tabular-nums text-ink-900">{value}</div></div>;
 }

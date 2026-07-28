@@ -1,9 +1,9 @@
 "use strict";
 /** Shared runtime-free contracts used by the React app and Cloud Functions. */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.MAX_AI_ADJUSTMENT = exports.RESOURCE_FORMULA_VERSION = exports.RULE_VERSION = exports.COLLECTIONS = exports.EVENT_STATUSES = exports.EVENT_TYPES = void 0;
+exports.RESOURCE_GUIDELINE_VERSION = exports.RESOURCE_FORMULA_VERSION = exports.CATEGORY_SCHEMA_STATUS = exports.SCORING_LOGIC_VERSION = exports.CATEGORY_SCHEMA_VERSION = exports.COLLECTIONS = exports.EVENT_STATUSES = exports.EVENT_TYPES = void 0;
 exports.riskLevelFor = riskLevelFor;
-exports.finalScoreFor = finalScoreFor;
+exports.hirarcRiskLevelFor = hirarcRiskLevelFor;
 exports.EVENT_TYPES = [
     { value: 'concert', label: 'Concert / Music' },
     { value: 'festival', label: 'Festival' },
@@ -36,11 +36,15 @@ exports.COLLECTIONS = {
     AUDIT_LOGS: 'audit_logs',
     VENUES: 'venues',
     INCIDENTS: 'incidents',
+    HISTORICAL_EVENTS: 'historical_events',
+    DATASET_MANIFESTS: 'dataset_manifests',
     PUBLIC_EVENTS: 'public_events',
 };
-exports.RULE_VERSION = '2026-07-v1';
-exports.RESOURCE_FORMULA_VERSION = '2026-07-prototype-v1';
-exports.MAX_AI_ADJUSTMENT = 15;
+exports.CATEGORY_SCHEMA_VERSION = '2026-07-24-all-hazards-v2';
+exports.SCORING_LOGIC_VERSION = '2026-07-24-hirarc-residual-v2';
+exports.CATEGORY_SCHEMA_STATUS = 'prototype';
+exports.RESOURCE_FORMULA_VERSION = '2026-07-24-prototype-range-v3';
+exports.RESOURCE_GUIDELINE_VERSION = '2026-07-24-malaysia-research-v2';
 function riskLevelFor(score) {
     if (score >= 70)
         return 'High';
@@ -48,10 +52,11 @@ function riskLevelFor(score) {
         return 'Medium';
     return 'Low';
 }
-function finalScoreFor(baselineScore, proposedAdjustment) {
-    const baseline = Math.max(0, Math.min(100, Math.round(baselineScore)));
-    const validatedAdjustment = Math.max(0, Math.min(exports.MAX_AI_ADJUSTMENT, Math.round(proposedAdjustment)));
-    const finalScore = Math.min(100, baseline + validatedAdjustment);
-    return { validatedAdjustment, finalScore, finalRiskLevel: riskLevelFor(finalScore) };
+function hirarcRiskLevelFor(matrixScore) {
+    if (matrixScore >= 15)
+        return 'High';
+    if (matrixScore >= 5)
+        return 'Medium';
+    return 'Low';
 }
 //# sourceMappingURL=types.js.map
