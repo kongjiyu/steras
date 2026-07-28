@@ -20,7 +20,9 @@
     "deploy": "npm run build && firebase deploy",
     "deploy:functions": "npm --workspace functions run build && firebase deploy --only functions",
     "verify:minimax": "npm --workspace functions run verify:minimax",
+    "verify:external": "npm --workspace functions run verify:external",
     "seed:staging": "npm --workspace functions run seed:venues:staging",
+    "seed:demo": "npm --workspace functions run seed:demo",
     "uat:staging": "npm --workspace functions run uat:staging",
     "uat:fallback": "npm --workspace functions run uat:fallback",
     "deploy:hosting": "npm --workspace frontend run build && firebase deploy --only hosting",
@@ -47,6 +49,7 @@
     "eslint": "^8.57.1",
     "eslint-plugin-react-hooks": "^4.6.2",
     "eslint-plugin-react-refresh": "^0.4.14",
+    "firebase-tools": "15.24.0",
     "vitest": "^4.1.10"
   }
 }

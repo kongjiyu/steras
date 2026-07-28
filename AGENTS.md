@@ -12,7 +12,7 @@ STERAS is a Firebase-backed React app organized as an npm workspace.
 - `functions/src/engines/`: AI prediction, rule-based scoring, and resource calculation logic.
 - `functions/src/triggers/` and `functions/src/http/`: Firestore triggers and endpoints.
 - `shared/`: cross-workspace TypeScript types.
-- `docs/`: project docs; `steras-prd.md` is the PRD source.
+- `docs/`: team docs and module ownership; `STERAS_PRD.md` is the sole PRD source.
 - `firestore.rules`, `storage.rules`, `firebase.json`: Firebase configuration.
 
 ## Build, Test, and Development Commands

@@ -26,7 +26,7 @@ describe('analyticsData', () => {
   });
 
   it('summarizes approval counts without dividing by zero', () => {
-    expect(analyticsSummary(records)).toMatchObject({ applications: 2, approved: 1, averageAdjustment: 0, fallbackRate: 0 });
+    expect(analyticsSummary(records)).toMatchObject({ applications: 2, approved: 1, aiCategoryAgreementRate: 0, fallbackRate: 0 });
   });
 
   it('handles malformed timestamps without crashing CSV or monthly analytics', () => {

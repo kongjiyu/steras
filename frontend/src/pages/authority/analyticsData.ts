@@ -15,8 +15,7 @@ export interface MonthlyAnalytics {
   month: string;
   applications: number;
   approvals: number;
-  baselines: number[];
-  finals: number[];
+  officialScores: number[];
 }
 
 export function filterAnalyticsRecords(records: AnalyticsRecord[], from?: string, to?: string): AnalyticsRecord[] {
@@ -30,7 +29,7 @@ export function buildMonthlyAnalytics(records: AnalyticsRecord[]): MonthlyAnalyt
   const months = new Map<string, MonthlyAnalytics>();
   const getMonth = (timestamp: number) => new Date(timestamp).toISOString().slice(0, 7);
   const ensure = (month: string) => {
-    const current = months.get(month) ?? { month, applications: 0, approvals: 0, baselines: [], finals: [] };
+    const current = months.get(month) ?? { month, applications: 0, approvals: 0, officialScores: [] };
     months.set(month, current);
     return current;
   };
@@ -39,8 +38,7 @@ export function buildMonthlyAnalytics(records: AnalyticsRecord[]): MonthlyAnalyt
     const applicationMonth = ensure(getMonth(record.createdAt));
     applicationMonth.applications += 1;
     if (record.assessment) {
-      applicationMonth.baselines.push(record.assessment.baselineScore);
-      applicationMonth.finals.push(record.assessment.finalScore);
+      applicationMonth.officialScores.push(record.assessment.officialScore);
     }
     if (record.status === 'Approved' && Number.isFinite(record.updatedAt)) ensure(getMonth(record.updatedAt)).approvals += 1;
   });
@@ -49,7 +47,7 @@ export function buildMonthlyAnalytics(records: AnalyticsRecord[]): MonthlyAnalyt
 
 export function riskDistribution(records: AnalyticsRecord[]): Record<RiskLevel, number> {
   return records.reduce<Record<RiskLevel, number>>((counts, record) => {
-    if (record.assessment) counts[record.assessment.finalRiskLevel] += 1;
+    if (record.assessment) counts[record.assessment.officialRiskLevel] += 1;
     return counts;
   }, { Low: 0, Medium: 0, High: 0 });
 }
@@ -57,14 +55,16 @@ export function riskDistribution(records: AnalyticsRecord[]): Record<RiskLevel, 
 export function analyticsSummary(records: AnalyticsRecord[]) {
   const assessed = records.filter((record) => record.assessment);
   const approved = records.filter((record) => record.status === 'Approved');
-  const fallbackCount = assessed.filter((record) => record.assessment?.ai.status !== 'success').length;
+  const fallbackCount = assessed.filter((record) => record.assessment?.aiAdvisory.status !== 'success').length;
+  const comparable = assessed.filter((record) => record.assessment?.aiAdvisory.overallBand);
+  const agreements = comparable.filter((record) => record.assessment?.aiAdvisory.overallBand === record.assessment?.officialRiskLevel);
   const turnaround = approved
     .filter((record) => record.submittedAt && record.updatedAt >= record.submittedAt)
     .map((record) => record.updatedAt - (record.submittedAt as number));
   return {
     applications: records.length,
     approved: approved.length,
-    averageAdjustment: average(assessed.map((record) => record.assessment?.ai.validatedAdjustment ?? 0)),
+    aiCategoryAgreementRate: comparable.length === 0 ? 0 : agreements.length / comparable.length,
     fallbackRate: assessed.length === 0 ? 0 : fallbackCount / assessed.length,
     averageTurnaroundHours: turnaround.length === 0 ? 0 : average(turnaround) / 3_600_000,
   };
@@ -78,14 +78,17 @@ export function analyticsCsv(records: AnalyticsRecord[]): string {
     record.status,
     safeIso(record.createdAt),
     record.submittedAt ? safeIso(record.submittedAt) : '',
-    record.assessment?.baselineScore ?? '',
-    record.assessment?.ai.validatedAdjustment ?? '',
-    record.assessment?.finalScore ?? '',
-    record.assessment?.finalRiskLevel ?? '',
-    record.assessment?.ai.status ?? '',
+    record.assessment?.officialScore ?? '',
+    record.assessment?.officialRiskLevel ?? '',
+    record.assessment?.categorySchemaVersion ?? '',
+    record.assessment?.aiAdvisory.overallBand ?? '',
+    record.assessment?.aiAdvisory.status ?? '',
+    record.assessment?.aiAdvisory.overallBand
+      ? record.assessment.aiAdvisory.overallBand === record.assessment.officialRiskLevel
+      : '',
   ]);
   return [
-    ['event_id', 'event_name', 'event_type', 'status', 'created_at', 'submitted_at', 'baseline_score', 'm3_adjustment', 'final_score', 'risk_level', 'm3_status'],
+    ['event_id', 'event_name', 'event_type', 'status', 'created_at', 'submitted_at', 'official_score', 'official_risk_level', 'category_schema_version', 'm3_advisory_band', 'm3_status', 'ai_deterministic_agreement'],
     ...rows,
   ].map((row) => row.map(csvCell).join(',')).join('\n');
 }
@@ -98,7 +101,7 @@ export function average(values: number[]): number {
   return values.length === 0 ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
-function csvCell(value: string | number): string {
+function csvCell(value: string | number | boolean): string {
   const text = String(value);
   const protectedText = /^[=+\-@]/.test(text) ? `'${text}` : text;
   return `"${protectedText.replaceAll('"', '""')}"`;

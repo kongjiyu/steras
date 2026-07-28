@@ -4,7 +4,7 @@ import PublicHeader from '../../components/layout/PublicHeader';
 import heroUrl from '../../assets/imagery/public-event-hero.webp';
 
 const capabilities = [
-  { icon: FileCheck2, title: 'Auditable assessment', body: 'One deterministic baseline, one bounded M3 adjustment, and one authoritative final risk.' },
+  { icon: FileCheck2, title: 'Auditable assessment', body: 'One official deterministic category result, with M3 explanations clearly labelled advisory.' },
   { icon: ShieldCheck, title: 'Coordinated approval', body: 'Required agencies review the same immutable application version with recorded rationale.' },
   { icon: CalendarDays, title: 'Trusted public register', body: 'Only unanimously approved events appear in the public tourism calendar.' },
 ];

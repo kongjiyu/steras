@@ -41,7 +41,7 @@ export default function OrganizerDashboard() {
           {[
             { icon: ClipboardList, title: 'Prepare the application', body: 'Add event, venue, crowd, contact, and emergency-plan information.' },
             { icon: FileCheck2, title: 'Submit evidence', body: 'Attach the files authorities need to inspect the same application version.' },
-            { icon: ShieldCheck, title: 'Track review', body: 'See live workflow status and the authoritative final risk assessment.' },
+            { icon: ShieldCheck, title: 'Track review', body: 'See live workflow status and the official category-based risk assessment.' },
           ].map(({ icon: Icon, title, body }, index) => (
             <div key={title} className="grid grid-cols-[2rem_minmax(0,1fr)] gap-3 py-4">
               <div className="flex h-8 w-8 items-center justify-center rounded-md bg-brand-50 text-brand-700"><Icon size={17} /></div>

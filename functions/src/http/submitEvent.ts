@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { firestore } from 'firebase-admin';
+import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import {
   AuthorityType,
@@ -23,7 +23,7 @@ export const submitEvent = onCall<SubmitEventRequest>({ region: FUNCTION_REGION 
 });
 
 export async function submitEventForUser(uid: string, eventId: string, now = Date.now()) {
-  const db = firestore();
+  const db = getFirestore();
   const eventReference = db.collection(COLLECTIONS.EVENTS).doc(eventId);
   const userReference = db.collection(COLLECTIONS.USERS).doc(uid);
 
@@ -76,8 +76,8 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
       status: 'Pending',
       currentVersionId: versionId,
       currentVersionNumber: versionNumber,
-      currentAssessmentId: firestore.FieldValue.delete(),
-      currentResourceId: firestore.FieldValue.delete(),
+      currentAssessmentId: FieldValue.delete(),
+      currentResourceId: FieldValue.delete(),
       editableVersionId: null,
       requiredAuthorities,
       submittedAt: now,

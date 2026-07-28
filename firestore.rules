@@ -159,6 +159,19 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Historical outcomes are evidence for server-side M2 retrieval. Synthetic
+    // records remain visible to authority reviewers for provenance inspection.
+    match /historical_events/{historicalEventId} {
+      allow read: if isSignedIn() && isAuthority();
+      allow write: if false;
+    }
+
+    // Dataset manifests disclose origin, intended use, and synthetic status.
+    match /dataset_manifests/{manifestId} {
+      allow read: if isSignedIn() && isAuthority();
+      allow write: if false;
+    }
+
     // ---- public_events (read-only for everyone, written by Cloud Functions) ----
     match /public_events/{eventId} {
       allow read: if true;

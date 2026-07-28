@@ -12,11 +12,11 @@ STERAS is an academic project aligned with the Visit Malaysia 2026 context. It i
 
 Project references:
 
-- [Product requirements](./steras-prd.md)
-- [Implementation plan](./docs/IMPLEMENTATION_PLAN.md)
-- [Module mapping](./docs/MODULE_MAPPING.md)
+- [Product requirements](./STERAS_PRD.md)
+- [Team documentation and module ownership](./docs/README.md)
+- [General page ownership and integration](./docs/GENERAL.md)
+- [M2 contract](./docs/modules/M2_SMART_RISK_AND_RESOURCES.md)
 - [Design guidelines](./docs/STERAS_DESIGN_GUIDELINES.md)
-- [Positive and negative test coverage](./docs/TEST_COVERAGE_MATRIX.md)
 
 ## Who uses it?
 
@@ -35,10 +35,12 @@ Organizer draft
     ↓ upload version-scoped evidence
 Submit immutable application version
     ↓
-Deterministic five-factor baseline
-    + bounded MiniMax M3 adjustment (0–15)
+Versioned deterministic category profile and scoring
     ↓
-Authoritative final risk + recommended resources
+Official score and Low/Medium/High risk level
+    + advisory MiniMax M3 category explanation
+    ↓
+Indicative safety-resource recommendation
     ↓
 Assigned authority reviews and decisions
     ├─ Amendment requested → organizer submits a new immutable version
@@ -78,22 +80,23 @@ Primary implementation:
 - `functions/src/http/withdrawEvent.ts`
 - `storage.rules`
 
-### Module 2 — Smart risk assessment
+### Module 2 — Smart risk assessment and safety resource recommendation
 
-Server-side hybrid assessment:
+Server-side category-based assessment:
 
-- deterministic weather, crowd, venue, incident-history, and holiday sub-scores;
-- rule-version and source-timestamp provenance;
-- OpenWeather context with cache and fallback handling;
-- Malaysian public-holiday and weekend context;
-- MiniMax M3 refinement using a strict non-PII allowlist;
-- server validation that limits the M3 upward adjustment to `0–15`;
-- deterministic fallback when M3 is unavailable, invalid, or times out.
+- eight versioned all-hazards domains covering crowd, fire/life safety, weather, public health, sanitation, medical capacity, security and transport;
+- deterministic HIRARC likelihood × severity with the highest residual hazard as the official result;
+- separate assessment-readiness, compliance, and evidence-confidence gates;
+- OpenWeather 5-day forecast context with cache, subscription fallback, and honest outside-horizon handling;
+- Malaysian public-holiday, verified-venue and normalized comparable-history context snapshots;
+- MiniMax M3 advisory category analysis through a strict non-PII allowlist and JSON schema;
+- deterministic continuity when M3 is unavailable, invalid, or times out.
 
-MiniMax does not produce a competing AI score. The authoritative result is:
+MiniMax never changes the official result:
 
 ```text
-final score = deterministic baseline + validated M3 adjustment
+official risk = highest deterministic residual hazard only
+M3 output = advisory explanations, concerns, evidence references, and resource considerations
 ```
 
 Primary implementation:
@@ -104,9 +107,7 @@ Primary implementation:
 - `functions/src/utils/holidays.ts`
 - `functions/src/triggers/onEventCreated.ts`
 
-### Module 3 — Safety resource recommendation
-
-Produces operational recommendations for:
+The same module produces indicative recommendations for:
 
 - police officers;
 - security personnel;
@@ -117,19 +118,21 @@ Produces operational recommendations for:
 
 Authorities may override quantities only during active review. Every override requires a rationale and records the previous values, reviewer, agency, version, timestamp, and audit entry.
 
+The current category taxonomy and resource mappings are the accepted academic prototype v1 assumptions. They remain labelled `prototype` and must be changed through a version bump rather than silently rewritten.
+
 Primary implementation:
 
 - `functions/src/engines/resourceCalculator.ts`
 - `functions/src/http/overrideResources.ts`
 - authority review UI in `frontend/src/pages/authority/AuthorityEventReview.tsx`
 
-### Module 4 — Authority review
+### Module 3 — Authority approval and notification
 
 Agency-specific operational workspace:
 
 - live dashboard and assigned review queue;
 - search, status filters, priority sorting, and pagination;
-- final risk, deterministic baseline, M3 adjustment, sub-scores, and evidence;
+- official category score/profile, source evidence, and clearly labelled M3 advisory analysis;
 - version history and decision history;
 - transactional Approve, Reject, and Amendment Requested decisions;
 - concurrent multi-agency decision aggregation;
@@ -143,20 +146,25 @@ Primary implementation:
 - `functions/src/http/authorityDecision.ts`
 - `functions/src/http/manualRecompute.ts`
 
-### Module 5 — Analytics and public views
+### Module 4 — Incident reporting and complaint handling
+
+Planned M4 scope includes organiser incident reports, authority verification, complaint tickets, private evidence, investigation history, and a verified incident projection for future M2 assessments. Existing `incidents` data is academic seed context, not a completed M4 workflow.
+
+Working contract:
+
+- `docs/modules/M4_INCIDENT_COMPLAINTS.md`
+
+### Module 5 — Analytics and reporting
 
 - authority portfolio summaries and monthly charts;
-- application, approval, final-risk, and baseline-versus-final analysis;
+- application, approval, official-risk, and AI-versus-deterministic agreement analysis;
 - local date-range filters;
 - PII-free CSV export with spreadsheet-formula neutralization;
-- searchable and filterable public approved-event calendar;
-- sanitized public event detail pages.
 
 Primary implementation:
 
 - `frontend/src/pages/authority/Analytics.tsx`
 - `frontend/src/pages/authority/analyticsData.ts`
-- `frontend/src/pages/public/`
 
 ## Main routes
 
@@ -167,7 +175,7 @@ Primary implementation:
 | `/events/:eventId` | Public | Sanitized approved-event detail |
 | `/register` | Public | Organizer registration |
 | `/login` | Public | Organizer or authority sign-in |
-| `/dashboard-preview` | Public mock preview | Design-review preview using mock data; it is not a real authority workspace |
+| `/dashboard-preview` | Public mock preview | Design-review preview using mock data; `?view=risk` and `?view=resources` show M2 monitoring views; none are real authority workspaces |
 | `/organizer` | Organizer | Organizer dashboard |
 | `/organizer/events/new` | Organizer | New event application |
 | `/organizer/events` | Organizer | Organizer application list |
@@ -175,12 +183,14 @@ Primary implementation:
 | `/organizer/events/:eventId/edit` | Organizer | Draft or amendment editing |
 | `/authority` | Authority | Authority operations dashboard |
 | `/authority/applications` | Authority | Assigned review queue |
+| `/authority/risk` | Authority | Official category assessment and evidence portfolio |
+| `/authority/resources` | Authority | Versioned indicative resource recommendation portfolio |
 | `/authority/events/:eventId` | Authority | Full authority review tool |
 | `/authority/reports` | Authority | Analytics and CSV export |
 
 Protected routes preserve the requested deep link after sign-in. Cross-role access is redirected to the signed-in user’s own workspace.
 
-Legacy authority paths are compatibility redirects: `/authority/risk`, `/authority/resources`, and `/authority/audit` go to the applications queue; `/authority/calendar` goes to the public calendar; `/authority/users` and `/authority/settings` go to the authority dashboard.
+Remaining compatibility redirects: `/authority/audit` goes to the applications queue; `/authority/calendar` goes to the public calendar; `/authority/users` and `/authority/settings` go to the authority dashboard.
 
 ## Technology
 
@@ -193,7 +203,7 @@ Legacy authority paths are compatibility redirects: `/authority/risk`, `/authori
 | File evidence | Firebase Cloud Storage |
 | Backend | Firebase Cloud Functions v2, Node.js 22 |
 | Charts | Chart.js and react-chartjs-2 |
-| AI refinement | MiniMax M3 through the Anthropic-compatible API |
+| AI advisory | MiniMax M3 through the Anthropic-compatible API; it cannot change official outputs |
 | Weather | OpenWeather API |
 | Testing | Vitest, Testing Library, Firebase Rules Unit Testing, Playwright smoke testing |
 
@@ -224,7 +234,11 @@ steras/
 │   │   └── scripts/          Staging UAT and verification tools
 │   └── test/                 Firestore and Storage Rules tests
 ├── shared/types.ts           Contracts shared by frontend and Functions
-├── docs/                     Architecture, design, testing, and operations docs
+├── docs/
+│   ├── README.md             Team documentation entry point
+│   ├── GENERAL.md            Route, page, shared UI, and integration ownership
+│   ├── modules/              One active working document per module
+│   └── ...                   Design, asset, and backup/restore references
 ├── firestore.rules
 ├── firestore.indexes.json
 ├── storage.rules
@@ -297,6 +311,11 @@ MINIMAX_API_KEY=
 OPENWEATHER_API_KEY=
 ```
 
+The weather integration prefers OpenWeather One Call 3.0 when available and
+automatically falls back to the subscription-free 5-day forecast endpoint.
+Events outside the available provider horizon are marked provisional rather
+than receiving invented clear-weather data.
+
 Set deployed project secrets through Firebase Secret Manager:
 
 ```bash
@@ -343,7 +362,7 @@ The configured local ports are:
 | Service | Port |
 |---|---:|
 | Emulator UI | 4000 |
-| Hosting | 5000 |
+| Hosting | 5002 |
 | Functions | 5001 |
 | Firestore | 8080 |
 | Authentication | 9099 |
@@ -386,13 +405,17 @@ To provision against local emulators, run the command from a shell with:
 ```bash
 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 \
 FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 \
-GCLOUD_PROJECT=steras-test \
+GCLOUD_PROJECT=linkos-496505 \
 AUTHORITY_EMAIL=reviewer@steras.test \
 AUTHORITY_PASSWORD='local-demo-password' \
 AUTHORITY_NAME='Local PDRM Reviewer' \
 AUTHORITY_TYPE=PDRM \
 npm --workspace functions run seed:authority
 ```
+
+The emulator project ID must match `VITE_FIREBASE_PROJECT_ID` in
+`frontend/.env`; otherwise the seed can succeed in a different emulator
+namespace while the frontend still reports that the account does not exist.
 
 ### Malaysian venues and incident history
 
@@ -403,6 +426,22 @@ npm run seed:staging
 ```
 
 Confirm the active project before running admin scripts. They bypass client security rules.
+
+### Complete local demo pack
+
+With the Auth and Firestore emulators running, seed stable synthetic test data:
+
+```bash
+FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 \
+FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 \
+FIREBASE_PROJECT_ID=linkos-496505 \
+npm run seed:demo
+```
+
+This emulator-only command refuses non-loopback hosts. It creates 25 venues,
+200 historical event outcomes, 50 incidents, 12 application examples, 6
+accounts and a provenance manifest. All generated history is marked synthetic
+and is not suitable for real permit decisions or accuracy claims.
 
 ## How to use the application
 
@@ -422,7 +461,7 @@ Confirm the active project before running admin scripts. They bypass client secu
 
 1. Sign in with an admin-provisioned authority account.
 2. Use the dashboard or **Applications** queue to open assigned work.
-3. Inspect the final risk first, followed by baseline provenance, M3 adjustment, sub-scores, documents, and resources.
+3. Inspect the official category score first, followed by category contributions, context evidence, advisory M3 explanation, documents, and resources.
 4. Download and inspect submitted evidence.
 5. Optionally adjust resources with a rationale of 10–1,000 characters.
 6. Enter a decision rationale and choose **Approve**, **Reject**, or **Request amendment**.
@@ -450,6 +489,8 @@ Run commands from the repository root unless stated otherwise.
 | `npm run build` | Build frontend and Functions |
 | `npm run check` | Run typecheck, lint, tests, and build |
 | `npm run verify:minimax` | Verify the configured MiniMax model |
+| `npm run verify:external` | Call MiniMax and OpenWeather, including a schema-valid 8-domain advisory and 5-day forecast check |
+| `npm run seed:demo` | Idempotently seed the complete emulator-only synthetic demo pack |
 | `npm run seed:staging` | Seed stable venues and incidents using Admin credentials |
 | `npm run uat:staging` | Run the deployed staging golden-path scenario |
 | `npm run uat:fallback` | Verify deployed deterministic fallback behavior |
@@ -471,7 +512,7 @@ npm run test:rules
 npm run build
 ```
 
-See [docs/TEST_COVERAGE_MATRIX.md](./docs/TEST_COVERAGE_MATRIX.md) for the per-feature positive/negative contract.
+See [docs/README.md](./docs/README.md) and each owned module document for the required page, contract, and verification responsibilities.
 
 `npm run check` does not start Firebase emulators and therefore does not include `npm run test:rules`; run both commands for the full release gate.
 
@@ -533,7 +574,7 @@ Check that `VITE_USE_FIREBASE_EMULATOR=true`, restart Vite after changing the en
 
 ### Assessment stays in processing or falls back
 
-Check Functions logs and local/deployed `MINIMAX_API_KEY` and `OPENWEATHER_API_KEY`. STERAS intentionally falls back to the deterministic baseline when M3 is unavailable; this is not a separate AI score.
+Check Functions logs and local/deployed `MINIMAX_API_KEY` and `OPENWEATHER_API_KEY`. When M3 is unavailable, STERAS preserves the official deterministic category result and marks only the advisory explanation unavailable.
 
 ### Seed script authentication fails
 
@@ -541,7 +582,7 @@ Run `gcloud auth application-default login`, confirm the target Firebase project
 
 ## Scope constraints
 
-STERAS does not include image-based crowd detection, IoT hardware, a custom-trained machine-learning model, or live surveillance streams. MiniMax is used only as a bounded evidence-based refinement of the deterministic risk baseline.
+STERAS does not include image-based crowd detection, IoT hardware, a custom-trained machine-learning model, or live surveillance streams. MiniMax is used only for advisory evidence-based category explanations and contextual considerations.
 
 ## License
 

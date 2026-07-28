@@ -19,19 +19,14 @@ import {
   RiskAssessment,
 } from '@shared/types';
 import { db, functions, isFirebaseConfigured, storage } from '../../config/firebase';
+import AIAdvisory from '../../components/m2/AIAdvisory';
+import CategoryProfile from '../../components/m2/CategoryProfile';
+import ContextEvidence from '../../components/m2/ContextEvidence';
+import ResourceRecommendationView from '../../components/m2/ResourceRecommendation';
+import { isCurrentResourceRecommendation, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
+import { RESOURCE_FIELDS, toResourceQuantities } from '../../components/m2/m2Presentation';
 import EmptyState from '../../components/ui/EmptyState';
-import RiskMeter from '../../components/ui/RiskMeter';
 import StatusBadge from '../../components/ui/StatusBadge';
-
-const RESOURCE_FIELDS: { key: keyof ResourceQuantities; label: string }[] = [
-  { key: 'police', label: 'Police officers' },
-  { key: 'security', label: 'Security personnel' },
-  { key: 'medicalTeams', label: 'Medical teams' },
-  { key: 'ambulances', label: 'Ambulances' },
-  { key: 'fireOfficers', label: 'Fire officers' },
-  { key: 'toilets', label: 'Portable toilets' },
-  { key: 'wasteBins', label: 'Waste bins' },
-];
 
 export default function AuthorityEventReview() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -39,6 +34,8 @@ export default function AuthorityEventReview() {
   const [assessment, setAssessment] = useState<RiskAssessment | null>(null);
   const [assessmentStatus, setAssessmentStatus] = useState<AssessmentRecord['status'] | null>(null);
   const [resources, setResources] = useState<ResourceRecommendation | null>(null);
+  const [legacyAssessment, setLegacyAssessment] = useState(false);
+  const [legacyResources, setLegacyResources] = useState(false);
   const [decisions, setDecisions] = useState<AuthorityDecision[]>([]);
   const [decisionHistory, setDecisionHistory] = useState<AuthorityDecision[]>([]);
   const [versions, setVersions] = useState<EventVersion[]>([]);
@@ -77,6 +74,8 @@ export default function AuthorityEventReview() {
     if (!isFirebaseConfigured || !eventId || !versionId) {
       setAssessment(null);
       setResources(null);
+      setLegacyAssessment(false);
+      setLegacyResources(false);
       return;
     }
     const eventReference = doc(db, COLLECTIONS.EVENTS, eventId);
@@ -84,11 +83,14 @@ export default function AuthorityEventReview() {
     const unsubscribeAssessment = onSnapshot(doc(eventReference, COLLECTIONS.ASSESSMENTS, versionId), (snapshot) => {
       const record = snapshot.data() as AssessmentRecord | undefined;
       setAssessmentStatus(record?.status ?? null);
-      setAssessment(record?.status === 'ready' ? record as RiskAssessment : null);
+      setAssessment(isCurrentRiskAssessment(record) ? record : null);
+      setLegacyAssessment(record?.status === 'ready' && !isCurrentRiskAssessment(record));
       setSupportingDataError('');
     }, supportingError);
     const unsubscribeResources = onSnapshot(doc(eventReference, COLLECTIONS.RESOURCES, versionId), (snapshot) => {
-      setResources(snapshot.exists() ? snapshot.data() as ResourceRecommendation : null);
+      const record = snapshot.data();
+      setResources(isCurrentResourceRecommendation(record) ? record : null);
+      setLegacyResources(snapshot.exists() && !isCurrentResourceRecommendation(record));
     }, supportingError);
     const unsubscribeDecisions = onSnapshot(query(collection(eventReference, COLLECTIONS.DECISIONS)), (snapshot) => {
       setDecisions(snapshot.docs.map((item) => item.data() as AuthorityDecision));
@@ -196,19 +198,15 @@ export default function AuthorityEventReview() {
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
         <div className="space-y-5">
           <section className="card">
-            <div className="card-header"><h2 className="font-semibold">Final risk assessment</h2></div>
+            <div className="card-header"><div><h2 className="font-semibold">Official category-based assessment</h2><p className="mt-0.5 text-xs text-ink-500">Deterministic result · AI cannot change this score</p></div></div>
             <div className="card-body">
-              {!assessment ? <p className="text-sm text-ink-500">{assessmentStatus === 'failed' ? 'Assessment failed and requires a retry.' : 'Assessment is still processing.'}</p> : (
+              {!assessment ? <p className="text-sm text-ink-500">{legacyAssessment ? 'Legacy assessment detected. Recompute this event version before recording a decision.' : assessmentStatus === 'failed' ? 'Assessment failed and requires a retry.' : 'Assessment is still processing.'}</p> : (
                 <div className="space-y-5">
-                  <div className="flex items-center gap-3"><RiskMeter level={assessment.finalRiskLevel} /><strong className="text-3xl">{assessment.finalScore}</strong><span className="text-ink-500">/ 100</span></div>
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <Metric label="Baseline" value={assessment.baselineScore} />
-                    <Metric label="M3 adjustment" value={`+${assessment.ai.validatedAdjustment}`} />
-                    <Metric label="M3 status" value={assessment.ai.status} />
-                  </div>
-                  <p className="text-sm leading-relaxed text-ink-700">{assessment.ai.reasoning}</p>
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-                    {(['weather', 'crowd', 'venue', 'history', 'holiday'] as const).map((key) => <Metric key={key} label={key} value={assessment.subScores[key]} />)}
+                  <CategoryProfile assessment={assessment} />
+                  <AIAdvisory advisory={assessment.aiAdvisory} officialRiskLevel={assessment.officialRiskLevel} />
+                  <div className="border-t border-[#e3dacb] pt-5">
+                    <h3 className="mb-4 font-display text-sm font-semibold text-ink-800">Versioned context evidence</h3>
+                    <ContextEvidence assessment={assessment} />
                   </div>
                 </div>
               )}
@@ -224,7 +222,7 @@ export default function AuthorityEventReview() {
               {resources && reviewOpen && !editingResources && <button type="button" className="btn-secondary !px-3 !py-1.5" onClick={() => setEditingResources(true)}><Pencil size={14} /> Adjust</button>}
             </div>
             <div className="card-body">
-              {!resources || !resourceDraft ? <p className="text-sm text-ink-500">No recommendation yet.</p> : editingResources ? (
+              {!resources || !resourceDraft ? <p className="text-sm text-ink-500">{legacyResources ? 'Legacy resource record detected. Recompute this event version before review.' : 'No recommendation yet.'}</p> : editingResources ? (
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                     {RESOURCE_FIELDS.map(({ key, label }) => (
@@ -242,9 +240,7 @@ export default function AuthorityEventReview() {
                   </div>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  {RESOURCE_FIELDS.map(({ key, label }) => <Metric key={key} label={label} value={resourceDraft[key]} />)}
-                </div>
+                <ResourceRecommendationView recommendation={resources} showOverrideProvenance />
               )}
             </div>
           </section>
@@ -349,14 +345,6 @@ function evidenceName(path: string): string {
   const encoded = path.split('/').pop() ?? 'evidence-file';
   const decoded = decodeURIComponent(encoded);
   return decoded.replace(/^[0-9a-f]{8}-[0-9a-f-]{27}-/i, '');
-}
-
-function toResourceQuantities(resource: ResourceRecommendation): ResourceQuantities {
-  return Object.fromEntries(RESOURCE_FIELDS.map(({ key }) => [key, resource[key]])) as unknown as ResourceQuantities;
-}
-
-function Metric({ label, value }: { label: string; value: string | number }) {
-  return <div className="rounded-md bg-cream-50 p-3"><div className="text-xs text-ink-500">{label}</div><div className="mt-0.5 font-semibold capitalize text-ink-800">{value}</div></div>;
 }
 
 function Row({ label, value }: { label: string; value: string }) {

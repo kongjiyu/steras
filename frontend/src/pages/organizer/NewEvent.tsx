@@ -1,7 +1,7 @@
 import PageHeader from '../../components/ui/PageHeader';
-import { EVENT_TYPES, EventType, EventDetails } from '@shared/types';
+import { EVENT_TYPES, EventType, EventDetails, EventRiskProfile, Venue } from '@shared/types';
 import { useEffect, useState, FormEvent, ChangeEvent } from 'react';
-import { arrayRemove, arrayUnion, collection, addDoc, doc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { arrayRemove, arrayUnion, collection, addDoc, doc, getDoc, getDocs, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { deleteObject, ref, uploadBytesResumable } from 'firebase/storage';
 import { db, functions, isFirebaseConfigured, storage } from '../../config/firebase';
@@ -24,6 +24,7 @@ export default function NewEvent() {
   const [submitting, setSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [venues, setVenues] = useState<Venue[]>([]);
 
   const [form, setForm] = useState<EventDetails>({
     name: '',
@@ -47,6 +48,22 @@ export default function NewEvent() {
   const update = <K extends keyof EventDetails>(key: K, value: EventDetails[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
+
+  const updateRiskProfile = <K extends keyof EventRiskProfile>(key: K, value: EventRiskProfile[K]) => {
+    setForm((previous) => ({
+      ...previous,
+      riskProfile: { ...previous.riskProfile, [key]: value },
+    }));
+  };
+
+  useEffect(() => {
+    if (!isFirebaseConfigured) return;
+    getDocs(collection(db, COLLECTIONS.VENUES))
+      .then((snapshot) => setVenues(snapshot.docs
+        .map((document) => ({ venueId: document.id, ...document.data() }) as Venue)
+        .sort((left, right) => left.name.localeCompare(right.name))))
+      .catch(() => setVenues([]));
+  }, []);
 
   useEffect(() => {
     if (!eventId || !isFirebaseConfigured) return;
@@ -204,7 +221,7 @@ export default function NewEvent() {
     <div>
       <PageHeader
         title={draftId ? 'Edit Event Application' : 'New Event Application'}
-        description="Complete the operational details and supporting evidence used for deterministic assessment and bounded M3 refinement."
+        description="Complete the operational details and supporting evidence used for the official category assessment and advisory M3 explanation."
       />
 
       <form onSubmit={handleSubmit} className="overflow-hidden rounded-lg border border-[#ded5c5] bg-[#fffdf8] shadow-card">
@@ -233,18 +250,49 @@ export default function NewEvent() {
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
+                <label htmlFor="venue-registry" className="field-label">Verified venue registry</label>
+                <select
+                  id="venue-registry"
+                  className="input mt-1"
+                  value={form.venueId ?? ''}
+                  onChange={(e) => {
+                    const venue = venues.find((item) => item.venueId === e.target.value);
+                    if (!venue) {
+                      setForm((previous) => ({ ...previous, venueId: undefined }));
+                      return;
+                    }
+                    setForm((previous) => ({
+                      ...previous,
+                      venueId: venue.venueId,
+                      venueName: venue.name,
+                      venueAddress: venue.address,
+                      venueCapacity: venue.verifiedSafeCapacity ?? venue.capacity,
+                      venueLocation: venue.location,
+                    }));
+                  }}
+                >
+                  <option value="">Custom / unverified venue</option>
+                  {venues.map((venue) => (
+                    <option key={venue.venueId} value={venue.venueId}>{venue.name}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-ink-500">Registry selection supplies the stable venue ID used for capacity and history retrieval.</p>
+              </div>
+              <div>
                 <label htmlFor="venue-name" className="field-label">Venue name *</label>
-                <input id="venue-name" className="input mt-1" required value={form.venueName} onChange={(e) => update('venueName', e.target.value)} />
+                <input id="venue-name" className="input mt-1" required value={form.venueName} onChange={(e) => setForm((previous) => ({ ...previous, venueId: undefined, venueName: e.target.value }))} />
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="venue-address" className="field-label">Venue address *</label>
+                <input id="venue-address" className="input mt-1" required value={form.venueAddress} onChange={(e) => update('venueAddress', e.target.value)} />
               </div>
               <div>
                 <label htmlFor="venue-capacity" className="field-label">Venue capacity *</label>
                 <input id="venue-capacity" type="number" min={1} className="input mt-1" required value={form.venueCapacity || ''} onChange={(e) => update('venueCapacity', Number(e.target.value))} />
               </div>
-            </div>
-
-            <div>
-              <label htmlFor="venue-address" className="field-label">Venue address *</label>
-              <input id="venue-address" className="input mt-1" required value={form.venueAddress} onChange={(e) => update('venueAddress', e.target.value)} />
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
@@ -309,6 +357,35 @@ export default function NewEvent() {
           </fieldset>
 
           <fieldset className="space-y-4 border-t border-[#e3dacb] pt-8">
+            <legend className="section-title mb-2 pr-4">All-hazards profile</legend>
+            <p className="text-sm leading-6 text-ink-500">
+              Declared controls are recorded as evidence but do not reduce residual risk until an authority or trusted registry verifies them.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {RISK_PROFILE_OPTIONS.map(({ key, label }) => (
+                <label key={key} className="flex min-h-12 items-center gap-3 border border-[#ded5c5] bg-cream-50 px-3 py-2 text-sm text-ink-700">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(form.riskProfile?.[key])}
+                    onChange={(event) => updateRiskProfile(key, event.target.checked)}
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label htmlFor="vulnerable-attendees" className="field-label">Vulnerable attendees estimate (%)</label>
+                <input id="vulnerable-attendees" type="number" min={0} max={100} className="input mt-1" value={form.riskProfile?.vulnerableAttendeesPercent ?? ''} onChange={(event) => updateRiskProfile('vulnerableAttendeesPercent', Number(event.target.value))} />
+              </div>
+              <div>
+                <label htmlFor="hospital-travel" className="field-label">Nearest hospital travel time (minutes)</label>
+                <input id="hospital-travel" type="number" min={0} max={240} className="input mt-1" value={form.riskProfile?.nearestHospitalTravelMinutes ?? ''} onChange={(event) => updateRiskProfile('nearestHospitalTravelMinutes', Number(event.target.value))} />
+              </div>
+            </div>
+          </fieldset>
+
+          <fieldset className="space-y-4 border-t border-[#e3dacb] pt-8">
             <legend className="section-title mb-2 pr-4">Supporting evidence</legend>
             <p className="text-sm leading-6 text-ink-500">Upload PDF, JPEG, PNG, or WebP files up to 10 MB each. Submitted files are locked to this application version.</p>
             <label className="flex min-h-24 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-[#b9ad97] bg-cream-50 px-4 py-5 text-center text-sm font-semibold text-brand-700 hover:bg-cream-100">
@@ -359,3 +436,39 @@ function documentName(path: string): string {
   const encoded = path.split('/').pop() ?? 'supporting-file';
   return decodeURIComponent(encoded).replace(/^[0-9a-f]{8}-[0-9a-f-]{27}-/i, '');
 }
+
+const RISK_PROFILE_OPTIONS: Array<{
+  key: keyof Pick<
+    EventRiskProfile,
+    | 'internationalAttendees'
+    | 'alcoholServed'
+    | 'foodServed'
+    | 'freeDrinkingWater'
+    | 'overnightAccommodation'
+    | 'pyrotechnics'
+    | 'temporaryStructures'
+    | 'rivalryOrTensionExpected'
+    | 'crowdManagementPlan'
+    | 'trafficManagementPlan'
+    | 'severeWeatherPlan'
+    | 'medicalPlan'
+    | 'evacuationPlanTested'
+    | 'authorityCoordinationConfirmed'
+  >;
+  label: string;
+}> = [
+  { key: 'internationalAttendees', label: 'International attendees expected' },
+  { key: 'alcoholServed', label: 'Alcohol served' },
+  { key: 'foodServed', label: 'Food served' },
+  { key: 'freeDrinkingWater', label: 'Free drinking water planned' },
+  { key: 'overnightAccommodation', label: 'Overnight accommodation involved' },
+  { key: 'pyrotechnics', label: 'Pyrotechnics or special effects' },
+  { key: 'temporaryStructures', label: 'Temporary stages or structures' },
+  { key: 'rivalryOrTensionExpected', label: 'Rivalry or crowd tension expected' },
+  { key: 'crowdManagementPlan', label: 'Crowd management plan declared' },
+  { key: 'trafficManagementPlan', label: 'Traffic management plan declared' },
+  { key: 'severeWeatherPlan', label: 'Severe weather plan declared' },
+  { key: 'medicalPlan', label: 'Medical plan declared' },
+  { key: 'evacuationPlanTested', label: 'Evacuation plan tested' },
+  { key: 'authorityCoordinationConfirmed', label: 'Authority coordination confirmed' },
+];

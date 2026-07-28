@@ -138,7 +138,7 @@ export default function Analytics() {
           <section aria-label="Analytics summary" className="mb-7 grid grid-cols-2 gap-x-6 gap-y-5 border-b border-[#ded4c1] pb-7 lg:grid-cols-5">
             <Summary label="Applications" value={summary.applications} />
             <Summary label="Approved" value={summary.approved} />
-            <Summary label="Avg adjustment" value={`+${summary.averageAdjustment.toFixed(1)}`} />
+            <Summary label="AI agreement" value={`${(summary.aiCategoryAgreementRate * 100).toFixed(0)}%`} />
             <Summary label="M3 fallback" value={`${(summary.fallbackRate * 100).toFixed(0)}%`} />
             <Summary label="Avg turnaround" value={`${summary.averageTurnaroundHours.toFixed(1)}h`} />
           </section>
@@ -150,13 +150,12 @@ export default function Analytics() {
                 { label: 'Approvals', data: monthly.map((item) => item.approvals), backgroundColor: '#c99425' },
               ] }} />
             </Chart>
-            <Chart title="Final risk distribution" subtitle="Assessed applications by final risk level">
+            <Chart title="Official risk distribution" subtitle="Applications by deterministic category-based risk level">
               <Bar options={{ ...chartOptions, plugins: { legend: { display: false } } }} data={{ labels: ['Low', 'Medium', 'High'], datasets: [{ label: 'Applications', data: [risks.Low, risks.Medium, risks.High], backgroundColor: ['#5f8d48', '#d39b2a', '#c84a3d'] }] }} />
             </Chart>
-            <Chart title="Baseline versus final score" subtitle="Monthly averages after validated M3 adjustment">
+            <Chart title="Official category score" subtitle="Monthly deterministic category-based average">
               <Line options={chartOptions} data={{ labels, datasets: [
-                { label: 'Baseline', data: monthly.map((item) => average(item.baselines)), borderColor: '#77715f', backgroundColor: '#77715f', tension: 0.25 },
-                { label: 'Final', data: monthly.map((item) => average(item.finals)), borderColor: '#627820', backgroundColor: '#627820', tension: 0.25 },
+                { label: 'Official score', data: monthly.map((item) => average(item.officialScores)), borderColor: '#627820', backgroundColor: '#627820', tension: 0.25 },
               ] }} />
             </Chart>
           </div>

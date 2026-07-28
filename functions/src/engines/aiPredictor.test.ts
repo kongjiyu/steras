@@ -1,6 +1,14 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { DeterministicBaseline, EventRecord, WeatherContext } from '@shared/types';
-import { AIRefinementError, AI_TIMEOUT_MS, buildAllowedInput, clearAICache, parseAIRefinement, predictWithAI, refineWithAIOrFallback } from './aiPredictor';
+import { AssessmentContextSnapshot, DeterministicCategoryResult, EventRecord } from '@shared/types';
+import {
+  AIAdvisoryError,
+  AI_TIMEOUT_MS,
+  analyseWithAIOrFallback,
+  buildAllowedInput,
+  clearAICache,
+  parseAIAdvisory,
+  predictWithAI,
+} from './aiPredictor';
 
 const event: EventRecord = {
   eventId: 'private-event-id', organizerId: 'private-user-id', status: 'Pending', currentVersionNumber: 1,
@@ -12,91 +20,128 @@ const event: EventRecord = {
     organizerName: 'Private Person', organizerEmail: 'private@example.com', organizerPhone: '+60111111111',
   },
 };
-const weather: WeatherContext = { forecast: 'Thunderstorm', temperature: 31, humidity: 85, windSpeed: 4, precipitationProbability: 80, severeAlert: true };
-const baseline: DeterministicBaseline = {
-  subScores: { weather: 50, crowd: 40, venue: 30, history: 5, holiday: 0 },
-  weightedContributions: { weather: 15, crowd: 10, venue: 6, history: 0.75, holiday: 0 },
-  baselineScore: 32, baselineRiskLevel: 'Low',
-  evidence: [{ key: 'weather', description: 'Thunderstorm', sourceTimestamp: 1 }],
-  ruleVersion: 'test', computedAt: 1,
+
+const context: AssessmentContextSnapshot = {
+  weather: {
+    data: { forecast: 'Thunderstorm', temperature: 31, humidity: 85, windSpeed: 4, precipitationProbability: 80, severeAlert: true },
+    source: 'openweather', freshness: 'fresh', fetchedAt: 1, expiresAt: 2, forecastFor: 10_000,
+  },
+  calendar: {
+    localDate: '2026-07-21', dayOfWeek: 'Tuesday', isWeekend: false, isHolidayOrAdjacent: false,
+    sourceVersion: 'test', sourceTimestamp: 1,
+  },
+  venue: { matched: true, venueId: 'venue-1', submittedCapacity: 10_000, registeredCapacity: 10_000, capacityDifference: 0, fetchedAt: 1 },
+  incidentHistory: { matched: true, venueId: 'venue-1', incidentIds: [], total: 0, bySeverity: { low: 0, medium: 0, high: 0 }, fetchedAt: 1 },
 };
-const validResponse = JSON.stringify({
-  proposedAdjustment: 8,
-  reasoning: 'Outdoor crowd and thunderstorm risks compound.',
-  compoundEffects: ['weather_and_outdoor_crowd'],
-  keyConcerns: ['thunderstorm'],
-  citedEvidenceKeys: ['weather', 'crowd', 'venue'],
-});
+
+const categoryIds = ['weather', 'crowd', 'venue', 'history', 'holiday'];
+const officialResult: DeterministicCategoryResult = {
+  categoryAssignments: categoryIds.map((categoryId, index) => ({
+    categoryId,
+    categoryName: categoryId,
+    score: 20 + index,
+    riskLevel: 'Low',
+    weight: 0.2,
+    weightedContribution: 4 + index * 0.2,
+    rationale: `${categoryId} evidence`,
+    evidenceKeys: [categoryId as 'weather'],
+    guidelineChecks: [`prototype.${categoryId}`],
+  })),
+  officialScore: 32,
+  officialRiskLevel: 'Low',
+  evidence: [{ key: 'weather', description: 'Thunderstorm', sourceTimestamp: 1, source: 'openweather', status: 'fresh' }],
+  categorySchemaVersion: 'test-category-v1',
+  scoringLogicVersion: 'test-scoring-v1',
+  categorySchemaStatus: 'prototype',
+  computedAt: 1,
+};
+
+const validPayload = {
+  overallBand: 'Medium',
+  overallExplanation: 'Outdoor crowd and thunderstorm risks require authority attention.',
+  categories: categoryIds.map((categoryId) => ({
+    categoryId,
+    advisoryBand: categoryId === 'weather' ? 'High' : 'Low',
+    explanation: `Advisory explanation for ${categoryId}.`,
+    evidenceReferences: [categoryId],
+    keyConcerns: [],
+    resourceConsiderations: [],
+  })),
+  keyConcerns: ['Thunderstorm exposure'],
+  resourceConsiderations: ['Review wet-weather medical positioning'],
+  citedEvidenceKeys: ['weather', 'crowd', 'venue', 'history', 'holiday'],
+};
+const validResponse = JSON.stringify(validPayload);
 
 beforeEach(clearAICache);
 
-describe('parseAIRefinement', () => {
-  it('accepts a valid bounded refinement', () => {
-    expect(parseAIRefinement(validResponse).proposedAdjustment).toBe(8);
+describe('parseAIAdvisory', () => {
+  it('accepts structured advisory analysis for every official category', () => {
+    expect(parseAIAdvisory(validResponse, categoryIds)).toMatchObject({ overallBand: 'Medium', categories: expect.arrayContaining([expect.objectContaining({ categoryId: 'weather' })]) });
   });
 
-  it.each([-1, 16, 2.5])('rejects adjustment %s', (proposedAdjustment) => {
-    expect(() => parseAIRefinement(JSON.stringify({ ...JSON.parse(validResponse), proposedAdjustment }))).toThrow(/proposedAdjustment/);
+  it('rejects score changes, resource quantities, and other unsupported fields', () => {
+    expect(() => parseAIAdvisory(JSON.stringify({ ...validPayload, officialScore: 99 }), categoryIds)).toThrow(/unsupported fields/);
+    expect(() => parseAIAdvisory(JSON.stringify({ ...validPayload, police: 20 }), categoryIds)).toThrow(/unsupported fields/);
   });
 
-  it('rejects evidence keys that were not supplied by the server', () => {
-    expect(() => parseAIRefinement(JSON.stringify({ ...JSON.parse(validResponse), citedEvidenceKeys: ['organizer_reputation'] }))).toThrow(/evidence key/);
+  it('rejects missing, duplicate, or unknown category analyses', () => {
+    expect(() => parseAIAdvisory(JSON.stringify({ ...validPayload, categories: validPayload.categories.slice(1) }), categoryIds)).toThrow(/exactly/);
+    const duplicate = validPayload.categories.map((category) => ({ ...category }));
+    duplicate[1].categoryId = 'weather';
+    expect(() => parseAIAdvisory(JSON.stringify({ ...validPayload, categories: duplicate }), categoryIds)).toThrow(/duplicate/);
   });
 
-  it('rejects extra fields and oversized responses', () => {
-    expect(() => parseAIRefinement(JSON.stringify({ ...JSON.parse(validResponse), finalScore: 99 }))).toThrow(/unsupported fields/);
-    expect(() => parseAIRefinement('x'.repeat(16_001))).toThrow(/allowed size/);
-  });
-
-  it('rejects scalar values where the response contract requires arrays', () => {
-    expect(() => parseAIRefinement(JSON.stringify({ ...JSON.parse(validResponse), compoundEffects: 'none' }))).toThrow(/compoundEffects/);
+  it('rejects unknown evidence keys and scalar array fields', () => {
+    expect(() => parseAIAdvisory(JSON.stringify({ ...validPayload, citedEvidenceKeys: ['organizer_reputation'] }), categoryIds)).toThrow(/evidence key/);
+    expect(() => parseAIAdvisory(JSON.stringify({ ...validPayload, keyConcerns: 'none' }), categoryIds)).toThrow(/keyConcerns/);
   });
 });
 
 describe('predictWithAI', () => {
-  it('keeps the AI deadline below the 15-second fallback requirement', () => {
-    expect(AI_TIMEOUT_MS).toBeLessThan(15_000);
+  it('allows MiniMax M3 enough time to return structured advisory output', () => {
+    expect(AI_TIMEOUT_MS).toBe(30_000);
   });
-  it('sends only the approved non-PII allowlist', () => {
-    const input = buildAllowedInput(event, weather, false, false, baseline);
+
+  it('sends only the approved non-PII allowlist and the immutable official result', () => {
+    const input = buildAllowedInput(event, context, officialResult);
     expect(input).not.toContain('Private');
     expect(input).not.toContain('private@');
     expect(input).not.toContain('+601');
     expect(input).not.toContain('private-user-id');
-    expect(JSON.parse(input).event).toEqual({
-      type: 'festival', expectedAttendance: 8_000, venueCapacity: 10_000, capacityUtilization: 0.8,
-      environment: 'outdoor', coverage: 'uncovered', seating: 'mixed', durationHours: 10_000 / 3_600_000,
-    });
+    expect(JSON.parse(input).officialResult).toMatchObject({ score: 32, riskLevel: 'Low', categorySchemaVersion: 'test-category-v1' });
   });
 
   it('caches successful parsed output by model, prompt, and allowlisted input', async () => {
     let requests = 0;
     const request = async () => { requests += 1; return validResponse; };
-    const first = await predictWithAI('secret', event, weather, false, false, baseline, { now: 1_000, request });
-    const second = await predictWithAI('secret', event, weather, false, false, baseline, { now: 2_000, request });
+    const first = await predictWithAI('secret', event, context, officialResult, { now: 1_000, request });
+    const second = await predictWithAI('secret', event, context, officialResult, { now: 2_000, request });
     expect(first.cacheStatus).toBe('miss');
     expect(second.cacheStatus).toBe('hit');
     expect(requests).toBe(1);
   });
 
   it('classifies timeout and unavailable failures without returning partial output', async () => {
-    await expect(predictWithAI('secret', event, weather, false, false, baseline, {
+    await expect(predictWithAI('secret', event, context, officialResult, {
       timeoutMs: 5,
       request: () => new Promise(() => undefined),
-    })).rejects.toMatchObject({ kind: 'timeout' } satisfies Partial<AIRefinementError>);
-    await expect(predictWithAI('secret', event, weather, false, false, baseline, {
+    })).rejects.toMatchObject({ kind: 'timeout' } satisfies Partial<AIAdvisoryError>);
+    await expect(predictWithAI('secret', event, context, officialResult, {
       request: async () => { throw new Error('quota exceeded'); },
-    })).rejects.toMatchObject({ kind: 'unavailable' } satisfies Partial<AIRefinementError>);
+    })).rejects.toMatchObject({ kind: 'unavailable' } satisfies Partial<AIAdvisoryError>);
   });
 
   it.each([
     ['timeout', 'unavailable'],
     ['unavailable', 'unavailable'],
     ['invalid', 'invalid'],
-  ] as const)('falls back to baseline for %s failures', async (kind, status) => {
-    const result = await refineWithAIOrFallback('secret', event, weather, false, false, baseline, async () => {
-      throw new AIRefinementError(kind, 'test failure');
+  ] as const)('preserves the official result for %s failures', async (kind, status) => {
+    const before = structuredClone(officialResult);
+    const result = await analyseWithAIOrFallback('secret', event, context, officialResult, async () => {
+      throw new AIAdvisoryError(kind, 'test failure');
     });
-    expect(result).toMatchObject({ status, proposedAdjustment: 0, validatedAdjustment: 0, cacheStatus: 'not-applicable' });
+    expect(result).toMatchObject({ status, label: 'advisory', categories: [], cacheStatus: 'not-applicable' });
+    expect(officialResult).toEqual(before);
   });
 });

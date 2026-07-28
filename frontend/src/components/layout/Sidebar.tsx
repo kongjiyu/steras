@@ -5,7 +5,9 @@ import {
   FileText,
   CalendarDays,
   ChartLine,
+  Boxes,
   LogOut,
+  ShieldAlert,
 } from 'lucide-react';
 import logoUrl from '../../assets/brand/steras-logo-horizontal-inverse.svg';
 import logoMark from '../../assets/brand/steras-mark.svg';
@@ -26,11 +28,30 @@ interface SidebarProps {
   onSignOut?: () => void | Promise<void>;
 }
 
-const navItems = [
-  { to: '/authority',              label: 'Dashboard',        icon: LayoutDashboard, end: true },
-  { to: '/authority/applications', label: 'Applications',     icon: FileText },
-  { to: '/authority/reports',      label: 'Reports',          icon: ChartLine },
+const navSections = [
+  {
+    label: 'Operations',
+    items: [
+      { to: '/authority', label: 'Dashboard', mobileLabel: 'Home', icon: LayoutDashboard, end: true },
+      { to: '/authority/applications', label: 'Applications', mobileLabel: 'Queue', icon: FileText },
+    ],
+  },
+  {
+    label: 'M2 intelligence',
+    items: [
+      { to: '/authority/risk', label: 'Risk assessments', mobileLabel: 'Risk', icon: ShieldAlert },
+      { to: '/authority/resources', label: 'Resources', mobileLabel: 'Plans', icon: Boxes },
+    ],
+  },
+  {
+    label: 'Insights',
+    items: [
+      { to: '/authority/reports', label: 'Reports', mobileLabel: 'Reports', icon: ChartLine },
+    ],
+  },
 ];
+
+const navItems = navSections.flatMap((section) => section.items);
 
 export default function Sidebar({ user, activePath, onSignOut }: SidebarProps) {
   return (
@@ -46,9 +67,10 @@ export default function Sidebar({ user, activePath, onSignOut }: SidebarProps) {
       </div>
 
       <nav className="authority-sidebar__nav flex-1 overflow-y-auto">
-        <p>Operations</p>
-        <ul>
-          {navItems.map((item) => {
+        {navSections.map((section) => <div key={section.label} className="authority-nav-section">
+          <p>{section.label}</p>
+          <ul>
+          {section.items.map((item) => {
             const Icon = item.icon;
             const isActive = activePath
               ? activePath === item.to
@@ -69,7 +91,8 @@ export default function Sidebar({ user, activePath, onSignOut }: SidebarProps) {
               </li>
             );
           })}
-        </ul>
+          </ul>
+        </div>)}
       </nav>
 
       <div className="authority-sidebar__user">
@@ -107,7 +130,7 @@ export default function Sidebar({ user, activePath, onSignOut }: SidebarProps) {
             className={({ isActive }) => `authority-mobile-link ${isActive ? 'is-active' : ''}`}
           >
             <Icon size={18} strokeWidth={1.8} />
-            <span>{item.label}</span>
+            <span>{item.mobileLabel}</span>
           </NavLink>
         );
       })}

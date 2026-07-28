@@ -4,10 +4,8 @@ import {
   COLLECTIONS,
   EventRecord,
   RiskAssessment,
-  WeatherContext,
-  finalScoreFor,
 } from '@shared/types';
-import { refineWithAIOrFallback } from '../engines/aiPredictor';
+import { analyseWithAIOrFallback } from '../engines/aiPredictor';
 
 const projectId = process.env.FIREBASE_PROJECT_ID ?? 'linkos-496505';
 const eventId = process.env.UAT_FALLBACK_EVENT_ID ?? 'uat-approval-1784011049847-1f1eca77';
@@ -25,25 +23,23 @@ async function run() {
   const assessment = assessmentSnapshot.data() as RiskAssessment | undefined;
   if (!assessment || assessment.status !== 'ready') throw new Error(`Assessment ${eventId}/${versionId} is not ready.`);
 
-  const weather: WeatherContext = {
-    forecast: 'Fallback verification context',
-    temperature: 28,
-    humidity: 70,
-    windSpeed: 2,
-    precipitationProbability: 20,
-    severeAlert: false,
+  const officialBefore = {
+    score: assessment.officialScore,
+    level: assessment.officialRiskLevel,
+    categories: structuredClone(assessment.categoryAssignments),
   };
   const startedAt = Date.now();
-  const refinement = await refineWithAIOrFallback('', event, weather, false, false, assessment);
+  const advisory = await analyseWithAIOrFallback('', event, assessment.contextSnapshot, assessment);
   const elapsedMs = Date.now() - startedAt;
-  const final = finalScoreFor(assessment.baselineScore, refinement.validatedAdjustment);
 
   if (elapsedMs >= 15_000) throw new Error(`Fallback exceeded 15 seconds: ${elapsedMs}ms.`);
-  if (refinement.status !== 'unavailable' || refinement.validatedAdjustment !== 0) {
-    throw new Error(`Unexpected fallback result: status=${refinement.status}, adjustment=${refinement.validatedAdjustment}.`);
+  if (advisory.status !== 'unavailable' || advisory.categories.length !== 0 || advisory.label !== 'advisory') {
+    throw new Error(`Unexpected fallback result: status=${advisory.status}, categories=${advisory.categories.length}.`);
   }
-  if (final.finalScore !== assessment.baselineScore || final.finalRiskLevel !== assessment.baselineRiskLevel) {
-    throw new Error('Fallback did not preserve the deterministic baseline result.');
+  if (assessment.officialScore !== officialBefore.score
+    || assessment.officialRiskLevel !== officialBefore.level
+    || JSON.stringify(assessment.categoryAssignments) !== JSON.stringify(officialBefore.categories)) {
+    throw new Error('Fallback did not preserve the official deterministic category result.');
   }
 
   console.info(JSON.stringify({
@@ -51,11 +47,10 @@ async function run() {
     eventId,
     versionId,
     elapsedMs,
-    aiStatus: refinement.status,
-    validatedAdjustment: refinement.validatedAdjustment,
-    baselineScore: assessment.baselineScore,
-    finalScore: final.finalScore,
-    baselinePreserved: true,
+    aiStatus: advisory.status,
+    officialScore: assessment.officialScore,
+    officialRiskLevel: assessment.officialRiskLevel,
+    officialResultPreserved: true,
     productionSecretRead: false,
     stagingWrites: false,
   }, null, 2));

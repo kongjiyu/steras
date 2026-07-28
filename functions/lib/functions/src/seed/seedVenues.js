@@ -1,5 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.VENUES = void 0;
+exports.stableVenueId = stableVenueId;
+exports.seedVenues = seedVenues;
 const app_1 = require("firebase-admin/app");
 const firestore_1 = require("firebase-admin/firestore");
 const types_1 = require("../../../shared/types");
@@ -7,7 +10,7 @@ const app = (0, app_1.initializeApp)({
     credential: (0, app_1.applicationDefault)(),
     projectId: process.env.FIREBASE_PROJECT_ID ?? process.env.GCLOUD_PROJECT ?? 'linkos-496505',
 });
-const VENUES = [
+exports.VENUES = [
     { name: 'Axiata Arena', address: 'Bukit Jalil, Kuala Lumpur', capacity: 16_000, location: { lat: 3.057, lng: 101.691 }, riskNotes: 'Indoor arena, multiple exits' },
     { name: 'Dataran Merdeka', address: 'Kuala Lumpur City Centre', capacity: 50_000, location: { lat: 3.148, lng: 101.694 }, riskNotes: 'Open field with limited shade' },
     { name: 'KLCC Park', address: 'KLCC, Kuala Lumpur', capacity: 30_000, location: { lat: 3.157, lng: 101.711 }, riskNotes: 'Urban park near major roads' },
@@ -55,9 +58,9 @@ function generateIncidents(venueId, venueName, venueIndex) {
         };
     });
 }
-async function seed() {
+async function seedVenues() {
     const db = (0, firestore_1.getFirestore)(app);
-    for (const [venueIndex, value] of VENUES.entries()) {
+    for (const [venueIndex, value] of exports.VENUES.entries()) {
         const venueId = stableVenueId(value.name);
         const incidents = generateIncidents(venueId, value.name, venueIndex);
         const venue = { ...value, venueId, incidentCount: incidents.length };
@@ -67,10 +70,12 @@ async function seed() {
         }
         console.log(`[seed] ${venue.name}: ${incidents.length} incidents`);
     }
-    console.log(`[seed] Done. ${VENUES.length} stable venues seeded.`);
+    console.log(`[seed] Done. ${exports.VENUES.length} stable venues seeded.`);
 }
-seed().catch((error) => {
-    console.error('[seed] failed:', error);
-    process.exit(1);
-});
+if (require.main === module) {
+    seedVenues().catch((error) => {
+        console.error('[seed] failed:', error);
+        process.exit(1);
+    });
+}
 //# sourceMappingURL=seedVenues.js.map

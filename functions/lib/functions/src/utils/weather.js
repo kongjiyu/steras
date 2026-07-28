@@ -13,7 +13,7 @@ const CACHE = new Map();
 async function fetchWeather(location, fallbackName, forecastFor, options = {}) {
     const now = options.now ?? Date.now();
     if (!location)
-        return fallbackSnapshot(forecastFor, now, 'Location unavailable');
+        return fallbackSnapshot(forecastFor, now, 'Location unavailable', 'unavailable');
     const cacheKey = `${location.lat.toFixed(2)},${location.lng.toFixed(2)},${localDate(forecastFor)}`;
     const cached = CACHE.get(cacheKey);
     if (cached && cached.expiresAt > now) {
@@ -23,12 +23,13 @@ async function fetchWeather(location, fallbackName, forecastFor, options = {}) {
     if (!apiKey || apiKey === 'disabled') {
         return cached
             ? { ...cached, source: 'cache', freshness: 'stale' }
-            : fallbackSnapshot(forecastFor, now, 'Weather API not configured');
+            : fallbackSnapshot(forecastFor, now, 'Weather API not configured', 'unavailable');
     }
     try {
-        const url = `https://api.openweathermap.org/data/3.0/onecall?lat=${location.lat}&lon=${location.lng}&exclude=minutely,hourly&units=metric&appid=${apiKey}`;
+        const oneCallUrl = `https://api.openweathermap.org/data/3.0/onecall?lat=${location.lat}&lon=${location.lng}&exclude=minutely,hourly&units=metric&appid=${apiKey}`;
+        const forecastUrl = `https://api.openweathermap.org/data/2.5/forecast?lat=${location.lat}&lon=${location.lng}&units=metric&appid=${apiKey}`;
         const request = options.request ?? (async (requestUrl) => (await axios_1.default.get(requestUrl, { timeout: REQUEST_TIMEOUT_MS })).data);
-        const payload = await requestWithRetry(request, url);
+        const payload = await requestWithProviderFallback(request, oneCallUrl, forecastUrl);
         const data = parseWeatherResponse(payload, forecastFor);
         const snapshot = {
             data,
@@ -43,24 +44,31 @@ async function fetchWeather(location, fallbackName, forecastFor, options = {}) {
     }
     catch (error) {
         console.warn(`[weather] Fetch failed for ${fallbackName}:`, error instanceof Error ? error.message : error);
+        const outsideHorizon = error instanceof Error && /outside the available weather forecast horizon/i.test(error.message);
         return cached
             ? { ...cached, source: 'cache', freshness: 'stale' }
-            : fallbackSnapshot(forecastFor, now, 'Weather unavailable');
+            : fallbackSnapshot(forecastFor, now, outsideHorizon ? 'Event is outside the available weather forecast horizon' : 'Weather unavailable', outsideHorizon ? 'not_assessable_yet' : 'unavailable');
     }
 }
-async function requestWithRetry(request, url) {
+async function requestWithProviderFallback(request, oneCallUrl, forecastUrl) {
     try {
-        return await request(url);
+        return await request(oneCallUrl);
     }
     catch {
-        return request(url);
+        try {
+            return await request(oneCallUrl);
+        }
+        catch {
+            return request(forecastUrl);
+        }
     }
 }
 function parseWeatherResponse(payload, forecastFor) {
     if (!isRecord(payload))
         throw new Error('OpenWeather response is not an object.');
     const daily = Array.isArray(payload.daily) ? payload.daily.filter(isRecord) : [];
-    const selected = daily.reduce((closest, item) => {
+    const forecastItems = Array.isArray(payload.list) ? payload.list.filter(isRecord) : [];
+    const selected = [...daily, ...forecastItems].reduce((closest, item) => {
         if (typeof item.dt !== 'number')
             return closest;
         if (!closest || typeof closest.dt !== 'number')
@@ -74,7 +82,9 @@ function parseWeatherResponse(payload, forecastFor) {
     if (typeof source.dt !== 'number' || Math.abs(source.dt * 1_000 - forecastFor) > 36 * 60 * 60 * 1_000) {
         throw new Error('Event is outside the available weather forecast horizon.');
     }
-    const temperature = isRecord(source.temp) ? source.temp.day : source.temp;
+    const main = isRecord(source.main) ? source.main : undefined;
+    const wind = isRecord(source.wind) ? source.wind : undefined;
+    const temperature = isRecord(source.temp) ? source.temp.day : source.temp ?? main?.temp;
     const weather = Array.isArray(source.weather) && isRecord(source.weather[0]) ? source.weather[0] : undefined;
     const alerts = Array.isArray(payload.alerts) ? payload.alerts.filter(isRecord) : [];
     const severeAlert = alerts.some((alert) => {
@@ -85,8 +95,8 @@ function parseWeatherResponse(payload, forecastFor) {
     return {
         forecast: stringValue(weather?.main) ?? stringValue(weather?.description) ?? 'Unknown',
         temperature: roundedNumber(temperature, 28),
-        humidity: roundedNumber(source.humidity, 70),
-        windSpeed: roundedNumber(source.wind_speed, 2, 1),
+        humidity: roundedNumber(source.humidity ?? main?.humidity, 70),
+        windSpeed: roundedNumber(source.wind_speed ?? wind?.speed, 2, 1),
         precipitationProbability: Math.round(numberValue(source.pop, 0.2) * 100),
         severeAlert,
     };
@@ -94,11 +104,11 @@ function parseWeatherResponse(payload, forecastFor) {
 function clearWeatherCache() {
     CACHE.clear();
 }
-function fallbackSnapshot(forecastFor, now, forecast) {
+function fallbackSnapshot(forecastFor, now, forecast, freshness) {
     return {
         data: { forecast, temperature: 28, humidity: 70, windSpeed: 2, precipitationProbability: 20, severeAlert: false },
         source: 'fallback',
-        freshness: 'fallback',
+        freshness,
         fetchedAt: now,
         expiresAt: now,
         forecastFor,

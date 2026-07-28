@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { EventRecord, Incident, WeatherContext, finalScoreFor, riskLevelFor } from '@shared/types';
-import { computeRuleBased } from './ruleBased';
+import { AssessmentContextSnapshot, EventRecord, hirarcRiskLevelFor, riskLevelFor } from '@shared/types';
+import { computeCategoryBasedAssessment } from './ruleBased';
 
 const event: EventRecord = {
   eventId: 'event-1',
@@ -32,66 +32,124 @@ const event: EventRecord = {
   },
 };
 
-const weather: WeatherContext = {
-  forecast: 'Thunderstorm',
-  temperature: 31,
-  humidity: 85,
-  windSpeed: 4,
-  precipitationProbability: 80,
-  severeAlert: true,
+const context: AssessmentContextSnapshot = {
+  weather: {
+    data: { forecast: 'Thunderstorm', temperature: 31, humidity: 85, windSpeed: 4, precipitationProbability: 80, severeAlert: true },
+    source: 'openweather',
+    freshness: 'fresh',
+    fetchedAt: 100,
+    expiresAt: 200,
+    forecastFor: event.eventDetails.startDatetime,
+  },
+  calendar: {
+    localDate: '2027-01-15',
+    dayOfWeek: 'Saturday',
+    isWeekend: true,
+    isHolidayOrAdjacent: true,
+    holidayName: 'Test holiday',
+    holidayDistanceDays: 0,
+    sourceVersion: 'test-holidays',
+    sourceTimestamp: 300,
+  },
+  venue: {
+    matched: true,
+    venueId: 'venue-1',
+    submittedCapacity: 10_000,
+    registeredCapacity: 10_000,
+    capacityDifference: 0,
+    fetchedAt: 150,
+  },
+  incidentHistory: {
+    matched: true,
+    venueId: 'venue-1',
+    incidentIds: [],
+    total: 0,
+    bySeverity: { low: 0, medium: 0, high: 0 },
+    fetchedAt: 200,
+  },
 };
 
-describe('computeRuleBased', () => {
-  it('produces a deterministic weighted baseline with evidence', async () => {
-    const first = await computeRuleBased(event, weather, true, true, [], 123);
-    const second = await computeRuleBased(event, weather, true, true, [], 123);
+describe('computeCategoryBasedAssessment', () => {
+  it('produces a deterministic HIRARC result with eight all-hazards domains', () => {
+    const first = computeCategoryBasedAssessment(event, context, 123);
+    const second = computeCategoryBasedAssessment(event, context, 123);
     expect(second).toEqual(first);
-    expect(first.baselineScore).toBe(Math.round(Object.values(first.weightedContributions).reduce((sum, value) => sum + value, 0)));
-    expect(first.evidence.map((item) => item.key)).toEqual(['weather', 'crowd', 'venue', 'history', 'holiday']);
+    expect(first.officialScore).toBe(first.officialMatrixScore! * 4);
+    expect(first.officialMatrixScore).toBe(Math.max(...first.hazards!.map((hazard) => hazard.residualMatrixScore)));
+    expect(first.categoryAssignments.map((category) => category.categoryId)).toEqual([
+      'crowd',
+      'venue_fire',
+      'weather_environment',
+      'public_health',
+      'food_water_sanitation',
+      'medical_capacity',
+      'security_cbrn',
+      'transport_accessibility',
+    ]);
+    expect(first.categorySchemaVersion).toContain('all-hazards-v2');
+    expect(first.categorySchemaStatus).toBe('prototype');
   });
 
-  it('records independent source timestamps and unmatched venue history', async () => {
-    const result = await computeRuleBased(event, weather, false, false, [], 500, { weather: 100, history: 200, holiday: 300 }, false);
-    expect(result.evidence.find((item) => item.key === 'weather')?.sourceTimestamp).toBe(100);
-    expect(result.evidence.find((item) => item.key === 'history')).toMatchObject({ description: 'No stable venue match; history unavailable', sourceTimestamp: 200 });
+  it('records source status, timestamps, and unmatched venue history', () => {
+    const result = computeCategoryBasedAssessment(event, {
+      ...context,
+      incidentHistory: { ...context.incidentHistory, matched: false, fetchedAt: 250 },
+    }, 500);
+    expect(result.evidence.find((item) => item.key === 'weather')).toMatchObject({ sourceTimestamp: 100, source: 'openweather', status: 'fresh' });
+    expect(result.evidence.find((item) => item.key === 'history')).toMatchObject({ description: 'No stable venue match; comparable history unavailable', sourceTimestamp: 250, status: 'unmatched' });
   });
 
-  it.each([
-    [5_000, 12],
-    [5_001, 30],
-    [7_500, 30],
-    [7_501, 40],
-    [9_000, 40],
-    [9_001, 55],
-    [10_001, 80],
-  ])('applies crowd thresholds at %i attendees', async (expectedAttendance, expected) => {
-    const result = await computeRuleBased(withDetails({ expectedAttendance }), weather, false, false, [], 1);
-    expect(result.subScores.crowd).toBe(expected);
+  it('uses the highest residual hazard rather than a weighted average', () => {
+    const result = computeCategoryBasedAssessment(withDetails({
+      expectedAttendance: 10_001,
+      riskProfile: { pyrotechnics: true },
+    }), context, 1);
+    const dominant = result.hazards!.reduce((highest, hazard) => (
+      hazard.residualMatrixScore > highest.residualMatrixScore ? hazard : highest
+    ));
+    expect(result.officialMatrixScore).toBe(dominant.residualMatrixScore);
+    expect(result.officialRiskLevel).toBe(hirarcRiskLevelFor(dominant.residualMatrixScore));
   });
 
-  it.each([
-    [false, false, 0],
-    [false, true, 30],
-    [true, false, 60],
-    [true, true, 90],
-  ])('scores holiday=%s and weekend=%s as %i', async (holiday, weekend, expected) => {
-    const result = await computeRuleBased(event, weather, holiday, weekend, [], 1);
-    expect(result.subScores.holiday).toBe(expected);
+  it('does not credit declared-only controls, but credits verified controls', () => {
+    const declared = computeCategoryBasedAssessment(withDetails({
+      riskProfile: { severeWeatherPlan: true },
+    }), context, 1);
+    const verified = computeCategoryBasedAssessment(withDetails({
+      riskProfile: {
+        severeWeatherPlan: true,
+        verifiedControlIds: ['severe-weather-plan'],
+      },
+    }), context, 1);
+    const declaredHazard = declared.hazards!.find((hazard) => hazard.hazardId === 'weather.severe')!;
+    const verifiedHazard = verified.hazards!.find((hazard) => hazard.hazardId === 'weather.severe')!;
+    expect(declaredHazard.residualSeverity).toBe(declaredHazard.inherentSeverity);
+    expect(verifiedHazard.residualSeverity).toBe(declaredHazard.inherentSeverity - 1);
   });
 
-  it('clamps severe compound weather and incident history to 100', async () => {
-    const severeWeather = { ...weather, temperature: 36, windSpeed: 11 };
-    const incidents: Incident[] = Array.from({ length: 3 }, (_, index) => ({
-      incidentId: `incident-${index}`,
-      venueId: 'venue-1',
-      eventType: 'festival',
-      incidentType: 'crowd_surge',
-      severity: 'high',
-      date: index,
-    }));
-    const result = await computeRuleBased(event, severeWeather, false, false, incidents, 1);
-    expect(result.subScores.weather).toBe(100);
-    expect(result.subScores.history).toBe(100);
+  it('separates readiness and compliance from the risk score', () => {
+    const result = computeCategoryBasedAssessment(event, {
+      ...context,
+      weather: { ...context.weather, freshness: 'not_assessable_yet', source: 'fallback' },
+      venue: {
+        ...context.venue,
+        verifiedSafeCapacity: 7_000,
+        fireCertificateStatus: 'unknown',
+      },
+    }, 1);
+    expect(result.assessmentReadiness).toBe('provisional');
+    expect(result.complianceStatus).toBe('blocked');
+    expect(result.manualReviewRequired).toBe(true);
+  });
+
+  it('marks unavailable weather or an unmatched venue as insufficient data', () => {
+    const result = computeCategoryBasedAssessment(event, {
+      ...context,
+      weather: { ...context.weather, freshness: 'unavailable', source: 'fallback' },
+      venue: { ...context.venue, matched: false },
+    }, 1);
+    expect(result.assessmentReadiness).toBe('insufficient_data');
+    expect(result.dataConfidenceLevel).toBe('low');
   });
 });
 
@@ -106,13 +164,9 @@ describe('riskLevelFor', () => {
   );
 });
 
-describe('finalScoreFor', () => {
-  it.each([
-    [40, -2, 0, 40],
-    [40, 8, 8, 48],
-    [40, 20, 15, 55],
-    [95, 15, 15, 100],
-  ] as const)('validates baseline %i with adjustment %i', (baseline, proposed, adjustment, finalScore) => {
-    expect(finalScoreFor(baseline, proposed)).toMatchObject({ validatedAdjustment: adjustment, finalScore });
-  });
+describe('hirarcRiskLevelFor', () => {
+  it.each([[1, 'Low'], [4, 'Low'], [5, 'Medium'], [12, 'Medium'], [15, 'High'], [25, 'High']] as const)(
+    'maps matrix score %i to %s',
+    (score, level) => expect(hirarcRiskLevelFor(score)).toBe(level),
+  );
 });
