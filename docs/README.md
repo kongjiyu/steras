@@ -1,6 +1,6 @@
 # STERAS Team Documentation
 
-This folder is the working entry point for the five module owners. `STERAS_PRD.md` v3.1 is the only product source of truth. Module documents translate that PRD into implementation ownership, assumptions, interfaces, and page responsibilities.
+This folder is the working entry point for the five module owners. `STERAS_PRD.md` v5.0 (Final, 104 functional requirements, 2026-08-12) is the only product source of truth. Module documents translate that PRD into implementation ownership, assumptions, interfaces, and page responsibilities.
 
 ## Read First
 
