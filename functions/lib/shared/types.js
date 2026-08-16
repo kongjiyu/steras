@@ -39,6 +39,9 @@ exports.COLLECTIONS = {
     HISTORICAL_EVENTS: 'historical_events',
     DATASET_MANIFESTS: 'dataset_manifests',
     PUBLIC_EVENTS: 'public_events',
+    NOTIFICATIONS: 'notifications',
+    EVENT_CONTROLS: 'event_controls',
+    CONTROL_VERIFICATIONS: 'control_verifications',
 };
 exports.CATEGORY_SCHEMA_VERSION = '2026-07-24-all-hazards-v2';
 exports.SCORING_LOGIC_VERSION = '2026-07-24-hirarc-residual-v2';

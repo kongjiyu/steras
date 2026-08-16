@@ -27,3 +27,5 @@ export { submitEvent } from './http/submitEvent';
 export { withdrawEvent } from './http/withdrawEvent';
 export { makeAuthorityDecision } from './http/authorityDecision';
 export { overrideResources } from './http/overrideResources';
+export { verifyEventControl } from './http/verifyEventControl';
+export { markNotificationRead, listMyNotifications } from './http/notifications';

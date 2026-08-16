@@ -8,15 +8,22 @@ import {
   EventRecord,
   EventVersion,
   PublicEvent,
+  RiskAssessment,
   UserProfile,
 } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
+import { createNotification } from '../utils/notifications';
 
 interface AuthorityDecisionRequest {
   eventId?: string;
   decision?: DecisionValue;
   rationale?: string;
 }
+
+/** Minimum rationale length when the assessment is provisional / insufficient. */
+const PROVISIONAL_MIN_RATIONALE = 80;
+/** Standard rationale length floor (FR-M3-16: 10–1000 chars). */
+const STANDARD_MIN_RATIONALE = 10;
 
 export const makeAuthorityDecision = onCall<AuthorityDecisionRequest>({ region: FUNCTION_REGION }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in before reviewing an application.');
@@ -35,7 +42,11 @@ export async function makeAuthorityDecisionForUser(
   const userReference = db.collection(COLLECTIONS.USERS).doc(uid);
   const publicReference = db.collection(COLLECTIONS.PUBLIC_EVENTS).doc(eventId);
 
-  return db.runTransaction(async (transaction) => {
+  // Capture for the post-transaction notification step
+  const notifCtx: { organizerId: string; aggregateStatus: EventRecord['status']; authorityType: AuthorityType; versionId: string } | null = null;
+  let notifCtxOut: { organizerId: string; aggregateStatus: EventRecord['status']; authorityType: AuthorityType; versionId: string } | null = notifCtx;
+
+  const result = await db.runTransaction(async (transaction) => {
     const [userSnapshot, eventSnapshot] = await Promise.all([
       transaction.get(userReference),
       transaction.get(eventReference),
@@ -55,9 +66,11 @@ export async function makeAuthorityDecisionForUser(
     const decisionId = currentDecisionId(versionId, profile.authorityType);
     const currentReference = eventReference.collection(COLLECTIONS.DECISIONS).doc(decisionId);
     const versionReference = eventReference.collection(COLLECTIONS.VERSIONS).doc(versionId);
-    const [currentSnapshot, versionSnapshot] = await Promise.all([
+    const assessmentReference = eventReference.collection(COLLECTIONS.ASSESSMENTS).doc(versionId);
+    const [currentSnapshot, versionSnapshot, assessmentSnapshot] = await Promise.all([
       transaction.get(currentReference),
       transaction.get(versionReference),
+      transaction.get(assessmentReference),
     ]);
     const current = currentSnapshot.data() as AuthorityDecision | undefined;
     if (current && current.decision === decision && current.rationale === rationale && current.reviewerId === uid) {
@@ -70,6 +83,26 @@ export async function makeAuthorityDecisionForUser(
       throw new HttpsError('failed-precondition', 'Risk assessment and resources must be ready before a decision.');
     }
     if (!versionSnapshot.exists) throw new HttpsError('failed-precondition', 'The immutable application version is missing.');
+
+    // ---- M3 gates: compliance + readiness (FR-M3-14, FR-M3-03 handoff) ----
+    const assessment = assessmentSnapshot.data() as RiskAssessment | undefined;
+    if (assessment?.complianceStatus === 'blocked' && decision === 'Approved') {
+      throw new HttpsError(
+        'failed-precondition',
+        'This application cannot be approved while M2 compliance status is "blocked". ' +
+        'Resolve the blocking compliance checks first or choose Reject / AmendmentRequested.',
+      );
+    }
+    const readiness = assessment?.assessmentReadiness;
+    const isProvisional = readiness === 'provisional' || readiness === 'insufficient_data';
+    if (isProvisional && rationale.trim().length < PROVISIONAL_MIN_RATIONALE) {
+      throw new HttpsError(
+        'invalid-argument',
+        `When the assessment is ${readiness}, the decision rationale must explain the gap ` +
+        `(at least ${PROVISIONAL_MIN_RATIONALE} characters).`,
+      );
+    }
+    // ---- end M3 gates ----
 
     const decisionReferences = event.requiredAuthorities.map((authority) =>
       eventReference.collection(COLLECTIONS.DECISIONS).doc(currentDecisionId(versionId, authority)));
@@ -116,7 +149,12 @@ export async function makeAuthorityDecisionForUser(
       previousStatus: event.status,
       newStatus: aggregateStatus,
       notes: rationale,
-      metadata: { authorityType: profile.authorityType, decision },
+      metadata: {
+        authorityType: profile.authorityType,
+        decision,
+        complianceStatus: assessment?.complianceStatus ?? null,
+        assessmentReadiness: assessment?.assessmentReadiness ?? null,
+      },
     });
 
     if (aggregateStatus === 'Approved') {
@@ -142,8 +180,50 @@ export async function makeAuthorityDecisionForUser(
       transaction.delete(publicReference);
     }
 
+    if (event.organizerId) {
+      const ctx: { organizerId: string; aggregateStatus: EventRecord['status']; authorityType: AuthorityType; versionId: string } = {
+        organizerId: event.organizerId,
+        aggregateStatus,
+        authorityType: profile.authorityType,
+        versionId,
+      };
+      notifCtxOut = ctx;
+    }
+
     return { eventId, versionId, decisionId, decision, status: aggregateStatus, idempotent: false };
   });
+
+  // ---- Notify the organiser (FR-M3-08, handoff item 7) ----
+  // Idempotent on sourceActionId. A notification write failure MUST NOT
+  // roll back a recorded decision.
+  const notif = notifCtxOut as { organizerId: string; aggregateStatus: EventRecord['status']; authorityType: AuthorityType; versionId: string } | null;
+  if (notif) {
+    try {
+      const notifType =
+        notif.aggregateStatus === 'Approved' ? 'application_approved'
+        : notif.aggregateStatus === 'Rejected' ? 'application_rejected'
+        : notif.aggregateStatus === 'AmendmentRequested' ? 'amendment_requested'
+        : 'decision_made';
+      const notifTitle =
+        notif.aggregateStatus === 'Approved' ? 'Application approved'
+        : notif.aggregateStatus === 'Rejected' ? 'Application rejected'
+        : notif.aggregateStatus === 'AmendmentRequested' ? 'Amendment requested'
+        : 'Decision recorded';
+      await createNotification({
+        recipientUid: notif.organizerId,
+        eventId,
+        versionId: notif.versionId,
+        type: notifType,
+        title: notifTitle,
+        message: `${notif.authorityType} ${decision} the application. See audit trail for rationale.`,
+        sourceActionId: `${result.decisionId}_notif`,
+      });
+    } catch (err) {
+      console.warn('[makeAuthorityDecision] notification write failed (non-fatal):', err);
+    }
+  }
+
+  return result;
 }
 
 export function validateDecisionRequest(request: unknown): { eventId: string; decision: DecisionValue; rationale: string } {
@@ -153,8 +233,8 @@ export function validateDecisionRequest(request: unknown): { eventId: string; de
   const rationale = typeof value.rationale === 'string' ? value.rationale.trim() : '';
   if (!eventId) throw new HttpsError('invalid-argument', 'eventId is required.');
   if (!isDecision(decision)) throw new HttpsError('invalid-argument', 'A valid decision is required.');
-  if (rationale.length < 10 || rationale.length > 1_000) {
-    throw new HttpsError('invalid-argument', 'Rationale must be between 10 and 1,000 characters.');
+  if (rationale.length < STANDARD_MIN_RATIONALE || rationale.length > 1_000) {
+    throw new HttpsError('invalid-argument', `Rationale must be between ${STANDARD_MIN_RATIONALE} and 1,000 characters.`);
   }
   return { eventId, decision, rationale };
 }

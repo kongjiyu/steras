@@ -122,6 +122,8 @@ export interface EventRecord {
   editableVersionId?: string | null;
   draftDocumentPaths: string[];
   requiredAuthorities: AuthorityType[];
+  /** Control IDs that have been VERIFIED (not just declared) by an authority. */
+  verifiedControlIds?: string[];
   createdAt: number;
   updatedAt: number;
   submittedAt?: number;
@@ -469,7 +471,50 @@ export type AuditAction =
   | 'amendment_requested'
   | 'authority_reviewed'
   | 'decision_made'
-  | 'public_published';
+  | 'public_published'
+  | 'control_verified'
+  | 'control_rejected';
+
+export type NotificationType =
+  | 'decision_made'
+  | 'application_approved'
+  | 'application_rejected'
+  | 'amendment_requested'
+  | 'control_verified'
+  | 'control_rejected';
+
+export interface Notification {
+  notificationId: string;
+  recipientUid: string;
+  eventId: string;
+  versionId?: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  sourceActionId: string;
+  read: boolean;
+  createdAt: number;
+  readAt?: number;
+}
+
+export type ControlVerificationStatus = 'verified' | 'rejected';
+
+export interface ControlVerification {
+  /** Composite ID = `${versionId}_${controlId}_${authorityType}` */
+  verificationId: string;
+  eventId: string;
+  versionId: string;
+  controlId: string;
+  authorityType: AuthorityType;
+  reviewerUid: string;
+  status: ControlVerificationStatus;
+  rationale: string;
+  /** Optional storage path (Firebase Storage or external) the reviewer used. */
+  evidencePath?: string;
+  /** Optional attached file metadata (filename, sizeBytes, mimeType). */
+  evidenceFile?: { name: string; sizeBytes: number; mimeType: string };
+  createdAt: number;
+}
 
 export interface AuditLog {
   id: string;
@@ -603,6 +648,9 @@ export const COLLECTIONS = {
   HISTORICAL_EVENTS: 'historical_events',
   DATASET_MANIFESTS: 'dataset_manifests',
   PUBLIC_EVENTS: 'public_events',
+  NOTIFICATIONS: 'notifications',
+  EVENT_CONTROLS: 'event_controls',
+  CONTROL_VERIFICATIONS: 'control_verifications',
 } as const;
 
 export const CATEGORY_SCHEMA_VERSION = '2026-07-24-all-hazards-v2';

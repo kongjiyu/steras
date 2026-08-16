@@ -12,6 +12,7 @@
 import type { FullConfig } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 import { initializeApp, getApps, cert, type App } from 'firebase-admin/app';
 import { getFirestore, type Firestore } from 'firebase-admin/firestore';
 
@@ -30,6 +31,24 @@ if (getApps().length === 0) {
 }
 
 const db: Firestore = getFirestore(adminApp);
+
+/**
+ * Mirror of the function's processingHash — see
+ * functions/src/triggers/onEventCreated.ts. Must match the version
+ * constants in shared/types.ts and functions/src/config/categorySchema.ts.
+ * If those change, update this too.
+ */
+function processingHash(versionInputHash: string): string {
+  return createHash('sha256').update(JSON.stringify({
+    versionInputHash,
+    categorySchemaVersion: '2026-07-24-all-hazards-v2',
+    scoringLogicVersion: '2026-07-24-hirarc-residual-v2',
+    promptVersion: 'v2.3.0',
+    aiResponseSchemaVersion: '2026-07-21-advisory-v1',
+    formulaVersion: '2026-07-24-prototype-range-v3',
+    guidelineVersion: '2026-07-24-malaysia-research-v2',
+  })).digest('hex');
+}
 
 /** Minimal mock resource recommendation for the M3 review form. */
 const MOCK_RESOURCE = {
@@ -127,8 +146,10 @@ function assessmentOverride(spec: EventSpec): Record<string, unknown> {
 async function seedEvent(spec: EventSpec): Promise<void> {
   const eventRef = db.collection('events').doc(spec.id);
   const eventSnap = await eventRef.get();
+
+  // Negative-test fixtures: create the event from scratch if it doesn't exist
   if (!eventSnap.exists) {
-    console.log(`  [setup] ${spec.id}: not present in Firestore — skipping (test must create it first)`);
+    await createNegativeTestFixture(spec);
     return;
   }
   const eventData = eventSnap.data()!;
@@ -184,6 +205,130 @@ async function seedEvent(spec: EventSpec): Promise<void> {
   }
 
   console.log(`  [setup] ${spec.id}: status=${spec.status} decisions=${spec.clearDecisions ? 'cleared' : 'kept'}` +
+    (spec.complianceStatus ? ` compliance=${spec.complianceStatus}` : '') +
+    (spec.assessmentReadiness ? ` readiness=${spec.assessmentReadiness}` : '') +
+    (spec.eventControls ? ` controls=${spec.eventControls}` : ''));
+}
+
+/**
+ * Create a fresh event doc + assessment + resource + version for negative
+ * tests so the spec doesn't have to do all that setup itself.
+ */
+async function createNegativeTestFixture(spec: EventSpec): Promise<void> {
+  const now = Date.now();
+  const eventRef = db.collection('events').doc(spec.id);
+  const versionId = 'v1';
+  const assessmentId = 'v1';
+  const resourceId = 'v1';
+
+  const eventDetails = {
+    name: `Test event — ${spec.id}`,
+    type: 'cultural',
+    venueId: 'ven-001-dataran-merdeka',
+    venueName: 'Dataran Merdeka',
+    venueAddress: 'Jalan Raja, 50050 Kuala Lumpur',
+    venueLocation: { lat: 3.1478, lng: 101.6953 },
+    venueCapacity: 10_000,
+    expectedAttendance: 1_000,
+    environment: 'outdoor',
+    coverage: 'uncovered',
+    seating: 'mixed',
+    startDatetime: now + 14 * 24 * 3600_000,
+    endDatetime: now + 14 * 24 * 3600_000 + 6 * 3600_000,
+    emergencyPlanSummary: 'Standard plan for UAT.',
+    organizerName: 'UAT Organiser',
+    organizerEmail: 'usr-org-003@steras.test',
+    organizerPhone: '+60 12-000 0000',
+  };
+
+  await eventRef.set({
+    eventId: spec.id,
+    organizerId: 'usr-org-003',
+    eventDetails,
+    status: spec.status,
+    currentVersionId: versionId,
+    currentVersionNumber: 1,
+    currentAssessmentId: assessmentId,
+    currentResourceId: resourceId,
+    editableVersionId: null,
+    draftDocumentPaths: [],
+    requiredAuthorities: spec.requiredAuthorities,
+    createdAt: now,
+    updatedAt: now,
+    submittedAt: now,
+  });
+
+  // Version — inputHash must match what the Cloud Function expects so that
+  // the function's claim check (existing.status==='ready' && same hash)
+  // recognises our pre-seeded assessment and skips overwriting it.
+  const versionInputHash = 'uat-' + spec.id;
+  await eventRef.collection('versions').doc(versionId).set({
+    versionId,
+    eventId: spec.id,
+    versionNumber: 1,
+    eventDetails,
+    documentPaths: [],
+    submittedBy: 'usr-org-003',
+    submittedAt: now,
+    inputHash: versionInputHash,
+  });
+
+  // Assessment (mock schema with the right compliance/readiness overrides)
+  const assessment: Record<string, unknown> = {
+    assessmentId,
+    eventId: spec.id,
+    versionId,
+    status: 'ready',
+    inputHash: processingHash(versionInputHash),
+    officialScore: 42,
+    officialRiskLevel: 'Medium',
+    categoryAssignments: [
+      { categoryId: 'weather', categoryName: 'Weather exposure', score: 38, riskLevel: 'Medium', weight: 0.3, weightedContribution: 11.4, rationale: 'UAT', evidenceKeys: ['weather'], guidelineChecks: [] },
+      { categoryId: 'crowd',   categoryName: 'Crowd pressure',     score: 44, riskLevel: 'Medium', weight: 0.3, weightedContribution: 13.2, rationale: 'UAT', evidenceKeys: ['crowd'],   guidelineChecks: [] },
+      { categoryId: 'venue',   categoryName: 'Venue profile',      score: 44, riskLevel: 'Medium', weight: 0.2, weightedContribution: 8.8,  rationale: 'UAT', evidenceKeys: ['venue'],   guidelineChecks: [] },
+      { categoryId: 'history', categoryName: 'Historical context', score: 42, riskLevel: 'Medium', weight: 0.1, weightedContribution: 4.2,  rationale: 'UAT', evidenceKeys: ['history'], guidelineChecks: [] },
+      { categoryId: 'holiday', categoryName: 'Calendar context',   score: 44, riskLevel: 'Medium', weight: 0.1, weightedContribution: 4.4,  rationale: 'UAT', evidenceKeys: ['holiday'], guidelineChecks: [] },
+    ],
+    evidence: [],
+    categorySchemaVersion: '2026-07-21-prototype-category-v1',
+    scoringLogicVersion: '2026-07-21-deterministic-v1',
+    categorySchemaStatus: 'prototype',
+    complianceStatus: spec.complianceStatus ?? 'pass',
+    assessmentReadiness: spec.assessmentReadiness ?? 'complete',
+    computedAt: now,
+    aiAdvisory: { model: 'M3 UAT', status: 'unavailable', overallBand: 'Medium', overallExplanation: 'UAT seed.' },
+  };
+  await eventRef.collection('assessments').doc(assessmentId).set(assessment);
+
+  // Resource
+  await eventRef.collection('resources').doc(resourceId).set({
+    ...MOCK_RESOURCE,
+    resourceId,
+    eventId: spec.id,
+    versionId,
+    assessmentId,
+    computedAt: now,
+  });
+
+  // Event controls (for the control-verification spec)
+  if (spec.eventControls && spec.eventControls > 0) {
+    const batch = db.batch();
+    for (let i = 0; i < spec.eventControls; i++) {
+      const ctrlId = `${spec.id}-ctrl-${i + 1}`;
+      batch.set(eventRef.collection('event_controls').doc(ctrlId), {
+        controlId: ctrlId,
+        eventId: spec.id,
+        title: `Control item ${i + 1}`,
+        stage: 'Stage1',
+        status: 'declared',
+        description: 'Seeded for E2E test',
+        createdAt: now,
+      });
+    }
+    await batch.commit();
+  }
+
+  console.log(`  [setup] ${spec.id}: created fixture` +
     (spec.complianceStatus ? ` compliance=${spec.complianceStatus}` : '') +
     (spec.assessmentReadiness ? ` readiness=${spec.assessmentReadiness}` : '') +
     (spec.eventControls ? ` controls=${spec.eventControls}` : ''));
