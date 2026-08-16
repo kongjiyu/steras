@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Outlet } from 'react-router-dom';
 import { useNavigate } from 'react-router-dom';
-import Sidebar from './Sidebar';
+import Sidebar, { AUTHORITY_NAV } from './Sidebar';
 import { useAuth } from '../../contexts/AuthContext';
 
 interface AuthorityLayoutProps {
@@ -28,7 +28,13 @@ export default function AuthorityLayout({ mockUser, children }: AuthorityLayoutP
   return (
     <div className="authority-workspace flex min-h-screen bg-[#f3f1e9] pb-24 lg:pb-0">
       <a href="#authority-content" className="authority-skip-link">Skip to workspace content</a>
-      <Sidebar user={user} onSignOut={async () => { await signOut(); navigate('/login', { replace: true }); }} />
+      <Sidebar
+        user={user}
+        navSections={AUTHORITY_NAV}
+        workspaceLabel="Authority workspace"
+        userRoleSuffix="authority"
+        onSignOut={async () => { await signOut(); navigate('/login', { replace: true }); }}
+      />
       <div id="authority-content" tabIndex={-1} className="flex min-w-0 flex-1 flex-col">
         {children ?? <Outlet />}
       </div>

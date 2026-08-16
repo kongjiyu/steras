@@ -31,7 +31,14 @@ import ResourceRecommendations from './pages/authority/ResourceRecommendations';
 import DashboardPreview from './pages/DashboardPreview';
 
 // Admin pages
+import AdminLayout from './components/layout/AdminLayout';
 import AdminDashboard from './pages/admin/AdminDashboard';
+import AdminApplicationQueue from './pages/admin/AdminApplicationQueue';
+import AdminApplicationReview from './pages/admin/AdminApplicationReview';
+import AdminUsers from './pages/admin/AdminUsers';
+import AdminVenues from './pages/admin/AdminVenues';
+import AdminAnalytics from './pages/admin/AdminAnalytics';
+import AdminAudit from './pages/admin/AdminAudit';
 
 export default function App() {
   const { loading } = useAuth();
@@ -91,11 +98,17 @@ export default function App() {
       <Route
         element={
           <ProtectedRoute requiredRole="admin">
-            <Outlet />
+            <AdminLayout />
           </ProtectedRoute>
         }
       >
         <Route path="/admin" element={<AdminDashboard />} />
+        <Route path="/admin/applications" element={<AdminApplicationQueue />} />
+        <Route path="/admin/applications/:eventId" element={<AdminApplicationReview />} />
+        <Route path="/admin/users" element={<AdminUsers />} />
+        <Route path="/admin/venues" element={<AdminVenues />} />
+        <Route path="/admin/analytics" element={<AdminAnalytics />} />
+        <Route path="/admin/audit" element={<AdminAudit />} />
       </Route>
 
       {/* Fallback */}
