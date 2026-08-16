@@ -518,7 +518,10 @@ async function main() {
     }
 
     // Resource recommendation
-    if (e.currentResourceId && e.status === 'Approved') {
+    // M3 reviewers need a resource plan visible even when an event is not yet
+    // Approved (reviewers see "Wait for assessment and resources" otherwise).
+    // Write a mock resource doc for EVERY event that has a currentResourceId.
+    if (e.currentResourceId) {
       await db.collection('events').doc(e.eventId).collection('resources').doc(e.currentResourceId).set({
         ...OFFICIAL_RESOURCE,
         resourceId: e.currentResourceId,
@@ -568,7 +571,7 @@ async function main() {
       await db.collection('events').doc(e.eventId).collection('audit_logs').doc(auditId).set({ id: auditId, ...a });
     }
 
-    console.log(`  ✓ ${e.eventId} (${e.status}) — ${e.requiredAuthorities.length} auths, ${e.status === 'Approved' ? 'with decisions + resources' : 'no decisions'}`);
+    console.log(`  ✓ ${e.eventId} (${e.status}) — ${e.requiredAuthorities.length} auths, ${e.status === 'Approved' ? 'with decisions' : 'no decisions'}`);
   }
 
   // Public events projection (only approved events get listed)
