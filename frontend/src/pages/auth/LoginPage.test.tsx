@@ -25,7 +25,7 @@ describe('LoginPage', () => {
     authState.profile = null;
   });
 
-  it('redirects an existing session away from the sign-in page', async () => {
+  it('lets an existing session return to the dashboard from the sign-in page', async () => {
     authState.user = { uid: 'organizer-1' };
     authState.profile = { role: 'organizer' };
     render(
@@ -36,6 +36,10 @@ describe('LoginPage', () => {
         </Routes>
       </MemoryRouter>,
     );
+
+    expect(screen.getByRole('heading', { name: "You're signed in as a user" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Go to your dashboard' }));
 
     await waitFor(() => expect(screen.getByText('Organizer workspace')).toBeInTheDocument());
   });
