@@ -283,9 +283,9 @@ export default function AdminApplicationReview() {
                 </div>
                 <div className="flex flex-col items-end gap-1">
                   <span className={STATUS_TONE[event.status]}>{event.status}</span>
-                  {assessment?.officialRiskLevel && (
-                    <span className={`${RISK_TONE[assessment.officialRiskLevel]} text-xs`}>
-                      {assessment.officialRiskLevel} risk
+                  {assessment && (assessment.officialRiskLevel ?? assessment.finalRiskLevel) && (
+                    <span className={`${RISK_TONE[assessment.officialRiskLevel ?? assessment.finalRiskLevel ?? '']} text-xs`}>
+                      {(assessment.officialRiskLevel ?? assessment.finalRiskLevel)} risk
                     </span>
                   )}
                 </div>
@@ -329,43 +329,93 @@ export default function AdminApplicationReview() {
                   </dl>
                 </Section>
 
-                {/* Assessment */}
-                {assessment && (
-                  <Section title="M2 risk assessment" icon={ShieldCheck}>
-                    <div className="mb-3 flex flex-wrap items-center gap-2">
-                      <span className={`${RISK_TONE[assessment.officialRiskLevel]} text-sm`}>
-                        {assessment.officialRiskLevel} · {assessment.officialScore}/100
-                      </span>
-                      <span className="text-xs text-ink-500">
-                        Schema v{assessment.categorySchemaVersion} · Logic v{assessment.scoringLogicVersion}
-                      </span>
-                    </div>
-                    <div className="overflow-hidden rounded-md border border-[#e8e0cf]">
-                      <table className="w-full text-sm">
-                        <thead className="bg-cream-50 text-xs uppercase tracking-[0.06em] text-ink-500">
-                          <tr>
-                            <th className="px-3 py-2 text-left">Category</th>
-                            <th className="px-3 py-2 text-left">Score</th>
-                            <th className="px-3 py-2 text-left">Risk</th>
-                            <th className="px-3 py-2 text-left">Rationale</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-[#e8e0cf]">
-                          {assessment.categoryAssignments.map((c) => (
-                            <tr key={c.categoryId}>
-                              <td className="px-3 py-2 font-medium text-ink-800">{c.categoryName}</td>
-                              <td className="px-3 py-2 text-ink-700">{c.score}</td>
-                              <td className="px-3 py-2">
-                                <span className={`${RISK_TONE[c.riskLevel]} text-xs`}>{c.riskLevel}</span>
-                              </td>
-                              <td className="px-3 py-2 text-xs text-ink-600">{c.rationale}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </Section>
-                )}
+                {/* Assessment — handles two schemas:
+                       A) M3-ready mock (categoryAssignments + officialRiskLevel)
+                       B) M2-engine output (subScores + finalScore / finalRiskLevel)
+                */}
+                {assessment && (() => {
+                  const useEngineSchema = !assessment.categoryAssignments && !!assessment.subScores;
+                  const riskLevel = assessment.officialRiskLevel ?? assessment.finalRiskLevel ?? 'Unknown';
+                  const score = assessment.officialScore ?? assessment.finalScore;
+                  const versionLabel = assessment.categorySchemaVersion
+                    ? `Schema v${assessment.categorySchemaVersion} · Logic v${assessment.scoringLogicVersion}`
+                    : assessment.ruleVersion
+                    ? `Rule v${assessment.ruleVersion}`
+                    : '';
+                  return (
+                    <Section title="M2 risk assessment" icon={ShieldCheck}>
+                      <div className="mb-3 flex flex-wrap items-center gap-2">
+                        {riskLevel !== 'Unknown' && (
+                          <span className={`${RISK_TONE[riskLevel]} text-sm`}>
+                            {riskLevel}{score !== undefined ? ` · ${score}/100` : ''}
+                          </span>
+                        )}
+                        {versionLabel && <span className="text-xs text-ink-500">{versionLabel}</span>}
+                      </div>
+
+                      <div className="overflow-hidden rounded-md border border-[#e8e0cf]">
+                        <table className="w-full text-sm">
+                          <thead className="bg-cream-50 text-xs uppercase tracking-[0.06em] text-ink-500">
+                            {useEngineSchema ? (
+                              <tr>
+                                <th className="px-3 py-2 text-left">Sub-score</th>
+                                <th className="px-3 py-2 text-right">Score</th>
+                                <th className="px-3 py-2 text-right">Weighted</th>
+                              </tr>
+                            ) : (
+                              <tr>
+                                <th className="px-3 py-2 text-left">Category</th>
+                                <th className="px-3 py-2 text-left">Score</th>
+                                <th className="px-3 py-2 text-left">Risk</th>
+                                <th className="px-3 py-2 text-left">Rationale</th>
+                              </tr>
+                            )}
+                          </thead>
+                          <tbody className="divide-y divide-[#e8e0cf]">
+                            {useEngineSchema
+                              ? Object.entries(assessment.subScores).map(([key, score]) => (
+                                  <tr key={key}>
+                                    <td className="px-3 py-2 font-medium text-ink-800 capitalize">{key}</td>
+                                    <td className="px-3 py-2 text-right text-ink-700">{score as number}</td>
+                                    <td className="px-3 py-2 text-right text-ink-700">
+                                      {assessment.weightedContributions?.[key]?.toFixed?.(2) ?? '—'}
+                                    </td>
+                                  </tr>
+                                ))
+                              : (assessment.categoryAssignments ?? []).map((c) => (
+                                  <tr key={c.categoryId}>
+                                    <td className="px-3 py-2 font-medium text-ink-800">{c.categoryName}</td>
+                                    <td className="px-3 py-2 text-ink-700">{c.score}</td>
+                                    <td className="px-3 py-2">
+                                      <span className={`${RISK_TONE[c.riskLevel]} text-xs`}>{c.riskLevel}</span>
+                                    </td>
+                                    <td className="px-3 py-2 text-xs text-ink-600">{c.rationale}</td>
+                                  </tr>
+                                ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* AI advisory (both schemas) */}
+                      {(assessment.aiAdvisory || assessment.ai) && (
+                        <div className="mt-3 rounded-md border border-gold-300 bg-gold-50 p-3 text-xs text-ink-700">
+                          <p className="font-semibold text-gold-600">
+                            AI advisory · {assessment.aiAdvisory?.model ?? assessment.ai?.model ?? 'model'}
+                            <span className="ml-2 font-normal text-ink-500">
+                              status: {assessment.aiAdvisory?.status ?? assessment.ai?.status ?? 'unknown'}
+                            </span>
+                          </p>
+                          <p className="mt-1">
+                            {assessment.aiAdvisory?.overallExplanation
+                              ?? assessment.aiAdvisory?.explanation
+                              ?? assessment.ai?.reasoning
+                              ?? ''}
+                          </p>
+                        </div>
+                      )}
+                    </Section>
+                  );
+                })()}
 
                 {/* Resource recommendations */}
                 {resource && (
