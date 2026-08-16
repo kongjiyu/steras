@@ -195,3 +195,81 @@
     }
   }
 }
+
+/* ============================================================================
+ *  Overlay scrollbars — slim, transparent, surface-aware
+ *  - Webkit (Chrome, Edge, Safari, Opera): 6px thin, transparent track, rounded
+ *    thumb with low alpha that brightens on hover.
+ *  - Firefox: scrollbar-width: thin + scrollbar-color.
+ *  - The dark sidebar (.authority-sidebar) gets a lighter thumb so the bar
+ *    stays visible on the dark-green surface; everywhere else uses a neutral
+ *    stone tone that reads on cream/white.
+ * ========================================================================= */
+@layer base {
+  html {
+    scrollbar-gutter: stable;
+  }
+
+  /* ---- Light surfaces (default) ---- */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(120, 113, 108, 0.28) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: rgba(120, 113, 108, 0.28);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    transition: background-color 160ms ease;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(63, 51, 36, 0.55);
+  }
+  *::-webkit-scrollbar-thumb:active {
+    background-color: rgba(63, 51, 36, 0.75);
+  }
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  /* ---- Dark surfaces (sidebar, dark panels) ---- */
+  .authority-sidebar,
+  .authority-mobile-nav,
+  .authority-topbar,
+  [data-surface="dark"] {
+    scrollbar-color: rgba(255, 253, 247, 0.22) transparent;
+  }
+  .authority-sidebar::-webkit-scrollbar-thumb,
+  .authority-mobile-nav::-webkit-scrollbar-thumb,
+  .authority-topbar::-webkit-scrollbar-thumb,
+  [data-surface="dark"]::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 253, 247, 0.18);
+  }
+  .authority-sidebar::-webkit-scrollbar-thumb:hover,
+  .authority-mobile-nav::-webkit-scrollbar-thumb:hover,
+  .authority-topbar::-webkit-scrollbar-thumb:hover,
+  [data-surface="dark"]::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(255, 253, 247, 0.38);
+  }
+  .authority-sidebar::-webkit-scrollbar-thumb:active,
+  .authority-mobile-nav::-webkit-scrollbar-thumb:active,
+  .authority-topbar::-webkit-scrollbar-thumb:active,
+  [data-surface="dark"]::-webkit-scrollbar-thumb:active {
+    background-color: rgba(255, 253, 247, 0.55);
+  }
+
+  /* Hide scrollbar arrows / buttons (IE/old Edge) */
+  *::-webkit-scrollbar-button {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+}
