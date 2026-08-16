@@ -1,0 +1,186 @@
+import { Incident } from '@shared/types';
+import { INCIDENT_IDS, USER_IDS, VENUE_IDS, daysAgo } from './ids';
+
+/**
+ * M4 incident fixtures (synthetic, for prototype).
+ *
+ * M2 reads from this collection for the `incidentHistory` context
+ * snapshot. Only events with `status: 'verified'` and
+ * `assessmentEligible: true` are surfaced to M2.
+ *
+ * The actual M4 module will eventually own this collection; the
+ * fixtures here let M2 / M3 read the data without an M4 build.
+ */
+
+export const mockIncidents: Incident[] = [
+  {
+    incidentId: INCIDENT_IDS.INC001,
+        venueId: VENUE_IDS.V006,
+    eventType: 'fair',
+    incidentType: 'medical_heat_exhaustion',
+    severity: 'low',
+    date: daysAgo(360),
+    status: 'verified',
+    assessmentEligible: true,
+    outcome: { injured: 1, hospitalized: 0, fatalities: 0, evacuated: 0 },
+    verifiedBy: USER_IDS.U_OFC_KKM_SL_02,
+    verifiedAt: daysAgo(359),
+    synthetic: true,
+    datasetVersion: '2026-07-24-malaysia-research-v1',
+    description: 'Visitor collapsed from heat exhaustion; treated by on-site medical team; recovered within 30 minutes.',
+  },
+  {
+    incidentId: INCIDENT_IDS.INC002,
+        venueId: VENUE_IDS.V006,
+    eventType: 'fair',
+    incidentType: 'lost_child',
+    severity: 'low',
+    date: daysAgo(360),
+    status: 'verified',
+    assessmentEligible: true,
+    outcome: { injured: 0, hospitalized: 0, fatalities: 0, evacuated: 0 },
+    verifiedBy: USER_IDS.U_OFC_PDRM_SL_01,
+    verifiedAt: daysAgo(359),
+    synthetic: true,
+    datasetVersion: '2026-07-24-malaysia-research-v1',
+    description: 'Child separated from parent for 15 minutes; reunited at PDRM information booth.',
+  },
+  {
+    incidentId: INCIDENT_IDS.INC003,
+        venueId: VENUE_IDS.V002,
+    eventType: 'sports',
+    incidentType: 'medical_dehydration',
+    severity: 'medium',
+    date: daysAgo(420),
+    status: 'verified',
+    assessmentEligible: true,
+    outcome: { injured: 1, hospitalized: 1, fatalities: 0, evacuated: 0 },
+    verifiedBy: USER_IDS.U_OFC_KKM_KL_01,
+    verifiedAt: daysAgo(419),
+    synthetic: true,
+    datasetVersion: '2026-07-24-malaysia-research-v1',
+    description: 'Marathon runner hospitalised for IV rehydration; discharged same day.',
+  },
+  {
+    incidentId: INCIDENT_IDS.INC004,
+        venueId: VENUE_IDS.V002,
+    eventType: 'sports',
+    incidentType: 'crowd_surge_finish_line',
+    severity: 'medium',
+    date: daysAgo(420),
+    status: 'verified',
+    assessmentEligible: true,
+    outcome: { injured: 0, hospitalized: 0, fatalities: 0, evacuated: 0 },
+    verifiedBy: USER_IDS.U_OFC_PDRM_KL_01,
+    verifiedAt: daysAgo(419),
+    synthetic: true,
+    datasetVersion: '2026-07-24-malaysia-research-v1',
+    description: 'Brief crowd surge at finish line; PDRM contained within 90 seconds.',
+  },
+  {
+    incidentId: INCIDENT_IDS.INC005,
+        venueId: VENUE_IDS.V002,
+    eventType: 'concert',
+    incidentType: 'crowd_surge_moshpit',
+    severity: 'medium',
+    date: daysAgo(550),
+    status: 'verified',
+    assessmentEligible: true,
+    outcome: { injured: 2, hospitalized: 1, fatalities: 0, evacuated: 0 },
+    verifiedBy: USER_IDS.U_OFC_PDRM_KL_01,
+    verifiedAt: daysAgo(549),
+    synthetic: true,
+    datasetVersion: '2026-07-24-malaysia-research-v1',
+    description: 'Mosh pit crowd surge; 2 attendees with minor injuries, 1 transported to hospital.',
+  },
+  {
+    incidentId: INCIDENT_IDS.INC006,
+        venueId: VENUE_IDS.V002,
+    eventType: 'concert',
+    incidentType: 'security_altercation',
+    severity: 'low',
+    date: daysAgo(550),
+    status: 'verified',
+    assessmentEligible: true,
+    outcome: { injured: 0, hospitalized: 0, fatalities: 0, evacuated: 1 },
+    verifiedBy: USER_IDS.U_OFC_PDRM_KL_01,
+    verifiedAt: daysAgo(549),
+    synthetic: true,
+    datasetVersion: '2026-07-24-malaysia-research-v1',
+    description: 'Security removed one attendee for disruptive behaviour.',
+  },
+  {
+    incidentId: INCIDENT_IDS.INC007,
+        venueId: VENUE_IDS.V002,
+    eventType: 'concert',
+    incidentType: 'lost_child',
+    severity: 'low',
+    date: daysAgo(550),
+    status: 'verified',
+    assessmentEligible: true,
+    outcome: { injured: 0, hospitalized: 0, fatalities: 0, evacuated: 0 },
+    verifiedBy: USER_IDS.U_OFC_PDRM_KL_01,
+    verifiedAt: daysAgo(549),
+    synthetic: true,
+    datasetVersion: '2026-07-24-malaysia-research-v1',
+    description: 'Child separated; reunited within 25 minutes.',
+  },
+  {
+    incidentId: INCIDENT_IDS.INC008,
+        venueId: VENUE_IDS.V007,
+    eventType: 'sports',
+    incidentType: 'medical_heat',
+    severity: 'low',
+    date: daysAgo(720),
+    status: 'verified',
+    assessmentEligible: true,
+    outcome: { injured: 1, hospitalized: 0, fatalities: 0, evacuated: 0 },
+    verifiedBy: USER_IDS.U_OFC_KKM_KL_01,
+    verifiedAt: daysAgo(719),
+    synthetic: true,
+    datasetVersion: '2026-07-24-malaysia-research-v1',
+    description: 'Heat exhaustion in spectator; treated on-site.',
+  },
+  {
+    incidentId: INCIDENT_IDS.INC009,
+        venueId: VENUE_IDS.V005,
+    eventType: 'religious',
+    incidentType: 'medical_faint',
+    severity: 'low',
+    date: daysAgo(450),
+    status: 'verified',
+    assessmentEligible: true,
+    outcome: { injured: 1, hospitalized: 0, fatalities: 0, evacuated: 0 },
+    verifiedBy: USER_IDS.U_OFC_KKM_SL_01,
+    verifiedAt: daysAgo(449),
+    synthetic: true,
+    datasetVersion: '2026-07-24-malaysia-research-v1',
+    description: 'Attendee fainted; treated on-site.',
+  },
+  {
+    incidentId: INCIDENT_IDS.INC010,
+        venueId: VENUE_IDS.V005,
+    eventType: 'religious',
+    incidentType: 'parking_overflow',
+    severity: 'low',
+    date: daysAgo(450),
+    status: 'verified',
+    assessmentEligible: true,
+    outcome: { injured: 0, hospitalized: 0, fatalities: 0, evacuated: 0 },
+    verifiedBy: USER_IDS.U_OFC_PDRM_SL_01,
+    verifiedAt: daysAgo(449),
+    synthetic: true,
+    datasetVersion: '2026-07-24-malaysia-research-v1',
+    description: 'Parking overflow; traffic redirected to overflow lot. No injuries.',
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Lookups
+// ---------------------------------------------------------------------------
+export const findIncidentsForVenue = (venueId: string): Incident[] =>
+  mockIncidents.filter((i) => i.venueId === venueId);
+
+export const findAssessmentEligibleIncidents = (): Incident[] =>
+  mockIncidents.filter((i) => i.status === 'verified' && i.assessmentEligible === true);
+
