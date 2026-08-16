@@ -1,6 +1,6 @@
 /** Shared runtime-free contracts used by the React app and Cloud Functions. */
 
-export type UserRole = 'organizer' | 'authority' | 'public';
+export type UserRole = 'organizer' | 'authority' | 'public' | 'admin';
 
 export type AuthorityType = 'PDRM' | 'BOMBA' | 'KKM' | 'DBKL' | 'MOTAC';
 
