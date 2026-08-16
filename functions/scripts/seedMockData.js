@@ -101,6 +101,12 @@ const VENUES = [
   { venueId: 'ven-010-sutera-harbour', name: 'Sutera Harbour Resort', address: '1 Sutera Harbour Boulevard, 88100 Kota Kinabalu', capacity: 5500, jurisdiction: 'DBKK', location: { lat: 5.9780, lng: 116.0710 }, verifiedSafeCapacity: 5000, exitCount: 8, totalExitWidthMm: 9600, fireCertificateStatus: 'valid', emergencyAccessVerified: true, nearestHospitalTravelMinutes: 12 },
 ];
 
+// USERS is intentionally NOT hard-coded here. Per project decision, the
+// `users` collection must mirror the Firebase Auth accounts exactly —
+// no fake profiles. Use `scripts/syncUserProfiles.js` to (re)build it.
+//
+// (This block is kept for reference only and is no longer executed.)
+
 const USERS = [
   // Organisers
   { uid: 'usr-org-001', name: 'Chia Yu Xin', email: 'chia.yuxin@steras.test', role: 'organizer', authorityType: null, phone: '+60 12-101 0001' },
@@ -147,7 +153,10 @@ const NOW = Date.now();
 
 function buildEventDetails(name, type, venueId, organiserUid, startDatetime, endDatetime, expectedAttendance) {
   const venue = VENUES.find((v) => v.venueId === venueId);
-  const org = USERS.find((u) => u.uid === organiserUid);
+  // organiser details are denormalised into the event doc (organizerName/Email/Phone).
+  // We do NOT require the organiser to exist in the `users` collection — the seed
+  // data references mock organisers by uid; admin pages read the denormalised fields.
+  const org = { name: 'STERAS Organiser', email: `${organiserUid}@steras.test`, phone: '+60 12-000 0000' };
   return {
     name, type,
     venueId,
@@ -402,8 +411,11 @@ async function main() {
   console.log('--- Loading images (base64) ---');
   const images = await loadAllImages();
 
-  console.log('\n--- Clearing existing data ---');
-  console.log(`  users: ${await clearCollection(db, 'users')} cleared`);
+  console.log('\n--- Clearing existing data (users collection is left to syncUserProfiles) ---');
+  // Note: we deliberately do NOT clear `users` here — that collection is
+  // managed by scripts/syncUserProfiles.js to keep it in lock-step with
+  // Firebase Auth.
+  console.log('  users: (skipped — handled by syncUserProfiles.js)');
   console.log(`  venues: ${await clearCollection(db, 'venues')} cleared`);
   console.log(`  events: ${await clearCollection(db, 'events')} cleared`);
   console.log(`  public_events: ${await clearCollection(db, 'public_events')} cleared`);
@@ -415,31 +427,11 @@ async function main() {
   console.log(`  events/*/resource_overrides: ${await clearSubcollections(db, 'events', 'resource_overrides')} cleared`);
   console.log(`  events/*/audit_logs: ${await clearSubcollections(db, 'events', 'audit_logs')} cleared`);
 
-  console.log('\n--- Writing users ---');
-  let batch = db.batch();
-  let count = 0;
-  for (const u of USERS) {
-    const profile = {
-      uid: u.uid,
-      name: u.name,
-      email: u.email,
-      role: u.role,
-      authorityType: u.authorityType ?? null,
-      phone: u.phone,
-      createdAt: daysAgo(120),
-      updatedAt: NOW,
-    };
-    if (u.authorityType === null) profile.authorityType = admin.firestore.FieldValue.delete();
-    batch.set(db.collection('users').doc(u.uid), profile, { merge: true });
-    count += 1;
-    if (count % 400 === 0) { await batch.commit(); batch = db.batch(); }
-  }
-  await batch.commit();
-  console.log(`  ${count} users written`);
+  console.log('\n--- Skipping users write — run scripts/syncUserProfiles.js to populate from Auth ---');
 
   console.log('\n--- Writing venues ---');
-  batch = db.batch();
-  count = 0;
+  let batch = db.batch();
+  let count = 0;
   for (const v of VENUES) {
     batch.set(db.collection('venues').doc(v.venueId), v);
     count += 1;
