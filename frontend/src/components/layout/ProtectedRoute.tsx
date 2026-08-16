@@ -2,6 +2,7 @@ import { ReactNode } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { UserRole } from '@shared/types';
+import { getRoleHome } from '../../routing';
 
 interface Props {
   children: ReactNode;
@@ -42,7 +43,7 @@ export default function ProtectedRoute({ children, requiredRole }: Props) {
         <section className="card w-full max-w-md" aria-labelledby="profile-missing-title">
           <div className="card-body text-center">
             <h1 id="profile-missing-title" className="font-display text-xl font-bold text-ink-800">Workspace profile unavailable</h1>
-            <p className="mt-2 text-sm leading-6 text-ink-500">Your sign-in exists, but no organizer or authority profile is assigned. Contact the project administrator.</p>
+            <p className="mt-2 text-sm leading-6 text-ink-500">Your sign-in exists, but no organizer, authority, or admin profile is assigned. Contact the project administrator.</p>
             <button type="button" className="btn-secondary mt-5" onClick={() => void signOut()}>Sign out</button>
           </div>
         </section>
@@ -52,9 +53,8 @@ export default function ProtectedRoute({ children, requiredRole }: Props) {
 
   if (requiredRole && profile.role !== requiredRole) {
     // Wrong role — redirect to that role's home if known, otherwise login.
-    if (profile?.role === 'organizer') return <Navigate to="/organizer" replace />;
-    if (profile?.role === 'authority') return <Navigate to="/authority" replace />;
-    return <Navigate to="/login" replace />;
+    const home = getRoleHome(profile.role);
+    return <Navigate to={home ?? '/login'} replace />;
   }
 
   return <>{children}</>;

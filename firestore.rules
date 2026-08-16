@@ -4,9 +4,10 @@ rules_version = '2';
 // STERAS Firestore Security Rules
 // =====================================================================
 // Roles:
-//   - organizer:  can edit own Draft or AmendmentRequested applications
-//   - authority:  can read only applications assigned to their agency
-//   - public:     can read only `public_events` collection (read-only, no auth)
+//   - organizer:  self-signup; can edit own Draft or AmendmentRequested applications
+//   - authority:  server-provisioned only; reviews applications assigned to their agency
+//   - public:     self-signup; reads public_events (same as logged-out users)
+//   - admin:      server-provisioned only; full read across users/events for ops
 // =====================================================================
 
 service cloud.firestore {
@@ -27,6 +28,16 @@ service cloud.firestore {
              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'authority';
     }
 
+    function isPublic() {
+      return isSignedIn() &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'public';
+    }
+
+    function isAdmin() {
+      return isSignedIn() &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
     function isOwner(organizerId) {
       return isSignedIn() && request.auth.uid == organizerId;
     }
@@ -43,14 +54,17 @@ service cloud.firestore {
     }
 
     // ---- users collection ----
-    // Organizers and authorities can read their own profile.
-    // Authorities can read other authorities' profiles (for assignment/coordination).
+    // Self can read own profile.
+    // Authorities can read other authorities (for assignment/coordination).
+    // Admins can read all profiles (for ops).
     match /users/{userId} {
       allow read: if isSignedIn() && (request.auth.uid == userId
-                    || (isAuthority() && resource.data.role == 'authority'));
+                    || (isAuthority() && resource.data.role == 'authority')
+                    || isAdmin());
       // Users can create their own profile on signup.
+      // Allowed roles: 'organizer' or 'public' (NOT 'admin' or 'authority' — those are server-only).
       allow create: if isSignedIn() && request.auth.uid == userId
-                    && request.resource.data.role == 'organizer'
+                    && (request.resource.data.role == 'organizer' || request.resource.data.role == 'public')
                     && request.resource.data.uid == request.auth.uid
                     && request.resource.data.keys().hasOnly([
                       'uid', 'name', 'email', 'role', 'phone',
@@ -69,8 +83,10 @@ service cloud.firestore {
     match /events/{eventId} {
       // Organizer can read their own event.
       // Assigned authorities can read applications for their agency.
+      // Admins can read all events (ops view).
       // Public viewers should query `public_events` instead — not `events`.
-      allow read: if (isSignedIn() && isAuthority()
+      allow read: if isAdmin()
+                  || (isSignedIn() && isAuthority()
                        && resource.data.requiredAuthorities.hasAny([
                          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.authorityType
                        ]))
@@ -102,13 +118,15 @@ service cloud.firestore {
       allow delete: if false;
 
       match /versions/{versionId} {
-        allow read: if (isSignedIn() && isAssignedAuthority(eventId))
+        allow read: if isAdmin()
+                    || (isSignedIn() && isAssignedAuthority(eventId))
                     || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
         allow write: if false;
       }
 
       match /assessments/{assessmentId} {
-        allow read: if (isSignedIn() && isAssignedAuthority(eventId))
+        allow read: if isAdmin()
+                    || (isSignedIn() && isAssignedAuthority(eventId))
                     || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
         allow write: if false;
       }
@@ -116,33 +134,37 @@ service cloud.firestore {
       // ---- Sub-collection: resources ----
       // Written by Cloud Functions only.
       match /resources/{resourceId} {
-        allow read: if (isSignedIn() && isAssignedAuthority(eventId))
+        allow read: if isAdmin()
+                    || (isSignedIn() && isAssignedAuthority(eventId))
                     || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
         allow write: if false; // server-only
       }
 
       match /decisions/{decisionId} {
-        allow read: if (isSignedIn() && isAssignedAuthority(eventId))
+        allow read: if isAdmin()
+                    || (isSignedIn() && isAssignedAuthority(eventId))
                     || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
         allow write: if false;
       }
 
       match /decision_history/{historyId} {
-        allow read: if (isSignedIn() && isAssignedAuthority(eventId))
+        allow read: if isAdmin()
+                    || (isSignedIn() && isAssignedAuthority(eventId))
                     || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
         allow write: if false;
       }
 
       match /resource_overrides/{overrideId} {
-        allow read: if (isSignedIn() && isAssignedAuthority(eventId))
+        allow read: if isAdmin()
+                    || (isSignedIn() && isAssignedAuthority(eventId))
                     || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
         allow write: if false;
       }
 
       // ---- Sub-collection: audit_logs ----
-      // Append-only. Read by authorities. Never client-writable.
+      // Append-only. Read by authorities + admins. Never client-writable.
       match /audit_logs/{logId} {
-        allow read: if isSignedIn() && isAssignedAuthority(eventId);
+        allow read: if isAdmin() || (isSignedIn() && isAssignedAuthority(eventId));
         allow write: if false; // server-only
       }
     }
@@ -155,20 +177,20 @@ service cloud.firestore {
 
     // ---- incidents (synthetic dataset — read-only) ----
     match /incidents/{incidentId} {
-      allow read: if isSignedIn() && isAuthority();
+      allow read: if isAdmin() || (isSignedIn() && isAuthority());
       allow write: if false;
     }
 
     // Historical outcomes are evidence for server-side M2 retrieval. Synthetic
     // records remain visible to authority reviewers for provenance inspection.
     match /historical_events/{historicalEventId} {
-      allow read: if isSignedIn() && isAuthority();
+      allow read: if isAdmin() || (isSignedIn() && isAuthority());
       allow write: if false;
     }
 
     // Dataset manifests disclose origin, intended use, and synthetic status.
     match /dataset_manifests/{manifestId} {
-      allow read: if isSignedIn() && isAuthority();
+      allow read: if isAdmin() || (isSignedIn() && isAuthority());
       allow write: if false;
     }
 

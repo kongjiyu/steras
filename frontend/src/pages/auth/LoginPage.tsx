@@ -7,6 +7,7 @@ import { auth } from '../../config/firebase';
 import AuthShell from '../../components/layout/AuthShell';
 import { getPostLoginPath, getRoleHome, ReturnLocation } from '../../routing';
 import { authErrorMessage } from '../../contexts/authErrors';
+import { LogIn, LogOut } from 'lucide-react';
 
 export default function LoginPage() {
   const { user, profile, signIn, signOut, configured } = useAuth();
@@ -15,7 +16,17 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const existingSessionHome = user ? getRoleHome(profile?.role) : null;
+
+  const handleSignOut = async () => {
+    setSigningOut(true);
+    try {
+      await signOut();
+    } finally {
+      setSigningOut(false);
+    }
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -48,7 +59,58 @@ export default function LoginPage() {
 
   // Keep the form mounted while a sign-in is resolving so its intended return
   // route wins over the generic existing-session redirect.
-  if (existingSessionHome && !submitting) return <Navigate to={existingSessionHome} replace />;
+  if (existingSessionHome && !submitting) {
+    const roleLabel = profile?.role === 'authority' && profile?.authorityType
+      ? `Authority (${profile.authorityType})`
+      : profile?.role
+      ? profile.role.charAt(0).toUpperCase() + profile.role.slice(1)
+      : 'Unknown';
+    return (
+      <AuthShell>
+        <div className="w-full border-t-4 border-brand-700 bg-[#fffdf8] px-5 py-7 shadow-[0_16px_40px_rgba(63,77,29,0.08)] sm:px-8 sm:py-8">
+          <p className="page-eyebrow">Already signed in</p>
+          <h1 className="font-display text-2xl font-bold tracking-[-0.025em] text-ink-900">
+            You&apos;re signed in as {profile?.name ?? 'a user'}
+          </h1>
+          <p className="mt-2 text-sm leading-6 text-ink-500">
+            You can&apos;t sign in to another account while this session is active.
+            Head to your dashboard, or sign out first to switch accounts.
+          </p>
+
+          <dl className="mt-5 divide-y divide-[#e8e0cf] rounded-lg border border-[#ded5c5] bg-cream-50/60 text-sm">
+            <div className="grid grid-cols-[6rem_minmax(0,1fr)] items-center gap-3 px-4 py-3">
+              <dt className="font-semibold text-ink-700">Email</dt>
+              <dd className="text-ink-900">{profile?.email ?? '—'}</dd>
+            </div>
+            <div className="grid grid-cols-[6rem_minmax(0,1fr)] items-center gap-3 px-4 py-3">
+              <dt className="font-semibold text-ink-700">Role</dt>
+              <dd className="text-ink-900">{roleLabel}</dd>
+            </div>
+          </dl>
+
+          <div className="mt-6 flex flex-col gap-2 sm:flex-row">
+            <button
+              type="button"
+              onClick={() => navigate(existingSessionHome, { replace: true })}
+              className="btn-primary flex-1"
+            >
+              <LogIn size={16} />
+              Go to your dashboard
+            </button>
+            <button
+              type="button"
+              onClick={handleSignOut}
+              disabled={signingOut}
+              className="btn-secondary flex-1"
+            >
+              <LogOut size={16} />
+              {signingOut ? 'Signing out…' : 'Sign out & sign in as another'}
+            </button>
+          </div>
+        </div>
+      </AuthShell>
+    );
+  }
 
   return (
     <AuthShell>

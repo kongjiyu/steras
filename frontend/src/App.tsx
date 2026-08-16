@@ -30,6 +30,9 @@ import RiskAssessments from './pages/authority/RiskAssessments';
 import ResourceRecommendations from './pages/authority/ResourceRecommendations';
 import DashboardPreview from './pages/DashboardPreview';
 
+// Admin pages
+import AdminDashboard from './pages/admin/AdminDashboard';
+
 export default function App() {
   const { loading } = useAuth();
 
@@ -82,6 +85,17 @@ export default function App() {
         <Route path="/authority/users" element={<Navigate to="/authority" replace />} />
         <Route path="/authority/settings" element={<Navigate to="/authority" replace />} />
         <Route path="/authority/events/:eventId" element={<AuthorityEventReview />} />
+      </Route>
+
+      {/* Admin routes (auth + role=admin) */}
+      <Route
+        element={
+          <ProtectedRoute requiredRole="admin">
+            <div />
+          </ProtectedRoute>
+        }
+      >
+        <Route path="/admin" element={<AdminDashboard />} />
       </Route>
 
       {/* Fallback */}

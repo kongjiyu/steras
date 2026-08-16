@@ -24,7 +24,7 @@ export default function PublicHome() {
               <p className="mt-5 max-w-lg text-base leading-7 text-ink-600">STERAS helps Malaysian organizers and authorities assess risk, coordinate evidence-based decisions, and publish trusted approved events.</p>
               <div className="mt-8 flex flex-wrap gap-3">
                 <Link to="/calendar" className="btn-primary">View approved events</Link>
-                <Link to="/register" className="btn-secondary">Organizer sign-up</Link>
+                <Link to="/login" className="btn-secondary">Sign in</Link>
               </div>
             </div>
           </div>
