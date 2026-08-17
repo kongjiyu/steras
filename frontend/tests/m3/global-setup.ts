@@ -35,16 +35,16 @@ const db: Firestore = getFirestore(adminApp);
 /**
  * Mirror of the function's processingHash — see
  * functions/src/triggers/onEventCreated.ts. Must match the version
- * constants in shared/types.ts and functions/src/config/categorySchema.ts.
- * If those change, update this too.
+ * constants in shared/types.ts, functions/src/config/categorySchema.ts,
+ * and functions/src/engines/aiPredictor.ts. If those change, update this too.
  */
 function processingHash(versionInputHash: string): string {
   return createHash('sha256').update(JSON.stringify({
     versionInputHash,
     categorySchemaVersion: '2026-07-24-all-hazards-v2',
     scoringLogicVersion: '2026-07-24-hirarc-residual-v2',
-    promptVersion: 'v2.3.0',
-    aiResponseSchemaVersion: '2026-07-21-advisory-v1',
+    promptVersion: 'v4.0.0-all-hazards-evidence-advisory',
+    aiResponseSchemaVersion: '2026-07-24-all-hazards-advisory-v2',
     formulaVersion: '2026-07-24-prototype-range-v3',
     guidelineVersion: '2026-07-24-malaysia-research-v2',
   })).digest('hex');
@@ -241,7 +241,15 @@ async function createNegativeTestFixture(spec: EventSpec): Promise<void> {
     organizerPhone: '+60 12-000 0000',
   };
 
-  await eventRef.set({
+  const versionInputHash = 'uat-' + spec.id;
+
+  // Atomic write of event + version + assessment. The deployed
+  // onEventCreated Cloud Function reads all three in sequence; if they
+  // are visible together with the right inputHash, the function's claim
+  // check (existing.status==='ready' && same inputHash) recognises our
+  // seed and skips processing.
+  const setupBatch = db.batch();
+  setupBatch.set(eventRef, {
     eventId: spec.id,
     organizerId: 'usr-org-003',
     eventDetails,
@@ -257,12 +265,7 @@ async function createNegativeTestFixture(spec: EventSpec): Promise<void> {
     updatedAt: now,
     submittedAt: now,
   });
-
-  // Version — inputHash must match what the Cloud Function expects so that
-  // the function's claim check (existing.status==='ready' && same hash)
-  // recognises our pre-seeded assessment and skips overwriting it.
-  const versionInputHash = 'uat-' + spec.id;
-  await eventRef.collection('versions').doc(versionId).set({
+  setupBatch.set(eventRef.collection('versions').doc(versionId), {
     versionId,
     eventId: spec.id,
     versionNumber: 1,
@@ -272,8 +275,24 @@ async function createNegativeTestFixture(spec: EventSpec): Promise<void> {
     submittedAt: now,
     inputHash: versionInputHash,
   });
-
-  // Assessment (mock schema with the right compliance/readiness overrides)
+  setupBatch.set(eventRef.collection('assessments').doc(assessmentId), assessment);
+  setupBatch.set(eventRef.collection('resources').doc(resourceId), {
+    ...MOCK_RESOURCE,
+    resourceId,
+    eventId: spec.id,
+    versionId,
+    assessmentId,
+    computedAt: now,
+  });
+  await setupBatch.commit();
+  // The function will then process and write its own assessment. We
+  // overwrite it again AFTER the function settles (see settleAndOverwrite
+  // below) with the test-specific complianceStatus/assessmentReadiness.
+  //
+  // IMPORTANT: this must pass `isCurrentRiskAssessment` in the frontend
+  // (src/components/m2/m2Contract.ts) or the review form's "Your decision"
+  // section stays disabled. The check requires status==='ready' and a
+  // fully-populated contextSnapshot + aiAdvisory with array fields.
   const assessment: Record<string, unknown> = {
     assessmentId,
     eventId: spec.id,
@@ -289,26 +308,49 @@ async function createNegativeTestFixture(spec: EventSpec): Promise<void> {
       { categoryId: 'history', categoryName: 'Historical context', score: 42, riskLevel: 'Medium', weight: 0.1, weightedContribution: 4.2,  rationale: 'UAT', evidenceKeys: ['history'], guidelineChecks: [] },
       { categoryId: 'holiday', categoryName: 'Calendar context',   score: 44, riskLevel: 'Medium', weight: 0.1, weightedContribution: 4.4,  rationale: 'UAT', evidenceKeys: ['holiday'], guidelineChecks: [] },
     ],
-    evidence: [],
-    categorySchemaVersion: '2026-07-21-prototype-category-v1',
-    scoringLogicVersion: '2026-07-21-deterministic-v1',
+    evidence: [
+      { key: 'weather', description: 'UAT', source: 'openweather', sourceTimestamp: now, status: 'matched', quality: 'verified' },
+      { key: 'crowd',   description: 'UAT', source: 'versioned-input', sourceTimestamp: now, status: 'matched', quality: 'verified' },
+    ],
+    categorySchemaVersion: '2026-07-24-all-hazards-v2',
+    scoringLogicVersion: '2026-07-24-hirarc-residual-v2',
     categorySchemaStatus: 'prototype',
     complianceStatus: spec.complianceStatus ?? 'pass',
     assessmentReadiness: spec.assessmentReadiness ?? 'complete',
     computedAt: now,
-    aiAdvisory: { model: 'M3 UAT', status: 'unavailable', overallBand: 'Medium', overallExplanation: 'UAT seed.' },
+    contextSnapshot: {
+      weather: {
+        data: { forecast: 'Partly cloudy', temperature: 31, humidity: 75, windSpeed: 12, precipitationProbability: 30, severeAlert: false },
+        source: 'openweather', freshness: 'fresh', fetchedAt: now, expiresAt: now + 6 * 3600_000, forecastFor: now + 3600_000,
+      },
+      calendar: {
+        localDate: new Date(now).toISOString().slice(0, 10), dayOfWeek: 'Saturday', isWeekend: true, isHolidayOrAdjacent: false,
+        sourceVersion: 'uat-calendar-v1', sourceTimestamp: now,
+      },
+      venue: {
+        matched: true, venueId: 'ven-001-dataran-merdeka', submittedCapacity: 10_000, registeredCapacity: 10_000, capacityDifference: 0,
+        jurisdiction: 'DBKL', fireCertificateStatus: 'valid', fireCertificateExpiresAt: now + 200 * 24 * 3600_000,
+        emergencyAccessVerified: true, nearestHospitalTravelMinutes: 8, fetchedAt: now,
+      },
+      incidentHistory: {
+        matched: false, venueId: 'ven-001-dataran-merdeka', incidentIds: [], total: 0, bySeverity: { low: 0, medium: 0, high: 0 },
+        fetchedAt: now,
+      },
+    },
+    sourceTimestamps: { weather: now, holiday: now, venue: now, incidents: now },
+    contextStatuses: { weather: 'matched', holiday: 'matched', venue: 'matched', incidents: 'unmatched', ai: 'not-applicable' },
+    aiAdvisory: {
+      model: 'MiniMax-M3', promptVersion: 'v2.3.0', responseSchemaVersion: '2026-07-21-advisory-v1',
+      status: 'unavailable', label: 'advisory', overallBand: 'Medium',
+      overallExplanation: 'UAT seed: MiniMax unavailable; deterministic baseline used.',
+      categories: [],
+      keyConcerns: [],
+      resourceConsiderations: [],
+      citedEvidenceKeys: ['weather', 'crowd'],
+      cacheStatus: 'not-applicable', generatedAt: now,
+    },
   };
-  await eventRef.collection('assessments').doc(assessmentId).set(assessment);
-
-  // Resource
-  await eventRef.collection('resources').doc(resourceId).set({
-    ...MOCK_RESOURCE,
-    resourceId,
-    eventId: spec.id,
-    versionId,
-    assessmentId,
-    computedAt: now,
-  });
+  // (Assessment and resource were already written in setupBatch above.)
 
   // Event controls (for the control-verification spec)
   if (spec.eventControls && spec.eventControls > 0) {
@@ -328,10 +370,62 @@ async function createNegativeTestFixture(spec: EventSpec): Promise<void> {
     await batch.commit();
   }
 
+  // ---- Settle the Cloud Function, then overwrite the assessment. ----
+  // The deployed onEventCreated function fires when we create the event
+  // above. To win the race we wait for it to settle, then re-write the
+  // assessment a few times with delays.
+  const t0 = Date.now();
+  await settleAssessmentFunction(eventRef, assessmentId);
+  console.log(`  [setup] ${spec.id} settled after ${Date.now() - t0}ms`);
+
+  // Re-write several times with delays to win against any racing
+  // markFailed from the Cloud Function.
+  for (let i = 0; i < 3; i++) {
+    await eventRef.collection('assessments').doc(assessmentId).set(assessment);
+    await new Promise((r) => setTimeout(r, 2_000));
+  }
+  // Final write after all racing writes should have settled
+  await eventRef.collection('assessments').doc(assessmentId).set(assessment);
+  await new Promise((r) => setTimeout(r, 1_000));
+
+  // Verify the final state
+  const finalSnap = await eventRef.collection('assessments').doc(assessmentId).get();
+  const finalData = finalSnap.data();
+  console.log(`  [setup] ${spec.id} final: status=${finalData?.status} compliance=${finalData?.complianceStatus} readiness=${finalData?.assessmentReadiness} hasContextSnapshot=${!!finalData?.contextSnapshot} hasAiAdvisory=${!!finalData?.aiAdvisory}`);
+
   console.log(`  [setup] ${spec.id}: created fixture` +
     (spec.complianceStatus ? ` compliance=${spec.complianceStatus}` : '') +
     (spec.assessmentReadiness ? ` readiness=${spec.assessmentReadiness}` : '') +
     (spec.eventControls ? ` controls=${spec.eventControls}` : ''));
+}
+
+/**
+ * Wait for the deployed onEventCreated Cloud Function to finish
+ * processing the assessment for this event, then return. We poll the
+ * assessment doc every 1s, up to 30s. We consider it 'settled' when:
+ *   - The doc has status === 'ready' (function finalised)
+ *   - OR the doc has status === 'failed' (function gave up)
+ *   - OR 30s elapses (function is stuck — give up and let the caller
+ *     overwrite so tests don't block forever)
+ *
+ * Note: the function will NOT re-trigger just because we write to the
+ * assessment doc — onDocumentCreated only fires on event creation.
+ */
+async function settleAssessmentFunction(
+  eventRef: FirebaseFirestore.DocumentReference,
+  assessmentId: string,
+  timeoutMs = 30_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  const assessRef = eventRef.collection('assessments').doc(assessmentId);
+  while (Date.now() < deadline) {
+    const snap = await assessRef.get();
+    const status = snap.data()?.status as string | undefined;
+    if (status === 'ready' || status === 'failed') return;
+    await new Promise((r) => setTimeout(r, 1_000));
+  }
+  // Timed out — function is stuck. Continue anyway; the next overwrite
+  // will replace whatever the function wrote (or didn't).
 }
 
 export default async function globalSetup(_config: FullConfig): Promise<void> {
