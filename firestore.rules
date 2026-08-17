@@ -199,5 +199,13 @@ service cloud.firestore {
       allow read: if true;
       allow write: if false; // server-only
     }
+
+    // ---- notifications (durable in-app notifications, FR-M3-08) ----
+    // Users see only their own notifications. Writes are server-only
+    // (the Cloud Functions createNotification helper is the only writer).
+    match /notifications/{notificationId} {
+      allow read: if isSignedIn() && resource.data.recipientUid == request.auth.uid;
+      allow write: if false; // server-only (Cloud Function)
+    }
   }
 }

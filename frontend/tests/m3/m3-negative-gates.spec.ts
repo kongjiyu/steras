@@ -65,27 +65,27 @@ test.describe('@M3 negative decision gates', () => {
   });
 
   test('non-assigned authority cannot act on an event that does not require them', async ({ page, api, loginAs }) => {
-    // evt-002 requires [PDRM, BOMBA, KKM, DBKL]. KKM is assigned.
-    // Sign in as a different authority... but our seed only has PDRM, BOMBA,
-    // KKM, DBKL. To exercise the "non-assigned" branch, we need an event
-    // that requires only a subset. We can use evt-003 (engine schema,
-    // requires PDRM, BOMBA, KKM) and sign in as DBKL (not assigned).
+    // evt-003 (mountain run) requires [PDRM, BOMBA, KKM]. DBKL is not
+    // assigned. Sign in as DBKL and call the Cloud Function directly —
+    // the form is hidden for non-assigned authorities so we bypass the UI.
     await loginAs('dbkl');
-    await page.goto(`/authority/events/${EVENTS.mountainRun}`, { waitUntil: 'domcontentloaded' });
-    // Page may render but the decision form should be disabled or the
-    // Cloud Function will reject. Fill and try to submit.
-    await expect(page.getByRole('heading', { name: /your decision/i })).toBeVisible();
-    const rationaleTa = page.getByLabel(/decision rationale/i);
-    await rationaleTa.scrollIntoViewIfNeeded();
-    rationaleTa.fill('DBKL attempting to act on an event it is not assigned to — should be rejected.');
-    const approveBtn = page.getByRole('button', { name: /^approve$/i });
-    await approveBtn.scrollIntoViewIfNeeded();
-    if (await approveBtn.isEnabled({ timeout: 5_000 }).catch(() => false)) {
-      await approveBtn.click();
-      // Expect a failure toast from the Cloud Function (permission-denied)
-      await expect(page.getByText(/not assigned|permission/i)).toBeVisible({ timeout: 10_000 });
+    let callError: string | null = null;
+    try {
+      await api.callFunction('makeAuthorityDecision', {
+        eventId: EVENTS.mountainRun,
+        decision: 'Approved',
+        rationale: 'DBKL attempting to act on an event it is not assigned to — should be rejected.',
+      });
+    } catch (err) {
+      callError = err instanceof Error ? err.message : String(err);
     }
-    // No decision recorded
+    // Expect a permission-denied HttpsError from the Cloud Function
+    expect(callError).toMatch(/not assigned|permission/i);
+    // Switch to admin (via signOut then loginAs) to read the
+    // (subcollection-server-only) decision and verify nothing was written.
+    // We can't read this as DBKL because they're not assigned to the event.
+    await api.signOut();
+    await loginAs('admin');
     const dec = await api.getDoc(`events/${EVENTS.mountainRun}/decisions/v1_DBKL`);
     expect(dec).toBeNull();
   });

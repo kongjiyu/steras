@@ -243,56 +243,10 @@ async function createNegativeTestFixture(spec: EventSpec): Promise<void> {
 
   const versionInputHash = 'uat-' + spec.id;
 
-  // Atomic write of event + version + assessment. The deployed
-  // onEventCreated Cloud Function reads all three in sequence; if they
-  // are visible together with the right inputHash, the function's claim
-  // check (existing.status==='ready' && same inputHash) recognises our
-  // seed and skips processing.
-  const setupBatch = db.batch();
-  setupBatch.set(eventRef, {
-    eventId: spec.id,
-    organizerId: 'usr-org-003',
-    eventDetails,
-    status: spec.status,
-    currentVersionId: versionId,
-    currentVersionNumber: 1,
-    currentAssessmentId: assessmentId,
-    currentResourceId: resourceId,
-    editableVersionId: null,
-    draftDocumentPaths: [],
-    requiredAuthorities: spec.requiredAuthorities,
-    createdAt: now,
-    updatedAt: now,
-    submittedAt: now,
-  });
-  setupBatch.set(eventRef.collection('versions').doc(versionId), {
-    versionId,
-    eventId: spec.id,
-    versionNumber: 1,
-    eventDetails,
-    documentPaths: [],
-    submittedBy: 'usr-org-003',
-    submittedAt: now,
-    inputHash: versionInputHash,
-  });
-  setupBatch.set(eventRef.collection('assessments').doc(assessmentId), assessment);
-  setupBatch.set(eventRef.collection('resources').doc(resourceId), {
-    ...MOCK_RESOURCE,
-    resourceId,
-    eventId: spec.id,
-    versionId,
-    assessmentId,
-    computedAt: now,
-  });
-  await setupBatch.commit();
-  // The function will then process and write its own assessment. We
-  // overwrite it again AFTER the function settles (see settleAndOverwrite
-  // below) with the test-specific complianceStatus/assessmentReadiness.
-  //
-  // IMPORTANT: this must pass `isCurrentRiskAssessment` in the frontend
-  // (src/components/m2/m2Contract.ts) or the review form's "Your decision"
-  // section stays disabled. The check requires status==='ready' and a
-  // fully-populated contextSnapshot + aiAdvisory with array fields.
+  // Build the full assessment object FIRST so we can include it in the
+  // atomic batch below. Must pass `isCurrentRiskAssessment` in the
+  // frontend (src/components/m2/m2Contract.ts) or the review form's
+  // "Your decision" section stays disabled.
   const assessment: Record<string, unknown> = {
     assessmentId,
     eventId: spec.id,
@@ -350,7 +304,65 @@ async function createNegativeTestFixture(spec: EventSpec): Promise<void> {
       cacheStatus: 'not-applicable', generatedAt: now,
     },
   };
-  // (Assessment and resource were already written in setupBatch above.)
+
+  // Atomic write of event + version + assessment. The deployed
+  // onEventCreated Cloud Function reads all three in sequence; if they
+  // are visible together with the right inputHash, the function's claim
+  // check (existing.status==='ready' && same inputHash) recognises our
+  // seed and skips processing. (M3 test fixtures are also explicitly
+  // skipped in the function body — see M3_TEST_FIXTURE_IDS.)
+  const setupBatch = db.batch();
+  setupBatch.set(eventRef, {
+    eventId: spec.id,
+    organizerId: 'usr-org-003',
+    eventDetails,
+    status: spec.status,
+    currentVersionId: versionId,
+    currentVersionNumber: 1,
+    currentAssessmentId: assessmentId,
+    currentResourceId: resourceId,
+    editableVersionId: null,
+    draftDocumentPaths: [],
+    requiredAuthorities: spec.requiredAuthorities,
+    createdAt: now,
+    updatedAt: now,
+    submittedAt: now,
+  });
+  setupBatch.set(eventRef.collection('versions').doc(versionId), {
+    versionId,
+    eventId: spec.id,
+    versionNumber: 1,
+    eventDetails,
+    documentPaths: [],
+    submittedBy: 'usr-org-003',
+    submittedAt: now,
+    inputHash: versionInputHash,
+  });
+  setupBatch.set(eventRef.collection('assessments').doc(assessmentId), assessment);
+  setupBatch.set(eventRef.collection('resources').doc(resourceId), {
+    ...MOCK_RESOURCE,
+    resourceId,
+    eventId: spec.id,
+    versionId,
+    assessmentId,
+    computedAt: now,
+  });
+  await setupBatch.commit();
+
+  // ---- Settle any in-flight Cloud Function and re-overwrite ----
+  // Belt-and-braces: even though the function is configured to skip
+  // these fixture ids, older invocations (or a function version still
+  // running on the old image) might still write. Re-overwrite a few
+  // times to win the race deterministically.
+  await settleAssessmentFunction(eventRef, assessmentId);
+  for (let i = 0; i < 2; i++) {
+    await eventRef.collection('assessments').doc(assessmentId).set(assessment);
+    await new Promise((r) => setTimeout(r, 2_000));
+  }
+  await eventRef.collection('assessments').doc(assessmentId).set(assessment);
+  const finalSnap = await eventRef.collection('assessments').doc(assessmentId).get();
+  const finalData = finalSnap.data();
+  console.log(`  [setup] ${spec.id} final: status=${finalData?.status} compliance=${finalData?.complianceStatus} readiness=${finalData?.assessmentReadiness} hasContextSnapshot=${!!finalData?.contextSnapshot} hasAiAdvisory=${!!finalData?.aiAdvisory}`);
 
   // Event controls (for the control-verification spec)
   if (spec.eventControls && spec.eventControls > 0) {
@@ -369,29 +381,6 @@ async function createNegativeTestFixture(spec: EventSpec): Promise<void> {
     }
     await batch.commit();
   }
-
-  // ---- Settle the Cloud Function, then overwrite the assessment. ----
-  // The deployed onEventCreated function fires when we create the event
-  // above. To win the race we wait for it to settle, then re-write the
-  // assessment a few times with delays.
-  const t0 = Date.now();
-  await settleAssessmentFunction(eventRef, assessmentId);
-  console.log(`  [setup] ${spec.id} settled after ${Date.now() - t0}ms`);
-
-  // Re-write several times with delays to win against any racing
-  // markFailed from the Cloud Function.
-  for (let i = 0; i < 3; i++) {
-    await eventRef.collection('assessments').doc(assessmentId).set(assessment);
-    await new Promise((r) => setTimeout(r, 2_000));
-  }
-  // Final write after all racing writes should have settled
-  await eventRef.collection('assessments').doc(assessmentId).set(assessment);
-  await new Promise((r) => setTimeout(r, 1_000));
-
-  // Verify the final state
-  const finalSnap = await eventRef.collection('assessments').doc(assessmentId).get();
-  const finalData = finalSnap.data();
-  console.log(`  [setup] ${spec.id} final: status=${finalData?.status} compliance=${finalData?.complianceStatus} readiness=${finalData?.assessmentReadiness} hasContextSnapshot=${!!finalData?.contextSnapshot} hasAiAdvisory=${!!finalData?.aiAdvisory}`);
 
   console.log(`  [setup] ${spec.id}: created fixture` +
     (spec.complianceStatus ? ` compliance=${spec.complianceStatus}` : '') +

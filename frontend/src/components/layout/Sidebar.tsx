@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import logoUrl from '../../assets/brand/steras-logo-horizontal-inverse.svg';
 import logoMark from '../../assets/brand/steras-mark.svg';
+import NotificationBell from './NotificationBell';
 
 /**
  * Generic workspace sidebar used by both the Authority and Admin layouts.
@@ -260,6 +261,7 @@ export function WorkspaceTopBar({
           <CalendarDays size={15} aria-hidden="true" />
           <span>{today}</span>
         </div>
+        <NotificationBell />
         <div className="authority-topbar__avatar" aria-label={`Signed in as ${userInitials ?? 'A'}`}>
           {userInitials ?? 'A'}
         </div>
