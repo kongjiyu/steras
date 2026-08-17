@@ -41,7 +41,19 @@ const RATIONALE_MAX = 1_000;
 
 export const verifyEventControl = onCall<VerifyEventControlRequest>({ region: FUNCTION_REGION }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in before verifying a control.');
-  return verifyEventControlForUser(request.auth.uid, request.data);
+  try {
+    return await verifyEventControlForUser(request.auth.uid, request.data);
+  } catch (err) {
+    // Re-throw HttpsError as-is; wrap any other error with a clear message
+    // so we don't ship silent INTERNAL failures.
+    if (err instanceof HttpsError) {
+      console.warn(`[verifyEventControl] HttpsError ${err.code}: ${err.message}`);
+      throw err;
+    }
+    const message = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
+    console.error(`[verifyEventControl] unexpected error: ${message}`);
+    throw new HttpsError('internal', message.slice(0, 500));
+  }
 });
 
 export async function verifyEventControlForUser(
@@ -110,10 +122,12 @@ export async function verifyEventControlForUser(
       reviewerUid: uid,
       status,
       rationale,
-      evidencePath,
-      evidenceFile,
       createdAt: now,
     };
+    // Firestore rejects `undefined` values by default. Only include the
+    // optional fields when the caller actually provided them.
+    if (evidencePath) verification.evidencePath = evidencePath;
+    if (evidenceFile) verification.evidenceFile = evidenceFile;
 
     tx.set(verifRef, verification);
     // Update the parent control's status field

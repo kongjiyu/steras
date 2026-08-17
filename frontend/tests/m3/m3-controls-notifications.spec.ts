@@ -30,14 +30,72 @@ test.describe('@M3 verified-control workflow', () => {
     expect(callError).toMatch(/not assigned|permission/i);
   });
 
-  // NOTE: the success-path spec is temporarily skipped — the deployed
-  // verifyEventControl function is throwing an INTERNAL error on
-  // PDRM's call. The non-assigned (KKM) path works correctly. The
-  // success path needs a function-log investigation before re-enabling.
-  test.skip('PDRM verifies a declared Stage-1 control', async () => {});
+  // The success-path spec — temporarily active to capture the INTERNAL error.
+  // Re-skip once we have a fix.
+  test('PDRM verifies a declared Stage-1 control', async ({ api, loginAs }) => {
+    await loginAs('pdrm');
+    const eventId = 'evt-control-verification';
+    const controlId = `${eventId}-ctrl-1`;
+    const result = await api.callFunction<{ eventId: string; controlId: string; status: 'verified' | 'rejected' }, { eventId: string; controlId: string; status: 'verified' | 'rejected' }>(
+      'verifyEventControl',
+      {
+        eventId,
+        controlId,
+        status: 'verified',
+        rationale: 'E2E — uploaded evacuation plan reviewed and approved by PDRM. All egress routes confirmed.',
+      },
+    );
+    expect(result.status).toBe('verified');
+  });
 });
 
 test.describe('@M3 organiser notifications', () => {
-  test.skip('organiser receives a notification after the event is Approved', async () => {});
-  test.skip('markNotificationRead toggles read state', async () => {});
+  test('organiser receives a notification after the event is Approved', async ({ api, loginAs }) => {
+    const eventId = EVENTS.foodFair;
+    const rationales: Array<[string, string]> = [
+      ['pdrm', 'PDRM approval: traffic management plan and crowd ingress accepted.'],
+      ['bomba', 'Bomba approval: fire safety officer signed off on egress routes.'],
+      ['kkm', 'KKM approval: medical plan meets mass-gathering guideline.'],
+      ['dbkl', 'DBKL approval: venue capacity and emergency access verified.'],
+    ];
+    for (const [key, rationale] of rationales) {
+      await api.signOut();
+      await loginAs(key as 'pdrm' | 'bomba' | 'kkm' | 'dbkl');
+      await api.callFunction('makeAuthorityDecision', { eventId, decision: 'Approved', rationale });
+    }
+
+    await api.signOut();
+    await loginAs('organizer');
+    const result = await api.callFunction<{ limit?: number }, { items: Array<{ notificationId: string; type: string; eventId: string; read: boolean }>; unread: number }>(
+      'listMyNotifications',
+      { limit: 50 },
+    );
+    const myNotifs = result.items.filter((n) => n.eventId === eventId);
+    expect(myNotifs.length).toBeGreaterThanOrEqual(1);
+    expect(myNotifs.some((n) => n.type === 'application_approved')).toBe(true);
+  });
+
+  test('markNotificationRead toggles read state', async ({ api, loginAs }) => {
+    await loginAs('organizer');
+    const result = await api.callFunction<{ limit?: number }, { items: Array<{ notificationId: string; read: boolean }>; unread: number }>(
+      'listMyNotifications',
+      { limit: 1 },
+    );
+    if (result.items.length === 0) {
+      test.skip(true, 'No notifications to test with — previous test left none.');
+      return;
+    }
+    const notifId = result.items[0].notificationId;
+    const updateResult = await api.callFunction<{ notificationId: string; read?: boolean }, { ok: boolean; idempotent: boolean }>(
+      'markNotificationRead',
+      { notificationId: notifId, read: true },
+    );
+    expect(updateResult.ok).toBe(true);
+    const after = await api.callFunction<{ limit?: number }, { items: Array<{ notificationId: string; read: boolean }>; unread: number }>(
+      'listMyNotifications',
+      { limit: 50 },
+    );
+    const afterNotif = after.items.find((n) => n.notificationId === notifId);
+    expect(afterNotif?.read).toBe(true);
+  });
 });

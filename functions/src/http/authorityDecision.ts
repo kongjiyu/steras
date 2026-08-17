@@ -27,7 +27,17 @@ const STANDARD_MIN_RATIONALE = 10;
 
 export const makeAuthorityDecision = onCall<AuthorityDecisionRequest>({ region: FUNCTION_REGION }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in before reviewing an application.');
-  return makeAuthorityDecisionForUser(request.auth.uid, request.data);
+  try {
+    return await makeAuthorityDecisionForUser(request.auth.uid, request.data);
+  } catch (err) {
+    if (err instanceof HttpsError) {
+      console.warn(`[makeAuthorityDecision] HttpsError ${err.code}: ${err.message}`);
+      throw err;
+    }
+    const message = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
+    console.error(`[makeAuthorityDecision] unexpected error: ${message}`);
+    throw new HttpsError('internal', message.slice(0, 500));
+  }
 });
 
 export async function makeAuthorityDecisionForUser(
