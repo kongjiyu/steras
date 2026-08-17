@@ -39,6 +39,7 @@ import AdminUsers from './pages/admin/AdminUsers';
 import AdminVenues from './pages/admin/AdminVenues';
 import AdminAnalytics from './pages/admin/AdminAnalytics';
 import AdminAudit from './pages/admin/AdminAudit';
+import AdminAssignment from './pages/admin/AdminAssignment';
 
 export default function App() {
   const { loading } = useAuth();
@@ -105,6 +106,7 @@ export default function App() {
         <Route path="/admin" element={<AdminDashboard />} />
         <Route path="/admin/applications" element={<AdminApplicationQueue />} />
         <Route path="/admin/applications/:eventId" element={<AdminApplicationReview />} />
+        <Route path="/admin/applications/:eventId/assign" element={<AdminAssignment />} />
         <Route path="/admin/users" element={<AdminUsers />} />
         <Route path="/admin/venues" element={<AdminVenues />} />
         <Route path="/admin/analytics" element={<AdminAnalytics />} />

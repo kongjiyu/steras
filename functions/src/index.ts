@@ -32,3 +32,7 @@ export { markNotificationRead, listMyNotifications } from './http/notifications'
 // M3 round N+1 — stub. Replaced by M2's `proposeEventControlList` when
 // M2 lands it (per integration contract Q5).
 export { proposeEventControlList } from './http/proposeEventControlList';
+// M3 Workstream 1 — officer assignment + multi-stage review.
+export { assignAuthorityOfficers } from './http/assignAuthorityOfficers';
+export { recordOfficerProposal } from './http/recordOfficerProposal';
+export { makeSecondReviewDecision } from './http/makeSecondReviewDecision';

@@ -126,6 +126,12 @@ export interface EventRecord {
   requiredAuthorities: AuthorityType[];
   /** Control IDs that have been VERIFIED (not just declared) by an authority. */
   verifiedControlIds?: string[];
+  /** M3 round N+1 (Workstream 1) — which review stage the event is in.
+   *  - 'initial':   admin has not yet approved for officer review (default)
+   *  - 'authority': officers are reviewing (admin clicked "Assign")
+   *  - 'second':    all officers have decided; admin must confirm aggregate
+   *  Absent or 'initial' = legacy flow (no assignment required). */
+  reviewStage?: 'initial' | 'authority' | 'second';
   createdAt: number;
   updatedAt: number;
   submittedAt?: number;
@@ -658,6 +664,7 @@ export const COLLECTIONS = {
   CONTROL_VERIFICATIONS: 'control_verifications',
   // M3 round N+1 — workstream 1
   OFFICERS: 'officers',
+  ASSIGNMENTS: 'assignments',
   STAGE1_DOCS: 'stage1_docs',
   STAGE2_DOCS: 'stage2_docs',
   PUBLIC_EVENT_CONTROLS: 'public_event_controls',
@@ -791,6 +798,26 @@ export interface Stage1Verification {
   evidencePath?: string;
   evidenceFile?: { name: string; sizeBytes: number; mimeType: string };
   createdAt: number;
+}
+
+/** Officer assignment to an event version. Doc id = `${versionId}_${authorityType}`
+ *  (one assignment per authority per version). Created by `assignAuthorityOfficers`;
+ *  consumed by `recordOfficerProposal`. */
+export interface Assignment {
+  assignmentId: string;
+  eventId: string;
+  versionId: string;
+  authorityType: AuthorityType;
+  officerUid: string;
+  assignedBy: string;
+  assignedAt: number;
+  status: 'pending' | 'in_progress' | 'completed' | 'revoked';
+  decision?: DecisionValue;
+  reason?: string;
+  suggestion?: string;
+  decidedAt?: number;
+  revokedAt?: number;
+  revokedBy?: string;
 }
 
 /** Public report of an inaccurate Stage 2 image. M3 writes the doc when

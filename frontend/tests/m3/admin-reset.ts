@@ -55,3 +55,34 @@ export async function resetMountainRun(): Promise<void> {
   await batch.commit();
   await eventRef.update({ status: 'Pending', organizerId: UAT_ORGANIZER_UID, updatedAt: Date.now() });
 }
+
+/**
+ * Reset evt-004 (marathon) for Workstream 1 tests: UnderReview +
+ * reviewStage='initial', no assignments. Resets all 5 officers'
+ * workloadCount to 0.
+ */
+export async function resetMarathon(): Promise<void> {
+  const eventRef = db.collection('events').doc('evt-004-kl-marathon');
+  // Wipe assignments
+  const assn = await eventRef.collection('assignments').get();
+  const b1 = db.batch();
+  assn.docs.forEach((d) => b1.delete(d.ref));
+  await b1.commit();
+  // Reset event
+  await eventRef.update({
+    status: 'UnderReview',
+    reviewStage: 'initial',
+    secondReview: null,
+    updatedAt: Date.now(),
+  });
+  // Reset officer workload
+  const o = await db.collection('officers').get();
+  const b2 = db.batch();
+  o.docs.forEach((d) => b2.update(d.ref, { workloadCount: 0, updatedAt: Date.now() }));
+  await b2.commit();
+  // Wipe notifications from prior runs
+  const ns = await db.collection('notifications').get();
+  const b3 = db.batch();
+  ns.docs.forEach((d) => b3.delete(d.ref));
+  await b3.commit();
+}

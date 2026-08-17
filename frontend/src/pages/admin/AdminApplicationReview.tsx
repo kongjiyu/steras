@@ -614,10 +614,15 @@ export default function AdminApplicationReview() {
               </aside>
             </div>
 
-            <div className="mt-6">
+            <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
               <Link to="/admin/applications" className="text-sm font-semibold text-brand-700 hover:text-brand-800">
                 ← Back to application queue
               </Link>
+              {event && (
+                <Link to={`/admin/applications/${event.eventId}/assign`} className="btn-secondary !py-1.5 !px-3 text-xs">
+                  Open officer assignment →
+                </Link>
+              )}
             </div>
           </>
         )}

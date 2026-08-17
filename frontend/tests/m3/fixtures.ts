@@ -120,19 +120,33 @@ export const test = base.extend<Fixtures>({
   loginAs: async ({ page }, use) => {
     const fn = async (key: AccountKey) => {
       const a = ACCOUNTS[key];
+      // Force signOut first via the firebase global so we always land on
+      // the login form. This handles the case where a previous test
+      // left a user signed in.
+      await page.goto('/', { waitUntil: 'domcontentloaded' });
+      try {
+        await page.waitForFunction(() => !!(window as any).__sterasFirebase, { timeout: 5_000 });
+        await page.evaluate(async () => {
+          const fb = (window as any).__sterasFirebase;
+          if (fb?.auth?.currentUser) {
+            await fb.auth.signOut();
+          }
+        });
+      } catch (e) {
+        // Firebase not loaded yet; fall through to the manual flow.
+      }
       await page.goto('/login', { waitUntil: 'domcontentloaded' });
-      await page.waitForSelector('input[type=email]', { state: 'visible', timeout: 15_000 });
-      // If an "already signed in" panel is showing, sign out first
+      // If a signOut button is showing (legacy "already signed in" panel),
+      // click it. Otherwise just wait for the email input.
       const signOutBtn = page.getByRole('button', { name: /sign out/i });
       if (await signOutBtn.isVisible().catch(() => false)) {
         await signOutBtn.click();
-        await page.waitForSelector('input[type=email]', { state: 'visible', timeout: 10_000 });
       }
+      await page.waitForSelector('input[type=email]', { state: 'visible', timeout: 15_000 });
       await page.fill('input[type=email]', a.email);
       await page.fill('input[type=password]', a.password);
       await page.click('button[type=submit]');
       await page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 15_000 });
-      // Wait for the app bundle to expose the firebase global
       await page.waitForFunction(() => !!(window as any).__sterasFirebase, { timeout: 15_000 });
     };
     await use(fn);

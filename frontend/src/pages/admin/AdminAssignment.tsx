@@ -1,0 +1,281 @@
+/**
+ * AdminAssignment — M3 Workstream 1 admin page.
+ *
+ * Renders the officer assignment checklist for an event. Admin can:
+ *   - See the default-checked officer per required authority (per A4)
+ *   - Override the default by picking a different officer
+ *   - Click "Assign" to commit (calls `assignAuthorityOfficers`)
+ *   - See each officer's current decision (if they've submitted one)
+ *   - Click "Confirm aggregate" once all officers are done (calls
+ *     `makeSecondReviewDecision`)
+ *
+ * Reuses the existing `AdminLayout` shell (Q2 decision).
+ */
+import { useEffect, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
+import { format } from 'date-fns';
+import { ChevronLeft, Shield, ShieldCheck, UserCheck, Users } from 'lucide-react';
+import toast from 'react-hot-toast';
+import {
+  Assignment,
+  AuthorityType,
+  COLLECTIONS,
+  EventRecord,
+} from '@shared/types';
+import { db, functions, isFirebaseConfigured } from '../../config/firebase';
+import EmptyState from '../../components/ui/EmptyState';
+import StatusBadge from '../../components/ui/StatusBadge';
+
+interface ProposedChecklistItem {
+  authorityType: AuthorityType;
+  defaultOfficerUid: string;
+  candidates: Array<{ officerUid: string; state: string; scopeType: 'state' | 'federal'; workloadCount: number; lastAssignedAt?: number }>;
+}
+
+interface ProposedChecklistResponse {
+  checklist: ProposedChecklistItem[];
+  venueState: string;
+}
+
+export default function AdminAssignment() {
+  const { eventId } = useParams<{ eventId: string }>();
+  const [event, setEvent] = useState<EventRecord | null>(null);
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [checklist, setChecklist] = useState<ProposedChecklistItem[]>([]);
+  const [venueState, setVenueState] = useState<string>('ALL');
+  const [selected, setSelected] = useState<Record<AuthorityType, string>>({} as Record<AuthorityType, string>);
+  const [loadingChecklist, setLoadingChecklist] = useState(true);
+  const [committing, setCommitting] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [adminNote, setAdminNote] = useState('');
+
+  // Live event doc.
+  useEffect(() => {
+    if (!isFirebaseConfigured || !eventId) return;
+    return onSnapshot(doc(db, COLLECTIONS.EVENTS, eventId), (snapshot) => {
+      setEvent(snapshot.exists() ? { eventId: snapshot.id, ...snapshot.data() } as EventRecord : null);
+    });
+  }, [eventId]);
+
+  // Live assignments sub-collection.
+  useEffect(() => {
+    if (!isFirebaseConfigured || !eventId) return;
+    return onSnapshot(doc(db, COLLECTIONS.EVENTS, eventId).collection(COLLECTIONS.ASSIGNMENTS), (snapshot) => {
+      setAssignments(snapshot.docs.map((d) => ({ assignmentId: d.id, ...(d.data() as Assignment) })));
+    });
+  }, [eventId]);
+
+  // Initial: fetch the proposed checklist (dryRun).
+  useEffect(() => {
+    if (!isFirebaseConfigured || !eventId || !event) return;
+    setLoadingChecklist(true);
+    const command = httpsCallable<{ eventId: string; dryRun: true }, ProposedChecklistResponse>(
+      functions,
+      'assignAuthorityOfficers',
+    );
+    command({ eventId, dryRun: true })
+      .then((res) => {
+        setChecklist(res.data.checklist);
+        setVenueState(res.data.venueState);
+        // Initialise the selected map with defaults.
+        const def: Record<AuthorityType, string> = {} as Record<AuthorityType, string>;
+        for (const item of res.data.checklist) def[item.authorityType] = item.defaultOfficerUid;
+        setSelected(def);
+      })
+      .catch((err) => {
+        console.error('[AdminAssignment] checklist load failed:', err);
+        toast.error(err instanceof Error ? err.message : 'Unable to load the officer checklist.');
+      })
+      .finally(() => setLoadingChecklist(false));
+  }, [eventId, event?.currentVersionId]);
+
+  if (!isFirebaseConfigured) {
+    return <div className="p-8 text-ink-500">Firebase is not configured.</div>;
+  }
+  if (!eventId) return <div className="p-8"><EmptyState title="No event selected" /></div>;
+  if (!event) return <div className="p-8 text-ink-500">Loading application...</div>;
+
+  const details = event.eventDetails;
+  const required = event.requiredAuthorities;
+  const assignmentsByAuthority = new Map<AuthorityType, Assignment>();
+  for (const a of assignments) assignmentsByAuthority.set(a.authorityType, a);
+  const isAuthorityReview = event.reviewStage === 'authority';
+  const isSecondReview = event.reviewStage === 'second';
+  const allComplete = isSecondReview
+    || (assignments.length > 0 && assignments.every((a) => a.status === 'completed' || a.status === 'revoked'));
+  const aggregateDecision = computeAggregate(Array.from(assignmentsByAuthority.values()), required);
+
+  const commit = async () => {
+    if (!eventId) return;
+    setCommitting(true);
+    try {
+      const command = httpsCallable<{ eventId: string; assignmentMap: Record<string, string>; dryRun: false }, { assigned: number }>(
+        functions,
+        'assignAuthorityOfficers',
+      );
+      await command({ eventId, assignmentMap: selected, dryRun: false });
+      toast.success(`Assigned ${Object.keys(selected).length} officer(s).`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Unable to assign officers.');
+    } finally {
+      setCommitting(false);
+    }
+  };
+
+  const confirmSecondReview = async () => {
+    if (!eventId || !aggregateDecision) return;
+    setConfirming(true);
+    try {
+      const command = httpsCallable<{ eventId: string; confirmedDecision: typeof aggregateDecision; adminNote?: string }, { status: typeof aggregateDecision }>(
+        functions,
+        'makeSecondReviewDecision',
+      );
+      await command({ eventId, confirmedDecision: aggregateDecision, adminNote: adminNote.trim() || undefined });
+      toast.success(`Second review confirmed: ${aggregateDecision}.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Unable to confirm second review.');
+    } finally {
+      setConfirming(false);
+    }
+  };
+
+  return (
+    <div className="p-5 sm:p-8">
+      <Link to={`/admin/applications/${eventId}`} className="mb-4 inline-flex min-h-11 items-center gap-1 text-sm font-medium text-brand-700 hover:text-brand-800">
+        <ChevronLeft size={16} /> Back to application
+      </Link>
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="font-display text-2xl font-bold text-ink-800">Officer assignment</h1>
+          <p className="mt-1 text-sm text-ink-500">{details.name} · {details.venueName}</p>
+          <p className="mt-1 text-xs text-ink-400">Venue state: <span className="font-semibold">{venueState}</span> · Required: {required.join(', ')}</p>
+        </div>
+        <div className="flex flex-col items-end gap-1">
+          <StatusBadge status={event.status} />
+          {event.reviewStage && <span className="text-xs font-semibold text-ink-500">Stage: {event.reviewStage}</span>}
+        </div>
+      </div>
+
+      {loadingChecklist ? (
+        <p className="text-sm text-ink-500">Loading officer checklist...</p>
+      ) : (
+        <div className="space-y-5">
+          <section className="card">
+            <div className="card-header">
+              <div>
+                <h2 className="font-semibold">Checklist</h2>
+                <p className="mt-0.5 text-xs text-ink-500">Default-checked by lowest workload + state scope. Swap to a backup officer by clicking a different radio button.</p>
+              </div>
+              <Users size={18} className="text-brand-700" />
+            </div>
+            <div className="card-body space-y-5">
+              {checklist.map((item) => {
+                const current = assignmentsByAuthority.get(item.authorityType);
+                return (
+                  <div key={item.authorityType} className="rounded-md border border-ink-100 p-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Shield size={16} className="text-brand-700" />
+                        <p className="text-sm font-semibold text-ink-800">{item.authorityType}</p>
+                        {current && <span className="badge bg-green-100 text-status-approved text-xs">Assigned</span>}
+                        {current?.status === 'completed' && <span className="badge bg-blue-100 text-brand-700 text-xs">Decision recorded</span>}
+                      </div>
+                      <p className="text-xs text-ink-500">{item.candidates.length} eligible officer(s)</p>
+                    </div>
+                    {current ? (
+                      <div className="mt-2 rounded-md bg-cream-50 p-3 text-xs text-ink-600">
+                        <p><span className="font-semibold">Officer:</span> {current.officerUid}</p>
+                        <p><span className="font-semibold">Assigned by:</span> {current.assignedBy} · {format(new Date(current.assignedAt), 'PPp')}</p>
+                        {current.decision && (
+                          <p className="mt-1">
+                            <span className="font-semibold">Decision:</span> {current.decision} · {format(new Date(current.decidedAt ?? 0), 'PPp')}
+                          </p>
+                        )}
+                        {current.reason && <p className="mt-1 whitespace-pre-line"><span className="font-semibold">Reason:</span> {current.reason}</p>}
+                        {current.suggestion && <p className="mt-1 whitespace-pre-line"><span className="font-semibold">Suggestion:</span> {current.suggestion}</p>}
+                      </div>
+                    ) : item.candidates.length === 0 ? (
+                      <p className="mt-2 text-sm text-status-rejected">No eligible officers for {item.authorityType} + venue state {venueState}.</p>
+                    ) : (
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                        {item.candidates.map((c) => {
+                          const checked = (selected[item.authorityType] ?? item.defaultOfficerUid) === c.officerUid;
+                          return (
+                            <label key={c.officerUid} className={`flex cursor-pointer items-start gap-2 rounded-md border p-2 text-xs ${checked ? 'border-brand-700 bg-brand-50' : 'border-ink-200 bg-white'}`}>
+                              <input
+                                type="radio"
+                                name={`auth-${item.authorityType}`}
+                                value={c.officerUid}
+                                checked={checked}
+                                onChange={() => setSelected((cur) => ({ ...cur, [item.authorityType]: c.officerUid }))}
+                                className="mt-1"
+                                disabled={isAuthorityReview || isSecondReview}
+                              />
+                              <span>
+                                <span className="font-mono text-ink-700">{c.officerUid}</span>
+                                <span className="ml-2 text-ink-500">[{c.scopeType}:{c.state}] · workload {c.workloadCount}</span>
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {!isAuthorityReview && !isSecondReview && (
+              <div className="card-body border-t border-ink-100">
+                <button type="button" className="btn-primary w-full" disabled={committing || Object.keys(selected).length === 0} onClick={commit}>
+                  <UserCheck size={16} />{committing ? 'Assigning...' : 'Assign officers'}
+                </button>
+              </div>
+            )}
+          </section>
+
+          {allComplete && aggregateDecision && (
+            <section className="card">
+              <div className="card-header">
+                <div>
+                  <h2 className="font-semibold">Second review</h2>
+                  <p className="mt-0.5 text-xs text-ink-500">All officers have recorded their decisions. Confirm the aggregate below.</p>
+                </div>
+                <ShieldCheck size={18} className="text-status-approved" />
+              </div>
+              <div className="card-body space-y-3">
+                <p className="rounded-md bg-cream-50 p-3 text-sm text-ink-700">
+                  Aggregate: <span className="font-semibold">{aggregateDecision}</span>
+                </p>
+                <label className="block text-xs font-medium text-ink-600">
+                  Admin note (optional, for audit)
+                  <textarea className="input mt-1 resize-y" rows={2} maxLength={1000} value={adminNote} onChange={(e) => setAdminNote(e.target.value)} placeholder="Any context for the audit log." />
+                </label>
+                <button type="button" className="btn-success w-full" disabled={confirming} onClick={confirmSecondReview}>
+                  {confirming ? 'Confirming...' : `Confirm aggregate (${aggregateDecision})`}
+                </button>
+              </div>
+            </section>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function computeAggregate(assignments: Assignment[], required: AuthorityType[]): EventRecord['status'] | null {
+  if (assignments.length === 0 || required.length === 0) return null;
+  const byAuthority = new Map<AuthorityType, Assignment['decision']>();
+  for (const a of assignments) {
+    if (a.status === 'completed' && a.decision) byAuthority.set(a.authorityType, a.decision);
+  }
+  for (const auth of required) {
+    if (byAuthority.get(auth) === 'Rejected') return 'Rejected';
+  }
+  for (const auth of required) {
+    if (byAuthority.get(auth) === 'AmendmentRequested') return 'AmendmentRequested';
+  }
+  if (required.every((auth) => byAuthority.get(auth) === 'Approved')) return 'Approved';
+  return null;
+}
