@@ -8,8 +8,15 @@
  *   npx playwright test --grep "@M3"
  */
 import { test, expect, EVENTS } from './fixtures';
+import { resetFoodFair } from './admin-reset';
 
 test.describe('@M3 PDRM decision flow', () => {
+  // Reset evt-002 to clean UnderReview state in case other specs
+  // (aggregate, control-verification) mutated it.
+  test.beforeEach(async () => {
+    await resetFoodFair();
+  });
+
   test('PDRM approves an assigned event', async ({ page, api, loginAs }) => {
     // Global setup (tests/m3/global-setup.ts) has already reset evt-002 to
     // a clean UnderReview state with a mock resource doc written.
