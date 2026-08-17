@@ -14,7 +14,7 @@
  *   - overrideResources     — validates and audits resource adjustments
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.listMyNotifications = exports.markNotificationRead = exports.verifyEventControl = exports.overrideResources = exports.makeAuthorityDecision = exports.withdrawEvent = exports.submitEvent = exports.manualRecompute = exports.recomputeRiskAndResources = exports.onEventUpdated = exports.onEventCreated = void 0;
+exports.proposeEventControlList = exports.listMyNotifications = exports.markNotificationRead = exports.verifyEventControl = exports.overrideResources = exports.makeAuthorityDecision = exports.withdrawEvent = exports.submitEvent = exports.manualRecompute = exports.recomputeRiskAndResources = exports.onEventUpdated = exports.onEventCreated = void 0;
 const app_1 = require("firebase-admin/app");
 // Initialize firebase-admin before any function code runs.
 (0, app_1.initializeApp)();
@@ -39,4 +39,8 @@ Object.defineProperty(exports, "verifyEventControl", { enumerable: true, get: fu
 var notifications_1 = require("./http/notifications");
 Object.defineProperty(exports, "markNotificationRead", { enumerable: true, get: function () { return notifications_1.markNotificationRead; } });
 Object.defineProperty(exports, "listMyNotifications", { enumerable: true, get: function () { return notifications_1.listMyNotifications; } });
+// M3 round N+1 — stub. Replaced by M2's `proposeEventControlList` when
+// M2 lands it (per integration contract Q5).
+var proposeEventControlList_1 = require("./http/proposeEventControlList");
+Object.defineProperty(exports, "proposeEventControlList", { enumerable: true, get: function () { return proposeEventControlList_1.proposeEventControlList; } });
 //# sourceMappingURL=index.js.map

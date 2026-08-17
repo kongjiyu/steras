@@ -181,12 +181,67 @@ service cloud.firestore {
         allow write: if false; // server-only
       }
 
+      // ---- Sub-collection: stage1_docs (M3 round N+1, Workstream 3) ----
+      // Per-doc Stage 1 evidence (application, license, insurance, ...).
+      // Read by assigned authority + event owner + admin. Writes server-only
+      // (verifyStage1Doc / uploadStage1Doc Cloud Functions).
+      match /event_controls/{controlId}/stage1_docs/{docId} {
+        allow read: if isAdmin()
+                    || (isSignedIn() && isAssignedAuthority(eventId))
+                    || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
+        allow write: if false; // server-only
+      }
+
+      // ---- Sub-collection: stage2_docs (M3 round N+1, Workstream 4) ----
+      // Visual evidence (public-verifiable). Same read scope as Stage 1.
+      match /event_controls/{controlId}/stage2_docs/{docId} {
+        allow read: if isAdmin()
+                    || (isSignedIn() && isAssignedAuthority(eventId))
+                    || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
+        allow write: if false; // server-only
+      }
+
       // ---- Sub-collection: audit_logs ----
       // Append-only. Read by authorities + admins. Never client-writable.
       match /audit_logs/{logId} {
         allow read: if isAdmin() || (isSignedIn() && isAssignedAuthority(eventId));
         allow write: if false; // server-only
       }
+    }
+
+    // ---- officers (M3 round N+1, Workstream 1) ----
+    // Top-level collection. Read by signed-in (the assignment checklist
+    // needs everyone to see the officer list). Writes are admin-only on
+    // the client; M3 server can write via Admin SDK.
+    match /officers/{officerId} {
+      allow read: if isSignedIn();
+      allow create, update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // ---- public_event_controls (M3 round N+1, Workstream 5) ----
+    // Sanitised public view of published Stage 1/2 documents. Read by
+    // anyone (public viewer). Writes server-only.
+    match /public_event_controls/{eventId}/{controlId}/{stage}/{docId} {
+      allow read: if true;
+      allow write: if false; // server-only
+    }
+
+    // ---- public_reports (M3 round N+1, Workstream 4 + 6) ----
+    // Public Stage 2 inaccurate reports. M3 writes when a public user
+    // reports; M4 updates `outcome` after investigation; M3 listens.
+    // Read scoped to: reporter, admin, assigned authority, event owner.
+    match /public_reports/{ticketId} {
+      allow read: if isAdmin()
+                  || (isSignedIn() && resource.data.reporterUid == request.auth.uid)
+                  || (isSignedIn() && isAuthority() && resource.data.eventId != null
+                      && get(/databases/$(database)/documents/events/$(resource.data.eventId)).data.requiredAuthorities.hasAny([
+                        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.authorityType
+                      ]))
+                  || (isSignedIn() && resource.data.eventId != null
+                      && isOwner(get(/databases/$(database)/documents/events/$(resource.data.eventId)).data.organizerId));
+      allow create: if isSignedIn() && request.resource.data.reporterUid == request.auth.uid;
+      allow update, delete: if false; // M4 / server-only
     }
 
     // ---- venues (read-only for all signed-in users, write = admin/seed) ----

@@ -29,3 +29,6 @@ export { makeAuthorityDecision } from './http/authorityDecision';
 export { overrideResources } from './http/overrideResources';
 export { verifyEventControl } from './http/verifyEventControl';
 export { markNotificationRead, listMyNotifications } from './http/notifications';
+// M3 round N+1 — stub. Replaced by M2's `proposeEventControlList` when
+// M2 lands it (per integration contract Q5).
+export { proposeEventControlList } from './http/proposeEventControlList';

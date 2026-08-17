@@ -23,6 +23,7 @@ exports.EVENT_STATUSES = [
     { value: 'Approved', label: 'Approved', color: 'green' },
     { value: 'Rejected', label: 'Rejected', color: 'red' },
     { value: 'Withdrawn', label: 'Withdrawn', color: 'gray' },
+    { value: 'Manual Review Required', label: 'Manual Review Required', color: 'purple' },
 ];
 exports.COLLECTIONS = {
     USERS: 'users',
@@ -42,6 +43,12 @@ exports.COLLECTIONS = {
     NOTIFICATIONS: 'notifications',
     EVENT_CONTROLS: 'event_controls',
     CONTROL_VERIFICATIONS: 'control_verifications',
+    // M3 round N+1 — workstream 1
+    OFFICERS: 'officers',
+    STAGE1_DOCS: 'stage1_docs',
+    STAGE2_DOCS: 'stage2_docs',
+    PUBLIC_EVENT_CONTROLS: 'public_event_controls',
+    PUBLIC_REPORTS: 'public_reports',
 };
 exports.CATEGORY_SCHEMA_VERSION = '2026-07-24-all-hazards-v2';
 exports.SCORING_LOGIC_VERSION = '2026-07-24-hirarc-residual-v2';
