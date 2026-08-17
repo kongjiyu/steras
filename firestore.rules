@@ -161,6 +161,26 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      // ---- Sub-collection: event_controls (Stage-1 controls, M3) ----
+      // Read by assigned authority + event owner + admin. Writes server-only
+      // (organisers populate via Cloud Function; verifications via verifyEventControl).
+      match /event_controls/{controlId} {
+        allow read: if isAdmin()
+                    || (isSignedIn() && isAssignedAuthority(eventId))
+                    || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
+        allow write: if false; // server-only
+      }
+
+      // ---- Sub-collection: control_verifications (M3 verified-control workflow) ----
+      // Read by assigned authority + event owner + admin. Writes server-only
+      // (verifyEventControl Cloud Function is the only writer).
+      match /control_verifications/{verificationId} {
+        allow read: if isAdmin()
+                    || (isSignedIn() && isAssignedAuthority(eventId))
+                    || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
+        allow write: if false; // server-only
+      }
+
       // ---- Sub-collection: audit_logs ----
       // Append-only. Read by authorities + admins. Never client-writable.
       match /audit_logs/{logId} {
