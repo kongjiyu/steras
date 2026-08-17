@@ -14,7 +14,7 @@
  *   - overrideResources     — validates and audits resource adjustments
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.proposeEventControlList = exports.listMyNotifications = exports.markNotificationRead = exports.verifyEventControl = exports.overrideResources = exports.makeAuthorityDecision = exports.withdrawEvent = exports.submitEvent = exports.manualRecompute = exports.recomputeRiskAndResources = exports.onEventUpdated = exports.onEventCreated = void 0;
+exports.makeSecondReviewDecision = exports.recordOfficerProposal = exports.assignAuthorityOfficers = exports.proposeEventControlList = exports.listMyNotifications = exports.markNotificationRead = exports.verifyEventControl = exports.overrideResources = exports.makeAuthorityDecision = exports.withdrawEvent = exports.submitEvent = exports.manualRecompute = exports.recomputeRiskAndResources = exports.onEventUpdated = exports.onEventCreated = void 0;
 const app_1 = require("firebase-admin/app");
 // Initialize firebase-admin before any function code runs.
 (0, app_1.initializeApp)();
@@ -43,4 +43,11 @@ Object.defineProperty(exports, "listMyNotifications", { enumerable: true, get: f
 // M2 lands it (per integration contract Q5).
 var proposeEventControlList_1 = require("./http/proposeEventControlList");
 Object.defineProperty(exports, "proposeEventControlList", { enumerable: true, get: function () { return proposeEventControlList_1.proposeEventControlList; } });
+// M3 Workstream 1 — officer assignment + multi-stage review.
+var assignAuthorityOfficers_1 = require("./http/assignAuthorityOfficers");
+Object.defineProperty(exports, "assignAuthorityOfficers", { enumerable: true, get: function () { return assignAuthorityOfficers_1.assignAuthorityOfficers; } });
+var recordOfficerProposal_1 = require("./http/recordOfficerProposal");
+Object.defineProperty(exports, "recordOfficerProposal", { enumerable: true, get: function () { return recordOfficerProposal_1.recordOfficerProposal; } });
+var makeSecondReviewDecision_1 = require("./http/makeSecondReviewDecision");
+Object.defineProperty(exports, "makeSecondReviewDecision", { enumerable: true, get: function () { return makeSecondReviewDecision_1.makeSecondReviewDecision; } });
 //# sourceMappingURL=index.js.map

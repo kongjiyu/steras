@@ -45,6 +45,7 @@ exports.COLLECTIONS = {
     CONTROL_VERIFICATIONS: 'control_verifications',
     // M3 round N+1 — workstream 1
     OFFICERS: 'officers',
+    ASSIGNMENTS: 'assignments',
     STAGE1_DOCS: 'stage1_docs',
     STAGE2_DOCS: 'stage2_docs',
     PUBLIC_EVENT_CONTROLS: 'public_event_controls',
