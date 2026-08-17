@@ -227,13 +227,14 @@ npx playwright test tests/m3/pdrm-decision.spec.ts
 
 ## 6. Open items & questions for you
 
-1. **Merge to main.** `anny_cont` has 6 new commits on top of `main`. Ready when you say so. I held off per your earlier "don't merge until I signal".
-2. **`/authority/audit` standalone page.** Still planned (the route currently redirects to event review). M3 handoff says it can be part of the event review page or a standalone page. Your call.
-3. **AI-assisted rejection/revision wording.** Explicitly out of scope for this round. The handoff says "after the human-edit boundary is tested" — let me know when M2's advisory export is stable.
-4. **Push notification (FCM).** Not implemented. Spec says it's optional until FCM is configured. If you want it, I can layer it on top of the existing `createNotification` without touching the decision path.
-5. **M4 escalation links.** The handoff calls for them; M4 doesn't exist yet. When M4 lands, I'll add the link shape.
-6. **Debug specs removed.** `tests/m3/debug.spec.ts` and `debug2.spec.ts` were scratch; removed in `0526286`. If you want them back as regression scratchpads, say the word.
-7. **Pre-existing TS errors in `frontend/src/`.** 41 errors (date-fns types, firebase/storage types, unused imports, etc.) exist in the codebase independent of M3. The vite build still succeeds. Worth a separate cleanup pass; I left them alone to keep the diff focused.
+1. **Stage-1 control list generation is NOT in this round.** `verifyEventControl` and the UI form work great against pre-existing `event_controls` docs, but no production code path creates those docs. Today they come from `functions/scripts/seedMockData.js` (mock seed) or `tests/m3/global-setup.ts` (test fixture). Per the handoffs, **M2 should generate the canonical control list from the HIRARC residual-hazard analysis** (each residual hazard implies a Stage-1 control to verify). M3 only verifies what's declared. M2 doesn't yet write `event_controls/{controlId}` docs after assessment finalisation. Three options: (a) hand it to M2 owner, (b) M3 generates on approval (couples M3 to M2's hazard model), (c) defer until M2 lands it. I recommend (a) — cleanest module split.
+2. **Merge to main.** `anny_cont` has 6 new commits on top of `main`. Ready when you say so. I held off per your earlier "don't merge until I signal".
+3. **`/authority/audit` standalone page.** Still planned (the route currently redirects to event review). M3 handoff says it can be part of the event review page or a standalone page. Your call.
+4. **AI-assisted rejection/revision wording.** Explicitly out of scope for this round. The handoff says "after the human-edit boundary is tested" — let me know when M2's advisory export is stable.
+5. **Push notification (FCM).** Not implemented. Spec says it's optional until FCM is configured. If you want it, I can layer it on top of the existing `createNotification` without touching the decision path.
+6. **M4 escalation links.** The handoff calls for them; M4 doesn't exist yet. When M4 lands, I'll add the link shape.
+7. **Debug specs removed.** `tests/m3/debug.spec.ts` and `debug2.spec.ts` were scratch; removed in `0526286`. If you want them back as regression scratchpads, say the word.
+8. **Pre-existing TS errors in `frontend/src/`.** 41 errors (date-fns types, firebase/storage types, unused imports, etc.) exist in the codebase independent of M3. The vite build still succeeds. Worth a separate cleanup pass; I left them alone to keep the diff focused.
 
 ---
 
