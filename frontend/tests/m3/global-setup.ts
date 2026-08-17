@@ -33,6 +33,14 @@ if (getApps().length === 0) {
 const db: Firestore = getFirestore(adminApp);
 
 /**
+ * Real auth UIDs (mirrored from Firebase Auth via the seeder). The user
+ * doc id == auth UID by convention; any event with a legacy organizerId
+ * (e.g. "usr-org-002") must be rewritten to this value so notifications
+ * surface in the bell.
+ */
+const UAT_ORGANIZER_UID = 'RTocM1dFipZfNcIacVAMMPRwazE3'; // uat-organizer@steras.test
+
+/**
  * Mirror of the function's processingHash — see
  * functions/src/triggers/onEventCreated.ts. Must match the version
  * constants in shared/types.ts, functions/src/config/categorySchema.ts,
@@ -154,8 +162,13 @@ async function seedEvent(spec: EventSpec): Promise<void> {
   }
   const eventData = eventSnap.data()!;
 
-  // Set the event status (test isolation)
-  await eventRef.update({ status: spec.status, updatedAt: Date.now() });
+  // Set the event status (test isolation) AND rewrite the organizerId
+  // to the real auth UID so notifications route correctly.
+  await eventRef.update({
+    status: spec.status,
+    organizerId: UAT_ORGANIZER_UID,
+    updatedAt: Date.now(),
+  });
 
   // Clear decisions if requested
   if (spec.clearDecisions) {
@@ -314,7 +327,7 @@ async function createNegativeTestFixture(spec: EventSpec): Promise<void> {
   const setupBatch = db.batch();
   setupBatch.set(eventRef, {
     eventId: spec.id,
-    organizerId: 'usr-org-003',
+    organizerId: UAT_ORGANIZER_UID,
     eventDetails,
     status: spec.status,
     currentVersionId: versionId,

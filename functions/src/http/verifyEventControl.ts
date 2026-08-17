@@ -25,7 +25,7 @@ import {
   EventRecord,
 } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
-import { createNotification } from '../utils/notifications';
+import { createNotification, resolveAuthUid } from '../utils/notifications';
 
 interface VerifyEventControlRequest {
   eventId?: string;
@@ -175,15 +175,22 @@ export async function verifyEventControlForUser(
     // verified control.
     if (result.organizerId) {
       try {
-        await createNotification({
-          recipientUid: result.organizerId,
-          eventId: result.eventId,
-          versionId: result.versionId,
-          type: result.status === 'verified' ? 'control_verified' : 'control_rejected',
-          title: result.status === 'verified' ? 'Control verified' : 'Control rejected',
-          message: `${result.authorityType} ${result.status} control "${result.ctrlTitle}".`,
-          sourceActionId: `${result.verificationId}_notif`,
-        });
+        // Resolve the auth UID (legacy organizerId format like
+        // "usr-org-003" doesn't match a real user doc).
+        const recipientUid = await resolveAuthUid(result.organizerId);
+        if (!recipientUid) {
+          console.warn(`[verifyEventControl] skipping notification: no recipientUid for organizerId=${result.organizerId}`);
+        } else {
+          await createNotification({
+            recipientUid,
+            eventId: result.eventId,
+            versionId: result.versionId,
+            type: result.status === 'verified' ? 'control_verified' : 'control_rejected',
+            title: result.status === 'verified' ? 'Control verified' : 'Control rejected',
+            message: `${result.authorityType} ${result.status} control "${result.ctrlTitle}".`,
+            sourceActionId: `${result.verificationId}_notif`,
+          });
+        }
       } catch (err) {
         console.warn('[verifyEventControl] notification write failed (non-fatal):', err);
       }

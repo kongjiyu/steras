@@ -27,6 +27,9 @@ if (getApps().length === 0) {
 
 const db: Firestore = getFirestore(adminApp);
 
+/** Real auth UID for the UAT organiser (mirrors Firebase Auth). */
+const UAT_ORGANIZER_UID = 'RTocM1dFipZfNcIacVAMMPRwazE3';
+
 /** Reset evt-002 to a clean UnderReview state with no decisions. */
 export async function resetFoodFair(): Promise<void> {
   const eventRef = db.collection('events').doc('evt-002-pj-food-fair');
@@ -34,7 +37,11 @@ export async function resetFoodFair(): Promise<void> {
   const batch = db.batch();
   for (const d of decs.docs) batch.delete(d.ref);
   await batch.commit();
-  await eventRef.update({ status: 'UnderReview', updatedAt: Date.now() });
+  await eventRef.update({
+    status: 'UnderReview',
+    organizerId: UAT_ORGANIZER_UID,
+    updatedAt: Date.now(),
+  });
   // Drop the public_events projection if any
   await db.collection('public_events').doc('evt-002-pj-food-fair').delete().catch(() => undefined);
 }
@@ -46,5 +53,5 @@ export async function resetMountainRun(): Promise<void> {
   const batch = db.batch();
   for (const d of decs.docs) batch.delete(d.ref);
   await batch.commit();
-  await eventRef.update({ status: 'Pending', updatedAt: Date.now() });
+  await eventRef.update({ status: 'Pending', organizerId: UAT_ORGANIZER_UID, updatedAt: Date.now() });
 }

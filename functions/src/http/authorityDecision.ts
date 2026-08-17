@@ -12,7 +12,7 @@ import {
   UserProfile,
 } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
-import { createNotification } from '../utils/notifications';
+import { createNotification, resolveAuthUid } from '../utils/notifications';
 
 interface AuthorityDecisionRequest {
   eventId?: string;
@@ -209,6 +209,13 @@ export async function makeAuthorityDecisionForUser(
   const notif = notifCtxOut as { organizerId: string; aggregateStatus: EventRecord['status']; authorityType: AuthorityType; versionId: string } | null;
   if (notif) {
     try {
+      // Resolve the auth UID from the user doc (legacy organizerId format
+      // like "usr-org-002" doesn't match any real user; convention is
+      // userDocId === authUid, so we look up the user doc).
+      const recipientUid = await resolveAuthUid(notif.organizerId);
+      if (!recipientUid) {
+        console.warn(`[makeAuthorityDecision] skipping notification: no recipientUid for organizerId=${notif.organizerId}`);
+      } else {
       const notifType =
         notif.aggregateStatus === 'Approved' ? 'application_approved'
         : notif.aggregateStatus === 'Rejected' ? 'application_rejected'
@@ -220,7 +227,7 @@ export async function makeAuthorityDecisionForUser(
         : notif.aggregateStatus === 'AmendmentRequested' ? 'Amendment requested'
         : 'Decision recorded';
       await createNotification({
-        recipientUid: notif.organizerId,
+        recipientUid,
         eventId,
         versionId: notif.versionId,
         type: notifType,
@@ -228,6 +235,7 @@ export async function makeAuthorityDecisionForUser(
         message: `${notif.authorityType} ${decision} the application. See audit trail for rationale.`,
         sourceActionId: `${result.decisionId}_notif`,
       });
+      }
     } catch (err) {
       console.warn('[makeAuthorityDecision] notification write failed (non-fatal):', err);
     }

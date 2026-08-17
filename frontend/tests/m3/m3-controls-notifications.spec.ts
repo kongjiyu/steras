@@ -10,6 +10,7 @@
  *     notification in the notifications collection.
  */
 import { test, expect, EVENTS } from './fixtures';
+import { resetFoodFair } from './admin-reset';
 
 test.describe('@M3 verified-control workflow', () => {
   test('KKM cannot verify a control on an event that does not require KKM', async ({ api, loginAs }) => {
@@ -50,6 +51,13 @@ test.describe('@M3 verified-control workflow', () => {
 });
 
 test.describe('@M3 organiser notifications', () => {
+  // Other specs in the same suite (e.g. m3-aggregate) leave evt-002 in
+  // Approved/Rejected state. Reset to a clean UnderReview before each
+  // notifications test so they can run in any order.
+  test.beforeEach(async () => {
+    await resetFoodFair();
+  });
+
   test('organiser receives a notification after the event is Approved', async ({ api, loginAs }) => {
     const eventId = EVENTS.foodFair;
     const rationales: Array<[string, string]> = [

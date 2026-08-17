@@ -91,3 +91,25 @@ export async function organiserUidFor(eventId: string): Promise<string | null> {
   const data = eventSnap.data() as { organizerId?: string } | undefined;
   return data?.organizerId ?? null;
 }
+
+/**
+ * Resolve an `organizerId` value on an event to the actual auth UID that
+ * can be used as `recipientUid` for a notification.
+ *
+ * Convention: the user doc id IS the auth UID. If `organizerId` matches a
+ * real user doc, return that doc's id (== auth UID). If no user doc with
+ * that id exists, log a warning and return the input as-is so existing
+ * (legacy) data keeps working — but the notification will likely not
+ * surface in the bell until the seed is updated.
+ */
+export async function resolveAuthUid(organizerId: string | null | undefined): Promise<string | null> {
+  if (!organizerId) return null;
+  const db = firestore();
+  const userSnap = await db.collection(COLLECTIONS.USERS).doc(organizerId).get();
+  if (userSnap.exists) {
+    const data = userSnap.data() as { uid?: string } | undefined;
+    return data?.uid ?? organizerId;
+  }
+  console.warn(`[notifications] organizerId=${organizerId} has no matching user doc; using as-is. Recipient may not see the notification.`);
+  return organizerId;
+}
