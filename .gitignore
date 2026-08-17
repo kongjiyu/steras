@@ -104,8 +104,10 @@ ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 
-# ----- Cache / temp -----
-.cache/
+# ----- Playwright -----
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
 .playwright-cli/
 .parcel-cache/
 .eslintcache
