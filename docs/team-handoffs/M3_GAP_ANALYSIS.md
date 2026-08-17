@@ -152,7 +152,7 @@ I recommend grouping the 28 missing + 6 partial UCs into **6 workstreams**. Orde
 - New collection / sub-collection: `events/{id}/event_controls/{controlId}/stage1_docs/{docId}`.
 - New organizer page: `OrganizerEventControls` (per-event). Lists all controls with their Stage 1 + Stage 2 requirements. Each Stage 1 slot is a file upload (or "Use Previous" — UC-29).
 - Extend `verifyEventControl` to operate on `stage1_docs/{docId}` instead of the control itself. Or add a sibling `verifyStage1Doc(eventId, controlId, docId, status, rationale, evidencePath)`.
-- "Use Previous" (UC-29, FR-M3-26, A25): only for `docType: 'receipt'`. Audit log: "Reused from event X". No upload, no verification. (A26: only when system has prior event data — gate on whether the organizer has any past events with a verified receipt for the same item.)
+- "Use Previous" (UC-29, FR-M3-26, A25): only for `docType: 'receipt'`. Audit log: "Reused from event X". No upload, no verification. **Per M3 owner decision (2026-08-17), A26's "only when system has prior event data" gate is dropped** — organizer can click "Use Previous" on any receipt slot. Stage 2 image remains mandatory and is the public-verification backstop.
 
 **UCs cleared:** UC-22, UC-23, UC-24, UC-25, UC-28, UC-29.
 
@@ -279,8 +279,9 @@ In the spirit of "grill the plan", here are the decisions that, if you don't mak
 - A: The organizer's UID has at least one event with a verified Stage 1 receipt of the same `controlId`. Implemented as a query: `events where organizerId == currentUid && event_controls/*/stage1_docs/* verified`.
 - B: A simpler rule: any organizer who has any prior event in the system can use "Use Previous". Less strict, easier to implement.
 - C: Per control: the control itself exists on a prior event by the same organiser.
+- **D (M3 owner decision, 2026-08-17): Drop the gate entirely.** Organizer can click "Use Previous" on any purchase-receipt Stage 1 slot, no conditions. The Stage 2 image remains mandatory and is the public-verification backstop — if the item isn't actually at the venue, the public sees the gap via Stage 2 and can report via M4. This effectively relaxes the locked assumption A26. The "Use Previous" button becomes a UX shortcut (skip the upload), not a verification bypass.
 
-**My pick: A.** Matches A26's intent ("items already procured") most precisely. Cost: an extra query per upload. Worth it.
+**My pick now: D.** The user's reasoning holds: Stage 2 is the verification surface, not Stage 1. The extra query cost in option A isn't worth the friction.
 
 ### Q4: M4 doesn't exist yet. What should M3 do today to make the future trigger plug-in easy?
 - A: Define the contract in `shared/types.ts` now — `public_reports/{ticketId}` shape, the `outcome` field values (`'confirmed_true' | 'dismissed_fake' | 'under_review'`). Don't build the trigger; just make the data model ready.
