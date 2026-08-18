@@ -42,17 +42,18 @@ What's NOT done:
 
 ## 2. Recommended path
 
-The work fits naturally into 5 small pieces, each shippable and reviewable:
+The work fits naturally into 4 small pieces, each shippable and reviewable:
 
 | # | Piece | Cloud Function | Page | Trigger |
 |---|---|---|---|---|
 | 1 | Commit a list (foundation) | `editEventControlList` | — | — |
 | 2 | Generate the proposal | `generateEventControlList` | — | — |
 | 3 | Admin editor UI | — | `AdminControlListEditor` | — |
-| 4 | Auto-generate on approval | — | — | `onEventApproved` |
-| 5 | Organizer read-only view | — | `OrganizerEventControls` | — |
+| 4 | Organizer read-only view | — | `OrganizerEventControls` | — |
 
-Order them by dependency. Pieces 1+2 are the Cloud Function surface; piece 3 is the admin UI on top; piece 4 is the auto-trigger; piece 5 is the organizer view (simplest, no mutations). Test as we go.
+**Note:** the earlier draft had a 5th piece — an `onEventApproved` Firestore trigger that auto-generated the list when the second review confirmed Approved. **Per the M3 owner decision (2026-08-18): the admin must click.** The admin explicitly opens `AdminControlListEditor` and clicks "Generate proposal". The trigger is dropped from this round. (If we want it later, it's a 3-line addition.)
+
+Order them by dependency. Pieces 1+2 are the Cloud Function surface; piece 3 is the admin UI on top; piece 4 is the organizer view (simplest, no mutations). Test as we go.
 
 ### Piece 1 — `editEventControlList` (commit point)
 
@@ -119,21 +120,7 @@ generateEventControlList: httpsCallable<{
 
 **Test:** m3-full — 1 spec for "admin generates proposal → table populates → admin edits → commit → re-reads with new state". Uses `evt-002-pj-food-fair` (we set its status to `Approved` in `resetFoodFair` first).
 
-### Piece 4 — `onEventApproved` trigger (auto-generate on second-review confirm)
-
-**Path:** `functions/src/triggers/onEventApproved.ts` (new). Registered in `index.ts`.
-
-**Behaviour:**
-- Firestore trigger on `events/{id}.update`.
-- Only acts when `event.status` moves to `'Approved'` AND `event.control_list_generated !== true` (idempotent).
-- Calls `editEventControlList` server-side with the result of `proposeEventControlList`.
-- Notification to the admin: "Control list auto-generated for [event name] — review at /admin/applications/[id]/controls."
-
-**Test:** m3-smoke — 1 spec for "approve event → control list auto-generated → admin sees the proposed list in AdminControlListEditor".
-
-**Caution:** the trigger must be server-only. Use the Admin SDK in the function. Don't expose this as a callable.
-
-### Piece 5 — `OrganizerEventControls` (organizer read-only view)
+### Piece 4 — `OrganizerEventControls` (organizer read-only view)
 
 **Path:** `frontend/src/pages/organizer/OrganizerEventControls.tsx` (new).
 
@@ -155,7 +142,7 @@ generateEventControlList: httpsCallable<{
 ## 3. Trade-offs
 
 - **Single page vs. multi-page editor?** I went with single page. The list is small (5 items max) and the editing surface is straightforward. Splitting it into a "view" + "edit" pair would add a navigation step for no real benefit.
-- **Auto-generate on approval vs. admin must click?** The integration contract says "kicks off generateEventControlList for the admin to review". I read that as: auto-generate, then admin reviews. If you prefer admin-only (no auto), the trigger becomes a 3-line stub that just sets `control_list_generated: false` until the admin clicks. Easy switch later.
+- **Auto-generate on approval vs. admin must click?** **Admin must click** (M3 owner decision, 2026-08-18). The flow is fully manual: admin sees the event in the queue, opens `AdminControlListEditor`, clicks "Generate proposal" to populate the list, then edits + commits. No Firestore trigger. Easy to switch later if we want auto.
 - **Re-call `proposeEventControlList` on every edit?** No — we cache the result. The admin's edits are local until commit, then the list is stored verbatim. This avoids the AI call being non-idempotent.
 - **M2 stub vs. real call?** Use the stub. The contract is clear: M2 owns the real one, M3 calls it. The stub is already deployed and returns a hardcoded 5-item list that matches the seed.
 
@@ -177,28 +164,25 @@ generateEventControlList: httpsCallable<{
 |---|---|---|
 | `functions/src/http/generateEventControlList.ts` | NEW | ~80 lines |
 | `functions/src/http/editEventControlList.ts` | NEW | ~120 lines |
-| `functions/src/triggers/onEventApproved.ts` | NEW | ~60 lines |
-| `functions/src/index.ts` | Export the 2 new functions + 1 trigger | +3 lines |
+| `functions/src/index.ts` | Export the 2 new functions | +2 lines |
 | `shared/types.ts` | Add `AuditAction: 'control_list_published'`; add `EventRecord.control_list_generated?: boolean` | ~5 lines |
 | `frontend/src/pages/admin/AdminControlListEditor.tsx` | NEW | ~300 lines |
 | `frontend/src/pages/organizer/OrganizerEventControls.tsx` | NEW | ~150 lines |
 | `frontend/src/App.tsx` | Add 2 new routes | +2 lines |
 | `frontend/src/pages/admin/AdminApplicationReview.tsx` | Add a link to `AdminControlListEditor` | ~10 lines |
-| `functions/src/utils/notifications.ts` | Add `'control_list_published'` to `NotificationType` (or use a new one); already supports arbitrary types | ~5 lines |
 | `tests/m3/generate-control-list.spec.ts` | NEW (3 specs) | ~250 lines |
 | `tests/m3/organizer-event-controls.spec.ts` | NEW (1 spec) | ~80 lines |
-| `tests/m3/global-setup.ts` | Seed `evt-001-kl-music-festival` (already approved) for the "auto-generate on approval" test | ~20 lines |
 | `tests/m3/admin-reset.ts` | New `resetApprovedEvent()` helper | ~30 lines |
 
-**Total:** 14 files, ~1,100 lines. Largest single piece is the `AdminControlListEditor` page (300 lines) — most of it is the editable table UI.
+**Total:** 11 files, ~1,030 lines. Largest single piece is the `AdminControlListEditor` page (300 lines) — most of it is the editable table UI. No Firestore trigger this round.
 
 ---
 
-## 6. Test plan — 4 new specs, 32 → ~36 specs
+## 6. Test plan — 4 new specs, 32 → 36 specs
 
 | Project | Before | After | New spec |
 |---|---:|---:|---|
-| m3-smoke | 13 | 14 | `onEventApproved` auto-generates the list, `OrganizerEventControls` shows the list |
+| m3-smoke | 13 | 14 | `OrganizerEventControls` shows the list / empty state |
 | m3-full | 15 | 18 | `generate-control-list.spec.ts` (3 specs: generate, edit + commit, cache on re-call) |
 | m3-workstream1 | 7 | 7 | — |
 
@@ -210,10 +194,7 @@ generateEventControlList: httpsCallable<{
 **New test file: `organizer-event-controls.spec.ts`** (m3-smoke):
 1. "organizer sees the read-only control list for an event with `control_list_generated = true`; sees the empty state for an event without it".
 
-**New test in m3-smoke** (in a new file or existing):
-1. "approve event via the second review → control list auto-generated → admin sees the proposed list in `AdminControlListEditor`".
-
-Plus 2-3 small updates to existing files (route additions, link additions).
+(No trigger test — the admin-must-click decision removed that path.)
 
 ---
 
@@ -256,11 +237,11 @@ Or split into 5 commits (one per piece) if you prefer — say the word.
 
 ---
 
-## 10. Decision needed from you
+## 10. Decision (locked 2026-08-18)
 
-1. **Scope: ship Workstream 2 (UC-13, UC-33, UC-34) in this round?** Approve, and I'll start.
-2. **Auto-generate on approval: yes (default) or admin must click?** Default = yes. Switch is a 3-line stub.
-3. **Commit granularity: 3 commits (impl, tests, docs) or 5 (one per piece)?** Default = 3.
-4. **Anything missing or wrong in §2's per-piece behaviour?** If you want a different UX for `AdminControlListEditor` (e.g. add a per-control "regenerate this one" button), call it out.
+1. **Scope: SHIP Workstream 2** (UC-13, UC-33, UC-34). ✅
+2. **Admin must click** to trigger generation. No `onEventApproved` Firestore trigger. ✅
+3. **3 commits** (impl, tests, docs). ✅
+4. UX of `AdminControlListEditor`: standard "Generate proposal" + "Commit changes" flow. Per-control "regenerate this one" not needed for the prototype.
 
-Once you sign off, I'll start with piece 1 (`editEventControlList`) as the foundation, then build up. I'll follow the same /plan-mode discipline: foundation first, then expand, typecheck + deploy at checkpoints.
+Starting piece 1 (`editEventControlList`) as the foundation, then build up. Same /plan-mode discipline: foundation first, then expand, typecheck + deploy at checkpoints, 3 commits at the end.
