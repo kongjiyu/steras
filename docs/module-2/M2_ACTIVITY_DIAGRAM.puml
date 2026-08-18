@@ -1,0 +1,85 @@
+@startuml
+title Smart Risk Assessment and Safety Resource Recommendation Module
+
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam defaultFontName Times New Roman
+skinparam defaultFontSize 15
+skinparam ArrowColor #3F3F46
+skinparam ArrowThickness 1.2
+skinparam activity {
+  BackgroundColor #EAF3FA
+  BorderColor #6B8EAD
+  FontColor #20242A
+  DiamondBackgroundColor #FFFFFF
+  DiamondBorderColor #20BFA9
+  StartColor #000000
+  EndColor #000000
+}
+skinparam note {
+  BackgroundColor #FFF8D9
+  BorderColor #D8B84B
+  FontColor #40351A
+}
+
+|#F7E8F5|Event Organiser|
+start
+:Submit or resubmit\nevent application;
+
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Retrieve application and contextual evidence\n(weather, public-holiday, venue, calendar,\nhistorical-event outcome, and closed and verified\nrelevant incident information from the\nIncident Reporting Module);
+:Record evidence source and provenance;
+:Validate required information and sufficient evidence;\ndetermine assessment readiness, compliance,\nand evidence confidence;
+
+if (Can assessment proceed?) then (No)
+  :Record warnings and mark\nreview required;
+  :Create review-required handoff to the\nAuthority Approval and Notification Module;
+  stop
+else (Yes)
+  |#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+  :Prepare validated assessment package\nwith rubric, hard rules, and guidance;
+endif
+
+|#E9F8F5|MiniMax M3 — External AI Service|
+:Identify hazards and propose\nlikelihood and severity scores;
+:Return evidence, rationale, confidence,\nconcerns, and missing information;
+
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Validate the MiniMax response;
+if (AI response usable?) then (Yes)
+  |#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+  :Load active formula, category weights,\nthresholds, guideline checks, and versions;
+  :Apply hard-rule constraints and retain\noriginal AI-proposed values;
+  :Calculate provisional risk value\nfor each applicable category;
+  :Apply category weights and calculate\nprovisional overall score;
+  :Map provisional score to\nLow / Medium / High risk level;
+  :Record score differences, warnings,\nand authority-review indicators;
+  :Store provisional assessment\nand audit record;
+else (No)
+  :Record unavailable or retryable status;
+  |#FDECEC|Authority Approval and Notification Module|
+  :Receive Manual Review Required handoff;
+  note right
+    MiniMax is advisory only.
+    Missing scores are never fabricated.
+  end note
+  stop
+endif
+
+|#FDECEC|Authority Approval and Notification Module|
+:Authority assessment review is performed by\nthe Authority Approval and Notification Module;
+:Return reviewed scores and decision audit details to the\nSmart Risk Assessment and Safety Resource Recommendation Module;
+
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Receive authority-confirmed or\noverridden category scores;
+:Recalculate official risk for each category\nusing the active formula and guideline checks;
+:Apply active weights and thresholds and\ncalculate the official overall score;
+:Map official score to\nLow / Medium / High risk level;
+:Generate safety-resource baselines and planning ranges\nusing the official risk result, event characteristics,\nconfigured assumptions, and relevant guidelines;
+:Store resource baselines, planning ranges, assumptions,\nguideline sources, authority sources, and provenance;
+:Append each authority confirmation or override,\noverride reason, confirming user, and official result\nwithout overwriting the original values;
+:Generate consolidated assessment outputs;
+:Publish the role-restricted organiser-safe summary\nand detailed authority assessment record;
+
+stop
+@enduml

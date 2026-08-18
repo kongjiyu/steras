@@ -1,0 +1,342 @@
+@startuml
+title Smart Risk Assessment and Safety Resource Recommendation Module — Detailed Activity Diagram
+
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam defaultFontName Times New Roman
+skinparam defaultFontSize 13
+skinparam ArrowColor #3F3F46
+skinparam ArrowThickness 1.2
+skinparam activity {
+  BackgroundColor #EAF3FA
+  BorderColor #6B8EAD
+  FontColor #20242A
+  DiamondBackgroundColor #FFFFFF
+  DiamondBorderColor #20BFA9
+  StartColor #000000
+  EndColor #000000
+  BarColor #D6B81F
+}
+skinparam note {
+  BackgroundColor #FFF8D9
+  BorderColor #D8B84B
+  FontColor #40351A
+  FontSize 11
+}
+|#F7E8F5|Event Organiser|
+start
+:Submit or resubmit event application [assessment trigger];
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Detect that the submitted application is ready for assessment [FR-M2-03];
+:Create or claim the assessment- processing job for the submitted input [FR-M2-09] [A1];
+if (A1 duplicate result or active claim?) then (Yes)
+:A1.1–A1.3 — Return the existing status and record identifiers, do not create a duplicate assessment;
+stop
+else (No)
+:Record message M1: “Assessment processing started.”;
+endif
+:Receive the event identifier and expected submitted-data reference [FR-M2-03];
+:Send event identifier and expected submitted-data reference to Firestore [FR-M2-03] [FR-M2-09];
+|#E5F7E6|Firestore Database|
+:Locate the event record [FR-M2-03] [FR-M2-09];
+:Locate the referenced submitted event-data record [FR-M2-03] [FR-M2-09];
+:Return both records with stored identifiers and update metadata [FR-M2-09];
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+if (A1/A2/A3 database exception?) then (Yes)
+:A1.1–A3.3 — Return event-not-found, inconsistent-reference, or database-read- failed status, record only a safe error category;
+stop
+else (No)
+:Acknowledge receipt and return the records to the calling assessment flow [FR-M2-03] [FR-M2-09];
+:Verify that the record belongs to the requested event and current input [FR-M2-03] [FR-M2-09];
+:Extract event name/type, date, duration, venue/location/capacity, attendance, characteristics, and evidence refs [FR-M2-01] [FR-M2-03];
+:Normalise dates, identifiers, enumerated values, optional fields, and timezone [FR-M2-03];
+:Record source record ID, retrieval time, and submitted-input ID [FR-M2-02] [FR-M2-09];
+:Return the normalised read-only assessment input to the calling assessment flow [FR-M2-03];
+endif
+:Load active required-information, evidence, and compliance configuration [FR-M2-03];
+if (A1 configuration unavailable?) then (Yes)
+:A1.1–A1.3 — Record evaluation-failed and message M1 “Readiness and compliance checks are unavailable”, end this gate;
+else (No)
+:Check every required submitted field and supporting-evidence reference [FR-M2-03];
+:Check venue capacity, fire/life- safety, schedule, and configured compliance conditions without using risk as compliance [FR-M2-03];
+:Verify source, freshness, eligibility, completeness, and consistency of evidence [FR-M2-02] [FR-M2-03];
+:Classify assessment readiness [FR-M2-03];
+:Classify compliance status [FR-M2-03];
+:Classify evidence confidence [FR-M2-03];
+:Create a reason list linked to each affected field, evidence item, or check [FR-M2-03] [FR-M2-08];
+:Return separate readiness, compliance, confidence, and reasons to the calling assessment flow [FR-M2-03] [FR-M2-08];
+endif
+if (A3 incomplete, provisional, blocked,
+or review-required gate?) then (Review required)
+:Preserve missing-evidence and compliance reasons, mark the assessment review-required [FR-M2-08];
+if (C2 permits provisional assessment?) then (Yes)
+:Continue with the limitation attached to the assessment package;
+else (No)
+:Skip AI, risk calculation, and resource calculation, continue to consolidation with an incomplete assessment state;
+endif
+else (Ready)
+:Continue to AI-assisted analysis;
+endif
+:Receive normalised event date, venue/location, characteristics, and evidence request [FR-M2-01];
+:Check whether a current snapshot satisfies freshness rules [FR-M2-02];
+if (A1 reusable snapshot exists?) then (Yes)
+:A1.1–A1.2 — Verify snapshot provenance and reuse it for the evidence summary;
+else (No)
+fork
+:Validate location, scheduled time, and forecast period [FR-M2-01];
+:Construct the OpenWeather request with required location/time only [FR-M2-01];
+|#FFF9C9|External Services|
+:Send request to OpenWeather API [FR-M2-01];
+:Authenticate and search available current/forecast data [FR-M2-01];
+:Return observations/forecast, provider timestamp, and response status [FR-M2-01] [FR-M2-02];
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Validate structure, units, coordinates, provider timestamp, and event-period applicability [FR-M2-02];
+:Normalise accepted values and label freshness/forecast relationship [FR-M2-02];
+:Return weather-evidence record [FR-M2-01] [FR-M2-02];
+fork again
+:Convert event time to the configured local calendar date [FR-M2-01];
+:Request matching holiday and adjacent-date records [FR-M2-01];
+|#FFF9C9|Public Holiday Dataset|
+:Return entries, jurisdiction, observed date, and dataset version [FR-M2-01] [FR-M2-02];
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Verify jurisdiction and date [FR-M2-01] [FR-M2-02];
+:Derive weekday/weekend, public-holiday, and adjacent-holiday flags [FR-M2-01];
+:Record dataset version, source timestamp, match result, retrieval time [FR-M2-02];
+:Return calendar-context record [FR-M2-01] [FR-M2-02];
+fork again
+:Send stable venue ID and comparison attributes to Firestore [FR-M2-01];
+|#E5F7E6|Firestore Database|
+:Retrieve the venue record [FR-M2-01];
+:Retrieve completed-event and incident-history candidates before event date [FR-M2-01];
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Filter by eligibility, status, event date, stable venue match, and criteria [FR-M2-01] [FR-M2-02];
+:Exclude rejected, pending, future, unverified, and ineligible records, record counts [FR-M2-01] [FR-M2-02];
+:Normalise outcomes only when denominators and definitions are present [FR-M2-02];
+:Return venue context, eligible history, criteria, retrieval time, synthetic flag [FR-M2-01] [FR-M2-02];
+fork again
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Request historical outcomes and verified assessment-eligible incidents [FR-M2-01] [FR-M2-02];
+|#E5F7E6|Firestore Database|
+:Return event date, venue linkage, eligibility, verification, and provenance for each record [FR-M2-01] [FR-M2-02];
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Validate source identity, retrieval time, relevance, eligibility, and synthetic-data indicator [FR-M2-02];
+end fork
+:Combine available items into one snapshot without silently merging contradictions [FR-M2-01] [FR-M2-02];
+:Calculate evidence availability and confidence summary without deciding the final risk-assessment method [FR-M2-03];
+:Return the contextual-evidence snapshot to the calling use case [FR-M2-01] [FR-M2-02] [FR-M2-03];
+endif
+note right
+Contextual-evidence alternative flow details:
+A2 Weather unavailable/stale/outside horizon → store explicit status;
+A3 Holiday dataset unavailable → calendar evidence unavailable;
+A4 Venue unmatched/no eligible history → empty eligible-history result;
+A5 Conflict/missing provenance/ineligible item → exclude or flag and reduce confidence;
+A6 No eligible incident information → exclude it; absence is not proof of no risk. Weather-data alternatives: invalid location/date; provider error/rate-limit/timeout;
+outside forecast horizon; malformed or irrelevant response.
+Public-holiday alternatives: invalid local date; dataset read failure;
+conflicting jurisdiction/date entries.
+Venue-history alternatives: ambiguous venue; no eligible history; unnormalisable outcome;
+database query failure.
+end note
+if (Evidence or context unavailable?) then (Yes)
+:Record explicit unavailable/provisional status and reduced evidence confidence [FR-M2-02] [FR-M2-03] [FR-M2-08];
+else (No)
+:Retain complete contextual-evidence snapshot;
+endif
+:Load active AI schema, category rubric, hard rules, guidance, model ID, prompt version, and safety restrictions [FR-M2-04] [FR-M2-06];
+:Reuse or request the contextual-evidence snapshot for AI analysis [FR-M2-04];
+:Construct an allowlisted payload with event data, eligible context, rubric, hard rules, and guidance [FR-M2-04];
+:Send structured request to MiniMax M3 API [FR-M2-04];
+|#FFF9C9|MiniMax M3 API|
+:Identify relevant hazards and applicable assessment categories [FR-M2-05];
+:Propose likelihood/severity scores, evidence references, rationale, confidence, concerns, and missing-information indicators [FR-M2-05];
+:Return structured JSON response, provider status, and model status [FR-M2-05];
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Parse the response and activate validation [FR-M2-06];
+:Receive response, input ID, evidence snapshot ID, rubric/prompt/model metadata [FR-M2-06] [FR-M2-09];
+:Validate required JSON schema [FR-M2-06];
+:Verify every category is permitted by the active rubric [FR-M2-06];
+:Validate likelihood/severity types and configured ranges [FR-M2-06];
+:Verify every evidence reference exists, is eligible, and belongs to this snapshot [FR-M2-06];
+:Check proposals against hard rules and active rubric, record conflicts/adjustments [FR-M2-06] [FR-M2-08];
+:Check hazards, rationale, confidence, concerns, and missing-information indicators [FR-M2-05] [FR-M2-06];
+:Create warnings for unsupported evidence, invalid values, rubric conflicts, low confidence, and hard-rule differences [FR-M2-08];
+:Mark affected categories or the assessment for authority review [FR-M2-08] [FR-M2-09];
+:Return accepted/rejected proposals, warnings, and validation provenance [FR-M2-06] [FR-M2-09];
+:Record accepted proposals, rejected items, warnings, review indicators, model/prompt/ rubric/schema versions, timing, and provenance [FR-M2-08] [FR-M2-09];
+if (MiniMax unavailable, timeout, empty,
+or response invalid?) then (A1–A4)
+:Receive classified AI failure, request ID, attempt count, and safe details [FR-M2-10];
+:Determine whether failure is retryable under active retry policy [FR-M2-10];
+if (A1 bounded retry permitted?) then (Retry)
+:A1.1–A1.4 — Wait configured backoff and retry the MiniMax request, if it fails, return to the failure-status step;
+:Record AI unavailable/invalid/ retryable and message M1 [FR-M2-10];
+else (No retry)
+:Record AI unavailable/invalid/ retryable and message M1 [FR-M2-10];
+endif
+:Record failure time, model/prompt/ schema versions, attempt count, safe category [FR-M2-09] [FR-M2-10];
+:Mark AI-unavailable/retryable and route to authorised manual review [FR-M2-10];
+:A2.1–A2.4 — Preserve input, context, failure, and valid gate findings, do not fabricate hazards or category scores;
+:Continue consolidation with assessment status review-required;
+else (Validated response)
+:Return the validated AI assessment package for deterministic calculation [FR-M2-04] [FR-M2-05] [FR-M2-06] [FR-M2-09];
+endif
+note right
+AI-response-validation alternative flow details:
+A1 schema failure → reject response, record schema errors, trigger AI-failure handling;
+A2 unsupported category → reject/flag category; return invalid if required categories remain incomplete;
+A3 out-of-range/missing score → reject without inventing, clamping, or silent correction;
+A4 unsupported evidence ref → warn and reject/flag affected proposal;
+A5 hard-rule/rubric conflict → retain proposed value, record adjustment, mark review;
+A6 low confidence/incomplete rationale → warn and mark review. AI-assisted-analysis alternatives:
+A1 missing model/prompt/schema/credential; A2 API error/rate-limit/timeout;
+A3 empty/provider error response; A4 validation rejects complete response. AI-failure A3 storage failure: preserve safe failure in parent transaction/logging
+path for later idempotent persistence. No raw secrets are exposed.
+end note
+:Load active formula, category weights, thresholds, guideline checks, hard rules, and version identifiers [FR-M2-07];
+:Receive validated category proposals and validation metadata [FR-M2-07] [FR-M2-08];
+:Verify each applicable category has accepted likelihood, severity, evidence, confidence, and validation status [FR-M2-07];
+:Apply hard-rule minimums, maximums, overrides, or review conditions, record each [FR-M2-07] [FR-M2-08];
+:Deterministically calculate each category risk value from likelihood/severity [FR-M2-07];
+:Apply weights and guideline checks, calculate overall numeric score and Low/Medium/High [FR-M2-07];
+:Record AI-vs-adjusted differences, calculation warnings, and review indicators [FR-M2-08] [FR-M2-09];
+:Return the calculated result and full provenance to the calling assessment flow [FR-M2-07] [FR-M2-09];
+if (A1–A4 risk calculation exception?) then (Unable to calculate)
+:A1.1–A4.3 — Record missing configuration, incomplete validated input, hard-rule conflict, or invalid result, never fabricate or silently clamp;
+:Mark risk result unavailable and review-required [FR-M2-08] [FR-M2-09];
+else (Calculated)
+:Retain official category values and overall Low/Medium/High result;
+endif
+note right
+Risk-calculation alternatives:
+A1 configuration error → unable-to-calculate;
+A2 incomplete accepted AI input → warning and authority review;
+A3 hard-rule conflict → retain proposed/adjusted values and continue;
+A4 non-finite/out-of-range/inconsistent result → reject result. Constraints represented by this path:
+versioned formula/weights/thresholds/rules; same validated input/configuration
+produces the same result; adjustments are never silent; no authority decision.
+end note
+:Load resource types, assumptions, guideline references, and version identifiers [FR-M2-11];
+:Reuse/request contextual evidence [FR-M2-01] [FR-M2-11];
+:Select event characteristics, validated findings, and eligible context [FR-M2-11];
+:Apply configured planning method to police, security, medical, ambulance, sanitation, waste-management, and fire-safety [FR-M2-11];
+:Create baseline/range, rationale, assumptions, modifiers, guidelines, and reviewing-authority information per item [FR-M2-11] [FR-M2-12];
+:Verify quantities/ranges are finite, non-negative, ordered, and configuration-backed [FR-M2-11];
+:Label recommendation confidence and authority-review requirement [FR-M2-11] [FR-M2-12];
+:Return the resource recommendation to the calling assessment flow [FR-M2-11] [FR-M2-12];
+if (A1–A4 resource exception?) then (Review required)
+:A1.1–A4.3 — Record missing configuration, incomplete context, unsupported resource method, or invalid quantity/range, do not invent defaults;
+:Mark affected item or recommendation unavailable/review-required [FR-M2-11] [FR-M2-12];
+else (Available)
+:Retain baseline quantities/ranges and item-level provenance;
+endif
+:Consolidate hazards, AI proposals, validated category values, overall risk, warnings, confidence, gates, evidence, and resources [FR-M2-13];
+:Prepare assessment/resource/context/ AI-status/audit records with stable event/input IDs and version metadata [FR-M2-02] [FR-M2-09] [FR-M2-12];
+:Start a consistency-preserving Firestore transaction/batch [FR-M2-09];
+|#E5F7E6|Firestore Database|
+:Return current event reference and processing-claim state [FR-M2-09];
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Verify submitted input is current and caller still owns the processing claim [FR-M2-09];
+if (A2 stale input or lost claim?) then (Yes)
+:A2.1–A2.3 — Abort transaction, do not publish stale result, return stale-result/ not-owner status;
+stop
+else (Current)
+:Write assessment-processing/ final assessment record [FR-M2-09];
+:Write resource recommendation record when available [FR-M2-12];
+:Write context/provenance and assessment/resource audit entries [FR-M2-02] [FR-M2-09] [FR-M2-12];
+:Update only event pointers/status fields owned by this module contract [FR-M2-09];
+|#E5F7E6|Firestore Database|
+:Commit complete transaction/batch [FR-M2-09];
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Return stored record identifiers and commit status to the calling assessment flow [FR-M2-09];
+endif
+note right
+Overall-assessment alternatives:
+A2 retrieval failure → failed/insufficient-data, store safe audit, end;
+A3 gate not ready → provisional path or skip AI/risk/resources and require review;
+A4 AI failure → , no fabricated scores, consolidate review-required;
+A5 calculation failure → preserve warnings, risk unavailable;
+A6 resource failure → store unavailable item/status;
+A7 final storage conflict → cancel stale publication, bounded idempotent retry. Storage alternatives:
+A1 transaction
+start failure → bounded idempotent retry;
+A2 input/claim changed → abort and do not publish stale result;
+A3 commit conflict → reload guard and retry within policy;
+A4 unavailable AI/resource → store explicit status/provenance, never omit silently.
+end note
+:Mark processing completed or review-required and publish current record IDs to authorised consumers [FR-M2-09] [FR-M2-13];
+:End assessment-processing workflow;
+fork
+|#F7E8F5|Event Organiser|
+:Open View Assessment Summary [FR-M2-13] [FR-M2-14];
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Verify organiser authentication, role, account status, and event scope [FR-M2-14];
+:Load current event summary, assessment status, risk output, and resource summary [FR-M2-13] [FR-M2-14];
+:Verify current submitted-event input and build the permitted safe projection [FR-M2-14];
+:Display risk level, main hazards/ concerns, required organiser actions, missing- information indicators, status, safe resources [FR-M2-13] [FR-M2-14];
+|#F7E8F5|Event Organiser|
+:Review the displayed summary [FR-M2-13] [FR-M2-14];
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Hide restricted evidence, internal validation details, AI prompts, private data, and authority-only decisions [FR-M2-14];
+|#F7E8F5|Event Organiser|
+:Leave page or select another event;
+fork again
+|#EDDCF7|Authority Officer|
+:Open View Risk Assessment [FR-M2-13] [FR-M2-14];
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Verify authority authentication, role, scope, and account status [FR-M2-14];
+:Load event summary and current assessment-processing/assessment record [FR-M2-13] [FR-M2-14];
+:Verify current input and supported assessment schema [FR-M2-09] [FR-M2-14];
+:Display readiness, compliance, confidence, result details, evidence, provenance, versions, and processing state [FR-M2-13] [FR-M2-14];
+|#EDDCF7|Authority Officer|
+:Review assessment and expand permitted evidence/details [FR-M2-13] [FR-M2-14];
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Display only evidence within officer-authorised scope [FR-M2-14];
+|#EDDCF7|Authority Officer|
+:Leave page or select another assessment;
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Continue human approval review in the Authority Approval and Notification Module;
+note right
+This module supports review only; it does not create the authority decision.
+end note
+fork again
+|#EDDCF7|Authority Officer|
+:Open View Resource Recommendation [FR-M2-13] [FR-M2-14];
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Verify authentication, profile, and event scope [FR-M2-14];
+:Load event, linked assessment, and resource record [FR-M2-13] [FR-M2-14];
+:Verify current input and supported resource configuration [FR-M2-14];
+:Display every resource type with baseline/range, rationale, assumptions, modifiers, guideline version, confidence, and review status [FR-M2-11] [FR-M2-12] [FR-M2-13] [FR-M2-14];
+|#EDDCF7|Authority Officer|
+:Review recommendation and expand item-level rationale/provenance [FR-M2-12] [FR-M2-14];
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Display existing authorised override provenance as reference only, do not create a new override [FR-M2-14];
+|#EDDCF7|Authority Officer|
+:Leave page or select another recommendation;
+fork again
+|#EDE2F7|Admin|
+:Open View AI-Assisted Analysis [FR-M2-13] [FR-M2-14];
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Verify Admin authentication, role, account status, and event access [FR-M2-14];
+:Load current event/assessment reference and linked AI-analysis status [FR-M2-13] [FR-M2-14];
+:Verify submitted-input, model, prompt, and response-schema versions [FR-M2-09] [FR-M2-14];
+:Display accepted structured analysis, evidence refs, concerns, status, timestamps, and provenance [FR-M2-13] [FR-M2-14];
+|#EDE2F7|Admin|
+:Review analysis and inspect permitted evidence [FR-M2-13] [FR-M2-14];
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Keep AI content distinct from protected assessment and authority decisions [FR-M2-14];
+|#EDE2F7|Admin|
+:Leave page or select another event;
+end fork
+note right
+View-use-case alternatives:
+Risk-assessment-view A1 unauthorised → message “You are not authorised to view this assessment”;
+A2 processing/failed/absent → show safe state; A3 legacy/stale → label and do not show current;
+A4 restricted evidence → deny request, keep summary; A5 leave page → no data change. Resource-view A1 unauthorised; A2 processing/absent/failed; A3 stale/legacy;
+A4 item unavailable/review-required → show reason, no fabricated default; A5 leave page. AI-analysis-view A1 unauthorised; A2 unavailable/invalid/retryable → safe status, no rejected raw output;
+A3 stale/other input → label legacy; A4 restricted evidence → indicator only; A5 leave page. Organiser-summary-view A1 unauthorised; A2 processing/unavailable/failed/absent → safe status, no invented result;
+A3 stale input → label stale; A4 restricted field → safe fields only; A5 leave page. All viewing constraints: role-based least privilege; current/processing/failed/incomplete/
+stale states are distinct; viewing never changes assessment, resources, or authority decisions.
+end note
+stop
+@enduml

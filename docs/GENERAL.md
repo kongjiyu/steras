@@ -37,9 +37,7 @@ General ownership does not mean owning every module feature. It means maintainin
 | `/authority/calendar` | Redirects to M1 public calendar | M1 | Compatibility redirect |
 | `/organizer/incidents` | M4 organiser incident list | M4 | Planned |
 | `/organizer/incidents/new` | M4 incident report form | M4 | Planned |
-| `/organizer/complaints` | M4 organiser complaint list/form | M4 | Planned |
 | `/authority/incidents` | M4 authority incident queue | M4 | Planned |
-| `/authority/complaints` | M4 complaint investigation queue | M4 | Planned |
 | `/authority/reports` | `Analytics.tsx` | M5 | Implemented foundation |
 
 ## General-Owned Files
@@ -70,7 +68,7 @@ Module-specific pages remain owned by their modules even when they use a shared 
 - Firestore subcollections under an event are version scoped.
 - The server owns assessments, resources, decisions, audit records, publication, and protected status changes.
 - M2 produces the official assessment; M3 produces the human decision.
-- Public pages never expose organiser PII, assessment details, incident details, or complaints.
+- Public pages never expose organiser PII, assessment details, incident details, evidence, or investigation notes.
 - General may resolve cross-module integration conflicts, but it must not silently change another module's business contract.
 
 ## Integration Workflow

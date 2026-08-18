@@ -146,13 +146,13 @@ Primary implementation:
 - `functions/src/http/authorityDecision.ts`
 - `functions/src/http/manualRecompute.ts`
 
-### Module 4 — Incident reporting and complaint handling
+### Module 4 — Incident reporting and handling
 
-Planned M4 scope includes organiser incident reports, authority verification, complaint tickets, private evidence, investigation history, and a verified incident projection for future M2 assessments. Existing `incidents` data is academic seed context, not a completed M4 workflow.
+Planned M4 scope includes organiser incident reports, admin action-required triage, assignment, authority investigation and verification, private evidence, resolution history, and a verified incident projection for future M2 assessments. Existing `incidents` data is academic seed context, not a completed M4 workflow.
 
 Working contract:
 
-- `docs/modules/M4_INCIDENT_COMPLAINTS.md`
+- `docs/modules/M4_INCIDENT_REPORTING_HANDLING.md`
 
 ### Module 5 — Analytics and reporting
 

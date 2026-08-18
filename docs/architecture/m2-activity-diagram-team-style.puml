@@ -1,0 +1,104 @@
+@startuml
+title Smart Risk Assessment and Safety Resource Recommendation Module
+
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam defaultFontName Times New Roman
+skinparam defaultFontSize 15
+skinparam ArrowColor #3F3F46
+skinparam ArrowThickness 1.3
+skinparam activity {
+  BackgroundColor #EAF3FA
+  BorderColor #6B8EAD
+  FontColor #20242A
+  DiamondBackgroundColor #FFFFFF
+  DiamondBorderColor #20BFA9
+  StartColor #000000
+  EndColor #000000
+  BarColor #D6B81F
+}
+skinparam note {
+  BackgroundColor #FFF8D9
+  BorderColor #D8B84B
+  FontColor #40351A
+}
+
+|#F7E8F5|Event Organiser|
+start
+:Submit or resubmit\nevent application;
+
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Receive submitted event application;
+:Retrieve submitted event data;
+:Check required fields, evidence references\nand assessment eligibility;
+if (Assessment input\nready and eligible?) then (No)
+  :Record incomplete, blocked, or\nreview-required status;
+  stop
+else (Yes)
+  :Prepare assessment request using the\nactive rubric, hard rules, and guidance;
+endif
+
+fork
+  |#E5F7E6|Firestore Database|
+  :Provide venue capacity and\nrelevant safety context;
+  :Provide eligible historical-event\nand verified incident records;
+fork again
+  |#FFF9C9|External Services|
+  :OpenWeather API provides\nevent-date weather data;
+  :Public Holiday Dataset provides\nlocal date and holiday context;
+end fork
+
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Assemble contextual evidence snapshot\nwith source, time, eligibility, and provenance;
+
+|#FFF9C9|External Services|
+:Receive allowlisted event data, context,\nrubric, hard rules, and guidance;
+:MiniMax M3 identifies hazards and proposes\ncategory likelihood and severity scores;
+
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Validate AI response schema, categories,\nscores, evidence references, and rubric;
+if (AI response valid and usable?) then (Yes)
+  :Apply hard-rule constraints and\ncalculate official category risk values;
+  :Calculate official overall score\nand Low, Medium, or High risk level;
+  :Record AI proposal, adjustments,\nwarnings, rationale, and confidence;
+  :Generate baseline safety-resource\nquantities and planning ranges;
+else (No / unavailable)
+  :Record validation warnings and mark\nAI analysis unavailable or retryable;
+  :Do not fabricate category scores;\nroute the assessment to authorised manual review;
+endif
+
+note right
+  MiniMax is advisory. It cannot replace the
+  official result, hard rules, or authority decision.
+end note
+
+:Consolidate assessment readiness,\ncompliance, evidence confidence, AI status,\nand resource recommendations;
+
+|#E5F7E6|Firestore Database|
+:Verify the submitted input and\nprocessing claim are still current;
+if (Input and claim still current?) then (No)
+  :Discard stale result and retain\nwarning/audit provenance;
+  stop
+else (Yes)
+  :Store assessment, evidence snapshot,\nAI analysis, resource recommendation,\nand version/provenance records;
+  :Write audit entries and update\ncurrent assessment/resource references;
+endif
+
+|#E7F1FB|Smart Risk Assessment and Safety Resource Recommendation Module|
+:Publish role-appropriate assessment outputs;
+
+fork
+  |#F7E8F5|Event Organiser|
+  :View Assessment Summary;
+fork again
+  |#F2E7FA|Authority Officer|
+  :View Risk Assessment and\nSafety Resource Recommendation;
+  :Continue human approval review in\nthe Authority Approval and Notification Module;
+  note left
+    The module output supports review only.
+    It does not create the authority decision.
+  end note
+end fork
+
+stop
+@enduml

@@ -8,7 +8,7 @@
 
 完成一个可以完整展示的 **end-to-end prototype**：
 
-> Event Organiser 提交活动申请，M2 完成风险评估，Authority Officers 进行人工审核，M4 记录事故与投诉，M5 提供可以审计的分析报告。
+> Event Organiser 提交活动申请，M2 完成风险评估，Authority Officers 进行人工审核，M4 处理事故报告、分流和调查，M5 提供可以审计的分析报告。
 
 每位队友负责一个完整的 **vertical slice**，包括：
 
@@ -41,7 +41,7 @@
 - 完整 lifecycle 的 **end-to-end UAT**
 - Revision Requested 后的 edit/resubmit 验证
 - M3 notification presentation
-- M4 incident/complaint navigation
+- M4 incident navigation
 - 更完整的 browser 与 cross-organiser permission tests
 
 ### M2 - Smart Risk Assessment and Safety Resource Recommendation
@@ -89,7 +89,7 @@
 - Standalone audit user experience
 - 所有 decision branches 的完整 UAT
 
-### M4 - Incident Reporting and Complaint Handling
+### M4 - Incident Reporting and Handling
 
 **目前状态 - Current Status:** 大部分尚未实现 - **Largest Missing Module**
 
@@ -104,8 +104,8 @@
 
 - Production routes and pages
 - Incident report/verification Functions
-- Complaint collection and workflow
-- Incident/complaint evidence upload contract
+- Admin action-required triage and assignment workflow
+- Incident evidence upload contract
 - Complete Firestore/Storage Rules
 - M3 notifications 和 M5 integration
 - End-to-end tests
@@ -130,7 +130,7 @@
 - Event type、venue、risk、status、authority 和 schema filters
 - Readiness/compliance/confidence analytics
 - Resource/override/re-application metrics
-- M4 incident/complaint metrics
+- M4 incident triage、verification 和 resolution metrics
 - Synthetic-data exclusion by default
 - Server-generated or bounded aggregation
 - 更完整的 privacy/export tests
@@ -168,7 +168,7 @@
 2. 验证 draft、version-scoped upload、immutable submission、revision resubmission 和 withdrawal。
 3. 完成 loading、empty、error、permission、mobile states。
 4. 提供可以读取 M3 notification records 的 organiser UI。
-5. 验证 `public_events` 不包含 PII、private evidence、risk、incident 或 complaint data。
+5. 验证 `public_events` 不包含 PII、private evidence、risk 或 incident data。
 6. 添加 organiser golden-path 和 forbidden cross-user browser tests。
 
 ### 验收 | Acceptance
@@ -245,23 +245,20 @@
 
 ### 目标 | Goal
 
-分两个 **vertical slices** 实现：先完成 Incident MVP，再完成 Complaint MVP。
+完成一个 **Incident Handling Vertical Slice**：reporting、admin triage、assignment、investigation、resolution 和 verification。
 
-### Incident MVP
+### Incident Handling MVP
 
 1. 建立 incident types、collections、indexes 和 Rules。
 2. 实现 organiser incident create/list/detail。
-3. 实现 authority verification queue 和 eligibility control。
+3. 实现 authority queue、action-required triage、assignment、verification 和 eligibility control。
 4. 保存 event/version/venue、time、severity、evidence、outcome、reporter 和 reviewer provenance。
 5. 只有 `verified + assessmentEligible` incidents 可以进入未来 M2 assessment。
 6. 保存 attendance exposure、medical outcomes、resources used、interruptions、near misses 和 after-action findings。
-
-### Complaint MVP
-
-1. 实现 organiser complaint create/list/detail。
-2. 实现 authority assignment、investigation、public-safe update 和 resolution。
-3. Complaint 不可以直接改变 M2；confirmed safety event 必须链接 verified incident。
-4. Material update 产生 notification request。
+7. `actionRequired: false` 时，admin 必须记录 justification 才能 Close。
+8. `actionRequired: true` 时，assign 给 relevant organiser 或 authority officer。
+9. Assigned party 记录 response actions、findings、evidence 和 final outcome。
+10. Assignment、material update 和 final resolution 产生 notification request。
 
 ### 验收 | Acceptance
 

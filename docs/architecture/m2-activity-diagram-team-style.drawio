@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2026-08-07T00:00:00.000Z" agent="Codex" version="24.7.17" type="device">
+  <diagram id="steras-m2-activity-current" name="Smart Risk Assessment Activity Diagram">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="3300" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="Smart Risk Assessment and Safety Resource Recommendation Module" style="text;html=1;align=center;verticalAlign=middle;fontFamily=Times New Roman;fontSize=22;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="20" y="10" width="1620" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="lane-organiser" value="Event Organiser" style="swimlane;html=1;horizontal=1;startSize=34;fillColor=#F7E8F5;swimlaneFillColor=#F7E8F5;strokeColor=#666666;fontFamily=Times New Roman;fontSize=16;fontStyle=1;collapsible=0;" vertex="1" parent="1">
+          <mxGeometry x="20" y="60" width="250" height="3060" as="geometry" />
+        </mxCell>
+        <mxCell id="lane-module" value="Smart Risk Assessment and Safety Resource Recommendation Module" style="swimlane;html=1;horizontal=1;startSize=34;fillColor=#E7F1FB;swimlaneFillColor=#E7F1FB;strokeColor=#666666;fontFamily=Times New Roman;fontSize=16;fontStyle=1;collapsible=0;" vertex="1" parent="1">
+          <mxGeometry x="270" y="60" width="430" height="3060" as="geometry" />
+        </mxCell>
+        <mxCell id="lane-database" value="Firestore Database" style="swimlane;html=1;horizontal=1;startSize=34;fillColor=#E5F7E6;swimlaneFillColor=#E5F7E6;strokeColor=#666666;fontFamily=Times New Roman;fontSize=16;fontStyle=1;collapsible=0;" vertex="1" parent="1">
+          <mxGeometry x="700" y="60" width="300" height="3060" as="geometry" />
+        </mxCell>
+        <mxCell id="lane-external" value="External Services" style="swimlane;html=1;horizontal=1;startSize=34;fillColor=#FFF9C9;swimlaneFillColor=#FFF9C9;strokeColor=#666666;fontFamily=Times New Roman;fontSize=16;fontStyle=1;collapsible=0;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="60" width="390" height="3060" as="geometry" />
+        </mxCell>
+        <mxCell id="lane-authority" value="Authority Officer" style="swimlane;html=1;horizontal=1;startSize=34;fillColor=#F2E7FA;swimlaneFillColor=#F2E7FA;strokeColor=#666666;fontFamily=Times New Roman;fontSize=16;fontStyle=1;collapsible=0;" vertex="1" parent="1">
+          <mxGeometry x="1390" y="60" width="250" height="3060" as="geometry" />
+        </mxCell>
+
+        <mxCell id="start" value="" style="ellipse;html=1;aspect=fixed;fillColor=#000000;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="133" y="105" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="submit" value="Submit or resubmit&lt;br&gt;event application" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#F8E5F1;strokeColor=#AD6F99;fontFamily=Times New Roman;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="55" y="155" width="180" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="receive" value="Receive submitted&lt;br&gt;event application" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#DDECF9;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="380" y="245" width="210" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="retrieve" value="Retrieve submitted&lt;br&gt;event data" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#DDF1DF;strokeColor=#6E9B72;fontFamily=Times New Roman;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="745" y="335" width="210" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="check-input" value="Check required fields, evidence references,&lt;br&gt;and assessment eligibility" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#DDECF9;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="340" y="425" width="290" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="input-ready" value="Assessment input&lt;br&gt;ready and eligible?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#20BFA9;strokeWidth=2;fontFamily=Times New Roman;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="425" y="525" width="120" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="incomplete" value="Record incomplete, blocked, or&lt;br&gt;review-required status" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#DDECF9;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="295" y="650" width="190" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="incomplete-end" value="" style="ellipse;shape=endState;html=1;fillColor=#000000;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="378" y="745" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="prepare" value="Prepare assessment request using the&lt;br&gt;active rubric, hard rules, and guidance" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#DDECF9;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="470" y="650" width="220" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="context-fork" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#D6B81F;strokeColor=#D6B81F;" vertex="1" parent="1">
+          <mxGeometry x="290" y="795" width="1050" height="10" as="geometry" />
+        </mxCell>
+        <mxCell id="venue" value="Provide venue capacity and&lt;br&gt;relevant safety context" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#DDF1DF;strokeColor=#6E9B72;fontFamily=Times New Roman;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="745" y="850" width="210" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="history" value="Provide eligible historical-event&lt;br&gt;and verified incident records" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#DDF1DF;strokeColor=#6E9B72;fontFamily=Times New Roman;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="745" y="940" width="210" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="weather" value="OpenWeather API provides&lt;br&gt;event-date weather data" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#FFF4B8;strokeColor=#B29A35;fontFamily=Times New Roman;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1060" y="850" width="250" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="holiday" value="Public Holiday Dataset provides&lt;br&gt;local date and holiday context" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#FFF4B8;strokeColor=#B29A35;fontFamily=Times New Roman;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1060" y="940" width="250" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="context-join" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#D6B81F;strokeColor=#D6B81F;" vertex="1" parent="1">
+          <mxGeometry x="290" y="1045" width="1050" height="10" as="geometry" />
+        </mxCell>
+        <mxCell id="assemble" value="Assemble contextual evidence snapshot&lt;br&gt;with source, time, eligibility, and provenance" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#DDECF9;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="325" y="1100" width="320" height="64" as="geometry" />
+        </mxCell>
+
+        <mxCell id="send-ai" value="Send allowlisted event data, context,&lt;br&gt;rubric, hard rules, and guidance" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#FFF4B8;strokeColor=#B29A35;fontFamily=Times New Roman;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1060" y="1190" width="250" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="ai-propose" value="MiniMax M3 API identifies hazards and proposes&lt;br&gt;category likelihood and severity scores" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#FFF4B8;strokeColor=#B29A35;fontFamily=Times New Roman;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1045" y="1290" width="280" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="validate-ai" value="Validate AI response schema, categories,&lt;br&gt;scores, evidence references, and rubric" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#DDECF9;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="330" y="1390" width="310" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="ai-valid" value="AI response&lt;br&gt;valid and usable?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#20BFA9;strokeWidth=2;fontFamily=Times New Roman;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="425" y="1490" width="120" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="ai-invalid" value="Record validation warnings and mark&lt;br&gt;AI analysis unavailable or retryable" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#DDECF9;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="290" y="1620" width="225" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="manual-review" value="Do not fabricate category scores;&lt;br&gt;route to authorised manual review" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#DDECF9;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="290" y="1720" width="225" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="apply-rules" value="Apply hard-rule constraints and&lt;br&gt;calculate official category risk values" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#DDECF9;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="535" y="1620" width="225" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="official-risk" value="Calculate official overall score&lt;br&gt;and Low, Medium, or High risk level" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#DDECF9;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="535" y="1720" width="225" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="record-analysis" value="Record AI proposal, adjustments,&lt;br&gt;warnings, rationale, and confidence" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#DDECF9;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="535" y="1820" width="225" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="resource" value="Generate baseline safety-resource&lt;br&gt;quantities and planning ranges" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#DDECF9;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="535" y="1920" width="225" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="merge-ai" value="" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#D8B84B;" vertex="1" parent="1">
+          <mxGeometry x="465" y="2020" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="ai-note" value="MiniMax is advisory. It cannot replace the official result, hard rules, or authority decision." style="shape=note;whiteSpace=wrap;html=1;fillColor=#FFF8D9;strokeColor=#D8B84B;fontFamily=Times New Roman;fontSize=12;align=left;" vertex="1" parent="1">
+          <mxGeometry x="770" y="1580" width="250" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="consolidate" value="Consolidate assessment readiness, compliance,&lt;br&gt;evidence confidence, AI status, and resources" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#DDECF9;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="325" y="2090" width="320" height="64" as="geometry" />
+        </mxCell>
+
+        <mxCell id="verify" value="Verify submitted input and&lt;br&gt;processing claim are still current" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#DDF1DF;strokeColor=#6E9B72;fontFamily=Times New Roman;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="745" y="2180" width="210" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="current" value="Input and claim&lt;br&gt;still current?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#20BFA9;strokeWidth=2;fontFamily=Times New Roman;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="790" y="2280" width="120" height="82" as="geometry" />
+        </mxCell>
+        <mxCell id="discard" value="Discard stale result and retain&lt;br&gt;warning/audit provenance" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#DDF1DF;strokeColor=#6E9B72;fontFamily=Times New Roman;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="700" y="2410" width="220" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="stale-end" value="" style="ellipse;shape=endState;html=1;fillColor=#000000;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="798" y="2510" width="24" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="store" value="Store assessment, evidence snapshot,&lt;br&gt;AI analysis, resource recommendation,&lt;br&gt;and version/provenance records" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#DDF1DF;strokeColor=#6E9B72;fontFamily=Times New Roman;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="745" y="2410" width="240" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="audit" value="Write audit entries and update&lt;br&gt;current assessment/resource references" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#DDF1DF;strokeColor=#6E9B72;fontFamily=Times New Roman;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="745" y="2520" width="240" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="publish" value="Publish role-appropriate&lt;br&gt;assessment outputs" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#DDECF9;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="380" y="2620" width="210" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="output-fork" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#D6B81F;strokeColor=#D6B81F;" vertex="1" parent="1">
+          <mxGeometry x="50" y="2710" width="1510" height="10" as="geometry" />
+        </mxCell>
+        <mxCell id="organiser-view" value="View Assessment Summary" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#F8E5F1;strokeColor=#AD6F99;fontFamily=Times New Roman;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="55" y="2770" width="180" height="52" as="geometry" />
+        </mxCell>
+        <mxCell id="authority-view" value="View Risk Assessment and&lt;br&gt;Safety Resource Recommendation" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#EDDCF7;strokeColor=#9569AC;fontFamily=Times New Roman;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1420" y="2770" width="200" height="62" as="geometry" />
+        </mxCell>
+        <mxCell id="authority-review" value="Continue human approval review in&lt;br&gt;the Authority Approval and Notification Module" style="rounded=1;whiteSpace=wrap;html=1;arcSize=18;fillColor=#EDDCF7;strokeColor=#9569AC;fontFamily=Times New Roman;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1400" y="2870" width="220" height="64" as="geometry" />
+        </mxCell>
+        <mxCell id="authority-note" value="The module output supports review only. It does not create the authority decision." style="shape=note;whiteSpace=wrap;html=1;fillColor=#FFF8D9;strokeColor=#D8B84B;fontFamily=Times New Roman;fontSize=12;align=left;" vertex="1" parent="1">
+          <mxGeometry x="1120" y="2865" width="250" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="output-join" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#D6B81F;strokeColor=#D6B81F;" vertex="1" parent="1">
+          <mxGeometry x="50" y="2990" width="1510" height="10" as="geometry" />
+        </mxCell>
+        <mxCell id="final-end" value="" style="ellipse;shape=endState;html=1;fillColor=#000000;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="1515" y="3040" width="26" height="26" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e-start-submit" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="start" target="submit"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-submit-receive" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="submit" target="receive"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-receive-retrieve" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="receive" target="retrieve"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-retrieve-check" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="retrieve" target="check-input"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-check-decision" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="check-input" target="input-ready"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-input-no" value="No" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="input-ready" target="incomplete"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-incomplete-end" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="incomplete" target="incomplete-end"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-input-yes" value="Yes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="input-ready" target="prepare"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-prepare-fork" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="prepare" target="context-fork"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-fork-venue" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="context-fork" target="venue"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-venue-history" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="venue" target="history"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-fork-weather" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="context-fork" target="weather"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-weather-holiday" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="weather" target="holiday"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-history-join" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="history" target="context-join"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-holiday-join" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="holiday" target="context-join"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-join-assemble" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="context-join" target="assemble"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-assemble-send" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="assemble" target="send-ai"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-send-propose" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="send-ai" target="ai-propose"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-propose-validate" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="ai-propose" target="validate-ai"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-validate-decision" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="validate-ai" target="ai-valid"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-ai-no" value="No / unavailable" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="ai-valid" target="ai-invalid"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-invalid-manual" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="ai-invalid" target="manual-review"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-manual-merge" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="manual-review" target="merge-ai"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-ai-yes" value="Yes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="ai-valid" target="apply-rules"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-rules-official" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="apply-rules" target="official-risk"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-official-record" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="official-risk" target="record-analysis"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-record-resource" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="record-analysis" target="resource"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-resource-merge" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="resource" target="merge-ai"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-merge-consolidate" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="merge-ai" target="consolidate"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-consolidate-verify" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="consolidate" target="verify"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-verify-current" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="verify" target="current"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-current-no" value="No" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="current" target="discard"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-discard-end" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="discard" target="stale-end"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-current-yes" value="Yes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="current" target="store"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-store-audit" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="store" target="audit"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-audit-publish" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="audit" target="publish"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-publish-fork" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="publish" target="output-fork"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-fork-organiser" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="output-fork" target="organiser-view"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-fork-authority" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="output-fork" target="authority-view"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-authority-review" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="authority-view" target="authority-review"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-organiser-join" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="organiser-view" target="output-join"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-authority-join" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="authority-review" target="output-join"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e-output-end" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;endFill=1;" edge="1" parent="1" source="output-join" target="final-end"><mxGeometry relative="1" as="geometry" /></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
