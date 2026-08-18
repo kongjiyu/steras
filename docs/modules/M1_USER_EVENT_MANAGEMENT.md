@@ -2,7 +2,7 @@
 
 **Owner:** Module 1 teammate
 
-**PRD requirements:** FR-01 to FR-06
+**PRD requirements:** FR-M1-01 to FR-M1-21
 
 ## Goal
 

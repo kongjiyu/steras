@@ -2,7 +2,7 @@
 
 **Owner:** M2 owner / project integrator
 
-**PRD requirements:** FR-07 to FR-15
+**PRD requirements:** FR-M2-01 to FR-M2-14
 
 ## Goal
 
