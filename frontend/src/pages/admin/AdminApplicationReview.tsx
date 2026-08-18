@@ -619,9 +619,14 @@ export default function AdminApplicationReview() {
                 ← Back to application queue
               </Link>
               {event && (
-                <Link to={`/admin/applications/${event.eventId}/assign`} className="btn-secondary !py-1.5 !px-3 text-xs">
-                  Open officer assignment →
-                </Link>
+                <div className="flex flex-wrap gap-2">
+                  <Link to={`/admin/applications/${event.eventId}/assign`} className="btn-secondary !py-1.5 !px-3 text-xs">
+                    Open officer assignment →
+                  </Link>
+                  <Link to={`/admin/applications/${event.eventId}/controls`} className="btn-secondary !py-1.5 !px-3 text-xs">
+                    Open event control list →
+                  </Link>
+                </div>
               )}
             </div>
           </>

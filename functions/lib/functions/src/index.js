@@ -14,7 +14,7 @@
  *   - overrideResources     — validates and audits resource adjustments
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.unassignAuthorityOfficers = exports.makeSecondReviewDecision = exports.recordOfficerProposal = exports.assignAuthorityOfficers = exports.proposeEventControlList = exports.listMyNotifications = exports.markNotificationRead = exports.verifyStage1Doc = exports.overrideResources = exports.makeAuthorityDecision = exports.withdrawEvent = exports.submitEvent = exports.manualRecompute = exports.recomputeRiskAndResources = exports.onEventUpdated = exports.onEventCreated = void 0;
+exports.editEventControlList = exports.generateEventControlList = exports.unassignAuthorityOfficers = exports.makeSecondReviewDecision = exports.recordOfficerProposal = exports.assignAuthorityOfficers = exports.proposeEventControlList = exports.listMyNotifications = exports.markNotificationRead = exports.verifyStage1Doc = exports.overrideResources = exports.makeAuthorityDecision = exports.withdrawEvent = exports.submitEvent = exports.manualRecompute = exports.recomputeRiskAndResources = exports.onEventUpdated = exports.onEventCreated = void 0;
 const app_1 = require("firebase-admin/app");
 // Initialize firebase-admin before any function code runs.
 (0, app_1.initializeApp)();
@@ -53,4 +53,9 @@ Object.defineProperty(exports, "makeSecondReviewDecision", { enumerable: true, g
 // M3 Workstream 1 polish — reverse an assignment (A15 backup officer swap).
 var unassignAuthorityOfficers_1 = require("./http/unassignAuthorityOfficers");
 Object.defineProperty(exports, "unassignAuthorityOfficers", { enumerable: true, get: function () { return unassignAuthorityOfficers_1.unassignAuthorityOfficers; } });
+// M3 Workstream 2 — event control list model + AI generation (admin).
+var generateEventControlList_1 = require("./http/generateEventControlList");
+Object.defineProperty(exports, "generateEventControlList", { enumerable: true, get: function () { return generateEventControlList_1.generateEventControlList; } });
+var editEventControlList_1 = require("./http/editEventControlList");
+Object.defineProperty(exports, "editEventControlList", { enumerable: true, get: function () { return editEventControlList_1.editEventControlList; } });
 //# sourceMappingURL=index.js.map

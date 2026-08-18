@@ -83,15 +83,27 @@ export const proposeEventControlList = onCall<ProposeEventControlListRequest>({ 
   if (!eventId) throw new HttpsError('invalid-argument', 'eventId is required.');
   if (!versionId) throw new HttpsError('invalid-argument', 'versionId is required.');
 
+  const items = await proposeControlItemsForEvent(eventId, versionId);
+  console.log(`[proposeEventControlList:STUB] eventId=${eventId} versionId=${versionId} returning ${items.length} items`);
+  return { items };
+});
+
+/**
+ * Reusable core: look up the event and return the proposed control
+ * items. Exported so other Cloud Functions (e.g. `generateEventControlList`)
+ * can call this without going through the onCall surface (which would
+ * require a deployed URL and auth context).
+ */
+export async function proposeControlItemsForEvent(eventId: string, versionId: string): Promise<ProposedControlItem[]> {
   const eventSnap = await firestore().collection(COLLECTIONS.EVENTS).doc(eventId).get();
   if (!eventSnap.exists) {
-    throw new HttpsError('not-found', `Event ${eventId} not found.`);
+    throw new Error(`Event ${eventId} not found.`);
   }
   const event = eventSnap.data() as EventRecord;
   const required = event.requiredAuthorities ?? [];
 
   // STUB: return a hardcoded list. When M2 ships the real one, this
-  // function is deleted and the real one is called instead.
+  // function is replaced with a call to M2's callable.
   const items: ProposedControlItem[] = required.map((authority) => ({
     controlName: CONTROL_NAMES[authority] ?? `${authority} compliance`,
     authority,
@@ -99,7 +111,5 @@ export const proposeEventControlList = onCall<ProposeEventControlListRequest>({ 
     stage1Requirements: STAGE1_TEMPLATES[authority] ?? [],
     stage2Requirement: { kind: 'image', label: STAGE2_LABEL[authority] ?? `Photo of ${authority} at venue` },
   }));
-
-  console.log(`[proposeEventControlList:STUB] eventId=${eventId} versionId=${versionId} returning ${items.length} items`);
-  return { items };
-});
+  return items;
+}

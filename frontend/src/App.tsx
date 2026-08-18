@@ -40,6 +40,8 @@ import AdminVenues from './pages/admin/AdminVenues';
 import AdminAnalytics from './pages/admin/AdminAnalytics';
 import AdminAudit from './pages/admin/AdminAudit';
 import AdminAssignment from './pages/admin/AdminAssignment';
+import AdminControlListEditor from './pages/admin/AdminControlListEditor';
+import OrganizerEventControls from './pages/organizer/OrganizerEventControls';
 
 export default function App() {
   const { loading } = useAuth();
@@ -73,6 +75,7 @@ export default function App() {
         <Route path="/organizer/events/:eventId/edit" element={<NewEvent />} />
         <Route path="/organizer/events" element={<MyEvents />} />
         <Route path="/organizer/events/:eventId" element={<EventDetail />} />
+        <Route path="/organizer/events/:eventId/controls" element={<OrganizerEventControls />} />
       </Route>
 
       {/* Authority routes (auth + role=authority) — sidebar layout */}
@@ -107,6 +110,7 @@ export default function App() {
         <Route path="/admin/applications" element={<AdminApplicationQueue />} />
         <Route path="/admin/applications/:eventId" element={<AdminApplicationReview />} />
         <Route path="/admin/applications/:eventId/assign" element={<AdminAssignment />} />
+        <Route path="/admin/applications/:eventId/controls" element={<AdminControlListEditor />} />
         <Route path="/admin/users" element={<AdminUsers />} />
         <Route path="/admin/venues" element={<AdminVenues />} />
         <Route path="/admin/analytics" element={<AdminAnalytics />} />

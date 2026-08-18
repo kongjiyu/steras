@@ -132,6 +132,28 @@ export interface EventRecord {
    *  - 'second':    all officers have decided; admin must confirm aggregate
    *  Absent or 'initial' = legacy flow (no assignment required). */
   reviewStage?: 'initial' | 'authority' | 'second';
+  /** M3 round N+1 (Workstream 2) — true after the admin has generated AND
+   *  committed the per-authority event control list. The organizer can
+   *  then see the Stage 1 + Stage 2 requirements in
+   *  `OrganizerEventControls` (UC-34) and the officers can verify them.
+   *  Reset to `false` (or unset) if a new version is approved and a new
+   *  control list needs to be generated for that version. */
+  controlListGenerated?: boolean;
+  /** M3 round N+1 (Workstream 2) — the per-authority control list
+   *  items, mirrored from `event_controls/{controlId}` (or its absence
+   *  when the list hasn't been generated). Mainly used for the admin
+   *  UI to render the current list without re-querying the sub-collection.
+   *  Server-owned: written by `editEventControlList`. */
+  controlListSnapshot?: Array<{
+    controlId: string;
+    controlName: string;
+    authority: AuthorityType;
+    stageRequirement: 'stage1_only' | 'stage1_and_stage2';
+    stage1RequirementsCount: number;
+    stage2Label?: string;
+    controlItemVersion: number;
+    label: EventControl['label'];
+  }>;
   createdAt: number;
   updatedAt: number;
   submittedAt?: number;
@@ -483,7 +505,8 @@ export type AuditAction =
   | 'public_published'
   | 'control_verified'
   | 'control_rejected'
-  | 'assignment_revoked';
+  | 'assignment_revoked'
+  | 'control_list_published';
 
 export type NotificationType =
   | 'decision_made'
@@ -492,6 +515,7 @@ export type NotificationType =
   | 'amendment_requested'
   | 'control_verified'
   | 'control_rejected'
+  | 'control_list_published'
   // Q1 refactor: per-doc Stage 1 verification notifications
   | 'stage1_doc_approved'
   | 'stage1_doc_rejected';
