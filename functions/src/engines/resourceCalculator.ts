@@ -36,7 +36,7 @@ export function computeResources(
   officialResult: DeterministicCategoryResult,
 ): ResourceCalculation {
   const attendance = Number.isFinite(eventDetails.expectedAttendance)
-    ? Math.max(0, Math.floor(eventDetails.expectedAttendance))
+    ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(eventDetails.expectedAttendance)))
     : 0;
   const highOfficialRisk = officialResult.officialRiskLevel === 'High';
   const categoryRisk = new Map(officialResult.categoryAssignments.map((category) => [category.categoryId, category.riskLevel]));

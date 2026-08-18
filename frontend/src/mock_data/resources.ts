@@ -2,6 +2,7 @@ import { ResourceQuantities, ResourceRecommendation, AuthorityType } from '@shar
 import { EVENT_IDS, USER_IDS, daysAgo, hoursAgo } from './ids';
 import { mockEventsById } from './events';
 import { findAssessmentByEventVersion } from './assessments';
+import { assessmentRiskLevel } from '../components/m2/m2Contract';
 
 /**
  * MOCK-only: the `resource_overrides/{overrideId}` document shape. Inline
@@ -53,6 +54,7 @@ const mkRecommendation = (o: ResourceOverrides): ResourceRecommendation => {
   if (!assessment) throw new Error(`mkRecommendation: missing assessment for ${o.eventId}/${o.versionId}`);
 
   const q = o.quantities;
+  const riskLevel = assessmentRiskLevel(assessment) ?? 'Low';
   const rationaleFor = (resource: keyof ResourceQuantities, baseline: number, factors: string[], refs: string[]) => ({
     resource,
     baselineQuantity: baseline,
@@ -69,10 +71,11 @@ const mkRecommendation = (o: ResourceOverrides): ResourceRecommendation => {
     formulaVersion: RESOURCE_FORMULA_VERSION,
     guidelineVersion: RESOURCE_GUIDELINE_VERSION,
     guidelineStatus: 'prototype',
+    assessmentStage: assessment.status === 'official_ready' ? 'official' : 'provisional',
     confidenceLevel: o.overridden ? 'authorityValidated' : 'prototype',
     rationales: {
       police: rationaleFor('police', q.police,
-        [`Baseline scaled to ${event.eventDetails.expectedAttendance} attendees.`, assessment.officialRiskLevel === 'High' ? 'High-risk event: +50% on baseline.' : ''].filter(Boolean),
+        [`Baseline scaled to ${event.eventDetails.expectedAttendance} attendees.`, riskLevel === 'High' ? 'High-risk event: +50% on baseline.' : ''].filter(Boolean),
         ['PDRM Mass Event Safety Guidelines 2020 §4', 'WHO Mass Gathering Planning 2015']),
       security: rationaleFor('security', q.security,
         ['Baseline 1:200 attendees for outdoor venues.'],
@@ -94,7 +97,7 @@ const mkRecommendation = (o: ResourceOverrides): ResourceRecommendation => {
         ['BOMBA Fire Safety Act 1988 §11']),
     },
     items: [
-      { resource: 'police', baseline: q.police, planningRange: { min: Math.max(0, q.police - 4), max: q.police + 8 }, assumptions: [`Attendance: ${event.eventDetails.expectedAttendance}`], riskModifiers: assessment.officialRiskLevel === 'High' ? ['High-risk +50%'] : [], confidence: 'prototype', guidelineReferences: ['PDRM §4'], reviewingAuthority: 'PDRM', authorityReviewRequired: true },
+      { resource: 'police', baseline: q.police, planningRange: { min: Math.max(0, q.police - 4), max: q.police + 8 }, assumptions: [`Attendance: ${event.eventDetails.expectedAttendance}`], riskModifiers: riskLevel === 'High' ? ['High-risk +50%'] : [], confidence: 'prototype', guidelineReferences: ['PDRM §4'], reviewingAuthority: 'PDRM', authorityReviewRequired: true },
       { resource: 'security', baseline: q.security, planningRange: { min: Math.max(0, q.security - 4), max: q.security + 8 }, assumptions: [], riskModifiers: [], confidence: 'prototype', guidelineReferences: ['PDRM Private Security SOP'], reviewingAuthority: 'PDRM', authorityReviewRequired: true },
       { resource: 'medicalTeams', baseline: q.medicalTeams, planningRange: { min: Math.max(0, q.medicalTeams - 1), max: q.medicalTeams + 2 }, assumptions: [], riskModifiers: [], confidence: 'prototype', guidelineReferences: ['KKM §3'], reviewingAuthority: 'KKM', authorityReviewRequired: true },
       { resource: 'ambulances', baseline: q.ambulances, planningRange: { min: Math.max(0, q.ambulances - 1), max: q.ambulances + 1 }, assumptions: [], riskModifiers: [], confidence: 'prototype', guidelineReferences: ['KKM §4'], reviewingAuthority: 'KKM', authorityReviewRequired: true },
@@ -102,7 +105,7 @@ const mkRecommendation = (o: ResourceOverrides): ResourceRecommendation => {
       { resource: 'wasteBins', baseline: q.wasteBins, planningRange: { min: Math.max(0, q.wasteBins - 10), max: q.wasteBins + 20 }, assumptions: [], riskModifiers: [], confidence: 'prototype', guidelineReferences: ['SWCorp SOP'], reviewingAuthority: 'DBKL', authorityReviewRequired: true },
       { resource: 'fireOfficers', baseline: q.fireOfficers, planningRange: { min: Math.max(0, q.fireOfficers - 1), max: q.fireOfficers + 2 }, assumptions: [], riskModifiers: [], confidence: 'prototype', guidelineReferences: ['BOMBA §11'], reviewingAuthority: 'BOMBA', authorityReviewRequired: true },
     ],
-    aiConsiderations: assessment.aiAdvisory.resourceConsiderations,
+    aiConsiderations: assessment.aiProposal?.status === 'success' ? assessment.aiProposal.categories.flatMap((category) => category.concerns) : [],
     notes: o.overridden
       ? `Authority override: ${o.overrideRationale}`
       : 'Prototype category mappings and resource guidance pending team and authority validation.',

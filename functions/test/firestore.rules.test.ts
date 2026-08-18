@@ -9,6 +9,9 @@ import { withdrawEventForUser } from '../src/http/withdrawEvent';
 import { runRiskAndResourcePipeline } from '../src/triggers/onEventCreated';
 import { makeAuthorityDecisionForUser } from '../src/http/authorityDecision';
 import { overrideResourcesForUser } from '../src/http/overrideResources';
+import { fetchHistoricalContext, fetchVenueContext } from '../src/engines/ruleBased';
+import { ASSESSMENT_SCHEMA_VERSION, HARD_RULE_VERSION, PROVISIONAL_FORMULA_VERSION } from '@shared/types';
+import { ACTIVE_CATEGORY_SCHEMA } from '../src/config/categorySchema';
 
 let environment: RulesTestEnvironment;
 let adminApp: App;
@@ -58,6 +61,13 @@ async function seedProfilesAndEvent() {
     await setDoc(doc(db, 'users/authority-1'), { role: 'authority', authorityType: 'PDRM' });
     await setDoc(doc(db, 'events/event-1'), { organizerId: 'organizer-1', status: 'Pending', requiredAuthorities: ['PDRM'] });
     await setDoc(doc(db, 'events/event-1/assessments/v1'), { officialScore: 50 });
+    await setDoc(doc(db, 'events/event-1/assessment_summaries/v1'), {
+      assessmentId: 'v1', eventId: 'event-1', versionId: 'v1', status: 'provisional_ready',
+      overallScore: 50, overallRiskLevel: 'Medium', categories: [], resourceQuantities: {}, computedAt: 1,
+    });
+    await setDoc(doc(db, 'events/event-1/decisions/v1-PDRM'), { reviewerId: 'authority-1', rationale: 'private' });
+    await setDoc(doc(db, 'events/event-1/decision_history/history-1'), { reviewerId: 'authority-1', rationale: 'private' });
+    await setDoc(doc(db, 'events/event-1/resource_overrides/override-1'), { reviewerId: 'authority-1', rationale: 'private' });
     await setDoc(doc(db, 'public_events/event-1'), { eventName: 'Public Event' });
   });
 }
@@ -149,33 +159,138 @@ describe('Firestore security rules', () => {
       expect(results.map((result) => result.status).sort()).toEqual(['processed', 'skipped']);
       const adminDb = getFirestore(adminApp);
       const assessment = await adminDb.doc('events/draft-1/assessments/v1').get();
+      const organizerSummary = await adminDb.doc('events/draft-1/assessment_summaries/v1').get();
       const resources = await adminDb.collection('events/draft-1/resources').get();
       const audits = await adminDb.collection('events/draft-1/audit_logs').get();
-      expect(assessment.data()).toMatchObject({ status: 'ready', versionId: 'v1' });
-      expect(resources.docs.map((item) => item.id)).toEqual(['v1']);
+      expect(assessment.data()).toMatchObject({ status: 'manual_review_required', versionId: 'v1' });
+      expect(organizerSummary.data()).toMatchObject({
+        status: 'manual_review_required', versionId: 'v1', categories: [], authorityReviewRequired: true,
+      });
+      expect(organizerSummary.data()).not.toHaveProperty('aiProposal');
+      expect(organizerSummary.data()).not.toHaveProperty('warnings');
+      expect(organizerSummary.data()).not.toHaveProperty('manualReviewReason');
+      expect(resources.docs).toHaveLength(0);
       expect(audits.docs.map((item) => item.id).sort()).toEqual([
         '1000-submitted-v1',
-        'v1-resource-recommended',
-        'v1-risk-score-computed',
+        'v1-risk-score-computed-v3',
       ]);
+      await Promise.all([
+        adminDb.doc('users/pdrm-unassigned').set({ role: 'authority', authorityType: 'PDRM' }),
+        adminDb.doc('events/draft-1').update({ requiredAuthorities: ['BOMBA'] }),
+      ]);
+      const unauthorizedRetry = await runRiskAndResourcePipeline('draft-1', 2_100, true, {
+        uid: 'pdrm-unassigned', authorityType: 'PDRM',
+      });
+      expect(unauthorizedRetry).toMatchObject({ status: 'skipped', reason: 'retry-not-authorized' });
+      await Promise.all([
+        adminDb.doc('events/draft-1').update({ requiredAuthorities: ['PDRM'] }),
+        adminDb.doc('events/draft-1/assessments/v1').set({
+          status: 'provisional_ready', inputHash: 'stale-hash', versionId: 'v1',
+        }),
+      ]);
+      const nonRetryable = await runRiskAndResourcePipeline('draft-1', 2_200, true, {
+        uid: 'pdrm-unassigned', authorityType: 'PDRM',
+      });
+      expect(nonRetryable).toMatchObject({ status: 'skipped', reason: 'retry-not-retryable' });
     } finally {
       if (minimaxKey) process.env.MINIMAX_API_KEY = minimaxKey;
       if (weatherKey) process.env.OPENWEATHER_API_KEY = weatherKey;
     }
   });
 
-  it('allows an organizer to read the owned assessment but not write it', async () => {
-    await seedProfilesAndEvent();
-    const db = environment.authenticatedContext('organizer-1').firestore();
-    await assertSucceeds(getDoc(doc(db, 'events/event-1/assessments/v1')));
-    await assertFails(setDoc(doc(db, 'events/event-1/assessments/v1'), { officialScore: 1 }));
+  it('UC-M2-02/06 rejects missing or inconsistent submitted records without publishing output', async () => {
+    expect(await runRiskAndResourcePipeline('missing-event', 1_000)).toMatchObject({
+      status: 'skipped', reason: 'event-not-found',
+    });
+    const adminDb = getFirestore(adminApp);
+    await adminDb.doc('events/missing-version').set({
+      organizerId: 'organizer-1', status: 'Pending', currentVersionId: 'v404', currentVersionNumber: 1,
+      requiredAuthorities: ['PDRM'], draftDocumentPaths: [], createdAt: 1, updatedAt: 1,
+    });
+    expect(await runRiskAndResourcePipeline('missing-version', 1_000)).toMatchObject({
+      status: 'processed', reason: 'version-not-found', versionId: 'v404',
+    });
+    expect((await adminDb.doc('events/missing-version/assessments/v404').get()).data()).toMatchObject({
+      status: 'failed', error: 'Immutable event version v404 was not found.',
+    });
+    expect((await adminDb.doc('events/missing-version/assessment_summaries/v404').get()).data()).toMatchObject({
+      status: 'failed', categories: [], authorityReviewRequired: true,
+    });
+    expect((await adminDb.collection('events/missing-version/resources').get()).empty).toBe(true);
   });
 
-  it('allows assigned authorities to read applications and rejects unassigned authorities', async () => {
+  it('UC-M2-07 rejects ambiguous venue names and excludes incidents that are not verified and eligible', async () => {
+    const adminDb = getFirestore(adminApp);
+    await Promise.all([
+      adminDb.doc('venues/venue-a').set({ name: 'Twin Hall', capacity: 100 }),
+      adminDb.doc('venues/venue-b').set({ name: 'Twin Hall', capacity: 200 }),
+    ]);
+    expect(await fetchVenueContext(undefined, 'Twin Hall', 50, 10)).toMatchObject({ matched: false });
+
+    await adminDb.doc('venues/stable-venue').set({ name: 'Stable Hall', capacity: 500 });
+    const event = {
+      eventId: 'history-event', organizerId: 'organizer-1', status: 'Pending', currentVersionNumber: 1,
+      draftDocumentPaths: [], requiredAuthorities: ['PDRM'], createdAt: 1, updatedAt: 1,
+      eventDetails: { ...validDetails, venueId: 'stable-venue', venueName: 'Stable Hall', startDatetime: 1_800_000_000_000, endDatetime: 1_800_003_600_000 },
+    } as const;
+    const incidentBase = {
+      venueId: 'stable-venue', eventType: 'cultural', incidentType: 'test', severity: 'medium',
+      date: event.eventDetails.startDatetime - 1_000,
+    };
+    await Promise.all([
+      adminDb.doc('incidents/eligible').set({ ...incidentBase, status: 'verified', assessmentEligible: true }),
+      adminDb.doc('incidents/unverified').set({ ...incidentBase, status: 'under_review', assessmentEligible: true }),
+      adminDb.doc('incidents/not-eligible').set({ ...incidentBase, status: 'verified', assessmentEligible: false }),
+      adminDb.doc('incidents/missing-provenance').set(incidentBase),
+    ]);
+    const history = await fetchHistoricalContext(event, 20);
+    expect(history.incidentIds).toEqual(['eligible']);
+    expect(history.total).toBe(1);
+  });
+
+  it('UC-M2-18 exposes only the owner-safe summary and denies raw assessment/resource records', async () => {
+    await seedProfilesAndEvent();
+    const db = environment.authenticatedContext('organizer-1').firestore();
+    await assertFails(getDoc(doc(db, 'events/event-1/assessments/v1')));
+    await assertFails(getDoc(doc(db, 'events/event-1/resources/v1')));
+    await assertFails(getDoc(doc(db, 'events/event-1/decisions/v1-PDRM')));
+    await assertFails(getDoc(doc(db, 'events/event-1/decision_history/history-1')));
+    await assertFails(getDoc(doc(db, 'events/event-1/resource_overrides/override-1')));
+    await assertSucceeds(getDoc(doc(db, 'events/event-1/assessment_summaries/v1')));
+    await assertFails(setDoc(doc(db, 'events/event-1/assessments/v1'), { officialScore: 1 }));
+    await assertFails(setDoc(doc(db, 'events/event-1/assessment_summaries/v1'), { overallScore: 1 }));
+  });
+
+  it('UC-M2-15/16 allows assigned authorities to read full M2 records and rejects unassigned authorities', async () => {
     await seedProfilesAndEvent();
     await environment.withSecurityRulesDisabled((context) => setDoc(doc(context.firestore(), 'users/authority-2'), { role: 'authority', authorityType: 'KKM' }));
     await assertSucceeds(getDoc(doc(environment.authenticatedContext('authority-1').firestore(), 'events/event-1')));
+    await assertSucceeds(getDoc(doc(environment.authenticatedContext('authority-1').firestore(), 'events/event-1/assessments/v1')));
     await assertFails(getDoc(doc(environment.authenticatedContext('authority-2').firestore(), 'events/event-1')));
+    await assertFails(getDoc(doc(environment.authenticatedContext('authority-2').firestore(), 'events/event-1/assessments/v1')));
+  });
+
+  it('UC-M2-17 restricts full AI analysis to assigned authorities and admins', async () => {
+    await seedProfilesAndEvent();
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'users/admin-1'), { role: 'admin' });
+      await setDoc(doc(context.firestore(), 'users/public-1'), { role: 'public' });
+    });
+    await assertSucceeds(getDoc(doc(environment.authenticatedContext('authority-1').firestore(), 'events/event-1/assessments/v1')));
+    await assertSucceeds(getDoc(doc(environment.authenticatedContext('admin-1').firestore(), 'events/event-1/assessments/v1')));
+    await assertFails(getDoc(doc(environment.authenticatedContext('public-1').firestore(), 'events/event-1/assessments/v1')));
+    await assertFails(getDoc(doc(environment.unauthenticatedContext().firestore(), 'events/event-1/assessments/v1')));
+  });
+
+  it('keeps append-only score reviews restricted to assigned authorities and admins', async () => {
+    await seedProfilesAndEvent();
+    await environment.withSecurityRulesDisabled((context) => setDoc(
+      doc(context.firestore(), 'events/event-1/assessments/v1/score_reviews/review-1'),
+      { reviewId: 'review-1', reviewerId: 'authority-1' },
+    ));
+    await assertSucceeds(getDoc(doc(environment.authenticatedContext('authority-1').firestore(), 'events/event-1/assessments/v1/score_reviews/review-1')));
+    await assertFails(getDoc(doc(environment.authenticatedContext('organizer-1').firestore(), 'events/event-1/assessments/v1/score_reviews/review-1')));
+    await assertFails(setDoc(doc(environment.authenticatedContext('authority-1').firestore(), 'events/event-1/assessments/v1/score_reviews/review-2'), { reviewerId: 'authority-1' }));
   });
 
   it('prevents authorities from reading organizer profiles or provisioning roles', async () => {
@@ -222,6 +337,22 @@ describe('Firestore security rules', () => {
     expect((await adminDb.doc('public_events/review-1').get()).exists).toBe(false);
   });
 
+  it('does not let an idempotent decision replay bypass the current official contract', async () => {
+    await seedReviewableEvent(['PDRM', 'BOMBA']);
+    const request = {
+      eventId: 'review-1', decision: 'Approved' as const,
+      rationale: 'PDRM confirms the version one operating plan.',
+    };
+    await makeAuthorityDecisionForUser('pdrm-1', request, 2_500);
+    const adminDb = getFirestore(adminApp);
+    await Promise.all([
+      adminDb.doc('events/review-1/assessments/v1').delete(),
+      adminDb.doc('events/review-1/resources/v1').delete(),
+    ]);
+    await expect(makeAuthorityDecisionForUser('pdrm-1', request, 2_501))
+      .rejects.toMatchObject({ code: 'failed-precondition' });
+  });
+
   it('does not carry authority approvals into a resubmitted version', async () => {
     await seedReviewableEvent(['PDRM', 'BOMBA']);
     await makeAuthorityDecisionForUser('pdrm-1', {
@@ -242,11 +373,8 @@ describe('Firestore security rules', () => {
     });
     await submitEventForUser('organizer-1', 'review-1', 3_200);
     await adminDb.doc('events/review-1').update({ currentAssessmentId: 'v2', currentResourceId: 'v2' });
-    await adminDb.doc('events/review-1/resources/v2').set({
-      resourceId: 'v2', eventId: 'review-1', versionId: 'v2', assessmentId: 'v2', police: 8, medicalTeams: 2,
-      ambulances: 1, toilets: 50, wasteBins: 15, security: 20, fireOfficers: 3,
-      formulaVersion: 'test', confidenceLevel: 'prototype', computedAt: 3_201,
-    });
+    await adminDb.doc('events/review-1/resources/v2').set(officialResourceFixture('v2', 3_201));
+    await adminDb.doc('events/review-1/assessments/v2').set(officialAssessmentFixture('v2'));
 
     const result = await makeAuthorityDecisionForUser('bomba-1', {
       eventId: 'review-1', decision: 'Approved', rationale: 'BOMBA approves the revised version two exit arrangement.',
@@ -306,10 +434,41 @@ async function seedReviewableEvent(requiredAuthorities: string[]) {
     await setDoc(doc(db, 'events/review-1/versions/v1'), {
       versionId: 'v1', eventId: 'review-1', versionNumber: 1, eventDetails: validDetails, documentPaths: [], submittedBy: 'organizer-1', submittedAt: 1, inputHash: 'hash',
     });
-    await setDoc(doc(db, 'events/review-1/resources/v1'), {
-      resourceId: 'v1', eventId: 'review-1', versionId: 'v1', assessmentId: 'v1', police: 8, medicalTeams: 2,
-      ambulances: 1, toilets: 50, wasteBins: 15, security: 20, fireOfficers: 3,
-      formulaVersion: 'test', confidenceLevel: 'prototype', computedAt: 1,
-    });
+    await setDoc(doc(db, 'events/review-1/resources/v1'), officialResourceFixture('v1', 1));
+    await setDoc(doc(db, 'events/review-1/assessments/v1'), officialAssessmentFixture('v1'));
   });
+}
+
+function officialAssessmentFixture(versionId: string) {
+  const categories = ACTIVE_CATEGORY_SCHEMA.categories.map((category) => ({
+    categoryId: category.id, categoryName: category.name,
+    proposedLikelihood: 2, proposedSeverity: 2, validatedLikelihood: 2, validatedSeverity: 2,
+    matrixScore: 4, normalizedScore: 16, riskLevel: 'Low', weight: category.weight,
+    weightedContribution: 2, evidenceReferences: ['crowd'], rationale: 'Test', confidence: 'high',
+    concerns: [], missingInformation: [], appliedHardRules: [], guidelineChecks: [...category.guidelineChecks],
+  }));
+  const result = {
+    proposalId: `proposal-${versionId}`, validatedHazards: [], categories, overallScore: 16,
+    weightedRiskLevel: 'Low', highestCategoryRiskLevel: 'Low', overallRiskLevel: 'Low',
+    formulaVersion: PROVISIONAL_FORMULA_VERSION, categorySchemaVersion: ACTIVE_CATEGORY_SCHEMA.version,
+    hardRuleVersion: HARD_RULE_VERSION, calculatedAt: 1,
+  };
+  return {
+    status: 'official_ready',
+    schemaVersion: ASSESSMENT_SCHEMA_VERSION,
+    assessmentId: versionId,
+    eventId: 'review-1',
+    versionId,
+    aiProposal: { status: 'success', proposalId: `proposal-${versionId}` },
+    provisionalResult: result,
+    officialResult: { ...result, finalizedAt: 2, finalizedBy: 'authority-1' },
+  };
+}
+
+function officialResourceFixture(versionId: string, computedAt: number) {
+  return {
+    resourceId: versionId, eventId: 'review-1', versionId, assessmentId: versionId,
+    police: 8, medicalTeams: 2, ambulances: 1, toilets: 50, wasteBins: 15, security: 20, fireOfficers: 3,
+    formulaVersion: 'test', guidelineVersion: 'test', confidenceLevel: 'authorityValidated', assessmentStage: 'official', computedAt,
+  };
 }

@@ -1,4 +1,5 @@
 import { EventStatus, EventType, RiskAssessment, RiskLevel } from '@shared/types';
+import { assessmentResult, assessmentRiskLevel, assessmentScore } from '../../components/m2/m2Contract';
 
 export interface AnalyticsRecord {
   eventId: string;
@@ -15,7 +16,7 @@ export interface MonthlyAnalytics {
   month: string;
   applications: number;
   approvals: number;
-  officialScores: number[];
+  assessmentScores: number[];
 }
 
 export function filterAnalyticsRecords(records: AnalyticsRecord[], from?: string, to?: string): AnalyticsRecord[] {
@@ -29,7 +30,7 @@ export function buildMonthlyAnalytics(records: AnalyticsRecord[]): MonthlyAnalyt
   const months = new Map<string, MonthlyAnalytics>();
   const getMonth = (timestamp: number) => new Date(timestamp).toISOString().slice(0, 7);
   const ensure = (month: string) => {
-    const current = months.get(month) ?? { month, applications: 0, approvals: 0, officialScores: [] };
+    const current = months.get(month) ?? { month, applications: 0, approvals: 0, assessmentScores: [] };
     months.set(month, current);
     return current;
   };
@@ -38,7 +39,8 @@ export function buildMonthlyAnalytics(records: AnalyticsRecord[]): MonthlyAnalyt
     const applicationMonth = ensure(getMonth(record.createdAt));
     applicationMonth.applications += 1;
     if (record.assessment) {
-      applicationMonth.officialScores.push(record.assessment.officialScore);
+      const score = assessmentScore(record.assessment);
+      if (score !== undefined) applicationMonth.assessmentScores.push(score);
     }
     if (record.status === 'Approved' && Number.isFinite(record.updatedAt)) ensure(getMonth(record.updatedAt)).approvals += 1;
   });
@@ -47,7 +49,8 @@ export function buildMonthlyAnalytics(records: AnalyticsRecord[]): MonthlyAnalyt
 
 export function riskDistribution(records: AnalyticsRecord[]): Record<RiskLevel, number> {
   return records.reduce<Record<RiskLevel, number>>((counts, record) => {
-    if (record.assessment) counts[record.assessment.officialRiskLevel] += 1;
+    const level = assessmentRiskLevel(record.assessment);
+    if (level) counts[level] += 1;
     return counts;
   }, { Low: 0, Medium: 0, High: 0 });
 }
@@ -55,9 +58,12 @@ export function riskDistribution(records: AnalyticsRecord[]): Record<RiskLevel, 
 export function analyticsSummary(records: AnalyticsRecord[]) {
   const assessed = records.filter((record) => record.assessment);
   const approved = records.filter((record) => record.status === 'Approved');
-  const fallbackCount = assessed.filter((record) => record.assessment?.aiAdvisory.status !== 'success').length;
-  const comparable = assessed.filter((record) => record.assessment?.aiAdvisory.overallBand);
-  const agreements = comparable.filter((record) => record.assessment?.aiAdvisory.overallBand === record.assessment?.officialRiskLevel);
+  const fallbackCount = assessed.filter((record) => record.assessment?.aiProposal?.status !== 'success').length;
+  const comparable = assessed.filter((record) => record.assessment && assessmentResult(record.assessment));
+  const agreements = comparable.filter((record) => {
+    const result = record.assessment ? assessmentResult(record.assessment) : undefined;
+    return result?.categories.every((category) => category.proposedLikelihood === category.validatedLikelihood && category.proposedSeverity === category.validatedSeverity);
+  });
   const turnaround = approved
     .filter((record) => record.submittedAt && record.updatedAt >= record.submittedAt)
     .map((record) => record.updatedAt - (record.submittedAt as number));
@@ -78,17 +84,15 @@ export function analyticsCsv(records: AnalyticsRecord[]): string {
     record.status,
     safeIso(record.createdAt),
     record.submittedAt ? safeIso(record.submittedAt) : '',
-    record.assessment?.officialScore ?? '',
-    record.assessment?.officialRiskLevel ?? '',
-    record.assessment?.categorySchemaVersion ?? '',
-    record.assessment?.aiAdvisory.overallBand ?? '',
-    record.assessment?.aiAdvisory.status ?? '',
-    record.assessment?.aiAdvisory.overallBand
-      ? record.assessment.aiAdvisory.overallBand === record.assessment.officialRiskLevel
-      : '',
+    assessmentScore(record.assessment) ?? '',
+    assessmentRiskLevel(record.assessment) ?? '',
+    record.assessment ? assessmentResult(record.assessment)?.categorySchemaVersion ?? '' : '',
+    '',
+    record.assessment?.aiProposal?.status ?? '',
+    '',
   ]);
   return [
-    ['event_id', 'event_name', 'event_type', 'status', 'created_at', 'submitted_at', 'official_score', 'official_risk_level', 'category_schema_version', 'm3_advisory_band', 'm3_status', 'ai_deterministic_agreement'],
+    ['event_id', 'event_name', 'event_type', 'status', 'created_at', 'submitted_at', 'assessment_score', 'assessment_risk_level', 'category_schema_version', 'm3_advisory_band', 'm3_status', 'ai_validation_agreement'],
     ...rows,
   ].map((row) => row.map(csvCell).join(',')).join('\n');
 }

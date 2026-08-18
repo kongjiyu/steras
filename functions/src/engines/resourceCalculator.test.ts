@@ -50,6 +50,15 @@ describe('computeResources', () => {
       expect(Object.values(result.quantities).every((value) => Number.isInteger(value) && value >= 0)).toBe(true);
     }
   });
+
+  it('UC-M2-11 never emits unsafe or infinite quantities and planning ranges for hostile finite attendance', () => {
+    const result = computeResources({ ...details, expectedAttendance: Number.MAX_VALUE }, officialResult('High'));
+    expect(Object.values(result.quantities).every(Number.isSafeInteger)).toBe(true);
+    expect(result.items.every((item) => Number.isSafeInteger(item.baseline)
+      && Number.isSafeInteger(item.planningRange.min)
+      && Number.isSafeInteger(item.planningRange.max)
+      && item.planningRange.min <= item.planningRange.max)).toBe(true);
+  });
 });
 
 function officialResult(

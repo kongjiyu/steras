@@ -10,7 +10,6 @@ const firebase_admin_1 = require("firebase-admin");
 const types_1 = require("../../../shared/types");
 const categorySchema_1 = require("../config/categorySchema");
 const LOOKBACK_MS = 36 * 30.4375 * 24 * 60 * 60 * 1_000;
-const DOMAIN_WEIGHT = 1 / categorySchema_1.ACTIVE_CATEGORY_SCHEMA.categories.length;
 function computeCategoryBasedAssessment(event, context, now = Date.now()) {
     const evidence = buildEvidence(event, context, now);
     const complianceChecks = buildComplianceChecks(event, context, now);
@@ -33,8 +32,8 @@ function computeCategoryBasedAssessment(event, context, now = Date.now()) {
             categoryName: category.name,
             score,
             riskLevel: domain?.riskLevel ?? 'Low',
-            weight: DOMAIN_WEIGHT,
-            weightedContribution: roundContribution(score * DOMAIN_WEIGHT),
+            weight: category.weight,
+            weightedContribution: roundContribution(score * category.weight),
             rationale: dominantHazard
                 ? `${dominantHazard.hazardName} is the dominant residual hazard (${dominantHazard.residualLikelihood}×${dominantHazard.residualSeverity}); data confidence ${domain?.confidenceScore ?? 0}%.`
                 : 'No domain hazard was produced.',
@@ -274,6 +273,22 @@ function buildEvidence(event, context, now) {
             quality: 'verified',
             confidenceScore: 85,
         },
+        ...[
+            ['public_health', 'Public-health exposure profile', 'international attendees, vulnerable attendees, and overnight accommodation'],
+            ['sanitation', 'Food, water, and sanitation profile', 'food service and drinking-water declarations'],
+            ['medical', 'Medical-capacity profile', 'medical plan and hospital travel-time declarations'],
+            ['security', 'Security profile', 'alcohol service, rivalry, and authority-coordination declarations'],
+            ['transport', 'Transport and accessibility profile', 'traffic plan and emergency-access declarations'],
+            ['compliance', 'Application and venue compliance inputs', 'submitted application and venue registry checks'],
+        ].map(([key, description, source]) => ({
+            key,
+            description,
+            sourceTimestamp: event.submittedAt ?? now,
+            source,
+            status: 'submitted',
+            quality: 'declared',
+            confidenceScore: 60,
+        })),
     ].map((item) => ({ ...item, sourceTimestamp: item.sourceTimestamp || now }));
 }
 async function fetchHistoricalContext(event, now = Date.now()) {
@@ -291,8 +306,8 @@ async function fetchHistoricalContext(event, now = Date.now()) {
         .map((document) => ({ incidentId: document.id, ...document.data() }))
         .filter((incident) => incident.date < eventStart
         && incident.date >= lookbackStart
-        && (incident.status === undefined || incident.status === 'verified')
-        && incident.assessmentEligible !== false);
+        && incident.status === 'verified'
+        && incident.assessmentEligible === true);
     const historicalEvents = historicalSnapshot.docs
         .map((document) => ({ historicalEventId: document.id, ...document.data() }))
         .filter((historical) => historical.completed
@@ -375,11 +390,16 @@ async function fetchVenueContext(venueId, venueName, submittedCapacity, now = Da
             venueDocument = snapshot;
     }
     if (!venueDocument && venueName.trim()) {
-        const exact = await db.collection(types_1.COLLECTIONS.VENUES).where('name', '==', venueName.trim()).limit(1).get();
+        const exact = await db.collection(types_1.COLLECTIONS.VENUES).where('name', '==', venueName.trim()).limit(2).get();
+        if (exact.docs.length > 1)
+            return { matched: false, submittedCapacity, fetchedAt: now };
         venueDocument = exact.docs[0];
         if (!venueDocument) {
             const all = await db.collection(types_1.COLLECTIONS.VENUES).get();
-            venueDocument = all.docs.find((document) => String(document.data().name).toLowerCase() === venueName.trim().toLowerCase());
+            const matches = all.docs.filter((document) => String(document.data().name).toLowerCase() === venueName.trim().toLowerCase());
+            if (matches.length > 1)
+                return { matched: false, submittedCapacity, fetchedAt: now };
+            venueDocument = matches[0];
         }
     }
     if (!venueDocument?.exists)
@@ -413,7 +433,10 @@ function buildHistoricalIncidentContext(snapshot) {
     };
 }
 function resolveVenueIdFromName(name) {
-    return (0, firebase_admin_1.firestore)().collection(types_1.COLLECTIONS.VENUES).get().then((snapshot) => (snapshot.docs.find((document) => String(document.data().name).toLowerCase() === name.trim().toLowerCase())?.id));
+    return (0, firebase_admin_1.firestore)().collection(types_1.COLLECTIONS.VENUES).get().then((snapshot) => {
+        const matches = snapshot.docs.filter((document) => String(document.data().name).toLowerCase() === name.trim().toLowerCase());
+        return matches.length === 1 ? matches[0].id : undefined;
+    });
 }
 async function resolveVenueId(venueId, venueName) {
     if (venueId)

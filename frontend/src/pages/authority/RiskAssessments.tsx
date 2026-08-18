@@ -9,6 +9,7 @@ import { AuthorityTopBar } from '../../components/layout/Sidebar';
 import EmptyState from '../../components/ui/EmptyState';
 import RiskMeter from '../../components/ui/RiskMeter';
 import StatusBadge from '../../components/ui/StatusBadge';
+import { assessmentRiskLevel, assessmentScore } from '../../components/m2/m2Contract';
 import { useAuth } from '../../contexts/AuthContext';
 import {
   assessmentFreshness,
@@ -41,14 +42,14 @@ export default function RiskAssessments({ previewRecords, previewAgency }: RiskA
 
   return (
     <div className="m2-workspace">
-      <AuthorityTopBar title="Risk assessments" subtitle={`${agency} · Official M2 category intelligence`} userInitials={initials} />
+      <AuthorityTopBar title="Risk assessments" subtitle={`${agency} · Provisional M2 category intelligence`} userInitials={initials} />
 
       <main className="m2-page page-enter">
         <section className="m2-observatory" aria-labelledby="risk-observatory-title">
           <div className="m2-observatory__grid">
             <div>
               <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#f6d25b]">Assessment observatory</p>
-              <h2 id="risk-observatory-title" className="mt-2 max-w-xl text-2xl font-bold sm:text-3xl">Official risk first. Advisory context stays visibly separate.</h2>
+              <h2 id="risk-observatory-title" className="mt-2 max-w-xl text-2xl font-bold sm:text-3xl">Validated provisional risk, ready for authority review.</h2>
               <p className="mt-3 max-w-2xl text-sm leading-6 text-[#c7d0be]">
                 Monitor deterministic category results and their evidence provenance across every application assigned to {agency}.
               </p>
@@ -73,7 +74,7 @@ export default function RiskAssessments({ previewRecords, previewAgency }: RiskA
             {summary.advisoryUnavailable > 0 && (
               <p className="flex items-start gap-2 border-l-4 border-gold-300 bg-gold-50 p-3 text-ink-700">
                 <ShieldAlert size={17} className="mt-0.5 shrink-0 text-gold-600" />
-                {summary.advisoryUnavailable} record{summary.advisoryUnavailable === 1 ? ' has' : 's have'} unavailable or pending AI advice; official results are unaffected.
+                {summary.advisoryUnavailable} record{summary.advisoryUnavailable === 1 ? ' requires' : 's require'} manual assessment because no valid AI proposal is available.
               </p>
             )}
           </div>
@@ -86,7 +87,7 @@ export default function RiskAssessments({ previewRecords, previewAgency }: RiskA
             <input className="input !pl-10" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search event, venue, or type" />
           </label>
           <label>
-            <span className="sr-only">Filter by official risk</span>
+            <span className="sr-only">Filter by assessment risk</span>
             <select className="input" value={filter} onChange={(event) => setFilter(event.target.value as RiskPortfolioFilter)}>
               {FILTERS.map((value) => <option key={value} value={value}>{riskFilterLabel(value)} ({riskCount(value, summary, records.length)})</option>)}
             </select>
@@ -126,7 +127,7 @@ function RiskRecord({ record }: { record: M2PortfolioRecord }) {
   const { event, assessment } = record;
   const topCategory = highestCategory(assessment);
   const freshness = assessmentFreshness(assessment);
-  const level = assessment?.officialRiskLevel ?? 'Unassessed';
+  const level = assessmentRiskLevel(assessment) ?? 'Unassessed';
 
   return (
     <li className="m2-record" data-risk={level}>
@@ -141,13 +142,13 @@ function RiskRecord({ record }: { record: M2PortfolioRecord }) {
         </div>
 
         <div className="text-xs text-ink-600">
-          <p className="font-semibold text-ink-800">{topCategory ? `${topCategory.categoryName}: ${topCategory.score}/100` : assessmentState(record)}</p>
-          <p className="mt-1 capitalize">Context: {freshness} · AI: {assessment?.aiAdvisory.status ?? 'pending'}</p>
+          <p className="font-semibold text-ink-800">{topCategory ? `${topCategory.categoryName}: ${topCategory.normalizedScore}/100` : assessmentState(record)}</p>
+          <p className="mt-1 capitalize">Context: {freshness} · AI: {assessment?.aiProposal?.status ?? 'pending'}</p>
         </div>
 
         <div className="m2-score">
-          {assessment ? <RiskMeter level={assessment.officialRiskLevel} size="compact" /> : <span className="text-xs font-semibold text-ink-500">Unassessed</span>}
-          <strong>{assessment?.officialScore ?? '—'}</strong>
+          {assessmentRiskLevel(assessment) ? <RiskMeter level={assessmentRiskLevel(assessment)!} size="compact" /> : <span className="text-xs font-semibold text-ink-500">Unassessed</span>}
+          <strong>{assessmentScore(assessment) ?? '—'}</strong>
         </div>
       </div>
 
@@ -156,11 +157,11 @@ function RiskRecord({ record }: { record: M2PortfolioRecord }) {
           <summary>Inspect categories, AI advisory and evidence</summary>
           <div className="m2-disclosure__body">
             <section className="border-t-2 border-brand-300 bg-white p-4">
-              <h4 className="mb-4 font-display text-sm font-semibold text-ink-800">Official category profile</h4>
+              <h4 className="mb-4 font-display text-sm font-semibold text-ink-800">Validated category profile</h4>
               <CategoryProfile assessment={assessment} density="compact" />
             </section>
             <section className="bg-white p-4">
-              <AIAdvisory advisory={assessment.aiAdvisory} officialRiskLevel={assessment.officialRiskLevel} showCategories={false} />
+              <AIAdvisory advisory={assessment.aiProposal} resultRiskLevel={assessmentRiskLevel(assessment)} showCategories={false} />
             </section>
             <section className="border-t border-[#e3dacb] bg-white p-4">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -193,7 +194,7 @@ function assessmentState(record: M2PortfolioRecord): string {
 }
 
 function riskFilterLabel(filter: RiskPortfolioFilter): string {
-  return filter === 'all' ? 'All official risks' : filter === 'Unassessed' ? 'Awaiting result' : `${filter} risk`;
+  return filter === 'all' ? 'All assessment risks' : filter === 'Unassessed' ? 'Awaiting result' : `${filter} risk`;
 }
 
 function riskCount(filter: RiskPortfolioFilter, summary: ReturnType<typeof riskPortfolioSummary>, total: number): number {

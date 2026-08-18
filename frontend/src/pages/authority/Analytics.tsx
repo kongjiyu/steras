@@ -64,7 +64,7 @@ export default function Analytics() {
           if (event.currentAssessmentId) {
             const assessmentDocument = await getDoc(doc(db, COLLECTIONS.EVENTS, event.eventId, COLLECTIONS.ASSESSMENTS, event.currentAssessmentId));
             const value = assessmentDocument.data();
-            if (value?.status === 'ready') assessment = value as RiskAssessment;
+            if (['provisional_ready', 'authority_review', 'official_ready'].includes(value?.status)) assessment = value as RiskAssessment;
           }
           return {
             eventId: event.eventId,
@@ -150,12 +150,12 @@ export default function Analytics() {
                 { label: 'Approvals', data: monthly.map((item) => item.approvals), backgroundColor: '#c99425' },
               ] }} />
             </Chart>
-            <Chart title="Official risk distribution" subtitle="Applications by deterministic category-based risk level">
+            <Chart title="Assessment risk distribution" subtitle="Applications by current provisional or official risk level">
               <Bar options={{ ...chartOptions, plugins: { legend: { display: false } } }} data={{ labels: ['Low', 'Medium', 'High'], datasets: [{ label: 'Applications', data: [risks.Low, risks.Medium, risks.High], backgroundColor: ['#5f8d48', '#d39b2a', '#c84a3d'] }] }} />
             </Chart>
-            <Chart title="Official category score" subtitle="Monthly deterministic category-based average">
+            <Chart title="Assessment category score" subtitle="Monthly current assessment average">
               <Line options={chartOptions} data={{ labels, datasets: [
-                { label: 'Official score', data: monthly.map((item) => average(item.officialScores)), borderColor: '#627820', backgroundColor: '#627820', tension: 0.25 },
+                { label: 'Assessment score', data: monthly.map((item) => average(item.assessmentScores)), borderColor: '#627820', backgroundColor: '#627820', tension: 0.25 },
               ] }} />
             </Chart>
           </div>
