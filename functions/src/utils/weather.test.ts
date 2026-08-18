@@ -48,6 +48,25 @@ describe('weather context', () => {
     expect(await fetchWeather(undefined, 'Unknown', forecastFor, { now: 100, apiKey: 'test' })).toMatchObject({ source: 'fallback', freshness: 'unavailable' });
   });
 
+  it.each([
+    { lat: Number.NaN, lng: 101.687 },
+    { lat: 91, lng: 101.687 },
+    { lat: 3.139, lng: Number.POSITIVE_INFINITY },
+    { lat: 3.139, lng: -181 },
+  ])('UC-M2-04 rejects unusable provider coordinates without making a request: $lat,$lng', async (location) => {
+    let requests = 0;
+    const result = await fetchWeather(location, 'Invalid', forecastFor, {
+      now: 100,
+      apiKey: 'test',
+      request: async () => {
+        requests += 1;
+        throw new Error('must not be called');
+      },
+    });
+    expect(result).toMatchObject({ source: 'fallback', freshness: 'unavailable' });
+    expect(requests).toBe(0);
+  });
+
   it('retries one transient request failure', async () => {
     let attempts = 0;
     const result = await fetchWeather({ lat: 5.4, lng: 100.3 }, 'Penang', forecastFor, {
@@ -56,7 +75,7 @@ describe('weather context', () => {
       request: async () => {
         attempts += 1;
         if (attempts === 1) throw new Error('temporary');
-        return { daily: [{ dt: forecastFor / 1_000, temp: { day: 29 }, weather: [{ main: 'Clear' }] }] };
+        return { daily: [{ dt: forecastFor / 1_000, temp: { day: 29 }, humidity: 70, wind_speed: 2, weather: [{ main: 'Clear' }] }] };
       },
     });
     expect(result.source).toBe('openweather');
@@ -67,5 +86,15 @@ describe('weather context', () => {
     expect(() => parseWeatherResponse({
       daily: [{ dt: forecastFor / 1_000 - 8 * 86_400, temp: { day: 30 }, weather: [{ main: 'Clear' }] }],
     }, forecastFor)).toThrow(/forecast horizon/);
+  });
+
+  it.each([
+    { temp: 'hot', humidity: 80, wind_speed: 3 },
+    { temp: 30, humidity: Number.NaN, wind_speed: 3 },
+    { temp: 30, humidity: 80, wind_speed: -1 },
+  ])('UC-M2-04 rejects malformed weather measurements instead of substituting defaults', (measurements) => {
+    expect(() => parseWeatherResponse({
+      daily: [{ dt: forecastFor / 1_000, ...measurements, weather: [{ main: 'Rain' }] }],
+    }, forecastFor)).toThrow(/weather measurement/i);
   });
 });

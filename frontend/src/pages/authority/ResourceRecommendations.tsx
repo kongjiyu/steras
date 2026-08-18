@@ -7,6 +7,7 @@ import { AuthorityTopBar } from '../../components/layout/Sidebar';
 import EmptyState from '../../components/ui/EmptyState';
 import RiskMeter from '../../components/ui/RiskMeter';
 import StatusBadge from '../../components/ui/StatusBadge';
+import { assessmentRiskLevel } from '../../components/m2/m2Contract';
 import { useAuth } from '../../contexts/AuthContext';
 import {
   filterResourcePortfolio,
@@ -117,7 +118,7 @@ export default function ResourceRecommendations({ previewRecords, previewAgency 
 
 function ResourceRecord({ record }: { record: M2PortfolioRecord }) {
   const { event, assessment, resources } = record;
-  const level = assessment?.officialRiskLevel ?? 'Unassessed';
+  const level = assessmentRiskLevel(assessment) ?? 'Unassessed';
   const people = resources ? resources.police + resources.security + resources.fireOfficers : 0;
 
   return (
@@ -138,7 +139,7 @@ function ResourceRecord({ record }: { record: M2PortfolioRecord }) {
         </div>
 
         <div className="m2-score">
-          {assessment ? <RiskMeter level={assessment.officialRiskLevel} size="compact" /> : <span className="text-xs font-semibold text-ink-500">Risk pending</span>}
+          {assessmentRiskLevel(assessment) ? <RiskMeter level={assessmentRiskLevel(assessment)!} size="compact" /> : <span className="text-xs font-semibold text-ink-500">Risk pending</span>}
           <span className={`badge ${resources?.confidenceLevel === 'authorityValidated' ? 'badge-green' : resources ? 'badge-amber' : 'badge-gray'}`}>
             {resources?.confidenceLevel === 'authorityValidated' ? 'Validated' : resources ? 'Prototype' : 'Missing'}
           </span>

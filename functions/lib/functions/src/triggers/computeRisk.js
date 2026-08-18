@@ -4,7 +4,9 @@
  * `manualRecompute` and any other code paths that need to re-run.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.recomputeRiskAndResources = void 0;
-var onEventCreated_1 = require("./onEventCreated");
-Object.defineProperty(exports, "recomputeRiskAndResources", { enumerable: true, get: function () { return onEventCreated_1.runRiskAndResourcePipeline; } });
+exports.recomputeRiskAndResources = recomputeRiskAndResources;
+const onEventCreated_1 = require("./onEventCreated");
+function recomputeRiskAndResources(eventId, authorization) {
+    return (0, onEventCreated_1.runRiskAndResourcePipeline)(eventId, Date.now(), true, authorization);
+}
 //# sourceMappingURL=computeRisk.js.map

@@ -1,7 +1,7 @@
 "use strict";
 /** Shared runtime-free contracts used by the React app and Cloud Functions. */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.RESOURCE_GUIDELINE_VERSION = exports.RESOURCE_FORMULA_VERSION = exports.CATEGORY_SCHEMA_STATUS = exports.SCORING_LOGIC_VERSION = exports.CATEGORY_SCHEMA_VERSION = exports.COLLECTIONS = exports.EVENT_STATUSES = exports.EVENT_TYPES = void 0;
+exports.RESOURCE_GUIDELINE_VERSION = exports.RESOURCE_FORMULA_VERSION = exports.CATEGORY_SCHEMA_STATUS = exports.PROVISIONAL_FORMULA_VERSION = exports.HARD_RULE_VERSION = exports.SCORING_LOGIC_VERSION = exports.CATEGORY_SCHEMA_VERSION = exports.COLLECTIONS = exports.ASSESSMENT_SCHEMA_VERSION = exports.EVENT_STATUSES = exports.EVENT_TYPES = void 0;
 exports.riskLevelFor = riskLevelFor;
 exports.hirarcRiskLevelFor = hirarcRiskLevelFor;
 exports.EVENT_TYPES = [
@@ -24,11 +24,14 @@ exports.EVENT_STATUSES = [
     { value: 'Rejected', label: 'Rejected', color: 'red' },
     { value: 'Withdrawn', label: 'Withdrawn', color: 'gray' },
 ];
+exports.ASSESSMENT_SCHEMA_VERSION = '2026-08-18-prd-v5';
 exports.COLLECTIONS = {
     USERS: 'users',
     EVENTS: 'events',
     VERSIONS: 'versions',
     ASSESSMENTS: 'assessments',
+    ASSESSMENT_SUMMARIES: 'assessment_summaries',
+    SCORE_REVIEWS: 'score_reviews',
     RESOURCES: 'resources',
     DECISIONS: 'decisions',
     DECISION_HISTORY: 'decision_history',
@@ -42,6 +45,8 @@ exports.COLLECTIONS = {
 };
 exports.CATEGORY_SCHEMA_VERSION = '2026-07-24-all-hazards-v2';
 exports.SCORING_LOGIC_VERSION = '2026-07-24-hirarc-residual-v2';
+exports.HARD_RULE_VERSION = '2026-08-18-hirarc-floor-v1';
+exports.PROVISIONAL_FORMULA_VERSION = '2026-08-18-weighted-safety-floor-v1';
 exports.CATEGORY_SCHEMA_STATUS = 'prototype';
 exports.RESOURCE_FORMULA_VERSION = '2026-07-24-prototype-range-v3';
 exports.RESOURCE_GUIDELINE_VERSION = '2026-07-24-malaysia-research-v2';

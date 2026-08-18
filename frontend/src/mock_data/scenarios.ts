@@ -47,7 +47,7 @@ export const scenarioM4Outcomes = (): EventRecord[] =>
 export const scenarioManualReview = (): EventRecord[] =>
   mockEvents.filter((e) => {
     const a = findAssessmentByEventVersion(e.eventId, e.currentVersionId ?? '');
-    return a?.manualReviewRequired === true;
+    return a?.status === 'manual_review_required';
   });
 
 /** Events with a blocked compliance (test: should be un-approvable). */

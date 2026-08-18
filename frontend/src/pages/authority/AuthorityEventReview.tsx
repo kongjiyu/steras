@@ -23,7 +23,7 @@ import AIAdvisory from '../../components/m2/AIAdvisory';
 import CategoryProfile from '../../components/m2/CategoryProfile';
 import ContextEvidence from '../../components/m2/ContextEvidence';
 import ResourceRecommendationView from '../../components/m2/ResourceRecommendation';
-import { isCurrentResourceRecommendation, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
+import { assessmentRiskLevel, isCurrentAssessmentRecord, isCurrentResourceRecommendation, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
 import { RESOURCE_FIELDS, toResourceQuantities } from '../../components/m2/m2Presentation';
 import EmptyState from '../../components/ui/EmptyState';
 import StatusBadge from '../../components/ui/StatusBadge';
@@ -84,7 +84,7 @@ export default function AuthorityEventReview() {
       const record = snapshot.data() as AssessmentRecord | undefined;
       setAssessmentStatus(record?.status ?? null);
       setAssessment(isCurrentRiskAssessment(record) ? record : null);
-      setLegacyAssessment(record?.status === 'ready' && !isCurrentRiskAssessment(record));
+      setLegacyAssessment(snapshot.exists() && !isCurrentAssessmentRecord(record));
       setSupportingDataError('');
     }, supportingError);
     const unsubscribeResources = onSnapshot(doc(eventReference, COLLECTIONS.RESOURCES, versionId), (snapshot) => {
@@ -128,7 +128,7 @@ export default function AuthorityEventReview() {
 
   const details = event.eventDetails;
   const reviewOpen = ['Pending', 'UnderReview'].includes(event.status);
-  const evidenceReady = Boolean(assessment && resources);
+  const evidenceReady = Boolean(assessment?.status === 'official_ready' && resources);
   const canDecide = reviewOpen && evidenceReady && rationale.trim().length >= 10;
 
   const submitDecision = async (decision: DecisionValue) => {
@@ -198,12 +198,12 @@ export default function AuthorityEventReview() {
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
         <div className="space-y-5">
           <section className="card">
-            <div className="card-header"><div><h2 className="font-semibold">Official category-based assessment</h2><p className="mt-0.5 text-xs text-ink-500">Deterministic result · AI cannot change this score</p></div></div>
+            <div className="card-header"><div><h2 className="font-semibold">Provisional category assessment</h2><p className="mt-0.5 text-xs text-ink-500">Validated AI proposal · authority confirmation required</p></div></div>
             <div className="card-body">
               {!assessment ? <p className="text-sm text-ink-500">{legacyAssessment ? 'Legacy assessment detected. Recompute this event version before recording a decision.' : assessmentStatus === 'failed' ? 'Assessment failed and requires a retry.' : 'Assessment is still processing.'}</p> : (
                 <div className="space-y-5">
                   <CategoryProfile assessment={assessment} />
-                  <AIAdvisory advisory={assessment.aiAdvisory} officialRiskLevel={assessment.officialRiskLevel} />
+                  <AIAdvisory advisory={assessment.aiProposal} resultRiskLevel={assessmentRiskLevel(assessment)} />
                   <div className="border-t border-[#e3dacb] pt-5">
                     <h3 className="mb-4 font-display text-sm font-semibold text-ink-800">Versioned context evidence</h3>
                     <ContextEvidence assessment={assessment} />

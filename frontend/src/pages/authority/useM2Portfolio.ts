@@ -5,6 +5,7 @@ import { db, isFirebaseConfigured } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import {
   isCurrentResourceRecommendation,
+  isCurrentAssessmentRecord,
   isCurrentRiskAssessment,
   M2PortfolioRecord,
 } from './m2PortfolioData';
@@ -54,7 +55,7 @@ export function useM2Portfolio(previewRecords?: M2PortfolioRecord[]) {
             assessment: isCurrentRiskAssessment(rawAssessment) ? rawAssessment : undefined,
             assessmentStatus: rawAssessment?.status,
             resources: isCurrentResourceRecommendation(rawResources) ? rawResources : undefined,
-            legacyAssessment: rawAssessment?.status === 'ready' && !isCurrentRiskAssessment(rawAssessment),
+            legacyAssessment: Boolean(assessmentDocument?.exists() && !isCurrentAssessmentRecord(rawAssessment)),
             legacyResources: Boolean(rawResources) && !isCurrentResourceRecommendation(rawResources),
           } satisfies M2PortfolioRecord;
         }));

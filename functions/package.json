@@ -22,6 +22,7 @@
     "verify:external": "npm run build && node --env-file=.env --env-file=.secret.local lib/functions/src/scripts/verifyExternalServices.js",
     "uat:staging": "npm run build && node --env-file=../frontend/.env lib/functions/src/scripts/runStagingUat.js",
     "uat:fallback": "npm run build && node --env-file=../frontend/.env lib/functions/src/scripts/verifyStagingFallback.js",
+    "cutover:m2-v3": "npm run build && node --env-file=.env --env-file=.secret.local lib/functions/src/scripts/cutoverAssessmentV3.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext ts --report-unused-disable-directives --max-warnings 0",
     "test": "vitest run --config vitest.config.mts",

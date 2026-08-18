@@ -6,17 +6,13 @@ import { getStorage } from 'firebase-admin/storage';
 import {
   AuthorityType,
   COLLECTIONS,
-  DecisionValue,
   EventDetails,
   EventRecord,
-  EventVersion,
-  ResourceRecommendation,
   RiskAssessment,
   UserProfile,
-  riskLevelFor,
 } from '@shared/types';
 
-type ScenarioName = 'approval' | 'rejection' | 'amendment' | 'withdrawal';
+type ScenarioName = 'assessment' | 'withdrawal';
 
 interface ProvisionedUser {
   profile: UserProfile;
@@ -35,24 +31,24 @@ interface ScenarioResult {
   finalStatus: EventRecord['status'];
   versions: number;
   publicPublished: boolean;
-  assessment?: { officialScore: number; officialRiskLevel: string; categories: number; aiStatus: string };
+  assessment?: { provisionalScore: number; provisionalRiskLevel: string; categories: number; aiStatus: string };
 }
 
 const projectId = process.env.FIREBASE_PROJECT_ID ?? 'linkos-496505';
 const apiKey = process.env.VITE_FIREBASE_API_KEY;
 const password = process.env.UAT_PASSWORD;
 const region = process.env.VITE_FIREBASE_FUNCTIONS_REGION ?? 'asia-southeast1';
-const requestedScenarios = (process.env.UAT_SCENARIOS ?? 'approval,rejection,amendment,withdrawal')
+const requestedScenarios = (process.env.UAT_SCENARIOS ?? 'assessment,withdrawal')
   .split(',')
   .map((value) => value.trim())
   .filter(Boolean) as ScenarioName[];
-const allowedScenarios = new Set<ScenarioName>(['approval', 'rejection', 'amendment', 'withdrawal']);
+const allowedScenarios = new Set<ScenarioName>(['assessment', 'withdrawal']);
 
 if (!apiKey || !password || password.length < 12) {
   throw new Error('Set VITE_FIREBASE_API_KEY and UAT_PASSWORD (minimum 12 characters).');
 }
 if (requestedScenarios.length === 0 || requestedScenarios.some((scenario) => !allowedScenarios.has(scenario))) {
-  throw new Error('UAT_SCENARIOS must contain approval, rejection, amendment, or withdrawal.');
+  throw new Error('UAT_SCENARIOS must contain assessment or withdrawal.');
 }
 
 const app = initializeApp({
@@ -80,9 +76,7 @@ async function run() {
   const results: ScenarioResult[] = [];
   for (const [index, scenario] of requestedScenarios.entries()) {
     const context = await createScenario(scenario, index, organizer, authorities);
-    if (scenario === 'approval') results.push(await runApproval(context));
-    if (scenario === 'rejection') results.push(await runRejection(context));
-    if (scenario === 'amendment') results.push(await runAmendment(context));
+    if (scenario === 'assessment') results.push(await runAssessment(context));
     if (scenario === 'withdrawal') results.push(await runWithdrawal(context));
   }
 
@@ -139,71 +133,11 @@ async function createScenario(
   return { eventId, organizer, authorities, eventDetails };
 }
 
-async function runApproval(context: ScenarioContext): Promise<ScenarioResult> {
+async function runAssessment(context: ScenarioContext): Promise<ScenarioResult> {
   const { event, assessment } = await submitAndAssess(context, 'v1');
-  const resources = await resourceFor(context.eventId, 'v1');
-  const pdrm = requiredAuthority(context.authorities, 'PDRM');
-  await callFunction('overrideResources', await idTokenFor(pdrm.profile.email), {
-    eventId: context.eventId,
-    quantities: {
-      police: resources.police + 1,
-      medicalTeams: resources.medicalTeams,
-      ambulances: resources.ambulances,
-      toilets: resources.toilets,
-      wasteBins: resources.wasteBins,
-      security: resources.security,
-      fireOfficers: resources.fireOfficers,
-    },
-    rationale: 'Cloud UAT adjustment verifies authority resource provenance.',
-  });
-  await decideAll(context, event.requiredAuthorities, 'Approved');
-  return verifyScenario(context.eventId, 'approval', 'Approved', 1, true, assessment);
-}
-
-async function runRejection(context: ScenarioContext): Promise<ScenarioResult> {
-  const { event, assessment } = await submitAndAssess(context, 'v1');
-  await decide(context, 'PDRM', 'Approved', 'PDRM confirms the traffic and crowd controls for this UAT scenario.');
-  await decide(context, 'BOMBA', 'Rejected', 'BOMBA rejects the plan because the secondary emergency exit is insufficient.');
-  const finalEvent = await eventFor(context.eventId);
-  if (!event.requiredAuthorities.includes('BOMBA') || finalEvent.status !== 'Rejected') {
-    throw new Error(`Rejection precedence failed for ${context.eventId}.`);
-  }
-  return verifyScenario(context.eventId, 'rejection', 'Rejected', 1, false, assessment);
-}
-
-async function runAmendment(context: ScenarioContext): Promise<ScenarioResult> {
-  const { event: versionOneEvent } = await submitAndAssess(context, 'v1');
-  await decide(context, 'PDRM', 'Approved', 'PDRM approves the version one traffic and crowd controls.');
-  await decide(context, 'BOMBA', 'AmendmentRequested', 'BOMBA requires a revised emergency exit and assembly-point arrangement.');
-
-  const versionOne = await versionFor(context.eventId, 'v1');
-  const evidencePath = await uploadEvidence(context.eventId, 'v2', 'revised-emergency-plan.pdf');
-  await db.collection(COLLECTIONS.EVENTS).doc(context.eventId).update({
-    eventDetails: {
-      ...context.eventDetails,
-      name: `${context.eventDetails.name} - Revised`,
-      emergencyPlanSummary: 'Revised secondary exits, signed evacuation routes, and separated fire assembly points are assigned.',
-    },
-    draftDocumentPaths: [evidencePath],
-    updatedAt: Date.now(),
-  });
-
-  const { event: versionTwoEvent, assessment } = await submitAndAssess(context, 'v2');
-  const versionOneAfter = await versionFor(context.eventId, 'v1');
-  if (JSON.stringify(versionOneAfter) !== JSON.stringify(versionOne)) {
-    throw new Error(`Version 1 changed during amendment scenario ${context.eventId}.`);
-  }
-  if (versionTwoEvent.currentVersionNumber !== 2 || versionTwoEvent.requiredAuthorities.join(',') !== versionOneEvent.requiredAuthorities.join(',')) {
-    throw new Error(`Version 2 contract failed for ${context.eventId}.`);
-  }
-
-  await decideAll(context, versionTwoEvent.requiredAuthorities, 'Approved');
-  const result = await verifyScenario(context.eventId, 'amendment', 'Approved', 2, true, assessment);
-  const history = await db.collection(`${COLLECTIONS.EVENTS}/${context.eventId}/${COLLECTIONS.DECISION_HISTORY}`).get();
-  if (history.size !== 5) throw new Error(`Expected 5 decision history records, received ${history.size}.`);
-  const publicEvent = await db.collection(COLLECTIONS.PUBLIC_EVENTS).doc(context.eventId).get();
-  if (publicEvent.data()?.versionId !== 'v2') throw new Error(`Amendment scenario did not publish v2 for ${context.eventId}.`);
-  return result;
+  if (!event.requiredAuthorities.includes('PDRM')) throw new Error(`PDRM was not assigned to ${context.eventId}.`);
+  await assertProvisionalDecisionBlocked(context, 'PDRM');
+  return verifyScenario(context.eventId, 'assessment', 'Pending', 1, false, assessment);
 }
 
 async function runWithdrawal(context: ScenarioContext): Promise<ScenarioResult> {
@@ -222,10 +156,10 @@ async function submitAndAssess(context: ScenarioContext, expectedVersionId: stri
   if (submission.versionId !== expectedVersionId) throw new Error(`Expected ${expectedVersionId}, received ${submission.versionId}.`);
   const event = await waitForAssessment(context.eventId, submission.versionId);
   const assessment = await assessmentFor(context.eventId, submission.versionId);
-  if (!Number.isInteger(assessment.officialScore) || assessment.officialScore < 0 || assessment.officialScore > 100
-    || assessment.officialRiskLevel !== riskLevelFor(assessment.officialScore)
-    || assessment.categoryAssignments.length === 0
-    || assessment.aiAdvisory.label !== 'advisory') {
+  if (!('provisionalResult' in assessment)
+    || assessment.provisionalResult.overallScore < 0 || assessment.provisionalResult.overallScore > 100
+    || assessment.provisionalResult.categories.length === 0
+    || assessment.aiProposal.status !== 'success') {
     throw new Error(`Category assessment contract failed for ${context.eventId}/${submission.versionId}.`);
   }
   if (event.requiredAuthorities.join(',') !== authorityTypes.join(',')) {
@@ -234,19 +168,19 @@ async function submitAndAssess(context: ScenarioContext, expectedVersionId: stri
   return { event, assessment };
 }
 
-async function decideAll(context: ScenarioContext, authorities: AuthorityType[], decision: DecisionValue) {
-  for (const authorityType of authorities) {
-    await decide(context, authorityType, decision, `${authorityType} cloud UAT review confirms the submitted controls for this version.`);
-  }
-}
-
-async function decide(context: ScenarioContext, authorityType: AuthorityType, decision: DecisionValue, rationale: string) {
+async function assertProvisionalDecisionBlocked(context: ScenarioContext, authorityType: AuthorityType) {
   const reviewer = requiredAuthority(context.authorities, authorityType);
-  return callFunction('makeAuthorityDecision', await idTokenFor(reviewer.profile.email), {
-    eventId: context.eventId,
-    decision,
-    rationale,
-  });
+  try {
+    await callFunction('makeAuthorityDecision', await idTokenFor(reviewer.profile.email), {
+      eventId: context.eventId,
+      decision: 'Approved',
+      rationale: 'PR1 UAT verifies that provisional assessments cannot be used for final approval.',
+    });
+  } catch (error) {
+    if (error instanceof Error && /official risk assessment/i.test(error.message)) return;
+    throw error;
+  }
+  throw new Error(`Provisional assessment unexpectedly allowed a final decision for ${context.eventId}.`);
 }
 
 async function verifyScenario(
@@ -345,22 +279,12 @@ async function eventFor(eventId: string): Promise<EventRecord> {
   return snapshot.data() as EventRecord;
 }
 
-async function versionFor(eventId: string, versionId: string): Promise<EventVersion> {
-  const snapshot = await db.doc(`${COLLECTIONS.EVENTS}/${eventId}/${COLLECTIONS.VERSIONS}/${versionId}`).get();
-  if (!snapshot.exists) throw new Error(`Version ${eventId}/${versionId} does not exist.`);
-  return snapshot.data() as EventVersion;
-}
-
 async function assessmentFor(eventId: string, versionId: string): Promise<RiskAssessment> {
   const snapshot = await db.doc(`${COLLECTIONS.EVENTS}/${eventId}/${COLLECTIONS.ASSESSMENTS}/${versionId}`).get();
-  if (!snapshot.exists || snapshot.data()?.status !== 'ready') throw new Error(`Assessment ${eventId}/${versionId} is not ready.`);
+  if (!snapshot.exists || !['provisional_ready', 'authority_review', 'official_ready'].includes(snapshot.data()?.status)) {
+    throw new Error(`Assessment ${eventId}/${versionId} has no validated result.`);
+  }
   return snapshot.data() as RiskAssessment;
-}
-
-async function resourceFor(eventId: string, versionId: string): Promise<ResourceRecommendation> {
-  const snapshot = await db.doc(`${COLLECTIONS.EVENTS}/${eventId}/${COLLECTIONS.RESOURCES}/${versionId}`).get();
-  if (!snapshot.exists) throw new Error(`Resources ${eventId}/${versionId} do not exist.`);
-  return snapshot.data() as ResourceRecommendation;
 }
 
 function requiredAuthority(authorities: Map<AuthorityType, ProvisionedUser>, authorityType: AuthorityType) {
@@ -370,11 +294,12 @@ function requiredAuthority(authorities: Map<AuthorityType, ProvisionedUser>, aut
 }
 
 function assessmentSummary(assessment: RiskAssessment) {
+  if (!('provisionalResult' in assessment)) throw new Error('Assessment requires manual review and has no provisional result.');
   return {
-    officialScore: assessment.officialScore,
-    officialRiskLevel: assessment.officialRiskLevel,
-    categories: assessment.categoryAssignments.length,
-    aiStatus: assessment.aiAdvisory.status,
+    provisionalScore: assessment.provisionalResult.overallScore,
+    provisionalRiskLevel: assessment.provisionalResult.overallRiskLevel,
+    categories: assessment.provisionalResult.categories.length,
+    aiStatus: assessment.aiProposal.status,
   };
 }
 

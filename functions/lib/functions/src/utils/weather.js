@@ -12,7 +12,7 @@ const REQUEST_TIMEOUT_MS = 2_500;
 const CACHE = new Map();
 async function fetchWeather(location, fallbackName, forecastFor, options = {}) {
     const now = options.now ?? Date.now();
-    if (!location)
+    if (!isValidLocation(location))
         return fallbackSnapshot(forecastFor, now, 'Location unavailable', 'unavailable');
     const cacheKey = `${location.lat.toFixed(2)},${location.lng.toFixed(2)},${localDate(forecastFor)}`;
     const cached = CACHE.get(cacheKey);
@@ -85,6 +85,16 @@ function parseWeatherResponse(payload, forecastFor) {
     const main = isRecord(source.main) ? source.main : undefined;
     const wind = isRecord(source.wind) ? source.wind : undefined;
     const temperature = isRecord(source.temp) ? source.temp.day : source.temp ?? main?.temp;
+    const humidity = source.humidity ?? main?.humidity;
+    const windSpeed = source.wind_speed ?? wind?.speed;
+    if (!isFiniteNumber(temperature) || temperature < -100 || temperature > 70
+        || !isFiniteNumber(humidity) || humidity < 0 || humidity > 100
+        || !isFiniteNumber(windSpeed) || windSpeed < 0) {
+        throw new Error('OpenWeather response contains an invalid weather measurement.');
+    }
+    if (source.pop !== undefined && (!isFiniteNumber(source.pop) || source.pop < 0 || source.pop > 1)) {
+        throw new Error('OpenWeather response contains an invalid weather measurement.');
+    }
     const weather = Array.isArray(source.weather) && isRecord(source.weather[0]) ? source.weather[0] : undefined;
     const alerts = Array.isArray(payload.alerts) ? payload.alerts.filter(isRecord) : [];
     const severeAlert = alerts.some((alert) => {
@@ -95,8 +105,8 @@ function parseWeatherResponse(payload, forecastFor) {
     return {
         forecast: stringValue(weather?.main) ?? stringValue(weather?.description) ?? 'Unknown',
         temperature: roundedNumber(temperature, 28),
-        humidity: roundedNumber(source.humidity ?? main?.humidity, 70),
-        windSpeed: roundedNumber(source.wind_speed ?? wind?.speed, 2, 1),
+        humidity: roundedNumber(humidity, 70),
+        windSpeed: roundedNumber(windSpeed, 2, 1),
         precipitationProbability: Math.round(numberValue(source.pop, 0.2) * 100),
         severeAlert,
     };
@@ -127,6 +137,18 @@ function numberValue(value, fallback) {
 }
 function stringValue(value) {
     return typeof value === 'string' && value.trim() ? value : undefined;
+}
+function isValidLocation(location) {
+    return Boolean(location
+        && Number.isFinite(location.lat)
+        && location.lat >= -90
+        && location.lat <= 90
+        && Number.isFinite(location.lng)
+        && location.lng >= -180
+        && location.lng <= 180);
+}
+function isFiniteNumber(value) {
+    return typeof value === 'number' && Number.isFinite(value);
 }
 function isRecord(value) {
     return typeof value === 'object' && value !== null && !Array.isArray(value);

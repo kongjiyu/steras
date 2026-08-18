@@ -140,8 +140,16 @@ export interface EventVersion {
 }
 
 export type RiskLevel = 'Low' | 'Medium' | 'High';
-export type AssessmentStatus = 'processing' | 'ready' | 'failed';
-export type AIStatus = 'success' | 'unavailable' | 'invalid';
+export const ASSESSMENT_SCHEMA_VERSION = '2026-08-18-prd-v5';
+export type AssessmentStatus =
+  | 'processing'
+  | 'manual_review_required'
+  | 'provisional_ready'
+  | 'authority_review'
+  | 'official_ready'
+  | 'failed';
+export type AIStatus = 'success' | 'unavailable' | 'timeout' | 'invalid';
+export type ScoreRating = 1 | 2 | 3 | 4 | 5;
 export type AssessmentReadiness = 'complete' | 'provisional' | 'insufficient_data';
 export type ComplianceStatus = 'pass' | 'review_required' | 'blocked';
 export type ConfidenceLevel = 'low' | 'medium' | 'high';
@@ -342,43 +350,182 @@ export interface DeterministicCategoryResult {
   computedAt: number;
 }
 
-export interface AIAdvisoryCategoryAnalysis {
-  categoryId: string;
-  advisoryBand: RiskLevel;
-  explanation: string;
+export interface AIHazardProposal {
+  hazardId: string;
+  hazardName: string;
+  categoryId: HazardDomain;
   evidenceReferences: EvidenceKey[];
-  keyConcerns: string[];
-  resourceConsiderations: string[];
+  rationale: string;
 }
 
-export interface AIAdvisoryAnalysis {
+export interface AICategoryProposal {
+  categoryId: string;
+  likelihood: ScoreRating;
+  severity: ScoreRating;
+  evidenceReferences: EvidenceKey[];
+  rationale: string;
+  confidence: ConfidenceLevel;
+  concerns: string[];
+  missingInformation: string[];
+}
+
+export interface AISuccessfulProposal {
+  status: 'success';
+  proposalId: string;
   model: string;
   promptVersion: string;
   responseSchemaVersion: string;
-  status: AIStatus;
-  label: 'advisory';
-  overallBand?: RiskLevel;
-  overallExplanation: string;
-  categories: AIAdvisoryCategoryAnalysis[];
-  keyConcerns: string[];
-  resourceConsiderations: string[];
-  citedEvidenceKeys: EvidenceKey[];
+  hazards: AIHazardProposal[];
+  categories: AICategoryProposal[];
   cacheStatus: 'hit' | 'miss' | 'not-applicable';
   generatedAt: number;
 }
 
-export interface RiskAssessment extends DeterministicCategoryResult {
+export interface AIFailedProposal {
+  status: 'unavailable' | 'timeout' | 'invalid';
+  model: string;
+  promptVersion: string;
+  responseSchemaVersion: string;
+  retryable: boolean;
+  errorSummary: string;
+  cacheStatus: 'not-applicable';
+  generatedAt: number;
+}
+
+export type AIProposalAttempt = AISuccessfulProposal | AIFailedProposal;
+
+export type ValidationWarningCode =
+  | 'missing_evidence'
+  | 'unsupported_evidence_reference'
+  | 'invalid_calculation'
+  | 'rubric_conflict'
+  | 'low_confidence'
+  | 'hard_rule_adjustment';
+
+export interface ValidationWarning {
+  warningId: string;
+  code: ValidationWarningCode;
+  message: string;
+  categoryId?: string;
+  evidenceReferences: EvidenceKey[];
+}
+
+export interface AppliedHardRule {
+  ruleId: string;
+  categoryId: string;
+  axis: ControlAxis;
+  proposedValue: ScoreRating;
+  constrainedValue: ScoreRating;
+  rationale: string;
+  guidelineReferences: string[];
+}
+
+export interface ValidatedCategoryResult {
+  categoryId: string;
+  categoryName: string;
+  proposedLikelihood: ScoreRating;
+  proposedSeverity: ScoreRating;
+  validatedLikelihood: ScoreRating;
+  validatedSeverity: ScoreRating;
+  matrixScore: number;
+  normalizedScore: number;
+  riskLevel: RiskLevel;
+  weight: number;
+  weightedContribution: number;
+  evidenceReferences: EvidenceKey[];
+  rationale: string;
+  confidence: ConfidenceLevel;
+  concerns: string[];
+  missingInformation: string[];
+  appliedHardRules: AppliedHardRule[];
+  guidelineChecks: string[];
+}
+
+export interface ProvisionalAssessmentResult {
+  proposalId: string;
+  validatedHazards: AIHazardProposal[];
+  categories: ValidatedCategoryResult[];
+  overallScore: number;
+  weightedRiskLevel: RiskLevel;
+  highestCategoryRiskLevel: RiskLevel;
+  overallRiskLevel: RiskLevel;
+  formulaVersion: string;
+  categorySchemaVersion: string;
+  hardRuleVersion: string;
+  calculatedAt: number;
+}
+
+export interface OfficialAssessmentResult extends ProvisionalAssessmentResult {
+  finalizedAt: number;
+  finalizedBy: string;
+}
+
+interface AuthorityCategoryScoreReviewBase {
+  categoryId: string;
+  likelihood: ScoreRating;
+  severity: ScoreRating;
+}
+
+export type AuthorityCategoryScoreReview =
+  | (AuthorityCategoryScoreReviewBase & { decision: 'confirmed'; reason?: never })
+  | (AuthorityCategoryScoreReviewBase & { decision: 'overridden'; reason: string });
+
+export interface AuthorityScoreReview {
+  reviewId: string;
+  eventId: string;
+  versionId: string;
+  assessmentId: string;
+  authorityType: AuthorityType;
+  reviewerId: string;
+  categories: AuthorityCategoryScoreReview[];
+  supersedesReviewId?: string;
+  createdAt: number;
+}
+
+interface AssessmentBase {
   assessmentId: string;
   eventId: string;
   versionId: string;
-  status: 'ready';
-  aiAdvisory: AIAdvisoryAnalysis;
+  schemaVersion: typeof ASSESSMENT_SCHEMA_VERSION;
   contextSnapshot: AssessmentContextSnapshot;
+  evidence: ScoreEvidence[];
   sourceTimestamps: Record<string, number>;
   contextStatuses: Record<string, string>;
+  assessmentReadiness: AssessmentReadiness;
+  complianceStatus: ComplianceStatus;
+  complianceChecks: ComplianceCheck[];
+  dataConfidenceScore: number;
+  dataConfidenceLevel: ConfidenceLevel;
   inputHash: string;
   createdAt: number;
 }
+
+export interface ProvisionalRiskAssessment extends AssessmentBase {
+  status: 'provisional_ready' | 'authority_review';
+  aiProposal: AISuccessfulProposal;
+  warnings: ValidationWarning[];
+  authorityReviewRequired: true;
+  provisionalResult: ProvisionalAssessmentResult;
+}
+
+export interface ManualReviewRiskAssessment extends AssessmentBase {
+  status: 'manual_review_required';
+  aiProposal: AIProposalAttempt | null;
+  warnings: ValidationWarning[];
+  authorityReviewRequired: true;
+  manualReviewReason: string;
+}
+
+export interface OfficialRiskAssessment extends AssessmentBase {
+  status: 'official_ready';
+  aiProposal: AISuccessfulProposal;
+  warnings: ValidationWarning[];
+  authorityReviewRequired: false;
+  provisionalResult: ProvisionalAssessmentResult;
+  officialResult: OfficialAssessmentResult;
+}
+
+export type RiskAssessment = ProvisionalRiskAssessment | ManualReviewRiskAssessment | OfficialRiskAssessment;
 
 export interface AssessmentJob {
   assessmentId: string;
@@ -394,6 +541,27 @@ export interface AssessmentJob {
 }
 
 export type AssessmentRecord = RiskAssessment | AssessmentJob;
+
+export interface OrganizerAssessmentSummary {
+  assessmentId: string;
+  eventId: string;
+  versionId: string;
+  schemaVersion: string;
+  status: AssessmentStatus;
+  overallScore?: number;
+  overallRiskLevel?: RiskLevel;
+  categories: Array<{
+    categoryId: string;
+    categoryName: string;
+    normalizedScore: number;
+    riskLevel: RiskLevel;
+  }>;
+  assessmentReadiness?: AssessmentReadiness;
+  complianceStatus?: ComplianceStatus;
+  authorityReviewRequired: boolean;
+  resourceQuantities?: ResourceQuantities;
+  computedAt: number;
+}
 
 export interface ResourceQuantities {
   police: number;
@@ -436,6 +604,7 @@ export interface ResourceRecommendation extends ResourceQuantities {
   items?: ResourceRecommendationItem[];
   aiConsiderations: string[];
   confidenceLevel: 'prototype' | 'authorityValidated';
+  assessmentStage: 'provisional' | 'official';
   notes?: string;
   overriddenBy?: string;
   overrideRationale?: string;
@@ -464,6 +633,7 @@ export type AuditAction =
   | 'event_withdrawn'
   | 'status_changed'
   | 'risk_score_computed'
+  | 'assessment_schema_cutover'
   | 'resource_recommended'
   | 'resource_overridden'
   | 'amendment_requested'
@@ -593,6 +763,8 @@ export const COLLECTIONS = {
   EVENTS: 'events',
   VERSIONS: 'versions',
   ASSESSMENTS: 'assessments',
+  ASSESSMENT_SUMMARIES: 'assessment_summaries',
+  SCORE_REVIEWS: 'score_reviews',
   RESOURCES: 'resources',
   DECISIONS: 'decisions',
   DECISION_HISTORY: 'decision_history',
@@ -607,6 +779,8 @@ export const COLLECTIONS = {
 
 export const CATEGORY_SCHEMA_VERSION = '2026-07-24-all-hazards-v2';
 export const SCORING_LOGIC_VERSION = '2026-07-24-hirarc-residual-v2';
+export const HARD_RULE_VERSION = '2026-08-18-hirarc-floor-v1';
+export const PROVISIONAL_FORMULA_VERSION = '2026-08-18-weighted-safety-floor-v1';
 export const CATEGORY_SCHEMA_STATUS: CategorySchemaStatus = 'prototype';
 export const RESOURCE_FORMULA_VERSION = '2026-07-24-prototype-range-v3';
 export const RESOURCE_GUIDELINE_VERSION = '2026-07-24-malaysia-research-v2';

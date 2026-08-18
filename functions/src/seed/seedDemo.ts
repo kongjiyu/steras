@@ -3,6 +3,7 @@ import { applicationDefault, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import {
+  ASSESSMENT_SCHEMA_VERSION,
   AssessmentContextSnapshot,
   AuthorityType,
   COLLECTIONS,
@@ -11,14 +12,10 @@ import {
   EventVersion,
   HistoricalEventOutcome,
   Incident,
-  RESOURCE_FORMULA_VERSION,
-  RESOURCE_GUIDELINE_VERSION,
-  ResourceRecommendation,
   RiskAssessment,
   UserProfile,
   Venue,
 } from '@shared/types';
-import { computeResources } from '../engines/resourceCalculator';
 import { computeCategoryBasedAssessment } from '../engines/ruleBased';
 import { VENUES, stableVenueId } from './seedVenues';
 
@@ -73,7 +70,6 @@ async function seedDemo(): Promise<void> {
     batch.set(eventReference, application.event);
     batch.set(eventReference.collection(COLLECTIONS.VERSIONS).doc(application.version.versionId), application.version);
     batch.set(eventReference.collection(COLLECTIONS.ASSESSMENTS).doc(application.assessment.assessmentId), application.assessment);
-    batch.set(eventReference.collection(COLLECTIONS.RESOURCES).doc(application.resources.resourceId), application.resources);
   }
   batch.set(db.collection(COLLECTIONS.DATASET_MANIFESTS).doc(DATASET_VERSION), {
     datasetVersion: DATASET_VERSION,
@@ -266,7 +262,6 @@ function buildApplications(venues: Venue[], organizerId: string) {
       currentVersionId: versionId,
       currentVersionNumber: 1,
       currentAssessmentId: versionId,
-      currentResourceId: versionId,
       draftDocumentPaths: [],
       requiredAuthorities: ['PDRM', 'BOMBA', 'KKM', 'DBKL'],
       createdAt: NOW,
@@ -290,46 +285,25 @@ function buildApplications(venues: Venue[], organizerId: string) {
       assessmentId: versionId,
       eventId,
       versionId,
-      status: 'ready',
-      ...official,
-      aiAdvisory: {
-        model: 'demo-fixture',
-        promptVersion: 'demo-fixture-v1',
-        responseSchemaVersion: 'demo-fixture-v1',
-        status: 'unavailable',
-        label: 'advisory',
-        overallExplanation: 'Synthetic fixture: run the live pipeline to exercise MiniMax.',
-        categories: [],
-        keyConcerns: ['Synthetic history must not be treated as real-world validation.'],
-        resourceConsiderations: ['Authority review is required for every prototype quantity.'],
-        citedEvidenceKeys: ['history'],
-        cacheStatus: 'not-applicable',
-        generatedAt: NOW,
-      },
+      schemaVersion: ASSESSMENT_SCHEMA_VERSION,
+      status: 'manual_review_required',
       contextSnapshot: context,
+      evidence: official.evidence,
       sourceTimestamps: { weather: NOW, holiday: NOW, venue: NOW, incidents: NOW },
-      contextStatuses: { weather: 'fallback:not_assessable_yet', venue: 'matched', incidents: 'synthetic-demo-evidence', ai: 'not-applicable' },
+      contextStatuses: { weather: 'fallback:not_assessable_yet', venue: 'matched', incidents: 'synthetic-demo-evidence' },
+      assessmentReadiness: official.assessmentReadiness ?? 'insufficient_data',
+      complianceStatus: official.complianceStatus ?? 'review_required',
+      complianceChecks: official.complianceChecks ?? [],
+      dataConfidenceScore: official.dataConfidenceScore ?? 0,
+      dataConfidenceLevel: official.dataConfidenceLevel ?? 'low',
+      aiProposal: null,
+      warnings: [{ warningId: 'missing_evidence.demo', code: 'missing_evidence', message: 'Synthetic demo data requires live reassessment.', evidenceReferences: ['history'] }],
+      authorityReviewRequired: true,
+      manualReviewReason: 'Synthetic fixtures do not fabricate MiniMax scores; run the live pipeline to create a proposal.',
       inputHash,
       createdAt: NOW,
     };
-    const calculation = computeResources(event.eventDetails, official);
-    const resources: ResourceRecommendation = {
-      resourceId: versionId,
-      eventId,
-      versionId,
-      assessmentId: versionId,
-      ...calculation.quantities,
-      rationales: calculation.rationales,
-      items: calculation.items,
-      formulaVersion: RESOURCE_FORMULA_VERSION,
-      guidelineVersion: RESOURCE_GUIDELINE_VERSION,
-      guidelineStatus: 'prototype',
-      aiConsiderations: assessment.aiAdvisory.resourceConsiderations,
-      confidenceLevel: 'prototype',
-      notes: 'Synthetic demo recommendation; reviewing authorities must validate the range.',
-      computedAt: NOW,
-    };
-    return { event, version, assessment, resources };
+    return { event, version, assessment };
   });
 }
 

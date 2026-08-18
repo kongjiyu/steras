@@ -19,6 +19,7 @@ import { AuthorityTopBar } from '../../components/layout/Sidebar';
 import EmptyState from '../../components/ui/EmptyState';
 import RiskMeter from '../../components/ui/RiskMeter';
 import StatusBadge from '../../components/ui/StatusBadge';
+import { assessmentRiskLevel, assessmentScore, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
 import { db, isFirebaseConfigured } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import logoMark from '../../assets/brand/steras-mark.svg';
@@ -92,9 +93,8 @@ export default function AuthorityDashboard({ previewRecords }: AuthorityDashboar
               COLLECTIONS.ASSESSMENTS,
               event.currentAssessmentId,
             ));
-            if (assessmentDocument.data()?.status === 'ready') {
-              assessment = assessmentDocument.data() as RiskAssessment;
-            }
+            const value = assessmentDocument.data();
+            if (isCurrentRiskAssessment(value)) assessment = value;
           }
           return { event, assessment };
         }));
@@ -198,7 +198,7 @@ function OperationalBrief({
   agency: string;
   queue: DashboardRecord[];
 }) {
-  const activeHighRisk = queue.filter(({ assessment }) => assessment?.officialRiskLevel === 'High').length;
+  const activeHighRisk = queue.filter(({ assessment }) => assessmentRiskLevel(assessment) === 'High').length;
   const spotlight = queue[0];
   const headline = summary.active === 0
     ? 'The field is clear. Your next signal will appear here.'
@@ -218,7 +218,7 @@ function OperationalBrief({
 
         <h2 id="operational-brief-title">{headline}</h2>
         <p className="ops-hero__lede">
-          Review the official category-based risk, supporting evidence and inter-agency requirements before recording a decision.
+          Review the provisional category risk, supporting evidence and inter-agency requirements while official confirmation is pending.
         </p>
 
         {spotlight && (
@@ -228,10 +228,10 @@ function OperationalBrief({
               <span>Review first</span>
               <strong>{spotlight.event.eventDetails.name}</strong>
             </div>
-            {spotlight.assessment && (
+            {assessmentRiskLevel(spotlight.assessment) && (
               <div className="spotlight-case__risk">
-                <RiskMeter level={spotlight.assessment.officialRiskLevel} size="compact" tone="inverse" />
-                <strong>{spotlight.assessment.officialScore}<small>/100</small></strong>
+                <RiskMeter level={assessmentRiskLevel(spotlight.assessment)!} size="compact" tone="inverse" />
+                <strong>{assessmentScore(spotlight.assessment)}<small>/100</small></strong>
               </div>
             )}
           </div>
@@ -343,7 +343,7 @@ function OperationalRadar({ queue, activeHighRisk }: { queue: DashboardRecord[];
 
           {queue.slice(0, RADAR_POINTS.length).map(({ event, assessment }, index) => {
             const point = RADAR_POINTS[index];
-            const level = assessment?.officialRiskLevel ?? 'Unassessed';
+            const level = assessmentRiskLevel(assessment) ?? 'Unassessed';
             const radius = Math.min(8, Math.max(5, event.eventDetails.expectedAttendance / 4_000));
             const style = {
               '--node-color': RISK_COLOR[level],
@@ -351,7 +351,7 @@ function OperationalRadar({ queue, activeHighRisk }: { queue: DashboardRecord[];
             } as MotionStyle;
             return (
               <g key={event.eventId} transform={`translate(${point.x} ${point.y})`} className="radar-node" style={style}>
-                <title>{`${event.eventDetails.name}: ${level}${assessment ? `, official score ${assessment.officialScore}` : ''}`}</title>
+                <title>{`${event.eventDetails.name}: ${level}${assessmentScore(assessment) !== undefined ? `, assessment score ${assessmentScore(assessment)}` : ''}`}</title>
                 <circle className="radar-node__glow" r={radius + 9} fill={RISK_COLOR[level]} filter="url(#radar-glow)" />
                 <circle className="radar-node__halo" r={radius + 5} />
                 <circle className="radar-node__core" r={radius} />
@@ -376,8 +376,8 @@ function OperationalRadar({ queue, activeHighRisk }: { queue: DashboardRecord[];
 
       <div className="operational-radar__footer">
         <span><i className="is-high" /> High {activeHighRisk}</span>
-        <span><i className="is-medium" /> Medium {queue.filter(({ assessment }) => assessment?.officialRiskLevel === 'Medium').length}</span>
-        <span><i className="is-low" /> Low {queue.filter(({ assessment }) => assessment?.officialRiskLevel === 'Low').length}</span>
+        <span><i className="is-medium" /> Medium {queue.filter(({ assessment }) => assessmentRiskLevel(assessment) === 'Medium').length}</span>
+        <span><i className="is-low" /> Low {queue.filter(({ assessment }) => assessmentRiskLevel(assessment) === 'Low').length}</span>
       </div>
     </div>
   );
@@ -435,10 +435,10 @@ function PriorityRow({ record: { event, assessment }, index }: { record: Dashboa
         </p>
         <div className="priority-row__risk">
           <span>Final risk</span>
-          {assessment ? (
+          {assessmentRiskLevel(assessment) ? (
             <div>
-              <RiskMeter level={assessment.officialRiskLevel} size="compact" />
-              <strong>{assessment.officialScore}<small>/100</small></strong>
+              <RiskMeter level={assessmentRiskLevel(assessment)!} size="compact" />
+              <strong>{assessmentScore(assessment)}<small>/100</small></strong>
             </div>
           ) : (
             <strong className="is-pending">Pending score</strong>
@@ -572,8 +572,8 @@ function AssessmentReadiness({ summary }: { summary: ReturnType<typeof dashboard
         <div>
           <h2>Assessment readiness</h2>
           <p>{summary.unassessed === 0
-            ? 'Every assigned event has a current official category assessment.'
-            : `${summary.unassessed} application${summary.unassessed === 1 ? '' : 's'} still awaiting an official category assessment.`}</p>
+            ? 'Every assigned event has a current calculated category assessment.'
+            : `${summary.unassessed} application${summary.unassessed === 1 ? '' : 's'} still awaiting a calculated category assessment.`}</p>
         </div>
       </div>
       <dl>

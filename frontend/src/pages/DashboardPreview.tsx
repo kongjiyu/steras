@@ -7,12 +7,16 @@ import AuthorityDashboard from './authority/AuthorityDashboard';
 import AuthorityLayout from '../components/layout/AuthorityLayout';
 import { useSearchParams } from 'react-router-dom';
 import {
+  ASSESSMENT_SCHEMA_VERSION,
   EventRecord,
   EventStatus,
+  HARD_RULE_VERSION,
+  PROVISIONAL_FORMULA_VERSION,
   ResourceQuantities,
   ResourceRecommendation,
   RiskAssessment,
   RiskLevel,
+  hirarcRiskLevelFor,
   riskLevelFor,
 } from '@shared/types';
 import { DashboardRecord } from './authority/dashboardData';
@@ -20,6 +24,7 @@ import RiskAssessments from './authority/RiskAssessments';
 import ResourceRecommendations from './authority/ResourceRecommendations';
 import { M2PortfolioRecord } from './authority/m2PortfolioData';
 import { RESOURCE_FIELDS } from '../components/m2/m2Presentation';
+import { assessmentRiskLevel } from '../components/m2/m2Contract';
 
 const MOCK_USER = { name: 'Admin Officer', role: 'PDRM', initials: 'AO' };
 
@@ -68,10 +73,9 @@ function previewRecord(
       organizerPhone: '+60 3 0000 0000',
     },
   };
-  const officialScore = risk === 'High' ? 82 : risk === 'Medium' ? 58 : 27;
-  const assessment = risk ? previewAssessment(event, officialScore, risk, versionId) : undefined;
+  const assessment = risk ? previewAssessment(event, risk, versionId) : undefined;
   const resources = assessment ? previewResources(event, assessment, versionId) : undefined;
-  return { event, assessment, assessmentStatus: risk ? 'ready' : 'processing', resources };
+  return { event, assessment, assessmentStatus: risk ? 'provisional_ready' : 'processing', resources };
 }
 
 const PREVIEW_RECORDS = [
@@ -100,56 +104,43 @@ export default function DashboardPreview() {
   );
 }
 
-function previewAssessment(event: EventRecord, officialScore: number, risk: RiskLevel, versionId: string): RiskAssessment {
+function previewAssessment(event: EventRecord, risk: RiskLevel, versionId: string): RiskAssessment {
   const categories = [
-    { categoryId: 'weather', categoryName: 'Weather exposure', weight: 0.3, evidenceKeys: ['weather'] as const },
-    { categoryId: 'crowd', categoryName: 'Crowd and capacity pressure', weight: 0.25, evidenceKeys: ['crowd'] as const },
-    { categoryId: 'venue', categoryName: 'Venue and event profile', weight: 0.2, evidenceKeys: ['venue'] as const },
-    { categoryId: 'history', categoryName: 'Historical incident context', weight: 0.15, evidenceKeys: ['history'] as const },
-    { categoryId: 'holiday', categoryName: 'Calendar and holiday context', weight: 0.1, evidenceKeys: ['holiday'] as const },
+    { categoryId: 'crowd', categoryName: 'Crowd and capacity pressure', weight: 0.125, evidenceKeys: ['crowd'] as const },
+    { categoryId: 'venue_fire', categoryName: 'Venue and fire safety', weight: 0.125, evidenceKeys: ['venue'] as const },
+    { categoryId: 'weather_environment', categoryName: 'Weather and environment', weight: 0.125, evidenceKeys: ['weather'] as const },
+    { categoryId: 'public_health', categoryName: 'Public health', weight: 0.125, evidenceKeys: ['public_health'] as const },
+    { categoryId: 'food_water_sanitation', categoryName: 'Food, water, and sanitation', weight: 0.125, evidenceKeys: ['sanitation'] as const },
+    { categoryId: 'medical_capacity', categoryName: 'Medical capacity', weight: 0.125, evidenceKeys: ['medical'] as const },
+    { categoryId: 'security_cbrn', categoryName: 'Security and CBRN', weight: 0.125, evidenceKeys: ['security'] as const },
+    { categoryId: 'transport_accessibility', categoryName: 'Transport and accessibility', weight: 0.125, evidenceKeys: ['transport'] as const },
   ];
+  const rating = risk === 'High' ? 4 : risk === 'Medium' ? 3 : 2;
+  const matrixScore = rating * rating;
+  const normalizedScore = matrixScore * 4;
+  const categoryRiskLevel = hirarcRiskLevelFor(matrixScore);
+  const weightedRiskLevel = riskLevelFor(normalizedScore);
   return {
     assessmentId: versionId,
     eventId: event.eventId,
     versionId,
-    status: 'ready',
-    officialScore,
-    officialRiskLevel: risk,
-    categoryAssignments: categories.map((category, index) => {
-      const score = Math.max(0, Math.min(100, officialScore + [5, 4, -5, -4, -9][index]));
-      return {
-        ...category,
-        score,
-        riskLevel: riskLevelFor(score),
-        weightedContribution: Number((score * category.weight).toFixed(2)),
-        rationale: `${category.categoryName} was calculated from the submitted event version and its captured context.`,
-        evidenceKeys: [...category.evidenceKeys],
-        guidelineChecks: [`prototype.${category.categoryId}.v1`],
-      };
-    }),
+    schemaVersion: ASSESSMENT_SCHEMA_VERSION,
+    status: 'provisional_ready',
     evidence: categories.map((category) => ({
       key: category.evidenceKeys[0],
       description: `${category.categoryName} input captured for preview.`,
       sourceTimestamp: now,
-      source: category.categoryId === 'weather' ? 'openweather' : 'versioned-input',
+      source: category.categoryId === 'weather_environment' ? 'openweather' : 'versioned-input',
       status: 'matched',
     })),
-    categorySchemaVersion: '2026-07-21-prototype-category-v1',
-    scoringLogicVersion: '2026-07-21-deterministic-v1',
-    categorySchemaStatus: 'prototype',
-    computedAt: now,
-    aiAdvisory: {
+    aiProposal: {
+      proposalId: `preview-${event.eventId}`,
       model: 'MiniMax-M3',
-      promptVersion: '2026-07-21-advisory-v1',
-      responseSchemaVersion: '2026-07-21-advisory-v1',
+      promptVersion: '2026-08-18-proposal-v3',
+      responseSchemaVersion: '2026-08-18-proposal-v3',
       status: 'success',
-      label: 'advisory',
-      overallBand: risk,
-      overallExplanation: 'The advisory highlights ingress congestion and weather monitoring without changing the official deterministic result.',
-      categories: [],
-      keyConcerns: ['Maintain clear emergency access during peak arrival.'],
-      resourceConsiderations: ['Stage personnel before the highest arrival window.'],
-      citedEvidenceKeys: ['crowd', 'weather'],
+      hazards: [],
+      categories: categories.map((category) => ({ categoryId: category.categoryId, likelihood: rating, severity: rating, evidenceReferences: [...category.evidenceKeys], rationale: category.categoryName, confidence: 'medium', concerns: [], missingInformation: [] })),
       cacheStatus: 'miss',
       generatedAt: now,
     },
@@ -164,6 +155,26 @@ function previewAssessment(event: EventRecord, officialScore: number, risk: Risk
     },
     sourceTimestamps: { event: event.updatedAt, weather: now, calendar: now, venue: now, history: now },
     contextStatuses: { weather: 'fresh', calendar: 'matched', venue: 'matched', history: 'matched' },
+    assessmentReadiness: 'complete',
+    complianceStatus: 'pass',
+    complianceChecks: [],
+    dataConfidenceScore: 80,
+    dataConfidenceLevel: 'high',
+    warnings: [],
+    authorityReviewRequired: true,
+    provisionalResult: {
+      proposalId: `preview-${event.eventId}`,
+      validatedHazards: [],
+      categories: categories.map((category) => ({ categoryId: category.categoryId, categoryName: category.categoryName, proposedLikelihood: rating, proposedSeverity: rating, validatedLikelihood: rating, validatedSeverity: rating, matrixScore, normalizedScore, riskLevel: categoryRiskLevel, weight: category.weight, weightedContribution: normalizedScore * category.weight, evidenceReferences: [...category.evidenceKeys], rationale: category.categoryName, confidence: 'medium', concerns: [], missingInformation: [], appliedHardRules: [], guidelineChecks: [`prototype.${category.categoryId}.v1`] })),
+      overallScore: normalizedScore,
+      weightedRiskLevel,
+      highestCategoryRiskLevel: categoryRiskLevel,
+      overallRiskLevel: risk,
+      formulaVersion: PROVISIONAL_FORMULA_VERSION,
+      categorySchemaVersion: '2026-07-24-all-hazards-v2',
+      hardRuleVersion: HARD_RULE_VERSION,
+      calculatedAt: now,
+    },
     inputHash: `preview-${event.eventId}`,
     createdAt: now,
   };
@@ -189,10 +200,11 @@ function previewResources(event: EventRecord, assessment: RiskAssessment, versio
     formulaVersion: '2026-07-21-prototype-v2',
     guidelineVersion: '2026-07-21-unverified-guidance-v1',
     guidelineStatus: 'prototype',
+    assessmentStage: assessment.status === 'official_ready' ? 'official' : 'provisional',
     rationales: Object.fromEntries(RESOURCE_FIELDS.map(({ key }) => [key, {
       resource: key,
       baselineQuantity: quantities[key],
-      factors: [`${attendance.toLocaleString()} expected attendees`, `${assessment.officialRiskLevel} official risk`],
+      factors: [`${attendance.toLocaleString()} expected attendees`, `${assessmentRiskLevel(assessment) ?? 'Unassessed'} provisional risk`],
       guidelineReferences: [`prototype.${key}.v1`],
     }])) as ResourceRecommendation['rationales'],
     aiConsiderations: ['Plan staggered deployment around the highest arrival period.'],
