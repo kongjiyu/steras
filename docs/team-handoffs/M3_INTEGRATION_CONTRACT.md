@@ -54,7 +54,7 @@ Deployed to `asia-southeast1`, project `linkos-496505`. Callable from any signed
 |---|---|---|
 | `makeAuthorityDecision` | `(eventId, decision: 'Approved'\|'Rejected'\|'AmendmentRequested', rationale, reviewStage?: 'initial'\|'authority')` | **CALLABLE BY M3 USERS ONLY.** Enforces: authority must be in `requiredAuthorities`; status must be in `Pending`/`UnderReview`; `complianceStatus !== 'blocked'` if `decision === 'Approved'`; rationale ≥80 chars if readiness is `provisional`/`insufficient_data`. Returns `{ eventId, versionId, decisionId, decision, status, idempotent }`. |
 | `makeSecondReviewDecision` | *(planned, this round)* `(eventId, decision: 'Approved'\|'Rejected', reason, suggestion)` | Admin only. Aggregates officer decisions. Reason + suggestion split (FR-M3-05). |
-| `verifyStage1Doc` | *(renamed from `verifyEventControl`, this round)* `(eventId, controlId, docId, status: 'verified'\|'rejected', rationale, evidencePath?)` | Officer must be in `requiredAuthorities` of the event. Writes provenance + audit + notification. Idempotent on `(versionId, controlId, docId, authorityType)`. **BREAKING CHANGE** — see §6. |
+| `verifyStage1Doc` | `({ eventId, controlId, docId, status: 'verified'\|'rejected', rationale, evidencePath? })` | **SHIPPED (`ab8b33d`)** — renamed from `verifyEventControl`. Officer must be in `requiredAuthorities` of the event. Operates on `event_controls/{controlId}/stage1_docs/{docId}`; carries provenance (`status`/`verifiedBy`/`verifiedAt`/`rejectionReason`) on the doc itself. Recomputes parent control's aggregate `label`; maintains `event.verifiedControlIds`; writes audit + organiser notification. Idempotent on `(versionId, controlId, docId, authorityType)`. **BREAKING CHANGE** — see §6. |
 | `generateEventControlList` | *(this round)* `(eventId, versionId)` | Admin only. Calls M2's `proposeEventControlList` AI proposal (Q5) → admin may edit → system writes `event_controls/{controlId}` with `stage1Docs` + `stage2Docs` template entries. |
 | `editEventControlList` | *(this round)* `(eventId, addControls?, removeControlIds?)` | Admin only. Replaces the inline edit UI call. |
 | `uploadStage1Doc` | *(this round)* `(eventId, controlId, filePath, usePrevious?: boolean)` | Organiser only. Writes `event_controls/{controlId}/stage1_docs/{docId}` with `status: 'pending_verification'`. If `usePrevious` → `status: 'verified'`, audit `Reused from event X`. |
@@ -279,29 +279,32 @@ Read-by-rules is already configured. Writes are server-only.
 
 ---
 
-## 5. The Q1 refactor — breaking change to other modules
+## 5. The Q1 refactor — SHIPPED (`ab8b33d`)
 
-> **The big one.** `verifyEventControl` is being renamed + restructured. Any current caller (UI smoke test, the existing `evt-control-verification` test fixture, the mock seeder) must be updated.
+> **The big one — now live.** `verifyEventControl` is renamed + restructured to `verifyStage1Doc` operating on per-doc sub-collections. Any current caller (UI smoke test, the existing `evt-control-verification` test fixture, the mock seeder) must be updated. Done in this commit.
 
-**Before (current code on `anny_cont`):**
+**Before (pre-Q1):**
 - Path: `events/{eventId}/event_controls/{controlId}`
 - Function: `verifyEventControl({ eventId, controlId, status, rationale, evidencePath? })`
 
-**After (this round):**
+**After (now on `anny_cont`):**
 - Path: `events/{eventId}/event_controls/{controlId}/stage1_docs/{docId}`
 - Function: `verifyStage1Doc({ eventId, controlId, docId, status, rationale, evidencePath? })`
+- Stage 1 doc carries provenance on itself: `{ status, verifiedBy, verifiedAt, rejectionReason }`. No more `ControlVerification` interface or `control_verifications` sub-collection.
 
-**What changes for other modules / tests:**
-- If you read `event_controls/{controlId}` to check verification status → use `event_controls/{controlId}.label` for the *item* status, and `event_controls/{controlId}/stage1_docs` for per-doc status.
-- If you wrote a `event_controls/{id}` doc directly in a seeder or test → also seed `event_controls/{id}/stage1_docs/{id}` so the verification has something to operate on.
-- The control *item* doc keeps a top-level `status` field (the aggregate of its docs) for backward-compat reads. New writes go to the doc level.
+**What changed for other modules / tests:**
+- If you read `event_controls/{controlId}` to check verification status → use `event_controls/{controlId}.label` for the *item* status (the function recomputes this from its stage1 docs: any rejected → `resubmit_required`; all verified/use_previous → `approved`; else `pending`).
+- If you wrote a `event_controls/{id}` doc directly in a seeder or test → also seed `event_controls/{id}/stage1_docs/{id}` (status: `pending_verification`) so the verification has something to operate on. The `seedEventControls` helper in `frontend/tests/m3/global-setup.ts` does this for all UAT events with non-empty `requiredAuthorities`.
+- The parent event's `verifiedControlIds` is still maintained (now sourced from a different sub-collection). M2's read of that field still works.
 
-**Migration plan:**
-- Round 1 (this PR): rename Cloud Function, update `AuthorityEventReview.tsx` UI to use the new path, update `firestore.rules` for the new subcollection, update `shared/types.ts` (drop `ControlVerification`, add `Stage1DocVerification`), migrate `evt-control-verification` test seed.
-- Round 2: delete the old flat `verifiedControlIds` logic from `verifyEventControl` (kept for reference, will become `stage1VerifiedControlIds`).
-- Round 3 (post-merge): clean up legacy data via Admin SDK one-shot script.
+**Migration status (all done in `ab8b33d`):**
+- [x] Round 1: rename Cloud Function, update `AuthorityEventReview.tsx` UI to use the new path, update `firestore.rules` for the new subcollection, update `shared/types.ts` (dropped `ControlVerification` + `COLLECTIONS.CONTROL_VERIFICATIONS`; added `stage1_doc_approved` / `stage1_doc_rejected` to `NotificationType`), migrate `evt-control-verification` test seed.
+- [x] Round 2: deleted the old flat `verifiedControlIds` logic from `verifyEventControl` (function removed). Old `event_controls/{id}` flat-doc shape gone.
+- [ ] Round 3 (post-merge): clean up legacy data via Admin SDK one-shot script. Not blocking — only matters once we cut a release with prior data.
 
-**Notification:** other modules don't need to migrate. Only the test fixture and the existing Playwright spec need updating. M2's `verifiedControlIds` read still works (it's the same field on the parent event doc, just sourced from a different sub-collection).
+**Verification:** 28/28 M3 Playwright specs pass (m3-smoke 12/12, m3-full 14/14, m3-workstream1 2/2). The 3-project split (commit `777bb55`) keeps cumulative Firebase Auth slowness from flaking the new per-doc tests.
+
+**Notification:** other modules don't need to migrate. Only the test fixture and the existing Playwright spec needed updating. M2's `verifiedControlIds` read still works (same field on the parent event doc, just sourced from a different sub-collection).
 
 ---
 
@@ -437,10 +440,10 @@ Withdrawn                 ← M1.withdrawEvent (anytime post-Pending)
 
 | What | When | Where |
 |---|---|---|
-| Q1 refactor: `verifyEventControl` → `verifyStage1Doc` on a doc sub-collection | This round (next PR on `anny_cont`) | `functions/src/http/verifyEventControl.ts` (renamed) + `shared/types.ts` (Stage 1 doc types) |
-| Q4: `PublicReport` type | This round (next PR) | `shared/types.ts` |
-| Workstream 1: officer assignment Cloud Function (`assignAuthorityOfficers`) | Next round | `functions/src/http/assignAuthorityOfficers.ts` |
-| Workstream 1: `makeSecondReviewDecision` Cloud Function | Next round | `functions/src/http/secondReview.ts` |
+| Q1 refactor: `verifyEventControl` → `verifyStage1Doc` on a doc sub-collection | **SHIPPED** (`ab8b33d`) | `functions/src/http/verifyStage1Doc.ts` (renamed + new path) + `shared/types.ts` (Stage 1 doc types) + `frontend/src/pages/authority/AuthorityEventReview.tsx` (per-doc UI) |
+| Q4: `PublicReport` type | SHIPPED (in `bf79619`) | `shared/types.ts` |
+| Workstream 1: officer assignment Cloud Function (`assignAuthorityOfficers`) | **SHIPPED** (`44a7840`) | `functions/src/http/assignAuthorityOfficers.ts` + `frontend/src/pages/admin/AdminAssignment.tsx` |
+| Workstream 1: `makeSecondReviewDecision` Cloud Function | **SHIPPED** (`44a7840`) | `functions/src/http/makeSecondReviewDecision.ts` |
 | Workstream 2: `generateEventControlList` + `editEventControlList` + new admin page `AdminControlListEditor` | Round after | `functions/src/http/controlList.ts` + `frontend/src/pages/admin/AdminControlListEditor.tsx` |
 | Workstream 3: `uploadStage1Doc` + `usePrevious` + organiser page | Round after | `functions/src/http/stage1Upload.ts` + `frontend/src/pages/organizer/EventControls.tsx` |
 | Workstream 4: `confirmStage2Doc` + `reportStage2Doc` + public UI | Round after | `functions/src/http/stage2Public.ts` + extension to `frontend/src/pages/public/PublicEventDetail.tsx` |
@@ -460,7 +463,7 @@ Withdrawn                 ← M1.withdrawEvent (anytime post-Pending)
 | M2 doesn't have time to add `proposeEventControlList` this round | M3 falls back to a hardcoded default control list (one per authority in `requiredAuthorities`). M3 patches the M2 owner block in. |
 | M4 won't have `public_reports` write capability ready when Workstream 4 lands | M3's `reportStage2Doc` writes the doc directly with `outcome: 'under_review'`. M4 reads from this collection on its own timeline. |
 | The `users` collection doesn't have `state` / `scopeType` / `workloadCount` yet (M1 territory) | M3 can't ship Workstream 1 without these. Either (a) M1 owner adds the fields, or (b) M3 stubs them and `AdminAssignment` shows a hardcoded checklist. (a) is the right answer. |
-| The `evt-control-verification` test fixture (and the existing Playwright spec) reference the old `verifyEventControl` path | The Q1 refactor PR updates both. The new test fixture seeds `event_controls/{id}/stage1_docs/{id}` instead of the flat `event_controls/{id}`. |
+| The `evt-control-verification` test fixture (and the existing Playwright spec) reference the old `verifyEventControl` path | **RESOLVED** in `ab8b33d`. The new test fixture (via `seedEventControls` in `global-setup.ts`) seeds `event_controls/{id}/stage1_docs/{id}` for all UAT events with non-empty `requiredAuthorities`. The `verifyStage1Doc` spec replaces the old `verifyEventControl` spec. |
 | The `verifyEventControl` smoke spec (2 passing tests) breaks under Q1 | Replace with `verifyStage1Doc` smoke spec in the same PR. |
 
 ---

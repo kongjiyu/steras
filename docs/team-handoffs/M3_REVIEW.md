@@ -1,9 +1,9 @@
 # M3 — Authority Approval and Notification · Review Pack
 
 **For:** M3 teammate (the human who owns the module)
-**Last commit on `anny_cont`:** `0526286`
+**Last commit on `anny_cont`:** `ab8b33d`
 **Reviewer entry point:** this file
-**Status:** 14/14 @M3 Playwright specs pass on the deployed Firebase project (`linkos-496505`).
+**Status:** 28/28 @M3 Playwright specs pass on the deployed Firebase project (`linkos-496505`) — split across 3 projects (`m3-smoke` 12, `m3-full` 14, `m3-workstream1` 2).
 
 This document is a self-contained review pack. It tells you:
 
@@ -62,14 +62,17 @@ Cross-module contracts (don't break these):
 **Added on `anny_cont` (this round, what you must review):**
 1. **M2 compliance gate** — `complianceStatus === 'blocked'` ⇒ Approve is rejected with `failed-precondition`.
 2. **Readiness rationale gate** — when `assessmentReadiness` is `provisional` or `insufficient_data`, the rationale must be ≥80 chars.
-3. **`verifyEventControl` Cloud Function** — server-mediated Stage-1 control verification with full provenance (`controlId`, `authorityType`, `reviewerUid`, `evidencePath`, `timestamp`, `versionId`).
-4. **Durable notifications** — `notifications/{notificationId}` with idempotent `sourceActionId`, recipient-scoped reads, `markNotificationRead`.
+3. **`verifyStage1Doc` Cloud Function** *(Q1 refactor — see `ab8b33d`)* — server-mediated per-doc Stage-1 verification on `event_controls/{controlId}/stage1_docs/{docId}`. Carries provenance on the doc itself (`status`, `verifiedBy`, `verifiedAt`, `rejectionReason`); recomputes the parent control's aggregate `label`; maintains `event.verifiedControlIds`; writes audit + organiser notification. **Replaces** the old `verifyEventControl` (function removed). See §6 for the Q1 refactor summary.
+4. **Durable notifications** — `notifications/{notificationId}` with idempotent `sourceActionId`, recipient-scoped reads, `markNotificationRead`. Added `stage1_doc_approved` / `stage1_doc_rejected` types.
 5. **NotificationBell UI** — real-time unread count + dropdown panel in `WorkspaceTopBar`.
-6. **Stage-1 control verification form** — a new section in `AuthorityEventReview` with verify/reject form + read-only provenance for completed controls.
-7. **Firestore rules** — `/notifications/{id}`, `/event_controls/{id}`, `/control_verifications/{id}`.
+6. **Per-doc Stage-1 control verification form** *(Q1 refactor — see `ab8b33d`)* — each control item renders one card per Stage 1 doc (application / licence / insurance / ...), each with its own rationale + evidence path + Verify/Reject form. Read-only view for non-assigned authorities. Aggregate label badge per control.
+7. **Firestore rules** — `/notifications/{id}`, `/event_controls/{id}`, `/stage1_docs/{id}` (per-doc sub-collection).
 8. **Composite index** — `notifications` on `(recipientUid ASC, createdAt DESC)`.
 9. **`resolveAuthUid()` helper** — robust against legacy `organizerId` values in the seed (`usr-org-002` style that don't match a real user doc).
-10. **14-spec Playwright E2E suite** covering the gates, aggregate precedence, verified-control workflow, organiser notifications, and the new UI form.
+10. **Workstream 1 (see `44a7840` + `2b8db0d`)**: `assignAuthorityOfficers` + `recordOfficerProposal` + `makeSecondReviewDecision` Cloud Functions; `AdminAssignment` page; reason+suggestion split per FR-M3-05; auto-advances `reviewStage` to `'second'` when all officers complete.
+11. **Pre-Workstream-1 setup (see `bf79619`)**: 5 officers (PDRM/BOMBA/KKM/DBKL/MOTAC, all state=Selangor), 10 venues with `state`, `proposeEventControlList` M2 stub, `PublicReport` / `Stage1Doc` / `Stage2Doc` / `OfficerProfile` / `Assignment` types in `shared/types.ts`.
+12. **Test infrastructure (see `777bb55`)**: SDK-based `signInWithEmail` (3x faster than UI form), 3-project split (`m3-smoke` / `m3-full` / `m3-workstream1`), `retries: 1` for cold-start blips.
+13. **28-spec Playwright E2E suite** covering the gates, aggregate precedence, per-doc verified-control workflow, organiser notifications, control verification UI, and the Workstream 1 assignment + second-review flow.
 
 ---
 
@@ -79,45 +82,54 @@ Cross-module contracts (don't break these):
 | File | Status | Purpose |
 |---|---|---|
 | `http/authorityDecision.ts` | modified | Added compliance + readiness gates; resolves recipientUid via `resolveAuthUid`; calls `createNotification` post-transaction. |
-| `http/verifyEventControl.ts` | **new** | `verifyEventControl` callable; persists full provenance; updates `event.verifiedControlIds`; writes audit + organiser notification. |
+| `http/verifyStage1Doc.ts` | **new (Q1 refactor, `ab8b33d`)** | `verifyStage1Doc` callable; per-doc verification on `event_controls/{id}/stage1_docs/{docId}`; recomputes parent control aggregate `label`; maintains `event.verifiedControlIds`; writes audit + organiser notification. Replaces the old `verifyEventControl` (deleted in `ab8b33d`). |
 | `http/notifications.ts` | **new** | `listMyNotifications` + `markNotificationRead` (server-scoped by `request.auth.uid`). |
+| `http/assignAuthorityOfficers.ts` | **new (Workstream 1, `44a7840`)** | `assignAuthorityOfficers` callable (admin, dryRun + commit modes); transaction-safe; default-checks state scope + lowest workloadCount. |
+| `http/recordOfficerProposal.ts` | **new (Workstream 1)** | Officer callable; requires assignment; auto-advances `reviewStage` to `'second'` when all officers complete; reason+suggestion split. |
+| `http/makeSecondReviewDecision.ts` | **new (Workstream 1)** | Admin aggregator; refuses overrides; writes final status + audit; notifies organiser. |
+| `http/proposeEventControlList.ts` | **new (Q5 stub, `bf79619`)** | Hardcoded 5-item list; M2 owner will replace with AI-backed version. |
 | `utils/notifications.ts` | **new** | `createNotification` helper (idempotent on `sourceActionId`); `resolveAuthUid` (user doc → auth UID). |
 | `triggers/onEventCreated.ts` | modified | Skips M3 negative-test fixture ids so pre-seeded `complianceStatus` / `assessmentReadiness` survive. |
-| `index.ts` | modified | Exports the three new functions. |
+| `index.ts` | modified | Exports all the new functions. |
 
 ### Shared types — `shared/types.ts`
-- `COLLECTIONS.NOTIFICATIONS` / `EVENT_CONTROLS` / `CONTROL_VERIFICATIONS`
+- `COLLECTIONS.NOTIFICATIONS` / `EVENT_CONTROLS` / `STAGE1_DOCS` / `STAGE2_DOCS` / `OFFICERS` / `ASSIGNMENTS` / `PUBLIC_EVENT_CONTROLS` / `PUBLIC_REPORTS`
 - `Notification` interface
-- `ControlVerification` interface
-- `NotificationType`, `ControlVerificationStatus`
-- `EventRecord.verifiedControlIds?: string[]`
-- `AuditAction` now includes `'control_verified' | 'control_rejected'`
+- `EventControl`, `Stage1Doc`, `Stage2Doc`, `OfficerProfile`, `Assignment`, `Stage1Verification`, `PublicReport`, `ProposedControlItem` interfaces
+- `NotificationType` (includes `stage1_doc_approved` / `stage1_doc_rejected`), `ControlVerificationStatus`
+- `EventRecord.verifiedControlIds?: string[]`, `EventRecord.reviewStage: 'initial' | 'authority' | 'second'`
+- `EventStatus` now includes `'Manual Review Required'`
+- `Venue.state?: string` (for officer scope matching)
+- `AuditAction` now includes `'control_verified' | 'control_rejected' | 'assignment_created' | 'officer_proposal_recorded' | 'second_review_decision'`
 
 ### Firestore — root
 | File | Change |
 |---|---|
-| `firestore.rules` | Added `/notifications/{id}` (read own only, writes server-only), `/events/{eventId}/event_controls/{id}` and `/control_verifications/{id}` (read by assigned authority, event owner, admin; writes server-only). |
+| `firestore.rules` | Added `/notifications/{id}` (read own only, writes server-only), `/events/{eventId}/event_controls/{id}` + `/stage1_docs/{id}` (per-doc sub-collection, read by assigned authority/owner/admin, writes server-only), `/events/{eventId}/assignments/{id}` (read by assigned authority/owner/admin), `/officers/{id}` (read public, writes server-only), `/public_event_controls/{id}` and `/public_reports/{id}` (read public, writes server-only). |
 | `firestore.indexes.json` | Added composite index for `notifications` (recipientUid ASC, createdAt DESC). |
 
 ### Frontend — `frontend/src/`
 | File | Status | Purpose |
 |---|---|---|
-| `pages/authority/AuthorityEventReview.tsx` | modified | New "Stage-1 control verification" section; per-control form (rationale + optional evidence path); status badges; read-only provenance for completed controls. |
+| `pages/authority/AuthorityEventReview.tsx` | modified (Q1 refactor) | New "Stage-1 control verification" section; per-control card with per-doc form (rationale + optional evidence path); `ControlLabelBadge` (aggregate) + `DocStatusBadge` (per doc); read-only provenance for completed controls; subscribes to each control's `stage1_docs` sub-collection. |
+| `pages/admin/AdminAssignment.tsx` | **new (Workstream 1)** | Officer assignment UI at `/admin/applications/:id/assign`; radio-button checklist; swap officers; Confirm aggregate card. |
 | `components/layout/NotificationBell.tsx` | **new** | Bell icon + unread badge + dropdown panel; real-time `onSnapshot`; mark-read via Cloud Function. |
 | `components/layout/Sidebar.tsx` | mounted | `<NotificationBell />` between date and avatar in `WorkspaceTopBar`. |
-| `config/firebase.ts` | unchanged for you | Exposes the `__sterasFirebase` global that the Playwright fixtures use. |
+| `components/layout/AdminLayout.tsx` | reused | Shell for the admin pages. |
+| `config/firebase.ts` | unchanged for you | Exposes the `__sterasFirebase` global that the Playwright fixtures use (incl. SDK-based `signInWithEmail` for the per-user test login). |
 
 ### Tests — `frontend/tests/m3/`
 | File | Status | Specs |
 |---|---|---|
-| `global-setup.ts` | **new** | Admin SDK reset + creates 3 negative-test fixtures (`evt-compliance-blocked`, `evt-provisional-readiness`, `evt-control-verification`). |
-| `admin-reset.ts` | **new** | Per-test helpers (`resetFoodFair`, `resetMountainRun`) using Admin SDK to bypass client rules. |
-| `fixtures.ts` | **new** | Shared `api` helper (Firestore + Cloud Functions via `__sterasFirebase`), `loginAs`, `ACCOUNTS`, `EVENTS`. |
+| `global-setup.ts` | **new** | Admin SDK reset + creates 3 negative-test fixtures (`evt-compliance-blocked`, `evt-provisional-readiness`, `evt-control-verification`). Wipes stale `event_controls` / `stage1_docs` / `control_verifications` on every run. New `seedEventControls` helper seeds one control per `requiredAuthority` × 3 stage1_docs (application/licence/insurance). Resets officer workload + notifications. |
+| `admin-reset.ts` | **new** | Per-test helpers (`resetFoodFair`, `resetMountainRun`, `resetMarathon`) using Admin SDK to bypass client rules. |
+| `fixtures.ts` | **new** | Shared `api` helper (Firestore + Cloud Functions via `__sterasFirebase`), `loginAs` (SDK-based, 3x faster than UI), `ACCOUNTS`, `EVENTS`. |
 | `pdrm-decision.spec.ts` | **new** | Happy path: PDRM Approve on assigned event. |
 | `m3-negative-gates.spec.ts` | **new** | 4 specs: compliance-blocked, short-rationale, long-rationale, non-assigned authority. |
 | `m3-aggregate.spec.ts` | **new** | 3 specs: rejection-precedence, amendment-precedence, unanimous-publish. |
-| `m3-controls-notifications.spec.ts` | **new** | 4 specs: KKM-cannot-verify, PDRM-verifies, organiser-receives, markNotificationRead. |
-| `control-verification-ui.spec.ts` | **new** | 2 UI smoke specs for the Stage-1 control verification form. |
+| `m3-controls-notifications.spec.ts` | **new** (Q1 refactor) | 4 specs: KKM-cannot-verify, PDRM-verifies (per-doc), organiser-receives, markNotificationRead. |
+| `control-verification-ui.spec.ts` | **new** (Q1 refactor) | 2 UI smoke specs for the per-doc Stage-1 control verification form. |
+| `officer-assignment.spec.ts` | **new** (Workstream 1) | 2 specs: full flow (assign → 4 officers propose → admin confirms aggregate), PDRM-cannot-record-if-not-assigned. |
 
 ### Branch / deploy
 - Branch: **`anny_cont`** (NOT merged to main; you said "don't merge until I signal").
@@ -225,6 +237,25 @@ npx playwright test tests/m3/pdrm-decision.spec.ts
 
 ---
 
+## 5b. Q1 refactor — `verifyEventControl` → `verifyStage1Doc` (shipped in `ab8b33d`)
+
+The Stage-1 control verification flow used to operate on a single flat `event_controls/{id}` doc. In practice each control item has *N* Stage-1 documents (application / licence / insurance / ...), and the verification has to be **per-doc** — you might accept the application but reject the insurance. The old shape couldn't model that.
+
+**What changed:**
+- `functions/src/http/verifyEventControl.ts` → `functions/src/http/verifyStage1Doc.ts`. New signature: `(eventId, controlId, docId, status, rationale, evidencePath?)`. Operates on `event_controls/{controlId}/stage1_docs/{docId}`.
+- The Stage-1 doc carries its own provenance: `status` / `verifiedBy` / `verifiedAt` / `rejectionReason` / `rejectionSuggestion`. No more separate `ControlVerification` collection.
+- The function recomputes the parent control's aggregate `label` from its stage1 docs: any rejected → `resubmit_required`; all verified/use_previous → `approved`; else `pending`. It also maintains `event.verifiedControlIds`.
+- `shared/types.ts`: dropped `ControlVerification` interface and `COLLECTIONS.CONTROL_VERIFICATIONS`. Added `stage1_doc_approved` / `stage1_doc_rejected` to `NotificationType`. `Stage1Doc` now owns its own status fields.
+- `frontend/src/pages/authority/AuthorityEventReview.tsx`: the Stage-1 control verification section now subscribes to each control's `stage1_docs` sub-collection and renders a per-doc form. `ControlLabelBadge` (per control) + `DocStatusBadge` (per doc) make the aggregate vs individual state visible at a glance.
+- `frontend/tests/m3/global-setup.ts`: added a `seedEventControls` helper that seeds one control per `requiredAuthority` with 3 stage1_docs each (application / licence / insurance) in `pending_verification`. Called from **both** the existing-event path and the negative-test-fixture path (was the root cause of one flake: the existing-event path wasn't re-seeding after the pre-cleanup wipe).
+- Test selectors: scoped the `Approve` / `Reject` / `Request amendment` / `decision rationale` locators to the "Your decision" section to avoid strict-mode collisions with the new per-doc forms.
+
+**Migration status:** Round 1 (rename + types + UI + tests) and Round 2 (delete the old flat `verifiedControlIds` logic) shipped in `ab8b33d`. Round 3 (post-merge legacy-data cleanup via Admin SDK) not blocking — only matters once we cut a release with prior data.
+
+**Test status:** 28/28 across 3 projects (`m3-smoke` 12/12, `m3-full` 14/14, `m3-workstream1` 2/2). The 3-project split (commit `777bb55`) was essential — the per-doc tests sign in/out 5+ times each, and cumulative Firebase Auth slowness was the previous flake source.
+
+---
+
 ## 6. Open items & questions for you
 
 1. **Stage-1 control list generation is NOT in this round.** `verifyEventControl` and the UI form work great against pre-existing `event_controls` docs, but no production code path creates those docs. Today they come from `functions/scripts/seedMockData.js` (mock seed) or `tests/m3/global-setup.ts` (test fixture). Per the handoffs, **M2 should generate the canonical control list from the HIRARC residual-hazard analysis** (each residual hazard implies a Stage-1 control to verify). M3 only verifies what's declared. M2 doesn't yet write `event_controls/{controlId}` docs after assessment finalisation. Three options: (a) hand it to M2 owner, (b) M3 generates on approval (couples M3 to M2's hazard model), (c) defer until M2 lands it. I recommend (a) — cleanest module split.
@@ -241,6 +272,14 @@ npx playwright test tests/m3/pdrm-decision.spec.ts
 ## 7. Commit log under review
 
 ```
+ab8b33d  refactor(m3)!: verifyStage1Doc — per-doc verification under event_controls/{id}/stage1_docs/{docId}
+2b8db0d  chore: rebuild functions lib artifacts for Workstream 1
+44a7840  feat(m3): Workstream 1 - officer assignment + second review flow
+777bb55  fix(tests): use firebase SDK auth + 3-project split - flakes gone
+bf79619  feat(m3): round N+1 setup — officers, venue.state, control list stub
+4f668d4  docs(m3): comprehensive gap analysis vs FR v4 + use case diagram
+48e4d3a  docs(m3): cross-module integration contract (locked against Q1/Q2/Q3/Q4/Q5)
+89cc2b8  docs(m3): M3 owner decision - drop Use Previous gate (A26)
 0526286  chore(tests): remove debug.spec.ts and debug2.spec.ts scratch specs
 3947c41  feat(m3): Stage-1 control verification UI in AuthorityEventReview + Firestore rules
 5719300  fix(m3): 12/12 green — Firestore index for notifications + resolveAuthUid + seed organizer UID
@@ -270,7 +309,7 @@ Commits before `e1263fe` were either the original M3 foundation (already in main
 
 **TL;DR for the impatient:**
 - Your module: **M3 — Authority Approval and Notification** (M3 teammate role).
-- The 9-point diff in §2 is what changed; everything else is the existing M3 foundation.
+- The 13-point diff in §2 is what changed; everything else is the existing M3 foundation. The Q1 refactor (§5b) is the biggest single change this round.
 - 5-minute smoke test in §4 step 1 is the fastest way to feel the whole thing work.
-- 14/14 Playwright specs pass.
+- 28/28 Playwright specs pass across 3 projects.
 - Branch is `anny_cont` — not merged. Tell me when you want to merge.
