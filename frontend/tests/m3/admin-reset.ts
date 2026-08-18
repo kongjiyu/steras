@@ -57,6 +57,45 @@ export async function resetMountainRun(): Promise<void> {
 }
 
 /**
+ * Reset evt-001-kl-music-festival (Approved) for Workstream 2 tests:
+ * Approved, no control list generated, no per-control docs. Wipes the
+ * `event_controls/` sub-collection + audit logs + control list snapshot
+ * + notifications. Used by generate-control-list.spec.ts and
+ * organizer-event-controls.spec.ts.
+ */
+export async function resetApprovedEvent(): Promise<void> {
+  const eventId = 'evt-001-kl-music-festival';
+  const eventRef = db.collection('events').doc(eventId);
+  // Wipe per-control docs + their stage1_docs sub-collections.
+  const ctrls = await eventRef.collection('event_controls').get();
+  const b1 = db.batch();
+  for (const c of ctrls.docs) {
+    const s1 = await c.ref.collection('stage1_docs').get();
+    for (const d of s1.docs) b1.delete(d.ref);
+    b1.delete(c.ref);
+  }
+  await b1.commit();
+  // Wipe audit logs (in case prior runs wrote them).
+  const audits = await eventRef.collection('audit_logs').get();
+  const bAudit = db.batch();
+  for (const a of audits.docs) bAudit.delete(a.ref);
+  await bAudit.commit();
+  // Wipe notifications from prior runs.
+  const ns = await db.collection('notifications').get();
+  const b2 = db.batch();
+  ns.docs.forEach((d) => b2.delete(d.ref));
+  await b2.commit();
+  // Reset the event's control-list fields + ensure status + organizer.
+  await eventRef.update({
+    status: 'Approved',
+    organizerId: UAT_ORGANIZER_UID,
+    controlListGenerated: false,
+    controlListSnapshot: null,
+    updatedAt: Date.now(),
+  });
+}
+
+/**
  * Reset evt-004 (marathon) for Workstream 1 tests: UnderReview +
  * reviewStage='initial', no assignments. Resets all 5 officers'
  * workloadCount to 0. Also clears the event's audit logs (so the

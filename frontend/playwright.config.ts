@@ -71,20 +71,22 @@ export default defineConfig({
         'm3-negative-gates.spec.ts',
         'm3-aggregate.spec.ts',
         'm3-controls-notifications.spec.ts',
+        'organizer-event-controls.spec.ts',
       ],
       use: { ...devices['Desktop Chrome'], channel: undefined },
     },
     {
       name: 'm3-full',
-      // smoke + control-verification-ui. Excludes officer-assignment
-      // (its 5-6 sequential Firebase Auth logins flake when run
-      // immediately after the other 12 specs).
+      // smoke + control-verification-ui + generate-control-list.
+      // Excludes officer-assignment (its 5-6 sequential Firebase Auth
+      // logins flake when run immediately after the other 12 specs).
       testMatch: [
         'pdrm-decision.spec.ts',
         'm3-negative-gates.spec.ts',
         'm3-aggregate.spec.ts',
         'm3-controls-notifications.spec.ts',
         'control-verification-ui.spec.ts',
+        'generate-control-list.spec.ts',
       ],
       use: { ...devices['Desktop Chrome'], channel: undefined },
     },
