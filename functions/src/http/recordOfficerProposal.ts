@@ -41,6 +41,13 @@ interface RecordOfficerProposalRequest {
   decision?: DecisionValue;
   reason?: string;
   suggestion?: string;
+  /**
+   * FR-M3-16: when approving, the officer must tick a checkbox
+   * confirming review of the assessment, advisory, evidence, and
+   * resource recommendation. Required when `decision === 'Approved'`;
+   * ignored otherwise. Defaults to false.
+   */
+  confirmedReview?: boolean;
 }
 
 const REASON_MIN = 10;
@@ -53,6 +60,7 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
   const decision = request.data?.decision;
   const reason = (request.data?.reason ?? '').trim();
   const suggestion = (request.data?.suggestion ?? '').trim();
+  const confirmedReview = request.data?.confirmedReview === true;
 
   if (!eventId) throw new HttpsError('invalid-argument', 'eventId is required.');
   if (!isDecision(decision)) throw new HttpsError('invalid-argument', 'A valid decision is required.');
@@ -64,6 +72,15 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
   }
   if (decision === 'Rejected' && suggestion.length === 0) {
     throw new HttpsError('invalid-argument', 'A suggestion is required when rejecting.');
+  }
+  // FR-M3-16: officer must confirm review of all listed materials
+  // before approving. The UI checkbox drives this — server-side gate
+  // is the source of truth.
+  if (decision === 'Approved' && !confirmedReview) {
+    throw new HttpsError(
+      'failed-precondition',
+      'You must confirm that you have reviewed the assessment, advisory, evidence, and resource recommendation before approving.',
+    );
   }
 
   const db = firestore();
@@ -149,6 +166,9 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
       }
     }
     // Notify the organiser (FR-M3-08) — wraps the legacy notification.
+    // FR-M3-08: rejection notifications carry reason + suggestion as
+    // separate fields so the bell UI can surface them structurally
+    // (not just mashed into the message).
     if (event.organizerId) {
       try {
         const recipientUid = await resolveAuthUid(event.organizerId);
@@ -165,6 +185,8 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
             title: `${profile.authorityType} recorded ${decision}`,
             message: `${profile.authorityType} ${decision} (officer proposal). Final decision pending second review.`,
             sourceActionId: `proposal_${assignmentId}`,
+            ...(decision === 'Rejected' ? { reason, suggestion: suggestion || undefined } : {}),
+            ...(decision === 'AmendmentRequested' && suggestion ? { reason, suggestion } : {}),
           });
         }
       } catch (err) {

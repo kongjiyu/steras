@@ -36,6 +36,15 @@ export interface NotificationInput {
   message: string;
   /** Idempotency key. If a notification with this id already exists, no-op. */
   sourceActionId: string;
+  /**
+   * FR-M3-08: rejection / second-review notifications must carry the
+   * reason and suggestion as separate, structured fields (not just
+   * concatenated into `message`). Optional — only set on notifications
+   * where the split is meaningful. The bell UI surfaces them on
+   * separate lines when present.
+   */
+  reason?: string;
+  suggestion?: string;
 }
 
 /**
@@ -51,6 +60,16 @@ export async function createNotification(input: NotificationInput, now = Date.no
   }
   if (!input.message || input.message.length > 500) {
     throw new HttpsError('invalid-argument', 'message is required (max 500 chars).');
+  }
+  // FR-M3-08 size limits on the split fields. Empty strings are
+  // treated as "not set" so callers can pass `''` safely.
+  const reason = input.reason?.trim() || undefined;
+  const suggestion = input.suggestion?.trim() || undefined;
+  if (reason && reason.length > 1_000) {
+    throw new HttpsError('invalid-argument', 'reason is too long (max 1000 chars).');
+  }
+  if (suggestion && suggestion.length > 1_000) {
+    throw new HttpsError('invalid-argument', 'suggestion is too long (max 1000 chars).');
   }
 
   const db = firestore();
@@ -71,6 +90,8 @@ export async function createNotification(input: NotificationInput, now = Date.no
     sourceActionId: input.sourceActionId,
     read: false,
     createdAt: now,
+    ...(reason ? { reason } : {}),
+    ...(suggestion ? { suggestion } : {}),
   });
 }
 

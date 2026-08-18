@@ -209,7 +209,7 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
 
     // Now writes — all reads are done.
     let officerWrites = 0;
-    for (const [auth, officerUid, officerRef] of officerEntries) {
+    for (const [auth, officerUid, officerRef, officer] of officerEntries) {
       const assignmentId = `${versionId}_${auth}`;
       const assignmentRef = eventRef.collection(COLLECTIONS.ASSIGNMENTS).doc(assignmentId);
       const assignment: Assignment = {
@@ -227,6 +227,30 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
         workloadCount: FieldValue.increment(1),
         lastAssignedAt: now,
         updatedAt: now,
+      });
+
+      // Audit log (FR-M3-09..12). Written in the same transaction so
+      // there's no consistency window — the assignment and its audit
+      // trail are committed atomically.
+      const auditId = `assignment_created_${versionId}_${auth}_${now}`;
+      tx.create(eventRef.collection(COLLECTIONS.AUDIT_LOGS).doc(auditId), {
+        id: auditId,
+        eventId,
+        versionId,
+        action: 'assignment_created',
+        actorId: request.auth!.uid,
+        actorRole: 'admin',
+        timestamp: now,
+        notes: `Assigned ${officerUid} as ${auth} officer`,
+        metadata: {
+          authorityType: auth,
+          officerUid,
+          officerState: officer?.state ?? null,
+          officerScopeType: officer?.scopeType ?? null,
+          previousWorkloadCount: officer?.workloadCount ?? 0,
+          newWorkloadCount: (officer?.workloadCount ?? 0) + 1,
+          venueState,
+        },
       });
       officerWrites++;
     }

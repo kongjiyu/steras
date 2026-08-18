@@ -151,6 +151,26 @@ export default function NotificationBell() {
                   <div className="min-w-0 flex-1">
                     <p className="font-semibold text-ink-800">{n.title}</p>
                     <p className="mt-0.5 text-xs leading-5 text-ink-600">{n.message}</p>
+                    {/* FR-M3-08: surface reason + suggestion as separate
+                        lines when present, so the organizer sees the
+                        full feedback (not just the message). Old
+                        notifications without these fields skip this. */}
+                    {(n.reason || n.suggestion) && (
+                      <div className="mt-2 rounded-md border border-ink-100 bg-white px-3 py-2 text-[12px] leading-5 text-ink-700">
+                        {n.reason && (
+                          <p>
+                            <span className="font-semibold text-ink-800">Reason:</span>{' '}
+                            <span className="whitespace-pre-line">{n.reason}</span>
+                          </p>
+                        )}
+                        {n.suggestion && (
+                          <p className={n.reason ? 'mt-1' : ''}>
+                            <span className="font-semibold text-ink-800">Suggestion:</span>{' '}
+                            <span className="whitespace-pre-line">{n.suggestion}</span>
+                          </p>
+                        )}
+                      </div>
+                    )}
                     <p className="mt-1 text-[11px] uppercase tracking-[0.06em] text-ink-400">{timeAgo(n.createdAt)}</p>
                   </div>
                   {!n.read && (

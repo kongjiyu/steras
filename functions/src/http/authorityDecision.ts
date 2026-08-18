@@ -18,6 +18,13 @@ interface AuthorityDecisionRequest {
   eventId?: string;
   decision?: DecisionValue;
   rationale?: string;
+  /**
+   * FR-M3-16: required when `decision === 'Approved'` (officer must
+   * confirm review of all listed materials). Defensive gate on the
+   * legacy path; the new officer flow uses `recordOfficerProposal`
+   * which has the same gate. Defaults to false.
+   */
+  confirmedReview?: boolean;
 }
 
 /** Minimum rationale length when the assessment is provisional / insufficient. */
@@ -46,6 +53,15 @@ export async function makeAuthorityDecisionForUser(
   now = Date.now(),
 ) {
   const { eventId, decision, rationale } = validateDecisionRequest(request);
+  // FR-M3-16: officer must confirm review of all listed materials
+  // before approving. Defensive on the legacy path — the new flow
+  // uses `recordOfficerProposal` which has the same gate.
+  if (decision === 'Approved' && request?.confirmedReview !== true) {
+    throw new HttpsError(
+      'failed-precondition',
+      'You must confirm that you have reviewed the assessment, advisory, evidence, and resource recommendation before approving.',
+    );
+  }
 
   const db = firestore();
   const eventReference = db.collection(COLLECTIONS.EVENTS).doc(eventId);

@@ -477,11 +477,13 @@ export type AuditAction =
   | 'resource_recommended'
   | 'resource_overridden'
   | 'amendment_requested'
+  | 'assignment_created'
   | 'authority_reviewed'
   | 'decision_made'
   | 'public_published'
   | 'control_verified'
-  | 'control_rejected';
+  | 'control_rejected'
+  | 'assignment_revoked';
 
 export type NotificationType =
   | 'decision_made'
@@ -506,6 +508,14 @@ export interface Notification {
   read: boolean;
   createdAt: number;
   readAt?: number;
+  /**
+   * FR-M3-08: rejection notifications must include the reason and
+   * suggestion as separate, structured fields (not just concatenated
+   * into the `message` string). Optional for legacy / non-rejection
+   * notifications — old docs without these fields degrade gracefully.
+   */
+  reason?: string;
+  suggestion?: string;
 }
 
 export type ControlVerificationStatus = 'verified' | 'rejected';

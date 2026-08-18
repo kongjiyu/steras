@@ -48,6 +48,11 @@ export default function AuthorityEventReview() {
   const [historyView, setHistoryView] = useState<'decisions' | 'versions'>('decisions');
   const [downloadingPath, setDownloadingPath] = useState<string | null>(null);
   const [rationale, setRationale] = useState('');
+  // FR-M3-16: officer must tick a checkbox confirming review of all
+  // listed materials (assessment, advisory, evidence, resource ranges)
+  // before approving. The server-side Cloud Function (recordOfficerProposal
+  // + the legacy makeAuthorityDecision) refuses Approved without it.
+  const [confirmedReview, setConfirmedReview] = useState(false);
   const [submittingDecision, setSubmittingDecision] = useState<DecisionValue | null>(null);
   const [editingResources, setEditingResources] = useState(false);
   const [resourceDraft, setResourceDraft] = useState<ResourceQuantities | null>(null);
@@ -163,16 +168,29 @@ export default function AuthorityEventReview() {
   const details = event.eventDetails;
   const reviewOpen = ['Pending', 'UnderReview'].includes(event.status);
   const evidenceReady = Boolean(assessment && resources);
-  const canDecide = reviewOpen && evidenceReady && rationale.trim().length >= 10;
+  // FR-M3-16: Approve additionally requires the confirmedReview checkbox.
+  // Reject / AmendmentRequested don't (per the PRD's intent — the
+  // checkbox is a "I have reviewed everything before I bless this" gate,
+  // not a "I have to agree" gate).
+  const canApprove = reviewOpen && evidenceReady && rationale.trim().length >= 10 && confirmedReview;
+  const canRejectOrAmend = reviewOpen && evidenceReady && rationale.trim().length >= 10;
 
   const submitDecision = async (decision: DecisionValue) => {
-    if (!eventId || !canDecide) return;
+    if (!eventId) return;
+    if (decision === 'Approved' && !canApprove) return;
+    if (decision !== 'Approved' && !canRejectOrAmend) return;
     setSubmittingDecision(decision);
     try {
-      const command = httpsCallable<{ eventId: string; decision: DecisionValue; rationale: string }>(functions, 'makeAuthorityDecision');
-      await command({ eventId, decision, rationale: rationale.trim() });
+      const command = httpsCallable<{ eventId: string; decision: DecisionValue; rationale: string; confirmedReview?: boolean }>(functions, 'makeAuthorityDecision');
+      await command({
+        eventId,
+        decision,
+        rationale: rationale.trim(),
+        ...(decision === 'Approved' ? { confirmedReview: true } : {}),
+      });
       toast.success(decision === 'Approved' ? 'Approval recorded.' : decision === 'Rejected' ? 'Rejection recorded.' : 'Amendment request recorded.');
       setRationale('');
+      setConfirmedReview(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Unable to record decision.');
     } finally {
@@ -403,9 +421,23 @@ export default function AuthorityEventReview() {
                 <textarea className="input mt-1 resize-y" rows={4} maxLength={1000} disabled={!reviewOpen} value={rationale} onChange={(e) => setRationale(e.target.value)} placeholder="Record the evidence and reasoning behind your decision." />
               </label>
               <p className="text-right text-xs text-ink-400">{rationale.trim().length}/1000 · minimum 10</p>
-              <button className="btn-success w-full" disabled={!canDecide || submittingDecision !== null} onClick={() => submitDecision('Approved')}><Check size={16} />{submittingDecision === 'Approved' ? 'Recording...' : 'Approve'}</button>
-              <button className="btn-secondary w-full" disabled={!canDecide || submittingDecision !== null} onClick={() => submitDecision('AmendmentRequested')}><RotateCcw size={16} />{submittingDecision === 'AmendmentRequested' ? 'Recording...' : 'Request amendment'}</button>
-              <button className="btn-danger w-full" disabled={!canDecide || submittingDecision !== null} onClick={() => submitDecision('Rejected')}><X size={16} />{submittingDecision === 'Rejected' ? 'Recording...' : 'Reject'}</button>
+              <label className={`flex items-start gap-2 rounded-md border px-3 py-2 text-xs text-ink-600 ${confirmedReview ? 'border-brand-300 bg-brand-50/50' : 'border-ink-200 bg-white'}`}>
+                <input
+                  type="checkbox"
+                  checked={confirmedReview}
+                  onChange={(e) => setConfirmedReview(e.target.checked)}
+                  disabled={!reviewOpen}
+                  className="mt-0.5 h-4 w-4 accent-brand-600"
+                  data-testid="confirmed-review-checkbox"
+                />
+                <span>
+                  <span className="font-semibold text-ink-700">I confirm I have reviewed</span> the assessment, AI advisory, submitted evidence, and recommended resource ranges for this application.
+                  <span className="mt-0.5 block text-[11px] text-ink-500">Required to approve (FR-M3-16). Not required to reject or request amendment.</span>
+                </span>
+              </label>
+              <button className="btn-success w-full" disabled={!canApprove || submittingDecision !== null} onClick={() => submitDecision('Approved')}><Check size={16} />{submittingDecision === 'Approved' ? 'Recording...' : 'Approve'}</button>
+              <button className="btn-secondary w-full" disabled={!canRejectOrAmend || submittingDecision !== null} onClick={() => submitDecision('AmendmentRequested')}><RotateCcw size={16} />{submittingDecision === 'AmendmentRequested' ? 'Recording...' : 'Request amendment'}</button>
+              <button className="btn-danger w-full" disabled={!canRejectOrAmend || submittingDecision !== null} onClick={() => submitDecision('Rejected')}><X size={16} />{submittingDecision === 'Rejected' ? 'Recording...' : 'Reject'}</button>
             </div>
           </section>
         </aside>

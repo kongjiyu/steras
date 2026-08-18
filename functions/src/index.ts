@@ -36,3 +36,5 @@ export { proposeEventControlList } from './http/proposeEventControlList';
 export { assignAuthorityOfficers } from './http/assignAuthorityOfficers';
 export { recordOfficerProposal } from './http/recordOfficerProposal';
 export { makeSecondReviewDecision } from './http/makeSecondReviewDecision';
+// M3 Workstream 1 polish — reverse an assignment (A15 backup officer swap).
+export { unassignAuthorityOfficers } from './http/unassignAuthorityOfficers';

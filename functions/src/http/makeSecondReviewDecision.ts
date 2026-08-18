@@ -165,6 +165,9 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
           const message = result.reasonOfficer
             ? `${result.reasonOfficer.authorityType} ${result.reasonOfficer.reason}${result.reasonOfficer.suggestion ? '. ' + result.reasonOfficer.suggestion : ''}`
             : `All required authorities have ${result.aggregate} the application.`;
+          // FR-M3-08: surface the featured officer's reason + suggestion
+          // as separate fields so the bell UI can render them on
+          // separate lines (instead of concatenating into the message).
           await createNotification({
             recipientUid,
             eventId,
@@ -173,6 +176,8 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
             title,
             message,
             sourceActionId: `second_review_${versionId}`,
+            ...(result.reasonOfficer?.reason ? { reason: result.reasonOfficer.reason } : {}),
+            ...(result.reasonOfficer?.suggestion ? { suggestion: result.reasonOfficer.suggestion } : {}),
           });
         }
       } catch (err) {

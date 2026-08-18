@@ -6,6 +6,7 @@ import {
   Filter,
   Search,
   ShieldCheck,
+  UserCheck,
 } from 'lucide-react';
 import { collection, getDocs, orderBy, query } from 'firebase/firestore';
 import { db, isFirebaseConfigured } from '../../config/firebase';
@@ -169,29 +170,44 @@ export default function AdminApplicationQueue() {
             </div>
           ) : (
             <ul className="divide-y divide-[#e8e0cf]">
-              {filtered.map((e) => (
-                <li key={e.eventId}>
-                  <Link
-                    to={`/admin/applications/${e.eventId}`}
-                    className="admin-queue-row grid grid-cols-[1.5rem_minmax(0,2fr)_minmax(0,1.4fr)_9rem_7rem_4rem] items-center gap-3 px-4 py-3 transition hover:bg-cream-50"
-                  >
-                    <ClipboardList size={16} className="text-ink-500" />
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-ink-900">{e.eventDetails.name}</p>
-                      <p className="truncate text-xs text-ink-500">
-                        {e.eventDetails.type} · {e.eventDetails.expectedAttendance.toLocaleString()} attendees
-                      </p>
-                    </div>
-                    <div className="min-w-0">
-                      <p className="truncate text-sm text-ink-800">{e.eventDetails.organizerName}</p>
-                      <p className="truncate text-xs text-ink-500">{e.eventDetails.venueName}</p>
-                    </div>
-                    <span className={STATUS_BADGE[e.status]}>{e.status}</span>
-                    <span className="text-xs text-ink-600">{formatDate(e.eventDetails.startDatetime)}</span>
-                    <ChevronRight size={16} className="justify-self-end text-ink-400" />
-                  </Link>
-                </li>
-              ))}
+              {filtered.map((e) => {
+                // Per-row "Assign" link is hidden when the event is
+                // past the assignment stage (second review, closed).
+                const showAssign = e.reviewStage !== 'second'
+                  && !['Approved', 'Rejected', 'Withdrawn'].includes(e.status);
+                return (
+                  <li key={e.eventId} className="flex items-stretch">
+                    <Link
+                      to={`/admin/applications/${e.eventId}`}
+                      className="admin-queue-row grid flex-1 grid-cols-[1.5rem_minmax(0,2fr)_minmax(0,1.4fr)_9rem_7rem_4rem] items-center gap-3 px-4 py-3 transition hover:bg-cream-50"
+                    >
+                      <ClipboardList size={16} className="text-ink-500" />
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-ink-900">{e.eventDetails.name}</p>
+                        <p className="truncate text-xs text-ink-500">
+                          {e.eventDetails.type} · {e.eventDetails.expectedAttendance.toLocaleString()} attendees
+                        </p>
+                      </div>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm text-ink-800">{e.eventDetails.organizerName}</p>
+                        <p className="truncate text-xs text-ink-500">{e.eventDetails.venueName}</p>
+                      </div>
+                      <span className={STATUS_BADGE[e.status]}>{e.status}</span>
+                      <span className="text-xs text-ink-600">{formatDate(e.eventDetails.startDatetime)}</span>
+                      <ChevronRight size={16} className="justify-self-end text-ink-400" />
+                    </Link>
+                    {showAssign && (
+                      <Link
+                        to={`/admin/applications/${e.eventId}/assign`}
+                        className="flex items-center gap-1 border-l border-[#e8e0cf] px-3 text-xs font-semibold text-brand-700 transition hover:bg-cream-50"
+                        aria-label={`Assign officers for ${e.eventDetails.name}`}
+                      >
+                        <UserCheck size={14} /> Assign
+                      </Link>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </section>

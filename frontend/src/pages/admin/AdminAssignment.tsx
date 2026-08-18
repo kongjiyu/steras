@@ -16,7 +16,7 @@ import { Link, useParams } from 'react-router-dom';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { format } from 'date-fns';
-import { ChevronLeft, Shield, ShieldCheck, UserCheck, Users } from 'lucide-react';
+import { ChevronLeft, RotateCcw, Shield, ShieldCheck, UserCheck, Users } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
   Assignment,
@@ -49,6 +49,8 @@ export default function AdminAssignment() {
   const [loadingChecklist, setLoadingChecklist] = useState(true);
   const [committing, setCommitting] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [unassigning, setUnassigning] = useState<AuthorityType | null>(null);
+  const [unassigningAll, setUnassigningAll] = useState(false);
   const [adminNote, setAdminNote] = useState('');
 
   // Live event doc.
@@ -141,6 +143,40 @@ export default function AdminAssignment() {
     }
   };
 
+  const unassign = async (authorityType: AuthorityType | null) => {
+    if (!eventId) return;
+    const msg = authorityType
+      ? `Unassign the ${authorityType} officer? You can re-assign them after.`
+      : 'Unassign ALL officers for this event version? You can re-assign them after.';
+    if (!window.confirm(msg)) return;
+    if (authorityType) {
+      setUnassigning(authorityType);
+    } else {
+      setUnassigningAll(true);
+    }
+    try {
+      const command = httpsCallable<{ eventId: string; authorityType?: AuthorityType }, { revoked: number; reviewStageReset: boolean }>(
+        functions,
+        'unassignAuthorityOfficers',
+      );
+      const payload: { eventId: string; authorityType?: AuthorityType } = { eventId };
+      if (authorityType) payload.authorityType = authorityType;
+      const result = await command(payload);
+      toast.success(`Unassigned ${result.data.revoked} officer(s).${result.data.reviewStageReset ? ' Event returned to pre-assignment state.' : ''}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Unable to unassign.');
+    } finally {
+      setUnassigning(null);
+      setUnassigningAll(false);
+    }
+  };
+
+  // Unassign is only available BEFORE any officer has recorded a
+  // proposal — once a proposal is in, the data is significant and the
+  // admin must go through the second review to close out the work.
+  const canUnassign = isAuthorityReview
+    && !assignments.some((a) => a.status === 'completed');
+
   return (
     <div className="p-5 sm:p-8">
       <Link to={`/admin/applications/${eventId}`} className="mb-4 inline-flex min-h-11 items-center gap-1 text-sm font-medium text-brand-700 hover:text-brand-800">
@@ -182,12 +218,30 @@ export default function AdminAssignment() {
                         {current && <span className="badge bg-green-100 text-status-approved text-xs">Assigned</span>}
                         {current?.status === 'completed' && <span className="badge bg-blue-100 text-brand-700 text-xs">Decision recorded</span>}
                       </div>
-                      <p className="text-xs text-ink-500">{item.candidates.length} eligible officer(s)</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs text-ink-500">{item.candidates.length} eligible officer(s)</p>
+                        {canUnassign && current && current.status !== 'revoked' && (
+                          <button
+                            type="button"
+                            className="btn-secondary !px-2 !py-1 text-xs"
+                            onClick={() => unassign(item.authorityType)}
+                            disabled={unassigning !== null || unassigningAll}
+                            aria-label={`Unassign ${item.authorityType} officer`}
+                          >
+                            <RotateCcw size={12} />{unassigning === item.authorityType ? 'Unassigning...' : 'Unassign'}
+                          </button>
+                        )}
+                      </div>
                     </div>
                     {current ? (
                       <div className="mt-2 rounded-md bg-cream-50 p-3 text-xs text-ink-600">
                         <p><span className="font-semibold">Officer:</span> {current.officerUid}</p>
                         <p><span className="font-semibold">Assigned by:</span> {current.assignedBy} · {format(new Date(current.assignedAt), 'PPp')}</p>
+                        {current.status === 'revoked' && current.revokedAt && (
+                          <p className="mt-1 text-status-rejected">
+                            <span className="font-semibold">Revoked</span> by {current.revokedBy ?? 'admin'} · {format(new Date(current.revokedAt), 'PPp')}
+                          </p>
+                        )}
                         {current.decision && (
                           <p className="mt-1">
                             <span className="font-semibold">Decision:</span> {current.decision} · {format(new Date(current.decidedAt ?? 0), 'PPp')}
@@ -230,6 +284,13 @@ export default function AdminAssignment() {
               <div className="card-body border-t border-ink-100">
                 <button type="button" className="btn-primary w-full" disabled={committing || Object.keys(selected).length === 0} onClick={commit}>
                   <UserCheck size={16} />{committing ? 'Assigning...' : 'Assign officers'}
+                </button>
+              </div>
+            )}
+            {canUnassign && assignments.length > 1 && (
+              <div className="card-body border-t border-ink-100">
+                <button type="button" className="btn-secondary w-full" disabled={unassigning !== null || unassigningAll} onClick={() => unassign(null)}>
+                  <RotateCcw size={14} />{unassigningAll ? 'Unassigning all...' : 'Unassign all officers'}
                 </button>
               </div>
             )}

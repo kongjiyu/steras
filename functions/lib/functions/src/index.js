@@ -14,7 +14,7 @@
  *   - overrideResources     — validates and audits resource adjustments
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.makeSecondReviewDecision = exports.recordOfficerProposal = exports.assignAuthorityOfficers = exports.proposeEventControlList = exports.listMyNotifications = exports.markNotificationRead = exports.verifyStage1Doc = exports.overrideResources = exports.makeAuthorityDecision = exports.withdrawEvent = exports.submitEvent = exports.manualRecompute = exports.recomputeRiskAndResources = exports.onEventUpdated = exports.onEventCreated = void 0;
+exports.unassignAuthorityOfficers = exports.makeSecondReviewDecision = exports.recordOfficerProposal = exports.assignAuthorityOfficers = exports.proposeEventControlList = exports.listMyNotifications = exports.markNotificationRead = exports.verifyStage1Doc = exports.overrideResources = exports.makeAuthorityDecision = exports.withdrawEvent = exports.submitEvent = exports.manualRecompute = exports.recomputeRiskAndResources = exports.onEventUpdated = exports.onEventCreated = void 0;
 const app_1 = require("firebase-admin/app");
 // Initialize firebase-admin before any function code runs.
 (0, app_1.initializeApp)();
@@ -50,4 +50,7 @@ var recordOfficerProposal_1 = require("./http/recordOfficerProposal");
 Object.defineProperty(exports, "recordOfficerProposal", { enumerable: true, get: function () { return recordOfficerProposal_1.recordOfficerProposal; } });
 var makeSecondReviewDecision_1 = require("./http/makeSecondReviewDecision");
 Object.defineProperty(exports, "makeSecondReviewDecision", { enumerable: true, get: function () { return makeSecondReviewDecision_1.makeSecondReviewDecision; } });
+// M3 Workstream 1 polish — reverse an assignment (A15 backup officer swap).
+var unassignAuthorityOfficers_1 = require("./http/unassignAuthorityOfficers");
+Object.defineProperty(exports, "unassignAuthorityOfficers", { enumerable: true, get: function () { return unassignAuthorityOfficers_1.unassignAuthorityOfficers; } });
 //# sourceMappingURL=index.js.map

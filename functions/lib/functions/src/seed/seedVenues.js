@@ -5,7 +5,7 @@ exports.stableVenueId = stableVenueId;
 exports.seedVenues = seedVenues;
 const app_1 = require("firebase-admin/app");
 const firestore_1 = require("firebase-admin/firestore");
-const types_1 = require("../../../shared/types");
+const types_1 = require("@shared/types");
 const app = (0, app_1.initializeApp)({
     credential: (0, app_1.applicationDefault)(),
     projectId: process.env.FIREBASE_PROJECT_ID ?? process.env.GCLOUD_PROJECT ?? 'linkos-496505',
