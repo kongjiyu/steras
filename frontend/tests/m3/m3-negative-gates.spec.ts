@@ -14,10 +14,13 @@ test.describe('@M3 negative decision gates', () => {
     await loginAs('pdrm');
     await page.goto(`/authority/events/evt-compliance-blocked`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: /your decision/i })).toBeVisible();
-    const rationaleTa = page.getByLabel(/decision rationale/i);
+    // Scope to the "Your decision" section — the Stage-1 control
+    // verification section also renders rationale textareas.
+    const decisionSection = page.locator('section', { has: page.getByRole('heading', { name: /your decision/i }) });
+    const rationaleTa = decisionSection.getByLabel(/decision rationale/i);
     await rationaleTa.scrollIntoViewIfNeeded();
     await rationaleTa.fill('Test rationale for blocked compliance scenario — should be rejected by the Cloud Function.');
-    const approveBtn = page.getByRole('button', { name: /^approve$/i });
+    const approveBtn = decisionSection.getByRole('button', { name: /^approve$/i });
     await approveBtn.scrollIntoViewIfNeeded();
     await expect(approveBtn).toBeEnabled({ timeout: 10_000 });
     await approveBtn.click();
@@ -32,11 +35,13 @@ test.describe('@M3 negative decision gates', () => {
     await loginAs('bomba');
     await page.goto(`/authority/events/evt-provisional-readiness`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: /your decision/i })).toBeVisible();
-    const rationaleTa = page.getByLabel(/decision rationale/i);
+    // Scope to the "Your decision" section (Stage-1 section also has textareas).
+    const decisionSection = page.locator('section', { has: page.getByRole('heading', { name: /your decision/i }) });
+    const rationaleTa = decisionSection.getByLabel(/decision rationale/i);
     await rationaleTa.scrollIntoViewIfNeeded();
     // 30 chars — passes the 10-char baseline but fails the 80-char provisional gate
     rationaleTa.fill('Short rationale that fails.');
-    const approveBtn = page.getByRole('button', { name: /^approve$/i });
+    const approveBtn = decisionSection.getByRole('button', { name: /^approve$/i });
     await approveBtn.scrollIntoViewIfNeeded();
     await expect(approveBtn).toBeEnabled({ timeout: 10_000 });
     await approveBtn.click();
@@ -47,14 +52,16 @@ test.describe('@M3 negative decision gates', () => {
     await loginAs('bomba');
     await page.goto(`/authority/events/evt-provisional-readiness`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: /your decision/i })).toBeVisible();
-    const rationaleTa = page.getByLabel(/decision rationale/i);
+    // Scope to the "Your decision" section (Stage-1 section also has textareas).
+    const decisionSection = page.locator('section', { has: page.getByRole('heading', { name: /your decision/i }) });
+    const rationaleTa = decisionSection.getByLabel(/decision rationale/i);
     await rationaleTa.scrollIntoViewIfNeeded();
     rationaleTa.fill(
       'Bomba approval: provisional M2 readiness acknowledged. ' +
       'KKM mass-gathering guideline and venue fire cert verified on site. ' +
       'No outstanding safety concerns. The provisional status is acceptable for this event size and risk profile.',
     );
-    const approveBtn = page.getByRole('button', { name: /^approve$/i });
+    const approveBtn = decisionSection.getByRole('button', { name: /^approve$/i });
     await approveBtn.scrollIntoViewIfNeeded();
     await expect(approveBtn).toBeEnabled({ timeout: 10_000 });
     await approveBtn.click();

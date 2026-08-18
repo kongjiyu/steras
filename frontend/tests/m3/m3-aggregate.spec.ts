@@ -32,8 +32,13 @@ test.describe('@M3 aggregate decision flows', () => {
     await loginAs('pdrm');
     await page.goto(`/authority/events/${EVENTS.foodFair}`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: /your decision/i })).toBeVisible();
-    await page.getByLabel(/decision rationale/i).fill('PDRM E2E — crowd ingress plan fails. Rejecting for revision.');
-    const rejectBtn = page.getByRole('button', { name: /^reject$/i });
+    // Scope to the "Your decision" section — the Stage-1 control
+    // verification section also renders Verify/Reject buttons (per
+    // authority × per Stage-1 doc), so a global selector would match
+    // multiple elements under strict mode.
+    const decisionSection = page.locator('section', { has: page.getByRole('heading', { name: /your decision/i }) });
+    await decisionSection.getByLabel(/decision rationale/i).fill('PDRM E2E — crowd ingress plan fails. Rejecting for revision.');
+    const rejectBtn = decisionSection.getByRole('button', { name: /^reject$/i });
     await rejectBtn.scrollIntoViewIfNeeded();
     await expect(rejectBtn).toBeEnabled();
     await rejectBtn.click();
@@ -79,8 +84,11 @@ test.describe('@M3 aggregate decision flows', () => {
       // The global-setup already cleared; if not, this test would have failed
       // earlier in the suite. Best-effort assertion.
     }
-    await page.getByLabel(/decision rationale/i).fill('PDRM E2E — requesting amendment to medical plan and traffic TMP.');
-    const amendBtn = page.getByRole('button', { name: /request amendment/i });
+    // Scope to the "Your decision" section for rationale + buttons
+    // (Stage-1 section also has buttons/textareas).
+    const decisionSection = page.locator('section', { has: page.getByRole('heading', { name: /your decision/i }) });
+    await decisionSection.getByLabel(/decision rationale/i).fill('PDRM E2E — requesting amendment to medical plan and traffic TMP.');
+    const amendBtn = decisionSection.getByRole('button', { name: /request amendment/i });
     await amendBtn.scrollIntoViewIfNeeded();
     await expect(amendBtn).toBeEnabled();
     await amendBtn.click();
@@ -108,10 +116,13 @@ test.describe('@M3 aggregate decision flows', () => {
       await loginAs(key as 'pdrm' | 'bomba' | 'kkm' | 'dbkl');
       await page.goto(`/authority/events/${EVENTS.foodFair}`, { waitUntil: 'domcontentloaded' });
       await expect(page.getByRole('heading', { name: /your decision/i })).toBeVisible();
-      const ta = page.getByLabel(/decision rationale/i);
+      // Scope to the "Your decision" section (Stage-1 section has its
+      // own buttons/textareas).
+      const decisionSection = page.locator('section', { has: page.getByRole('heading', { name: /your decision/i }) });
+      const ta = decisionSection.getByLabel(/decision rationale/i);
       await ta.scrollIntoViewIfNeeded();
       await ta.fill(rationale);
-      const approveBtn = page.getByRole('button', { name: /^approve$/i });
+      const approveBtn = decisionSection.getByRole('button', { name: /^approve$/i });
       await approveBtn.scrollIntoViewIfNeeded();
       await expect(approveBtn).toBeEnabled();
       await approveBtn.click();

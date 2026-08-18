@@ -36,12 +36,14 @@ test.describe('@M3 PDRM decision flow', () => {
 
     // Fill the rationale and submit Approve.
     const rationale = 'PDRM E2E test — crowd ingress plan accepted, traffic management plan acceptable.';
-    const rationaleTa = page.getByLabel(/decision rationale/i);
+    // Scope to the "Your decision" section (Stage-1 section also has textareas/buttons).
+    const decisionSection = page.locator('section', { has: page.getByRole('heading', { name: /your decision/i }) });
+    const rationaleTa = decisionSection.getByLabel(/decision rationale/i);
     await rationaleTa.scrollIntoViewIfNeeded();
     await rationaleTa.fill(rationale);
     await expect(rationaleTa).toHaveValue(rationale);
 
-    const approveBtn = page.getByRole('button', { name: /^approve$/i });
+    const approveBtn = decisionSection.getByRole('button', { name: /^approve$/i });
     await approveBtn.scrollIntoViewIfNeeded();
     await expect(approveBtn).toBeEnabled({ timeout: 10_000 });
     await approveBtn.click();

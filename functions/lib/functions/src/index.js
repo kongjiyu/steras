@@ -14,7 +14,7 @@
  *   - overrideResources     — validates and audits resource adjustments
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.makeSecondReviewDecision = exports.recordOfficerProposal = exports.assignAuthorityOfficers = exports.proposeEventControlList = exports.listMyNotifications = exports.markNotificationRead = exports.verifyEventControl = exports.overrideResources = exports.makeAuthorityDecision = exports.withdrawEvent = exports.submitEvent = exports.manualRecompute = exports.recomputeRiskAndResources = exports.onEventUpdated = exports.onEventCreated = void 0;
+exports.makeSecondReviewDecision = exports.recordOfficerProposal = exports.assignAuthorityOfficers = exports.proposeEventControlList = exports.listMyNotifications = exports.markNotificationRead = exports.verifyStage1Doc = exports.overrideResources = exports.makeAuthorityDecision = exports.withdrawEvent = exports.submitEvent = exports.manualRecompute = exports.recomputeRiskAndResources = exports.onEventUpdated = exports.onEventCreated = void 0;
 const app_1 = require("firebase-admin/app");
 // Initialize firebase-admin before any function code runs.
 (0, app_1.initializeApp)();
@@ -34,8 +34,8 @@ var authorityDecision_1 = require("./http/authorityDecision");
 Object.defineProperty(exports, "makeAuthorityDecision", { enumerable: true, get: function () { return authorityDecision_1.makeAuthorityDecision; } });
 var overrideResources_1 = require("./http/overrideResources");
 Object.defineProperty(exports, "overrideResources", { enumerable: true, get: function () { return overrideResources_1.overrideResources; } });
-var verifyEventControl_1 = require("./http/verifyEventControl");
-Object.defineProperty(exports, "verifyEventControl", { enumerable: true, get: function () { return verifyEventControl_1.verifyEventControl; } });
+var verifyStage1Doc_1 = require("./http/verifyStage1Doc");
+Object.defineProperty(exports, "verifyStage1Doc", { enumerable: true, get: function () { return verifyStage1Doc_1.verifyStage1Doc; } });
 var notifications_1 = require("./http/notifications");
 Object.defineProperty(exports, "markNotificationRead", { enumerable: true, get: function () { return notifications_1.markNotificationRead; } });
 Object.defineProperty(exports, "listMyNotifications", { enumerable: true, get: function () { return notifications_1.listMyNotifications; } });

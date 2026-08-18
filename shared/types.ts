@@ -489,7 +489,10 @@ export type NotificationType =
   | 'application_rejected'
   | 'amendment_requested'
   | 'control_verified'
-  | 'control_rejected';
+  | 'control_rejected'
+  // Q1 refactor: per-doc Stage 1 verification notifications
+  | 'stage1_doc_approved'
+  | 'stage1_doc_rejected';
 
 export interface Notification {
   notificationId: string;
@@ -507,22 +510,9 @@ export interface Notification {
 
 export type ControlVerificationStatus = 'verified' | 'rejected';
 
-export interface ControlVerification {
-  /** Composite ID = `${versionId}_${controlId}_${authorityType}` */
-  verificationId: string;
-  eventId: string;
-  versionId: string;
-  controlId: string;
-  authorityType: AuthorityType;
-  reviewerUid: string;
-  status: ControlVerificationStatus;
-  rationale: string;
-  /** Optional storage path (Firebase Storage or external) the reviewer used. */
-  evidencePath?: string;
-  /** Optional attached file metadata (filename, sizeBytes, mimeType). */
-  evidenceFile?: { name: string; sizeBytes: number; mimeType: string };
-  createdAt: number;
-}
+// Q1 refactor: the old `ControlVerification` standalone verification record
+// is gone. Per-doc verification provenance now lives directly on the
+// Stage1Doc (status, verifiedBy, verifiedAt, rejectionReason, filePath).
 
 export interface AuditLog {
   id: string;
@@ -661,7 +651,6 @@ export const COLLECTIONS = {
   PUBLIC_EVENTS: 'public_events',
   NOTIFICATIONS: 'notifications',
   EVENT_CONTROLS: 'event_controls',
-  CONTROL_VERIFICATIONS: 'control_verifications',
   // M3 round N+1 — workstream 1
   OFFICERS: 'officers',
   ASSIGNMENTS: 'assignments',

@@ -11,14 +11,15 @@ import {
   AuthorityDecision,
   AuthorityType,
   COLLECTIONS,
-  ControlVerification,
   ControlVerificationStatus,
   DecisionValue,
+  EventControl,
   EventRecord,
   EventVersion,
   ResourceQuantities,
   ResourceRecommendation,
   RiskAssessment,
+  Stage1Doc,
 } from '@shared/types';
 import { db, functions, isFirebaseConfigured, storage } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -56,24 +57,16 @@ export default function AuthorityEventReview() {
   const [loadError, setLoadError] = useState('');
   const [supportingDataError, setSupportingDataError] = useState('');
   const [retryKey, setRetryKey] = useState(0);
-  // M3 control verification (FR-M3-22, FR-M3-23)
-  interface EventControlDoc {
-    controlId: string;
-    eventId: string;
-    title?: string;
-    description?: string;
-    stage?: string;
-    status?: 'declared' | 'verified' | 'rejected' | 'absent' | 'unknown';
-    createdAt?: number;
-    updatedAt?: number;
-    reviewerUid?: string;
-    authorityType?: AuthorityType;
-  }
-  const [eventControls, setEventControls] = useState<EventControlDoc[]>([]);
-  const [controlVerifications, setControlVerifications] = useState<ControlVerification[]>([]);
-  const [controlRationale, setControlRationale] = useState<Record<string, string>>({});
-  const [controlEvidencePath, setControlEvidencePath] = useState<Record<string, string>>({});
-  const [submittingControl, setSubmittingControl] = useState<string | null>(null);
+  // M3 control verification (FR-M3-22, FR-M3-23, Q1 refactor)
+  // Each control item has N Stage 1 docs; verification is per-doc.
+  // Stage 1 docs live at event_controls/{controlId}/stage1_docs/{docId}
+  // and carry the verification provenance directly on the doc.
+  const [eventControls, setEventControls] = useState<EventControl[]>([]);
+  const [stage1DocsByControl, setStage1DocsByControl] = useState<Record<string, Stage1Doc[]>>({});
+  // Per-doc form state, keyed by `${controlId}__${docId}`.
+  const [docRationale, setDocRationale] = useState<Record<string, string>>({});
+  const [docEvidencePath, setDocEvidencePath] = useState<Record<string, string>>({});
+  const [submittingDoc, setSubmittingDoc] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isFirebaseConfigured || !eventId) {
@@ -125,13 +118,21 @@ export default function AuthorityEventReview() {
       setVersions(snapshot.docs.map((item) => item.data() as EventVersion).sort((a, b) => b.versionNumber - a.versionNumber));
     }, supportingError);
     const unsubscribeControls = onSnapshot(query(collection(eventReference, COLLECTIONS.EVENT_CONTROLS)), (snapshot) => {
-      setEventControls(snapshot.docs.map((item) => {
-        const { controlId: _ignored, ...rest } = item.data() as EventControlDoc;
-        return { controlId: item.id, ...rest } as EventControlDoc;
-      }).sort((a, b) => a.controlId.localeCompare(b.controlId)));
-    }, supportingError);
-    const unsubscribeVerifications = onSnapshot(query(collection(eventReference, COLLECTIONS.CONTROL_VERIFICATIONS)), (snapshot) => {
-      setControlVerifications(snapshot.docs.map((item) => item.data() as ControlVerification));
+      const controls = snapshot.docs.map((item) => ({ controlId: item.id, ...(item.data() as EventControl) }) as EventControl)
+        .sort((a, b) => a.controlId.localeCompare(b.controlId));
+      setEventControls(controls);
+      // Subscribe to each control's stage1_docs sub-collection.
+      // (We tear down previous subscriptions in the cleanup.)
+      const unsubscribes: Array<() => void> = [];
+      const next: Record<string, Stage1Doc[]> = {};
+      for (const control of controls) {
+        const ref = collection(eventReference, COLLECTIONS.EVENT_CONTROLS, control.controlId, COLLECTIONS.STAGE1_DOCS);
+        unsubscribes.push(onSnapshot(query(ref), (docsSnap) => {
+          next[control.controlId] = docsSnap.docs.map((d) => ({ docId: d.id, ...(d.data() as Stage1Doc) }) as Stage1Doc);
+          setStage1DocsByControl((prev) => ({ ...prev, [control.controlId]: next[control.controlId] }));
+        }, supportingError));
+      }
+      return () => { for (const u of unsubscribes) u(); };
     }, supportingError);
     return () => {
       unsubscribeAssessment();
@@ -140,7 +141,6 @@ export default function AuthorityEventReview() {
       unsubscribeDecisionHistory();
       unsubscribeVersions();
       unsubscribeControls();
-      unsubscribeVerifications();
     };
   }, [event?.currentVersionId, eventId]);
 
@@ -213,42 +213,48 @@ export default function AuthorityEventReview() {
     }
   };
 
-  const submitControlVerification = async (controlId: string, status: ControlVerificationStatus) => {
+  const submitControlVerification = async (controlId: string, docId: string, status: ControlVerificationStatus) => {
     if (!eventId) return;
-    const rationale = (controlRationale[controlId] ?? '').trim();
+    const key = `${controlId}__${docId}`;
+    const rationale = (docRationale[key] ?? '').trim();
     if (rationale.length < 10) {
       toast.error('Verification rationale must be at least 10 characters.');
       return;
     }
-    setSubmittingControl(controlId);
+    setSubmittingDoc(key);
     try {
-      const evidencePath = (controlEvidencePath[controlId] ?? '').trim();
-      const command = httpsCallable<{ eventId: string; controlId: string; status: ControlVerificationStatus; rationale: string; evidencePath?: string }>(
-        functions,
-        'verifyEventControl',
-      );
+      const evidencePath = (docEvidencePath[key] ?? '').trim();
+      const command = httpsCallable<{
+        eventId: string;
+        controlId: string;
+        docId: string;
+        status: ControlVerificationStatus;
+        rationale: string;
+        evidencePath?: string;
+      }>(functions, 'verifyStage1Doc');
       await command({
         eventId,
         controlId,
+        docId,
         status,
         rationale,
         ...(evidencePath ? { evidencePath } : {}),
       });
-      toast.success(status === 'verified' ? 'Control verified.' : 'Control rejected.');
-      setControlRationale((current) => {
+      toast.success(status === 'verified' ? 'Stage 1 document approved.' : 'Stage 1 document rejected.');
+      setDocRationale((current) => {
         const next = { ...current };
-        delete next[controlId];
+        delete next[key];
         return next;
       });
-      setControlEvidencePath((current) => {
+      setDocEvidencePath((current) => {
         const next = { ...current };
-        delete next[controlId];
+        delete next[key];
         return next;
       });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Unable to record control verification.');
+      toast.error(error instanceof Error ? error.message : 'Unable to record verification.');
     } finally {
-      setSubmittingControl(null);
+      setSubmittingDoc(null);
     }
   };
 
@@ -344,14 +350,14 @@ export default function AuthorityEventReview() {
 
           <ControlVerificationSection
             eventControls={eventControls}
-            controlVerifications={controlVerifications}
+            stage1DocsByControl={stage1DocsByControl}
             myAuthorityType={myAuthorityType}
             reviewOpen={reviewOpen}
-            controlRationale={controlRationale}
-            controlEvidencePath={controlEvidencePath}
-            submittingControl={submittingControl}
-            onRationaleChange={(controlId, value) => setControlRationale((current) => ({ ...current, [controlId]: value }))}
-            onEvidencePathChange={(controlId, value) => setControlEvidencePath((current) => ({ ...current, [controlId]: value }))}
+            docRationale={docRationale}
+            docEvidencePath={docEvidencePath}
+            submittingDoc={submittingDoc}
+            onRationaleChange={(key, value) => setDocRationale((current) => ({ ...current, [key]: value }))}
+            onEvidencePathChange={(key, value) => setDocEvidencePath((current) => ({ ...current, [key]: value }))}
             onSubmit={submitControlVerification}
           />
 
@@ -438,51 +444,38 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 /**
- * Stage-1 Control verification section (FR-M3-22, FR-M3-23, FR-M3-24).
+ * Stage-1 Control verification section (FR-M3-22, FR-M3-23, Q1 refactor).
  *
- * For each event_control in 'declared' status, the assigned authority can
- * verify (move to 'verified') or reject (move to 'rejected') with rationale
- * and optional evidence path. Verified/rejected controls show the
- * persisted record (reviewer, timestamp, rationale, evidence).
+ * Each control item has N Stage 1 docs (e.g. an application letter, a
+ * licence, an insurance policy). The assigned authority verifies each doc
+ * independently via the per-doc form below. The control's aggregate
+ * `label` is recomputed by the cloud function from its stage1 docs.
  *
  * Only the officer whose authority type is in `event.requiredAuthorities`
  * can act; other authorities see a read-only state.
  */
 interface ControlVerificationSectionProps {
-  eventControls: Array<{
-    controlId: string;
-    eventId: string;
-    title?: string;
-    description?: string;
-    stage?: string;
-    status?: 'declared' | 'verified' | 'rejected' | 'absent' | 'unknown';
-    createdAt?: number;
-    updatedAt?: number;
-    reviewerUid?: string;
-    authorityType?: AuthorityType;
-  }>;
-  controlVerifications: ControlVerification[];
+  eventControls: EventControl[];
+  stage1DocsByControl: Record<string, Stage1Doc[]>;
   myAuthorityType: AuthorityType | undefined;
   reviewOpen: boolean;
-  controlRationale: Record<string, string>;
-  controlEvidencePath: Record<string, string>;
-  submittingControl: string | null;
-  onRationaleChange: (controlId: string, value: string) => void;
-  onEvidencePathChange: (controlId: string, value: string) => void;
-  onSubmit: (controlId: string, status: ControlVerificationStatus) => Promise<void>;
+  docRationale: Record<string, string>;
+  docEvidencePath: Record<string, string>;
+  submittingDoc: string | null;
+  onRationaleChange: (key: string, value: string) => void;
+  onEvidencePathChange: (key: string, value: string) => void;
+  onSubmit: (controlId: string, docId: string, status: ControlVerificationStatus) => Promise<void>;
 }
 
 function ControlVerificationSection(props: ControlVerificationSectionProps) {
   const {
-    eventControls, controlVerifications, myAuthorityType, reviewOpen,
-    controlRationale, controlEvidencePath, submittingControl,
+    eventControls, stage1DocsByControl, myAuthorityType, reviewOpen,
+    docRationale, docEvidencePath, submittingDoc,
     onRationaleChange, onEvidencePathChange, onSubmit,
   } = props;
   if (eventControls.length === 0) {
     return null;
   }
-  const verByControl = new Map<string, ControlVerification>();
-  for (const v of controlVerifications) verByControl.set(v.controlId, v);
   const canAct = reviewOpen && !!myAuthorityType;
   return (
     <section className="card">
@@ -490,76 +483,95 @@ function ControlVerificationSection(props: ControlVerificationSectionProps) {
         <div>
           <h2 className="font-semibold">Stage-1 control verification</h2>
           <p className="mt-0.5 text-xs text-ink-500">
-            {canAct ? `You are reviewing as ${myAuthorityType}. Verify or reject declared controls with a recorded rationale.` : 'Read-only view — your account is not assigned to this application.'}
+            {canAct
+              ? `You are reviewing as ${myAuthorityType}. Verify or reject each Stage 1 document with a recorded rationale.`
+              : 'Read-only view — your account is not assigned to this application.'}
           </p>
         </div>
         <span className="text-sm font-semibold text-ink-500">{eventControls.length}</span>
       </div>
       <div className="card-body space-y-4">
         {eventControls.map((control) => {
-          const verification = verByControl.get(control.controlId);
-          const resolvedStatus = verification?.status ?? control.status ?? 'declared';
-          const isFinal = resolvedStatus === 'verified' || resolvedStatus === 'rejected';
-          const currentRationale = controlRationale[control.controlId] ?? '';
-          const currentEvidence = controlEvidencePath[control.controlId] ?? '';
-          const canSubmit = canAct && !isFinal && currentRationale.trim().length >= 10 && submittingControl === null;
+          const docs = stage1DocsByControl[control.controlId] ?? [];
+          const controlCanAct = canAct && control.authority === myAuthorityType;
           return (
             <div key={control.controlId} className="rounded-md border border-ink-100 p-3">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <Shield size={16} className="shrink-0 text-brand-700" />
-                    <p className="text-sm font-semibold text-ink-800">{control.title ?? control.controlId}</p>
+                    <p className="text-sm font-semibold text-ink-800">{control.controlName}</p>
                   </div>
-                  {control.description && <p className="mt-1 text-xs text-ink-500">{control.description}</p>}
-                  <p className="mt-1 text-xs text-ink-400">Stage: {control.stage ?? 'Stage1'}</p>
+                  <p className="mt-1 text-xs text-ink-400">Stage: {control.stageRequirement} · Authority: {control.authority} · {docs.length} doc(s)</p>
                 </div>
-                <ControlStatusBadge status={resolvedStatus} />
+                <ControlLabelBadge label={control.label} />
               </div>
-              {isFinal && verification && (
-                <div className="mt-3 rounded-md bg-cream-50 p-3 text-xs text-ink-600">
-                  <p><span className="font-semibold">{verification.authorityType}</span> {verification.status} on {format(new Date(verification.createdAt), 'PPp')}</p>
-                  <p className="mt-1 whitespace-pre-line">{verification.rationale}</p>
-                  {verification.evidencePath && <p className="mt-1 truncate text-ink-500" title={verification.evidencePath}>Evidence: {verification.evidencePath}</p>}
-                </div>
-              )}
-              {canAct && !isFinal && (
-                <div className="mt-3 space-y-2">
-                  <label className="block text-xs font-medium text-ink-600">
-                    Verification rationale
-                    <textarea
-                      className="input mt-1 resize-y"
-                      rows={2}
-                      maxLength={1000}
-                      value={currentRationale}
-                      onChange={(e) => onRationaleChange(control.controlId, e.target.value)}
-                      placeholder="Explain the basis for your verification (10–1000 chars)."
-                    />
-                  </label>
-                  <label className="block text-xs font-medium text-ink-600">
-                    Evidence path (optional)
-                    <input
-                      className="input mt-1"
-                      type="text"
-                      value={currentEvidence}
-                      onChange={(e) => onEvidencePathChange(control.controlId, e.target.value)}
-                      placeholder="evidence/control-evacuation-plan.pdf"
-                    />
-                  </label>
-                  <p className="text-right text-xs text-ink-400">{currentRationale.trim().length}/1000 · minimum 10</p>
-                  <div className="flex justify-end gap-2">
-                    <button type="button" className="btn-secondary" disabled={!canSubmit} onClick={() => onSubmit(control.controlId, 'rejected')}>
-                      <X size={15} />{submittingControl === control.controlId ? 'Recording...' : 'Reject'}
-                    </button>
-                    <button type="button" className="btn-success" disabled={!canSubmit} onClick={() => onSubmit(control.controlId, 'verified')}>
-                      <Check size={15} />{submittingControl === control.controlId ? 'Recording...' : 'Verify'}
-                    </button>
-                  </div>
-                </div>
-              )}
-              {canAct && isFinal && (
-                <p className="mt-2 text-xs text-ink-400">A verification already exists for this control. Further updates require a new application version.</p>
-              )}
+              <div className="mt-3 space-y-3">
+                {docs.map((doc) => {
+                  const key = `${control.controlId}__${doc.docId}`;
+                  const rationale = docRationale[key] ?? '';
+                  const evidence = docEvidencePath[key] ?? '';
+                  const isFinal = doc.status === 'verified' || doc.status === 'rejected' || doc.status === 'use_previous';
+                  const canSubmitDoc = controlCanAct && doc.status === 'pending_verification' && rationale.trim().length >= 10 && submittingDoc === null;
+                  return (
+                    <div key={doc.docId} className="rounded-md bg-cream-50 p-3">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-ink-800">{doc.label}</p>
+                          <p className="mt-1 text-xs text-ink-500">docType: {doc.docType} · id: <span className="font-mono">{doc.docId}</span></p>
+                        </div>
+                        <DocStatusBadge status={doc.status} />
+                      </div>
+                      {isFinal && (
+                        <div className="mt-2 text-xs text-ink-600">
+                          <p>
+                            <span className="font-semibold">{doc.status}</span>
+                            {doc.verifiedAt && <> on {format(new Date(doc.verifiedAt), 'PPp')} by <span className="font-mono">{doc.verifiedBy}</span></>}
+                          </p>
+                          {doc.rejectionReason && <p className="mt-1 whitespace-pre-line">{doc.rejectionReason}</p>}
+                        </div>
+                      )}
+                      {controlCanAct && doc.status === 'pending_verification' && (
+                        <div className="mt-2 space-y-2">
+                          <label className="block text-xs font-medium text-ink-600">
+                            Verification rationale
+                            <textarea
+                              className="input mt-1 resize-y"
+                              rows={2}
+                              maxLength={1000}
+                              value={rationale}
+                              onChange={(e) => onRationaleChange(key, e.target.value)}
+                              placeholder="Explain the basis for your verification (10–1000 chars)."
+                            />
+                          </label>
+                          <label className="block text-xs font-medium text-ink-600">
+                            Evidence path (optional)
+                            <input
+                              className="input mt-1"
+                              type="text"
+                              value={evidence}
+                              onChange={(e) => onEvidencePathChange(key, e.target.value)}
+                              placeholder="evidence/control-evacuation-plan.pdf"
+                            />
+                          </label>
+                          <p className="text-right text-xs text-ink-400">{rationale.trim().length}/1000 · minimum 10</p>
+                          <div className="flex justify-end gap-2">
+                            <button type="button" className="btn-secondary" disabled={!canSubmitDoc} onClick={() => onSubmit(control.controlId, doc.docId, 'rejected')}>
+                              <X size={15} />{submittingDoc === key ? 'Recording...' : 'Reject'}
+                            </button>
+                            <button type="button" className="btn-success" disabled={!canSubmitDoc} onClick={() => onSubmit(control.controlId, doc.docId, 'verified')}>
+                              <Check size={15} />{submittingDoc === key ? 'Recording...' : 'Verify'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {docs.length === 0 && (
+                  <p className="text-xs text-ink-500">No Stage 1 documents have been uploaded for this control yet.</p>
+                )}
+              </div>
             </div>
           );
         })}
@@ -568,10 +580,17 @@ function ControlVerificationSection(props: ControlVerificationSectionProps) {
   );
 }
 
-function ControlStatusBadge({ status }: { status: 'declared' | 'verified' | 'rejected' | 'absent' | 'unknown' }) {
-  if (status === 'verified') return <span className="badge bg-green-100 text-status-approved"><ShieldCheck size={12} className="mr-1 inline" />Verified</span>;
-  if (status === 'rejected') return <span className="badge bg-red-100 text-status-rejected"><ShieldX size={12} className="mr-1 inline" />Rejected</span>;
-  if (status === 'absent') return <span className="badge bg-ink-100 text-ink-500">Absent</span>;
-  if (status === 'declared') return <span className="badge bg-amber-100 text-amber-700">Declared</span>;
-  return <span className="badge bg-ink-100 text-ink-500">Unknown</span>;
+function ControlLabelBadge({ label }: { label: EventControl['label'] }) {
+  if (label === 'approved') return <span className="badge bg-green-100 text-status-approved"><ShieldCheck size={12} className="mr-1 inline" />Approved</span>;
+  if (label === 'resubmit_required') return <span className="badge bg-red-100 text-status-rejected"><ShieldX size={12} className="mr-1 inline" />Resubmit required</span>;
+  if (label === 'reported_under_review') return <span className="badge bg-amber-100 text-amber-700">Under review</span>;
+  return <span className="badge bg-ink-100 text-ink-500">Pending</span>;
+}
+
+function DocStatusBadge({ status }: { status: Stage1Doc['status'] }) {
+  if (status === 'verified') return <span className="badge bg-green-100 text-status-approved">Verified</span>;
+  if (status === 'rejected') return <span className="badge bg-red-100 text-status-rejected">Rejected</span>;
+  if (status === 'use_previous') return <span className="badge bg-blue-100 text-brand-700">Use previous</span>;
+  if (status === 'pending_submission') return <span className="badge bg-ink-100 text-ink-500">Awaiting upload</span>;
+  return <span className="badge bg-amber-100 text-amber-700">Awaiting verification</span>;
 }

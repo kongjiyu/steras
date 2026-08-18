@@ -42,7 +42,6 @@ exports.COLLECTIONS = {
     PUBLIC_EVENTS: 'public_events',
     NOTIFICATIONS: 'notifications',
     EVENT_CONTROLS: 'event_controls',
-    CONTROL_VERIFICATIONS: 'control_verifications',
     // M3 round N+1 — workstream 1
     OFFICERS: 'officers',
     ASSIGNMENTS: 'assignments',

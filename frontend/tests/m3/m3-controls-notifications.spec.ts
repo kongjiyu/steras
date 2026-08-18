@@ -1,11 +1,12 @@
 /**
- * M3 verified-control workflow (FR-M3-22, FR-M3-23, FR-M3-24)
+ * M3 verified-control workflow (FR-M3-22, FR-M3-23, FR-M3-24, Q1 refactor)
  * + durable in-app notifications (FR-M3-08, handoff item 7)
  *
- *   control-verification.spec.ts: officer verifies a Stage-1 control
- *     via the verifyEventControl Cloud Function. The function persists
- *     controlId/authorityType/reviewerUid/evidencePath/timestamp/versionId
- *     and updates the event's verifiedControlIds set.
+ *   control-verification.spec.ts: officer verifies a Stage-1 document
+ *     via the verifyStage1Doc Cloud Function. The function writes
+ *     status/verifiedBy/verifiedAt/rejectionReason to the
+ *     event_controls/{id}/stage1_docs/{id} doc and updates the parent
+ *     control's aggregate label.
  *   notifications.spec.ts: after a decision, the organiser gets a
  *     notification in the notifications collection.
  */
@@ -19,9 +20,10 @@ test.describe('@M3 verified-control workflow', () => {
     await loginAs('kkm');
     let callError: string | null = null;
     try {
-      await api.callFunction('verifyEventControl', {
+      await api.callFunction('verifyStage1Doc', {
         eventId: 'evt-provisional-readiness',
-        controlId: 'evt-provisional-readiness-ctrl-1',
+        controlId: 'evt-provisional-readiness-ctrl-pdrm',
+        docId: 'evt-provisional-readiness-ctrl-pdrm-s1-application',
         status: 'verified',
         rationale: 'KKM should not be allowed to verify on this event.',
       });
@@ -31,17 +33,17 @@ test.describe('@M3 verified-control workflow', () => {
     expect(callError).toMatch(/not assigned|permission/i);
   });
 
-  // The success-path spec — temporarily active to capture the INTERNAL error.
-  // Re-skip once we have a fix.
-  test('PDRM verifies a declared Stage-1 control', async ({ api, loginAs }) => {
+  test('PDRM verifies a declared Stage-1 document', async ({ api, loginAs }) => {
     await loginAs('pdrm');
     const eventId = 'evt-control-verification';
-    const controlId = `${eventId}-ctrl-1`;
-    const result = await api.callFunction<{ eventId: string; controlId: string; status: 'verified' | 'rejected' }, { eventId: string; controlId: string; status: 'verified' | 'rejected' }>(
-      'verifyEventControl',
+    const controlId = `${eventId}-ctrl-pdrm`;
+    const docId = `${controlId}-s1-application`;
+    const result = await api.callFunction<{ eventId: string; controlId: string; docId: string; status: 'verified' | 'rejected' }, { status: 'verified' | 'rejected' }>(
+      'verifyStage1Doc',
       {
         eventId,
         controlId,
+        docId,
         status: 'verified',
         rationale: 'E2E — uploaded evacuation plan reviewed and approved by PDRM. All egress routes confirmed.',
       },

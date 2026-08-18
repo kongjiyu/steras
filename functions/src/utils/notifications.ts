@@ -23,15 +23,9 @@
  */
 import { firestore } from 'firebase-admin';
 import { HttpsError } from 'firebase-functions/v2/https';
-import { COLLECTIONS } from '@shared/types';
+import { COLLECTIONS, NotificationType } from '@shared/types';
 
-export type NotificationType =
-  | 'decision_made'
-  | 'application_approved'
-  | 'application_rejected'
-  | 'amendment_requested'
-  | 'control_verified'
-  | 'control_rejected';
+export type { NotificationType };
 
 export interface NotificationInput {
   recipientUid: string;

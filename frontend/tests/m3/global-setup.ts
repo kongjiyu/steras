@@ -88,8 +88,11 @@ interface EventSpec {
   assessmentReadiness?: 'complete' | 'provisional' | 'insufficient_data';
   /** Force-clear any existing decisions */
   clearDecisions?: boolean;
-  /** When set, also seed event_controls with this many synthetic items */
-  eventControls?: number;
+  /** Force seed event_controls + stage1_docs. Default: true for any
+   *  event with requiredAuthorities AND status in the M3 review surface. */
+  eventControls?: boolean;
+  /** Current submitted version id; used to stamp control docs. */
+  currentVersionId?: string;
 }
 
 const UAT_EVENTS: EventSpec[] = [
@@ -139,7 +142,6 @@ const UAT_EVENTS: EventSpec[] = [
     status: 'UnderReview',
     requiredAuthorities: ['PDRM', 'BOMBA', 'KKM'],
     clearDecisions: true,
-    eventControls: 4,
   },
 ];
 
@@ -198,24 +200,12 @@ async function seedEvent(spec: EventSpec): Promise<void> {
     }
   }
 
-  // Seed event controls for control-verification test
-  if (spec.eventControls && spec.eventControls > 0) {
-    const batch = db.batch();
-    for (let i = 0; i < spec.eventControls; i++) {
-      const ctrlId = `${spec.id}-ctrl-${i + 1}`;
-      const ctrlRef = eventRef.collection('event_controls').doc(ctrlId);
-      batch.set(ctrlRef, {
-        controlId: ctrlId,
-        eventId: spec.id,
-        title: `Control item ${i + 1}`,
-        stage: 'Stage1',
-        status: 'declared',
-        description: 'Seeded for E2E test',
-        createdAt: Date.now(),
-      });
-    }
-    await batch.commit();
-  }
+  // Seed event_controls + stage1_docs (Q1 refactor). Must run on the
+  // existing-event path too — the cleanup loop at the top of setup
+  // wipes stale sub-collections, and an event that already has docs
+  // (e.g. evt-control-verification) would otherwise end up with no
+  // controls for the PDRM-verifies test to hit.
+  await seedEventControls(eventRef, spec);
 
   console.log(`  [setup] ${spec.id}: status=${spec.status} decisions=${spec.clearDecisions ? 'cleared' : 'kept'}` +
     (spec.complianceStatus ? ` compliance=${spec.complianceStatus}` : '') +
@@ -377,28 +367,80 @@ async function createNegativeTestFixture(spec: EventSpec): Promise<void> {
   const finalData = finalSnap.data();
   console.log(`  [setup] ${spec.id} final: status=${finalData?.status} compliance=${finalData?.complianceStatus} readiness=${finalData?.assessmentReadiness} hasContextSnapshot=${!!finalData?.contextSnapshot} hasAiAdvisory=${!!finalData?.aiAdvisory}`);
 
-  // Event controls (for the control-verification spec)
-  if (spec.eventControls && spec.eventControls > 0) {
-    const batch = db.batch();
-    for (let i = 0; i < spec.eventControls; i++) {
-      const ctrlId = `${spec.id}-ctrl-${i + 1}`;
-      batch.set(eventRef.collection('event_controls').doc(ctrlId), {
-        controlId: ctrlId,
-        eventId: spec.id,
-        title: `Control item ${i + 1}`,
-        stage: 'Stage1',
-        status: 'declared',
-        description: 'Seeded for E2E test',
-        createdAt: now,
-      });
-    }
-    await batch.commit();
-  }
+  // Event controls (Q1 refactor: per requiredAuthority, with a
+  // stage1_docs sub-collection ready for the verifyStage1Doc flow).
+  await seedEventControls(eventRef, spec);
 
   console.log(`  [setup] ${spec.id}: created fixture` +
     (spec.complianceStatus ? ` compliance=${spec.complianceStatus}` : '') +
     (spec.assessmentReadiness ? ` readiness=${spec.assessmentReadiness}` : '') +
     (spec.eventControls ? ` controls=${spec.eventControls}` : ''));
+}
+
+/**
+ * Seed event_controls + stage1_docs for an event.
+ *
+ * Default behaviour: seed for any event with non-empty
+ * requiredAuthorities. This is safe because the UI hides the section
+ * when empty, and the negative-gates tests need the control docs to
+ * exist (so the "not assigned" check runs instead of "not found").
+ *
+ * Called from BOTH `seedEvent` (existing events) and
+ * `createNegativeTestFixture` (freshly-created events) because the
+ * setup's pre-cleanup loop wipes stale sub-collections — without this
+ * the existing-event path would lose its controls between runs.
+ */
+async function seedEventControls(
+  eventRef: FirebaseFirestore.DocumentReference,
+  spec: EventSpec,
+): Promise<void> {
+  const shouldSeedControls = spec.eventControls !== false
+    && spec.requiredAuthorities && spec.requiredAuthorities.length > 0;
+  if (!shouldSeedControls) return;
+
+  const now = Date.now();
+  const auths = spec.requiredAuthorities ?? [];
+  for (const authority of auths) {
+    const ctrlId = `${spec.id}-ctrl-${authority.toLowerCase()}`;
+    const ctrlRef = eventRef.collection('event_controls').doc(ctrlId);
+    await ctrlRef.set({
+      controlId: ctrlId,
+      eventId: spec.id,
+      versionId: spec.currentVersionId ?? 'v1',
+      controlName: `${authority} compliance`,
+      authority,
+      stageRequirement: 'stage1_and_stage2',
+      stage1Requirements: [
+        { docType: 'application', label: `${authority} event notification acknowledgement`, required: true },
+        { docType: 'license',     label: `${authority} operating licence`,                required: true },
+        { docType: 'insurance',   label: 'Public liability insurance',                  required: true },
+      ],
+      stage2Requirement: { kind: 'image', label: `Photo of ${authority} at venue` },
+      controlItemVersion: 1,
+      label: 'pending',
+      createdAt: now,
+      updatedAt: now,
+    });
+    // Seed 3 Stage 1 docs in pending_verification so the UI can show
+    // a per-doc form.
+    const stage1Batch = db.batch();
+    const reqs = [
+      { docType: 'application', label: `${authority} event notification acknowledgement` },
+      { docType: 'license',     label: `${authority} operating licence` },
+      { docType: 'insurance',   label: 'Public liability insurance' },
+    ];
+    for (const req of reqs) {
+      const docId = `${ctrlId}-s1-${req.docType}`;
+      stage1Batch.set(ctrlRef.collection('stage1_docs').doc(docId), {
+        docId,
+        docType: req.docType,
+        label: req.label,
+        status: 'pending_verification',
+        uploadedAt: now,
+      });
+    }
+    await stage1Batch.commit();
+  }
 }
 
 /**
@@ -432,6 +474,37 @@ async function settleAssessmentFunction(
 
 export default async function globalSetup(_config: FullConfig): Promise<void> {
   console.log('[M3 setup] Resetting UAT events to known state...');
+
+  // Q1 refactor: wipe any stale event_controls / stage1_docs /
+  // control_verifications sub-collections from the old shape so the
+  // new per-authority seed lands on a clean slate.
+  const eventsToClean = Array.from(new Set(UAT_EVENTS.map((s) => s.id)));
+  for (const evtId of eventsToClean) {
+    const evtRef = db.collection('events').doc(evtId);
+    const ctrls = await evtRef.collection('event_controls').get();
+    for (const c of ctrls.docs) {
+      const docs = await c.ref.collection('stage1_docs').get();
+      for (const d of docs.docs) await d.ref.delete();
+      await c.ref.delete();
+    }
+    const verifs = await evtRef.collection('control_verifications').get();
+    for (const v of verifs.docs) await v.ref.delete();
+  }
+  // Reset officer workload so the assignment tests start at 0.
+  const officers = await db.collection('officers').get();
+  if (!officers.empty) {
+    const b = db.batch();
+    officers.docs.forEach((d) => b.update(d.ref, { workloadCount: 0, lastAssignedAt: null }));
+    await b.commit();
+  }
+  // Wipe notifications from prior runs.
+  const notifs = await db.collection('notifications').get();
+  if (!notifs.empty) {
+    const b = db.batch();
+    notifs.docs.forEach((d) => b.delete(d.ref));
+    await b.commit();
+  }
+
   for (const spec of UAT_EVENTS) {
     await seedEvent(spec);
   }
