@@ -43,6 +43,9 @@ test.describe('@M3 PDRM decision flow', () => {
     await rationaleTa.fill(rationale);
     await expect(rationaleTa).toHaveValue(rationale);
 
+    // FR-M3-16: tick the "I have reviewed" checkbox before Approve.
+    await decisionSection.getByTestId('confirmed-review-checkbox').check();
+
     const approveBtn = decisionSection.getByRole('button', { name: /^approve$/i });
     await approveBtn.scrollIntoViewIfNeeded();
     await expect(approveBtn).toBeEnabled({ timeout: 10_000 });

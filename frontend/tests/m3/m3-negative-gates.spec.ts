@@ -20,6 +20,9 @@ test.describe('@M3 negative decision gates', () => {
     const rationaleTa = decisionSection.getByLabel(/decision rationale/i);
     await rationaleTa.scrollIntoViewIfNeeded();
     await rationaleTa.fill('Test rationale for blocked compliance scenario — should be rejected by the Cloud Function.');
+    // FR-M3-16: tick the "I have reviewed" checkbox so the function
+    // gets past the new gate and can fail on the compliance gate.
+    await decisionSection.getByTestId('confirmed-review-checkbox').check();
     const approveBtn = decisionSection.getByRole('button', { name: /^approve$/i });
     await approveBtn.scrollIntoViewIfNeeded();
     await expect(approveBtn).toBeEnabled({ timeout: 10_000 });
@@ -41,6 +44,9 @@ test.describe('@M3 negative decision gates', () => {
     await rationaleTa.scrollIntoViewIfNeeded();
     // 30 chars — passes the 10-char baseline but fails the 80-char provisional gate
     rationaleTa.fill('Short rationale that fails.');
+    // FR-M3-16: tick the checkbox so the new gate passes and the
+    // provisional gate can fail.
+    await decisionSection.getByTestId('confirmed-review-checkbox').check();
     const approveBtn = decisionSection.getByRole('button', { name: /^approve$/i });
     await approveBtn.scrollIntoViewIfNeeded();
     await expect(approveBtn).toBeEnabled({ timeout: 10_000 });
@@ -61,6 +67,8 @@ test.describe('@M3 negative decision gates', () => {
       'KKM mass-gathering guideline and venue fire cert verified on site. ' +
       'No outstanding safety concerns. The provisional status is acceptable for this event size and risk profile.',
     );
+    // FR-M3-16: tick the checkbox.
+    await decisionSection.getByTestId('confirmed-review-checkbox').check();
     const approveBtn = decisionSection.getByRole('button', { name: /^approve$/i });
     await approveBtn.scrollIntoViewIfNeeded();
     await expect(approveBtn).toBeEnabled({ timeout: 10_000 });
@@ -82,6 +90,9 @@ test.describe('@M3 negative decision gates', () => {
         eventId: EVENTS.mountainRun,
         decision: 'Approved',
         rationale: 'DBKL attempting to act on an event it is not assigned to — should be rejected.',
+        // FR-M3-16: pass confirmedReview so the new gate doesn't fire
+        // before the assignment check we're trying to test.
+        confirmedReview: true,
       });
     } catch (err) {
       callError = err instanceof Error ? err.message : String(err);

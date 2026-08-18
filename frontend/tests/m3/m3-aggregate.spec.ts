@@ -63,6 +63,8 @@ test.describe('@M3 aggregate decision flows', () => {
         eventId: EVENTS.foodFair,
         decision: 'Approved',
         rationale: BOMBA_RATIONALE,
+        // FR-M3-16: required when Approve (the function refuses without it).
+        confirmedReview: true,
       });
     } catch (err) {
       callError = err instanceof Error ? err.message : String(err);
@@ -122,6 +124,10 @@ test.describe('@M3 aggregate decision flows', () => {
       const ta = decisionSection.getByLabel(/decision rationale/i);
       await ta.scrollIntoViewIfNeeded();
       await ta.fill(rationale);
+      // FR-M3-16: tick the "I have reviewed" checkbox before Approve
+      // (the button is disabled without it and the Cloud Function
+      // would refuse the call server-side).
+      await decisionSection.getByTestId('confirmed-review-checkbox').check();
       const approveBtn = decisionSection.getByRole('button', { name: /^approve$/i });
       await approveBtn.scrollIntoViewIfNeeded();
       await expect(approveBtn).toBeEnabled();

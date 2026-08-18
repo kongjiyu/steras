@@ -59,7 +59,10 @@ export async function resetMountainRun(): Promise<void> {
 /**
  * Reset evt-004 (marathon) for Workstream 1 tests: UnderReview +
  * reviewStage='initial', no assignments. Resets all 5 officers'
- * workloadCount to 0.
+ * workloadCount to 0. Also clears the event's audit logs (so the
+ * assignment_created assertions in officer-assignment.spec.ts don't
+ * pick up old data from prior test runs) and any prior
+ * `second_review_*` / `assignment_*` audit entries.
  */
 export async function resetMarathon(): Promise<void> {
   const eventRef = db.collection('events').doc('evt-004-kl-marathon');
@@ -68,6 +71,11 @@ export async function resetMarathon(): Promise<void> {
   const b1 = db.batch();
   assn.docs.forEach((d) => b1.delete(d.ref));
   await b1.commit();
+  // Wipe audit logs (assignment_created, assignment_revoked, decision_made, etc.)
+  const audits = await eventRef.collection('audit_logs').get();
+  const bAudit = db.batch();
+  audits.docs.forEach((d) => bAudit.delete(d.ref));
+  await bAudit.commit();
   // Reset event
   await eventRef.update({
     status: 'UnderReview',

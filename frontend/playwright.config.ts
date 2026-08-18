@@ -24,11 +24,13 @@ import { defineConfig, devices } from '@playwright/test';
  *               which occasionally flake on Firebase Hosting cold-start
  *               when run after many other tests.
  *
- *   m3-workstream1 — 2 specs for the new officer assignment + second
- *               review flow. Designed to run in its own clean process
- *               (separate Playwright invocation) so the cumulative
- *               Firebase Auth slowness from the other suites doesn't
- *               trip the 30s loginAs timeout. Runs in ~1-2 min.
+ *   m3-workstream1 — 5 specs covering the officer assignment + second
+ *               review flow, the unassign / backup-officer swap, and
+ *               the FR-M3-16 "confirmed review" gate. Designed to run
+ *               in its own clean process (separate Playwright
+ *               invocation) so the cumulative Firebase Auth slowness
+ *               from the other suites doesn't trip the 30s loginAs
+ *               timeout. Runs in ~2 min.
  *
  * retries: 1 recovers from one-off cold-start blips.
  *
@@ -90,7 +92,10 @@ export default defineConfig({
       name: 'm3-workstream1',
       // Run in its own clean process so Firebase Auth isn't hot from
       // a prior 12+ spec run.
-      testMatch: ['officer-assignment.spec.ts'],
+      testMatch: [
+        'officer-assignment.spec.ts',
+        'unassign-officer.spec.ts',
+      ],
       use: { ...devices['Desktop Chrome'], channel: undefined },
     },
   ],

@@ -71,7 +71,13 @@ test.describe('@M3 organiser notifications', () => {
     for (const [key, rationale] of rationales) {
       await api.signOut();
       await loginAs(key as 'pdrm' | 'bomba' | 'kkm' | 'dbkl');
-      await api.callFunction('makeAuthorityDecision', { eventId, decision: 'Approved', rationale });
+      await api.callFunction('makeAuthorityDecision', {
+        eventId,
+        decision: 'Approved',
+        rationale,
+        // FR-M3-16: required for Approve.
+        confirmedReview: true,
+      });
     }
 
     await api.signOut();
@@ -83,6 +89,80 @@ test.describe('@M3 organiser notifications', () => {
     const myNotifs = result.items.filter((n) => n.eventId === eventId);
     expect(myNotifs.length).toBeGreaterThanOrEqual(1);
     expect(myNotifs.some((n) => n.type === 'application_approved')).toBe(true);
+  });
+
+  // FR-M3-08: rejection / second-review notifications must carry
+  // reason + suggestion as separate, structured fields. The
+  // featured officer's reason + suggestion are surfaced on the
+  // application_approved / application_rejected / amendment_requested
+  // notification written by makeSecondReviewDecision.
+  test('second-review notification carries the featured officer reason + suggestion as separate fields', async ({ api, loginAs }) => {
+    // Reuse the reset state from beforeEach (UnderReview, no decisions).
+    // The new flow: assign officers -> each records a proposal
+    // (with reason + suggestion) -> admin confirms the aggregate.
+    const eventId = EVENTS.foodFair;
+    const OFFICERS = {
+      pdrm: 'mmcccuLb5kQOKGdf2eECQOiAS7h2',
+      bomba: 'sKCMYylLOpY1dabTFcRwrxb0y0c2',
+      kkm: 'qjLsLI8ZSJNX5t6HlsrRTQYG9Bl2',
+      dbkl: 'efL2zcnyExZqvciYoq5V0oZZMPn1',
+    };
+
+    await loginAs('admin');
+    await api.callFunction('assignAuthorityOfficers', {
+      eventId,
+      assignmentMap: { PDRM: OFFICERS.pdrm, BOMBA: OFFICERS.bomba, KKM: OFFICERS.kkm, DBKL: OFFICERS.dbkl },
+      dryRun: false,
+    });
+
+    // Each officer records an Approved proposal with a distinctive
+    // reason + suggestion. The featured officer is the first one
+    // matching the aggregate (Approved), so the BOMBA reason will be
+    // surfaced.
+    const proposals: Array<[keyof typeof OFFICERS, string, string]> = [
+      ['pdrm', 'PDRM notification-split — traffic plan accepted.', 'PDRM E2E — fine.'],
+      ['bomba', 'Bomba notification-split — fire safety signed off.', 'Bomba E2E — egress routes clear.'],
+      ['kkm', 'KKM notification-split — medical plan approved.', 'KKM E2E — medical coverage OK.'],
+      ['dbkl', 'DBKL notification-split — venue capacity verified.', 'DBKL E2E — venue OK.'],
+    ];
+    for (const [key, reason, suggestion] of proposals) {
+      await api.signOut();
+      await loginAs(key);
+      await api.callFunction('recordOfficerProposal', {
+        eventId,
+        decision: 'Approved',
+        reason,
+        suggestion,
+        confirmedReview: true,
+      });
+    }
+
+    // Admin confirms the aggregate.
+    await api.signOut();
+    await loginAs('admin');
+    await api.callFunction('makeSecondReviewDecision', {
+      eventId,
+      confirmedDecision: 'Approved',
+      adminNote: 'E2E — confirming aggregate, asserting notification split.',
+    });
+
+    // Organiser lists their notifications; the second-review
+    // `application_approved` notification should carry reason +
+    // suggestion as separate fields.
+    await api.signOut();
+    await loginAs('organizer');
+    const result = await api.callFunction<{ limit?: number }, { items: Array<{ notificationId: string; type: string; eventId: string; reason?: string; suggestion?: string }>; unread: number }>(
+      'listMyNotifications',
+      { limit: 50 },
+    );
+    const approvedNotif = result.items.find((n) => n.eventId === eventId && n.type === 'application_approved');
+    expect(approvedNotif).toBeTruthy();
+    expect(approvedNotif?.reason).toBeTruthy();
+    expect(approvedNotif?.suggestion).toBeTruthy();
+    // FR-M3-08: the featured officer's reason must appear in the
+    // `reason` field (not just mashed into `message`).
+    expect(approvedNotif?.reason).toMatch(/notification-split/);
+    expect(approvedNotif?.suggestion).toMatch(/E2E/);
   });
 
   test('markNotificationRead toggles read state', async ({ api, loginAs }) => {
