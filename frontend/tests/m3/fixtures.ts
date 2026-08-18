@@ -120,34 +120,35 @@ export const test = base.extend<Fixtures>({
   loginAs: async ({ page }, use) => {
     const fn = async (key: AccountKey) => {
       const a = ACCOUNTS[key];
-      // Force signOut first via the firebase global so we always land on
-      // the login form. This handles the case where a previous test
-      // left a user signed in.
+      // Sign in via the firebase SDK directly. This is much faster than
+      // navigating to /login + filling the form + submitting (which can
+      // take 30-60s on Firebase Hosting when the test suite has already
+      // hammered the auth endpoint). A single signInWithEmailAndPassword
+      // network call replaces 4-5 page interactions.
       await page.goto('/', { waitUntil: 'domcontentloaded' });
-      try {
-        await page.waitForFunction(() => !!(window as any).__sterasFirebase, { timeout: 5_000 });
-        await page.evaluate(async () => {
-          const fb = (window as any).__sterasFirebase;
-          if (fb?.auth?.currentUser) {
-            await fb.auth.signOut();
-          }
-        });
-      } catch (e) {
-        // Firebase not loaded yet; fall through to the manual flow.
-      }
-      await page.goto('/login', { waitUntil: 'domcontentloaded' });
-      // If a signOut button is showing (legacy "already signed in" panel),
-      // click it. Otherwise just wait for the email input.
-      const signOutBtn = page.getByRole('button', { name: /sign out/i });
-      if (await signOutBtn.isVisible().catch(() => false)) {
-        await signOutBtn.click();
-      }
-      await page.waitForSelector('input[type=email]', { state: 'visible', timeout: 15_000 });
-      await page.fill('input[type=email]', a.email);
-      await page.fill('input[type=password]', a.password);
-      await page.click('button[type=submit]');
-      await page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 15_000 });
       await page.waitForFunction(() => !!(window as any).__sterasFirebase, { timeout: 15_000 });
+      // Sign out any previous user (in case the page is cached with a
+      // different auth state).
+      await page.evaluate(async () => {
+        const fb = (window as any).__sterasFirebase;
+        await fb.signOutCurrent();
+      });
+      // Sign in via SDK. Returns the new uid so we can confirm auth
+      // state settled on the correct user.
+      const { uid } = await page.evaluate(
+        async ({ email, password }) => {
+          const fb = (window as any).__sterasFirebase;
+          return await fb.signInWithEmail(email, password);
+        },
+        { email: a.email, password: a.password },
+      );
+      // Wait for auth state to reflect the new uid (handles race where
+      // signOut is still propagating when signIn lands).
+      await page.waitForFunction(
+        (expectedUid: string) => (window as any).__sterasFirebase?.auth?.currentUser?.uid === expectedUid,
+        uid,
+        { timeout: 30_000 },
+      );
     };
     await use(fn);
   },

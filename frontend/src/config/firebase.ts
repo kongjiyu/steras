@@ -86,6 +86,8 @@ if (typeof window !== 'undefined' && isFirebaseConfigured) {
     setDoc: (path: string, data: Record<string, unknown>, opts?: { merge?: boolean }) => Promise<void>;
     deleteDoc: (path: string) => Promise<void>;
     getCollection: <T = Record<string, unknown>>(path: string) => Promise<Array<{ id: string } & T>>;
+    signInWithEmail: (email: string, password: string) => Promise<{ uid: string }>;
+    signOutCurrent: () => Promise<void>;
   } }).__sterasFirebase = {
     auth: authInst as Auth,
     db: dbInst as Firestore,
@@ -111,6 +113,19 @@ if (typeof window !== 'undefined' && isFirebaseConfigured) {
       const fs = await import('firebase/firestore');
       const snap = await fs.getDocs(collection(dbInst as Firestore, path));
       return snap.docs.map((d) => ({ id: d.id, ...(d.data() as T) }));
+    },
+    // Test-only auth helpers. The bare Auth instance imported into this
+    // file doesn't always carry signInWithEmailAndPassword after Vite
+    // tree-shaking. Use the dynamic import + the same auth instance
+    // to guarantee the method is present at call time.
+    signInWithEmail: async (email: string, password: string) => {
+      const authMod = await import('firebase/auth');
+      const cred = await authMod.signInWithEmailAndPassword(authInst as Auth, email, password);
+      return { uid: cred.user.uid };
+    },
+    signOutCurrent: async () => {
+      const authMod = await import('firebase/auth');
+      await authMod.signOut(authInst as Auth);
     },
   };
 }

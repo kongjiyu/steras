@@ -26,6 +26,11 @@ const OFFICERS = {
 } as const;
 
 test.describe('@M3 Workstream 1: officer assignment + second review', () => {
+  // The full flow does 5 sequential Firebase Auth logins (admin + 4
+  // officers + admin again) and 7 Cloud Function calls. Under sustained
+  // load Firebase Auth can take 20-40s per login. 180s is the floor.
+  test.setTimeout(180_000);
+
   test.beforeEach(async () => {
     // Reset evt-004 + officers + notifications via Admin SDK (client
     // auth can't write to events/ — admin ops are server-only).
