@@ -2,7 +2,7 @@
 
 **Owner:** M2 owner / project integrator
 
-**PRD requirements:** FR-07 to FR-15
+**PRD requirements:** FR-M2-01 to FR-M2-14
 
 ## Goal
 
@@ -117,7 +117,7 @@ M3 may override quantities during active review with a human rationale. An overr
 | M1 | Immutable version, event characteristics, venue/location/capacity, schedule, attendance, and evidence paths |
 | M4 | Assessment-eligible incident projection by stable venue ID |
 
-Until M4 exists, `npm run seed:demo` provides deterministic emulator-only fixtures. They are never represented as real incidents. Complaints never affect M2 scoring.
+Until M4 exists, `npm run seed:demo` provides deterministic emulator-only fixtures. They are never represented as real incidents. Unverified or assessment-ineligible incident reports never affect M2 scoring.
 
 ## Outputs To Other Modules
 

@@ -31,7 +31,7 @@
 - Readiness、compliance 和 confidence metrics
 - Resource recommendation 和 override trends
 - Re-application metrics
-- M4 incident/complaint analytics
+- M4 incident triage、verification 和 resolution analytics
 - Synthetic-data exclusion by default
 - Metric definition/version metadata
 - Bounded queries 或 server-generated snapshots
@@ -62,7 +62,7 @@
 - Analytics 根据 signed-in authority scope 过滤。
 - 不同 schema/formula versions 不会混在一起误导用户。
 - Synthetic records 默认不进入 operational KPIs。
-- CSV/PDF export 不包含 organizer PII、evidence paths、incident details、complaint text 或 private notes。
+- CSV/PDF export 不包含 organizer PII、evidence paths、incident descriptions 或 private investigation notes。
 - Metric results 可重现并可追踪 source cutoff。
 
 ## 需要其他 Module 提供 | Required Inputs
@@ -70,7 +70,7 @@
 - **M1:** Event type、venue、dates、versions、status 和 timestamps。
 - **M2:** Residual matrix/band、dominant hazard、readiness、compliance、confidence、AI status、resource ranges 和 schema versions。
 - **M3:** Decisions、review stages、timestamps、authority type、overrides 和 publication state。
-- **M4:** Privacy-safe incident/complaint status、severity、category 和 resolution timestamps。
+- **M4:** Privacy-safe incident status、action-required flag、severity、category、verification 和 resolution timestamps。
 
 ## 你需要提供给其他 Module | Outputs
 

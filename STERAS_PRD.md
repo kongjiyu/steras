@@ -9,7 +9,7 @@ source_of_truth:
   - Team-confirmed final functional requirements supplied on 2026-08-12
   - FR-M1-01 to FR-M1-21
   - FR-M2-01 to FR-M2-14
-  - FR-M3-01 to FR-M3-31
+  - FR-M3-01 to FR-M3-32
   - FR-M4-01 to FR-M4-18
   - FR-M5-01 to FR-M5-20
 ---
@@ -144,7 +144,7 @@ application decision.
 
 ## 5. Functional requirements
 
-The following **104 functional requirements** constitute the confirmed
+The following **105 functional requirements** constitute the confirmed
 baseline.
 
 ### M1 — User and Event Management
@@ -152,7 +152,7 @@ baseline.
 The module manages organiser authentication, event application versions, evidence submission, application status, and the public approved-event calendar.
 
 | ID | Functional Requirement |
-|---|---|---|
+|---|---|
 | FR-M1-01 | The system shall allow registered organisers, authority users, and administrators to log in and log out, and shall provide access to system functions according to their assigned roles. The system shall allow new users to register where registration is permitted. |
 | FR-M1-02 | The system shall allow a new event organiser to register an account by providing the required account and profile information. |
 | FR-M1-03 | The system shall restrict the creation of authority-user and administrator accounts to authorised administrators. |
@@ -169,7 +169,7 @@ The module manages organiser authentication, event application versions, evidenc
 | FR-M1-14 | The system shall remove the event from the public event calendar, retain the application and withdrawal history for audit purposes, and publish the withdrawal status to the Authority Approval and Notification Module and the Incident Reporting Module for downstream closure and access enforcement when an application is withdrawn. |
 | FR-M1-15 | The system shall allow an organiser to withdraw an eligible application after admin review has begun and shall change the application status to Withdrawn  while preserving its previous status and history. |
 | FR-M1-16 | The system shall allow an organiser to revise a Rejected application or template based on the recorded rejection reason and suggestion, review the corrected information, and submit a new application version for review while preserving the previously rejected version and review history |
-| FR-M1-17 | The system shall display the organizer’s applications together with their current status, submitted version, assessment availability, admin decision, correction details, and publication state. |
+| FR-M1-17 | The system shall display the organiser’s applications together with their current status, submitted version, assessment availability, admin decision, correction details, and publication state. |
 | FR-M1-18 | The system shall notify the administrator when a new event application or edited application is submitted for review. |
 | FR-M1-19 | The system shall display a public event calendar containing only approved and sanitised event information, without exposing organiser personal information, private evidence, risk details, incidents, or complaints. |
 | FR-M1-20 | The system shall allow an organiser to select an event venue from the venue database. If the required venue is unavailable, the system shall allow the organiser to provide a custom venue name, address, state, and other required location information. |
@@ -180,7 +180,7 @@ The module manages organiser authentication, event application versions, evidenc
 The module owns contextual evidence retrieval, deterministic risk assessment, advisory AI analysis, safety-resource planning, and assessment outputs for other modules.
 
 | ID | Functional Requirement |
-|---|---|---|
+|---|---|
 | FR-M2-01 | The system shall retrieve weather, public-holiday, venue, calendar, historical-event outcome, and closed and verified incident information supplied by the Incident Reporting Module that is relevant to the submitted event application. |
 | FR-M2-02 | The system shall record the source, retrieval time, eligibility, synthetic-data indicator, and other provenance details for each contextual evidence item used in an assessment. |
 | FR-M2-03 | The system shall validate whether the submitted event application contains sufficient evidence and required information before determining its assessment readiness, compliance status, and evidence-confidence level. |
@@ -201,46 +201,46 @@ The module owns contextual evidence retrieval, deterministic risk assessment, ad
 The module manages assigned authority reviews, multi-agency decisions, control verification, resource overrides, publication, notifications, and decision auditing.
 
 | ID | Functional Requirement |
-|---|---|---|
+|---|---|
 | FR-M3-01 | The system shall close all pending authority reviews and event-control activities, unpublish any published event-control information, and retain all existing records for audit purposes when an event application becomes “Withdrawn”. |
 | FR-M3-02 | The system shall allow the admin to perform an initial review of the event application after the Smart Risk Assessment and Safety Resource Recommendation have completed. |
 | FR-M3-03 | The system shall allow the administrator to perform an initial review when the application has been transferred with a Manual Review Required status since the AI-assisted assessment is unavailable. |
 | FR-M3-04 | The system shall allow an authorised administrator to complete and record the required manual assessment when an application is marked Manual Review Required, including the assessment inputs, rationale, administrator identity, date, and time. |
 | FR-M3-05 | The system shall allow the admin to approve or reject the event application during the initial review and the second review. |
-| FR-M3-05 | The system shall require both the admin and authority officers to enter a reason and a suggestion when rejecting the event application. |
-| FR-M3-06 | The system shall allow the admin to attach the assigned authority officer's feedback when rejecting the event application. |
-| FR-M3-07 | The system shall allow the admin to approve an application for authority review or reject it during the initial review, and to grant final approval or reject it during the second review. |
-| FR-M3-08 | The system shall notify the event organizer of the rejection result together with the reason and suggestion when the application is rejected by the admin at the initial review or the second review. |
-| FR-M3-09 | The system shall list all authenticated authority officers in a checklist for the admin to assign. |
-| FR-M3-10 | The system shall default-check the authenticated authority officer in the checklist based on the state of the event's venue. |
-| FR-M3-11 | The system shall allow the admin to modify the auto-generated checklist of default-checked authenticated authority officers. |
-| FR-M3-12 | The system shall allow the admin to assign the event application to the selected authenticated authority officers by checking them in the checklist and clicking the "Assign" button. |
-| FR-M3-13 | The system shall display the event applications to the assigned authority officer only. |
-| FR-M3-14 | The system shall allow an assigned authority officer to review the submitted application, supporting evidence, provisional assessment, AI advisory explanation, and resource ranges, and to confirm or override the AI-proposed likelihood and severity scores with a recorded reason. |
-| FR-M3-15 | The system shall allow an assigned officer to reject the event application which requires enter reason and suggestion. |
-| FR-M3-16 | The system shall allow an assigned officer to approve the event application which requires ticking a checkbox confirming review of all listed materials. |
-| FR-M3-17 | The system shall allow the admin to perform a second review of the event application after all assigned officers have completed their review. |
-| FR-M3-18 | The system shall send the approved event application, official risk assessment, safety-resource recommendations, and relevant control rules or guidelines to MiniMax M3 to generate a proposed event control list. |
-| FR-M3-19 | The system shall allow the admin to modify the event control list. |
-| FR-M3-20 | The system shall allow the event organizer to upload the documentation required by the event control list. |
-| FR-M3-21 | The system shall allow the admin to publish the sanitised event control documentation uploaded by the event organizer to public view. |
-| FR-M3-22 | The system shall allow an assigned officer to verify Stage 1 event control documentation. |
-| FR-M3-23 | The system shall allow an assigned officer to reject Stage 1 event control documentation and require the event organizer to re-submit. |
-| FR-M3-24 | The system shall allow an authorised officer to override on the resource-planning recommendation with reason provided and record the original recommendation, revised quantity, officer ID, authority, date, and time for audit and reporting purposes. |
-| FR-M3-25 | The system shall list Stage 1 and Stage 2 documentation requirements together at the time each control item is generated, so the event organizer sees the full submission scope upfront. |
-| FR-M3-26 | The system shall allow the event organizer to mark a Stage 1 purchase receipt as "Use Previous" for items already procured without requiring a fresh upload or officer verification. |
-| FR-M3-27 | The system shall allow any registered public viewer to confirm a published Stage 2 image as accurate or to report it as inaccurate. |
-| FR-M3-28 | The system shall increase the confirmation counts and make it visible to the public when a public viewer confirms a published Stage 2 image as accurate. |
-| FR-M3-29 | The system shall direct to the incident report module when public viewers report a published Stage 2 image as inaccurate. |
-| FR-M3-30 | The system shall require the event organizer to resubmit the event control documentation if the report is confirmed true. |
-| FR-M3-31 | The system shall update the state of the event control documentation back to approved if the report is dismissed as fake. |
+| FR-M3-06 | The system shall require both the admin and authority officers to enter a reason and a suggestion when rejecting the event application. |
+| FR-M3-07 | The system shall allow the admin to attach the assigned authority officer's feedback when rejecting the event application. |
+| FR-M3-08 | The system shall allow the admin to approve an application for authority review or reject it during the initial review, and to grant final approval or reject it during the second review. |
+| FR-M3-09 | The system shall notify the event organizer of the rejection result together with the reason and suggestion when the application is rejected by the admin at the initial review or the second review. |
+| FR-M3-10 | The system shall list all authenticated authority officers in a checklist for the admin to assign. |
+| FR-M3-11 | The system shall default-check the authenticated authority officer in the checklist based on the state of the event's venue. |
+| FR-M3-12 | The system shall allow the admin to modify the auto-generated checklist of default-checked authenticated authority officers. |
+| FR-M3-13 | The system shall allow the admin to assign the event application to the selected authenticated authority officers by checking them in the checklist and clicking the "Assign" button. |
+| FR-M3-14 | The system shall display the event applications to the assigned authority officer only. |
+| FR-M3-15 | The system shall allow an assigned authority officer to review the submitted application, supporting evidence, provisional assessment, AI advisory explanation, and resource ranges, and to confirm or override the AI-proposed likelihood and severity scores with a recorded reason. |
+| FR-M3-16 | The system shall allow an assigned officer to reject the event application which requires enter reason and suggestion. |
+| FR-M3-17 | The system shall allow an assigned officer to approve the event application which requires ticking a checkbox confirming review of all listed materials. |
+| FR-M3-18 | The system shall allow the admin to perform a second review of the event application after all assigned officers have completed their review. |
+| FR-M3-19 | The system shall send the approved event application, official risk assessment, safety-resource recommendations, and relevant control rules or guidelines to MiniMax M3 to generate a proposed event control list. |
+| FR-M3-20 | The system shall allow the admin to modify the event control list. |
+| FR-M3-21 | The system shall allow the event organizer to upload the documentation required by the event control list. |
+| FR-M3-22 | The system shall allow the admin to publish the sanitised event control documentation uploaded by the event organizer to public view. |
+| FR-M3-23 | The system shall allow an assigned officer to verify Stage 1 event control documentation. |
+| FR-M3-24 | The system shall allow an assigned officer to reject Stage 1 event control documentation and require the event organizer to re-submit. |
+| FR-M3-25 | The system shall allow an authorised officer to override on the resource-planning recommendation with reason provided and record the original recommendation, revised quantity, officer ID, authority, date, and time for audit and reporting purposes. |
+| FR-M3-26 | The system shall list Stage 1 and Stage 2 documentation requirements together at the time each control item is generated, so the event organizer sees the full submission scope upfront. |
+| FR-M3-27 | The system shall allow the event organizer to mark a Stage 1 purchase receipt as "Use Previous" for items already procured without requiring a fresh upload or officer verification. |
+| FR-M3-28 | The system shall allow any registered public viewer to confirm a published Stage 2 image as accurate or to report it as inaccurate. |
+| FR-M3-29 | The system shall increase the confirmation counts and make it visible to the public when a public viewer confirms a published Stage 2 image as accurate. |
+| FR-M3-30 | The system shall direct to the incident report module when public viewers report a published Stage 2 image as inaccurate. |
+| FR-M3-31 | The system shall require the event organizer to resubmit the event control documentation if the report is confirmed true. |
+| FR-M3-32 | The system shall update the state of the event control documentation back to approved if the report is dismissed as fake. |
 
 ### M4 — Incident Reporting Module
 
 The module enables registered reporters to submit event-related incident reports, supports AI-assisted incident assessment and severity classification, coordinates incident handling by Event Organizers and external authorities, and maintains historical incident records for future event assessment and analytics.
 
 | ID | Functional Requirement |
-|---|---|---|
+|---|---|
 | FR-M4-01 | The system shall allow a registered reporter to submit an incident report for an ongoing event or an event completed within the past seven (7) days. Reportable incidents shall include, but are not limited to, crowd congestion or overcrowding, missing persons, lost-and-found matters, medical or safety incidents, security concerns, property or facility damage, suspicious activities, access or traffic-related issues, and discrepancies involving published Event Control items or their supporting evidence. |
 | FR-M4-02 | The system shall require the reporter to provide the incident category, description, occurrence date and time, incident location, and supporting evidence where available, and shall automatically associate the report with the selected event and reporter account. |
 | FR-M4-03 | When an incident report originates from a published Event Control item, the system shall retain a reference to the related Event Control item, published evidence, event, and originating report action so that the Authority Approval Module can be notified and retrieve the incident outcome after resolution. |
@@ -265,7 +265,7 @@ The module enables registered reporters to submit event-related incident reports
 The module allows authenticated Admin users to generate, view, and export privacy-safe analytical reports. All report-generation activities are performed through the Admin interface. Other users must obtain required reports through the Admin and cannot directly access.
 
 | ID | Functional Requirement |
-|---|---|---|
+|---|---|
 | FR-M5-01 | The system shall restrict access to the Analytics and Reporting Module to authenticated Admin users. |
 | FR-M5-02 | The system shall allow the Admin to select one of the available report types for generation. |
 | FR-M5-03 | The system shall allow the Admin to generate the selected report using either the Overall analysis scope or the By Event Type analysis scope. |
@@ -376,10 +376,10 @@ end-to-end outcomes are demonstrable:
 |---|---:|---:|---|
 | M1 — User and Event Management | FR-M1-01–FR-M1-21 | 21 | Sections 2–8 |
 | M2 — Smart Risk Assessment and Safety Resource Recommendation | FR-M2-01–FR-M2-14 | 14 | Sections 2–8 |
-| M3 — Authority Approval and Notification | FR-M3-01–FR-M3-31 | 31 | Sections 2–8 |
+| M3 — Authority Approval and Notification | FR-M3-01–FR-M3-32 | 32 | Sections 2–8 |
 | M4 — Incident Reporting Module | FR-M4-01–FR-M4-18 | 18 | Sections 2–8 |
 | M5 — Analytics and Reporting | FR-M5-01–FR-M5-20 | 20 | Sections 2–8 |
-| **Total** | **FR-M1-01–FR-M5-20** | **104** | Final confirmed baseline |
+| **Total** | **FR-M1-01–FR-M5-20** | **105** | Final confirmed baseline |
 
 ---
 
@@ -398,11 +398,11 @@ resolution. M5 provides read-only analytics.
 - **Status**: aligned draft → Final
 - **Date**: 2026-07-21 → 2026-08-12
 - **Source of truth**: Updated from 3-module split (M1, M2, M3) to 5-module split (M1 User & Event Management, M2 Risk Assessment, M3 Authority Approval, M4 Incident Reporting, M5 Analytics & Reporting)
-- **FR count**: 33 → 104 (per the v5.0 source-of-truth totals; v5.0 file §9 says 104, but the v5.0 file body contains a duplicate `FR-M3-05` in §5.3 — the second row reads `FR-M3-05` but is logically the next-row entry. The PRD was kept verbatim from the v5.0 source; this is a known source bug to flag to the team)
+- **FR count**: 33 → 105. The duplicated `FR-M3-05` in the supplied v5.0 source was corrected by renumbering the second occurrence and subsequent M3 requirements through `FR-M3-32`.
 - **Sections added** (vs v3.1):
   - §3 Users and access boundaries (new 7-actor table with confirmed responsibilities)
   - §4 Core workflow and module boundaries (5 sub-sections: application/assessment, review/decision, withdrawal, event controls, incident/analytics)
-  - §5.3 M3 expanded to 31 FRs (from 7 in v3.1)
+  - §5.3 M3 expanded to 32 FRs (from 7 in v3.1)
   - §5.4 M4 Incident Reporting Module — 18 FRs (new module)
   - §5.5 M5 Analytics and Reporting — 20 FRs (new module)
   - §6 Data and integration requirements (data domains + cross-module contracts + external/AI integrations)
@@ -416,9 +416,9 @@ resolution. M5 provides read-only analytics.
 - **Key M3 contract changes affecting this module's build queue**:
   - Withdrawn app → FR-M3-01 (close pending reviews, unpublish controls, retain records) — passive audit, no UI change
   - Manual review path → FR-M3-03 + FR-M3-04 (admin manual assessment) — **new admin page needed**
-  - Officer assignment checklist → FR-M3-09 → FR-M3-13 (workload-based default-check per scope) — **new admin page needed**
+  - Officer assignment checklist → FR-M3-10 → FR-M3-14 (workload-based default-check per scope) — **new admin page needed**
   - Provisional/insufficient readiness → FR-M2-03 + FR-M2-08 (officer must record rationale) — **gap to fix in M3**
   - Blocked compliance → FR-M2-07 (must block approval) — **gap to fix in M3**
-  - Event controls two-stage → FR-M3-22 → FR-M3-28 (Stage 1 officer verify + Stage 2 public confirm/report + Use Previous) — **new feature to build**
-  - M4 outcome auto-update → FR-M3-30 + FR-M3-31 (trigger on `public_reports/{ticketId}.update`) — **new trigger to add**
-  - Durable notifications → FR-M3-08 (rejection notify) + 16-row matrix (N1–N16) — **new collection to add**
+  - Event controls two-stage → FR-M3-23 → FR-M3-29 (Stage 1 officer verify + Stage 2 public confirm/report + Use Previous) — **new feature to build**
+  - M4 outcome auto-update → FR-M3-31 + FR-M3-32 (trigger on `public_reports/{ticketId}.update`) — **new trigger to add**
+  - Durable notifications → FR-M3-09 (rejection notify) + 16-row matrix (N1–N16) — **new collection to add**

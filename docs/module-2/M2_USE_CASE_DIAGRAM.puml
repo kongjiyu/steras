@@ -1,0 +1,74 @@
+@startuml
+!pragma layout smetana
+left to right direction
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam packageStyle rectangle
+skinparam actorStyle awesome
+skinparam usecase {
+  BackgroundColor #EAF3FA
+  BorderColor #0B6FB8
+  FontColor #172033
+}
+
+actor "M1 / User & Event\nManagement" as M1
+actor "Authority Officer" as Officer
+actor "Admin" as Admin
+actor "MiniMax M3 API" as AI
+actor "OpenWeather API" as Weather
+actor "Public Holiday Dataset" as Holiday
+actor "Firestore Database" as DB
+actor "M4 Incident Reporting" as M4
+actor "M3 Authority Approval\nand Notification" as M3
+
+rectangle "M2 — Smart Risk Assessment and Safety Resource Recommendation" {
+  usecase "UC-M2-01\nAssess Submitted Event Application" as UC01
+  usecase "UC-M2-02\nRetrieve Submitted Event Data" as UC02
+  usecase "UC-M2-03\nRetrieve Contextual Evidence" as UC03
+  usecase "UC-M2-04\nProvide Weather Data" as UC04
+  usecase "UC-M2-05\nProvide Public Holiday Data" as UC05
+  usecase "UC-M2-06\nProvide Submitted Event Data" as UC06
+  usecase "UC-M2-07\nProvide Venue History Data" as UC07
+  usecase "UC-M2-08\nEvaluate Readiness, Compliance\nand Evidence Confidence" as UC08
+  usecase "UC-M2-09\nPerform Risk Assessment" as UC09
+  usecase "UC-M2-10\nValidate AI Response" as UC10
+  usecase "UC-M2-11\nGenerate Safety Resource Recommendation" as UC11
+  usecase "UC-M2-12\nGenerate AI-Assisted Analysis" as UC12
+  usecase "UC-M2-13\nHandle AI Failure / Create M3 Handoff" as UC13
+  usecase "UC-M2-14\nStore Assessment and Resource Records" as UC14
+  usecase "UC-M2-15\nView Risk Assessment" as UC15
+  usecase "UC-M2-16\nView Resource Recommendation" as UC16
+  usecase "UC-M2-17\nView AI-Assisted Analysis" as UC17
+  usecase "UC-M2-18\nView Organiser Assessment Summary" as UC18
+}
+
+M1 --> UC01
+M1 --> UC06
+M1 --> UC18
+Officer --> UC15
+Officer --> UC16
+Admin --> UC17
+AI --> UC12
+Weather --> UC04
+Holiday --> UC05
+DB --> UC06
+DB --> UC07
+DB --> UC14
+M4 --> UC03
+UC13 --> M3 : review-required handoff
+
+UC01 .> UC02 : <<include>>
+UC01 .> UC03 : <<include>>
+UC01 .> UC08 : <<include>>
+UC01 .> UC12 : <<include>>
+UC01 .> UC09 : <<include>>
+UC01 .> UC11 : <<include>>
+UC01 .> UC14 : <<include>>
+UC02 .> UC06 : <<include>>
+UC03 .> UC04 : <<include>>
+UC03 .> UC05 : <<include>>
+UC03 .> UC07 : <<include>>
+UC12 .> UC10 : <<include>>
+UC13 .> UC12 : <<extend>>
+@enduml

@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" modified="2026-08-05T00:00:00.000Z" agent="Codex" version="24.7.17" type="device">
+  <diagram id="smart-risk-use-case" name="Use Case Diagram">
+    <mxGraphModel dx="1900" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="1400" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="Smart Risk Assessment and Safety Resource Recommendation Use Case Diagram" style="text;html=1;align=center;verticalAlign=middle;fontFamily=Arial;fontSize=24;fontStyle=1;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="250" y="10" width="1700" height="42" as="geometry" />
+        </mxCell>
+
+        <mxCell id="system-boundary" value="Smart Risk Assessment and Safety Resource Recommendation Module" style="swimlane;html=1;horizontal=1;startSize=42;fillColor=#F8FAFC;swimlaneFillColor=#F8FAFC;strokeColor=#19324D;strokeWidth=2;fontFamily=Arial;fontSize=18;fontStyle=1;fontColor=#19324D;collapsible=0;" vertex="1" parent="1">
+          <mxGeometry x="210" y="85" width="1570" height="1170" as="geometry" />
+        </mxCell>
+
+        <!-- Human actor: only direct M2 monitoring/recalculation interaction. -->
+        <mxCell id="actor-authority" value="Authority Officer" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fontFamily=Arial;fontSize=15;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="25" y="940" width="140" height="105" as="geometry" />
+        </mxCell>
+
+        <!-- External modules and services. -->
+        <mxCell id="actor-m1" value="User and Event&lt;br&gt;Management Module" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fontFamily=Arial;fontSize=13;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="1870" y="760" width="175" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="actor-m3" value="Authority Approval and&lt;br&gt;Notification Module" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fontFamily=Arial;fontSize=13;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="1870" y="900" width="175" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="actor-minimax" value="MiniMax M3 API" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fontFamily=Arial;fontSize=13;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="1885" y="120" width="145" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="actor-weather" value="OpenWeather API" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fontFamily=Arial;fontSize=13;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="1885" y="260" width="145" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="actor-holiday" value="Public Holiday Dataset" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fontFamily=Arial;fontSize=13;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="1875" y="400" width="165" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="actor-m4" value="Incident Reporting and&lt;br&gt;Handling Module" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fontFamily=Arial;fontSize=13;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="1870" y="540" width="175" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="actor-m5" value="Analytics and&lt;br&gt;Reporting Module" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fontFamily=Arial;fontSize=13;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="1880" y="1040" width="155" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="actor-firestore" value="Firestore Database" style="shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;html=1;outlineConnect=0;fontFamily=Arial;fontSize=13;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="1885" y="1170" width="145" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- Main assessment orchestration. -->
+        <mxCell id="process-assessment" value="Process Submitted&lt;br&gt;Event Application" style="ellipse;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#0B6FB8;strokeWidth=2;fontFamily=Arial;fontSize=15;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="850" y="155" width="220" height="82" as="geometry" />
+        </mxCell>
+
+        <!-- Input and contextual evidence use cases. -->
+        <mxCell id="retrieve-version" value="Retrieve Submitted&lt;br&gt;Event Data" style="ellipse;whiteSpace=wrap;html=1;fillColor=#F1F8F4;strokeColor=#3A8D5D;fontFamily=Arial;fontSize=14;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="285" y="330" width="210" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="retrieve-context" value="Retrieve Contextual&lt;br&gt;Evidence" style="ellipse;whiteSpace=wrap;html=1;fillColor=#F1F8F4;strokeColor=#3A8D5D;fontFamily=Arial;fontSize=14;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="1460" y="330" width="210" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="evaluate-readiness" value="Evaluate Readiness,&lt;br&gt;Compliance and&lt;br&gt;Evidence Confidence" style="ellipse;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#0B6FB8;fontFamily=Arial;fontSize=14;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="590" y="320" width="230" height="96" as="geometry" />
+        </mxCell>
+
+        <!-- Formula-neutral assessment use cases. -->
+        <mxCell id="perform-risk" value="Perform Risk&lt;br&gt;Assessment" style="ellipse;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#0B6FB8;strokeWidth=2;fontFamily=Arial;fontSize=14;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="880" y="330" width="200" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="validate-result" value="Validate Assessment&lt;br&gt;Result" style="ellipse;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#0B6FB8;fontFamily=Arial;fontSize=14;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="880" y="500" width="200" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="generate-resources" value="Generate Safety Resource&lt;br&gt;Recommendation" style="ellipse;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#0B6FB8;strokeWidth=2;fontFamily=Arial;fontSize=14;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="880" y="665" width="235" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- AI support use cases. -->
+        <mxCell id="generate-ai" value="Generate AI-Assisted&lt;br&gt;Analysis" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFF4D6;strokeColor=#D78B00;strokeWidth=2;fontFamily=Arial;fontSize=14;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="1190" y="330" width="215" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="validate-ai" value="Validate AI Response" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFF9E8;strokeColor=#D78B00;fontFamily=Arial;fontSize=14;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="1190" y="500" width="215" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="handle-ai-failure" value="Handle AI Failure" style="ellipse;whiteSpace=wrap;html=1;fillColor=#FFF9E8;strokeColor=#D78B00;fontFamily=Arial;fontSize=14;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="1475" y="500" width="190" height="76" as="geometry" />
+        </mxCell>
+        <mxCell id="note-ai-failure" value="Unavailable, timeout, or invalid response" style="text;html=1;align=center;verticalAlign=middle;fontFamily=Arial;fontSize=11;fontColor=#6B4E00;fillColor=none;strokeColor=none;" vertex="1" parent="1">
+          <mxGeometry x="1440" y="580" width="260" height="26" as="geometry" />
+        </mxCell>
+
+        <!-- Persistence and traceability. -->
+        <mxCell id="persist-outputs" value="Store Assessment and&lt;br&gt;Resource Records" style="ellipse;whiteSpace=wrap;html=1;fillColor=#F1F8F4;strokeColor=#3A8D5D;strokeWidth=2;fontFamily=Arial;fontSize=14;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="1190" y="665" width="225" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="record-audit" value="Record Assessment&lt;br&gt;Audit Trail" style="ellipse;whiteSpace=wrap;html=1;fillColor=#F1F8F4;strokeColor=#3A8D5D;fontFamily=Arial;fontSize=14;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="1480" y="665" width="190" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- Cross-module output contracts. -->
+        <mxCell id="provide-m1" value="Provide Organiser-Safe&lt;br&gt;Assessment Output" style="ellipse;whiteSpace=wrap;html=1;fillColor=#F3ECFA;strokeColor=#6D5BD0;fontFamily=Arial;fontSize=14;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="300" y="805" width="230" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="provide-m3" value="Provide Detailed Assessment&lt;br&gt;and Resource Output" style="ellipse;whiteSpace=wrap;html=1;fillColor=#F3ECFA;strokeColor=#6D5BD0;fontFamily=Arial;fontSize=14;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="610" y="805" width="245" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="provide-m5" value="Provide Assessment and&lt;br&gt;Resource Analytics Data" style="ellipse;whiteSpace=wrap;html=1;fillColor=#F3ECFA;strokeColor=#6D5BD0;fontFamily=Arial;fontSize=14;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="945" y="805" width="245" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="request-recompute" value="Request Assessment&lt;br&gt;Recalculation" style="ellipse;whiteSpace=wrap;html=1;fillColor=#F3ECFA;strokeColor=#6D5BD0;fontFamily=Arial;fontSize=14;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="805" width="220" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- M2-owned monitoring pages. -->
+        <mxCell id="view-risk-portfolio" value="View Risk Assessment&lt;br&gt;Portfolio" style="ellipse;whiteSpace=wrap;html=1;fillColor=#F3ECFA;strokeColor=#6D5BD0;strokeWidth=2;fontFamily=Arial;fontSize=14;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="480" y="1040" width="220" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="view-resource-portfolio" value="View Resource Recommendation&lt;br&gt;Portfolio" style="ellipse;whiteSpace=wrap;html=1;fillColor=#F3ECFA;strokeColor=#6D5BD0;strokeWidth=2;fontFamily=Arial;fontSize=14;fontColor=#19324D;" vertex="1" parent="1">
+          <mxGeometry x="800" y="1040" width="250" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- Actor associations. -->
+        <mxCell id="a-authority-risk" style="edgeStyle=none;html=1;endArrow=none;strokeColor=#64748B;" edge="1" parent="1" source="actor-authority" target="view-risk-portfolio"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="a-authority-resource" style="edgeStyle=none;html=1;endArrow=none;strokeColor=#64748B;" edge="1" parent="1" source="actor-authority" target="view-resource-portfolio"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="a-m1-process" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=none;strokeColor=#64748B;" edge="1" parent="1" source="actor-m1" target="process-assessment"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1810" y="805" /><mxPoint x="1810" y="65" /><mxPoint x="1120" y="65" /><mxPoint x="1120" y="196" /></Array></mxGeometry></mxCell>
+        <mxCell id="a-m1-output" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=none;strokeColor=#64748B;" edge="1" parent="1" source="actor-m1" target="provide-m1"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1810" y="805" /><mxPoint x="1810" y="920" /><mxPoint x="415" y="920" /></Array></mxGeometry></mxCell>
+        <mxCell id="a-m3-output" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=none;strokeColor=#64748B;" edge="1" parent="1" source="actor-m3" target="provide-m3"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1810" y="945" /><mxPoint x="732" y="945" /></Array></mxGeometry></mxCell>
+        <mxCell id="a-m3-recompute" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=none;strokeColor=#64748B;" edge="1" parent="1" source="actor-m3" target="request-recompute"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1800" y="930" /><mxPoint x="1530" y="930" /><mxPoint x="1530" y="845" /></Array></mxGeometry></mxCell>
+        <mxCell id="a-minimax-ai" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=none;strokeColor=#64748B;" edge="1" parent="1" source="actor-minimax" target="generate-ai"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1800" y="165" /><mxPoint x="1435" y="165" /><mxPoint x="1435" y="368" /></Array></mxGeometry></mxCell>
+        <mxCell id="a-weather-context" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=none;strokeColor=#64748B;" edge="1" parent="1" source="actor-weather" target="retrieve-context"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1810" y="305" /><mxPoint x="1720" y="305" /><mxPoint x="1720" y="350" /></Array></mxGeometry></mxCell>
+        <mxCell id="a-holiday-context" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=none;strokeColor=#64748B;" edge="1" parent="1" source="actor-holiday" target="retrieve-context"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1810" y="445" /><mxPoint x="1720" y="445" /><mxPoint x="1720" y="368" /></Array></mxGeometry></mxCell>
+        <mxCell id="a-m4-context" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=none;strokeColor=#64748B;" edge="1" parent="1" source="actor-m4" target="retrieve-context"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1810" y="585" /><mxPoint x="1740" y="585" /><mxPoint x="1740" y="386" /></Array></mxGeometry></mxCell>
+        <mxCell id="a-m5-output" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=none;strokeColor=#64748B;" edge="1" parent="1" source="actor-m5" target="provide-m5"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1770" y="1085" /><mxPoint x="1067" y="1085" /><mxPoint x="1067" y="885" /></Array></mxGeometry></mxCell>
+        <mxCell id="a-db-version" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=none;strokeColor=#64748B;" edge="1" parent="1" source="actor-firestore" target="retrieve-version"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1750" y="1135" /><mxPoint x="390" y="1135" /><mxPoint x="390" y="406" /></Array></mxGeometry></mxCell>
+        <mxCell id="a-db-context" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=none;strokeColor=#64748B;" edge="1" parent="1" source="actor-firestore" target="retrieve-context"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1770" y="1160" /><mxPoint x="420" y="1160" /><mxPoint x="420" y="576" /></Array></mxGeometry></mxCell>
+        <mxCell id="a-db-persist" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=none;strokeColor=#64748B;" edge="1" parent="1" source="actor-firestore" target="persist-outputs"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1790" y="1180" /><mxPoint x="1302" y="1180" /><mxPoint x="1302" y="745" /></Array></mxGeometry></mxCell>
+        <mxCell id="a-db-audit" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=none;strokeColor=#64748B;" edge="1" parent="1" source="actor-firestore" target="record-audit"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1810" y="1200" /><mxPoint x="1575" y="1200" /><mxPoint x="1575" y="745" /></Array></mxGeometry></mxCell>
+
+        <!-- Include and extend relationships. -->
+        <mxCell id="i-process-version" value="«include»" style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;dashPattern=8 4;endArrow=open;endFill=0;fontFamily=Arial;fontSize=12;labelBackgroundColor=#F8FAFC;" edge="1" parent="1" source="process-assessment" target="retrieve-version"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="i-process-context" value="«include»" style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;dashPattern=8 4;endArrow=open;endFill=0;fontFamily=Arial;fontSize=12;labelBackgroundColor=#F8FAFC;" edge="1" parent="1" source="process-assessment" target="retrieve-context"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1565" y="260" /><mxPoint x="1565" y="330" /></Array></mxGeometry></mxCell>
+        <mxCell id="i-process-readiness" value="«include»" style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;dashPattern=8 4;endArrow=open;endFill=0;fontFamily=Arial;fontSize=12;labelBackgroundColor=#F8FAFC;" edge="1" parent="1" source="process-assessment" target="evaluate-readiness"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="i-process-risk" value="«include»" style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;dashPattern=8 4;endArrow=open;endFill=0;fontFamily=Arial;fontSize=12;labelBackgroundColor=#F8FAFC;" edge="1" parent="1" source="process-assessment" target="perform-risk"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="i-risk-validate" value="«include»" style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;dashPattern=8 4;endArrow=open;endFill=0;fontFamily=Arial;fontSize=12;labelBackgroundColor=#F8FAFC;" edge="1" parent="1" source="perform-risk" target="validate-result"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="i-process-ai" value="«include»" style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;dashPattern=8 4;endArrow=open;endFill=0;fontFamily=Arial;fontSize=12;labelBackgroundColor=#F8FAFC;" edge="1" parent="1" source="process-assessment" target="generate-ai"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="i-ai-validate" value="«include»" style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;dashPattern=8 4;endArrow=open;endFill=0;fontFamily=Arial;fontSize=12;labelBackgroundColor=#F8FAFC;" edge="1" parent="1" source="generate-ai" target="validate-ai"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="x-ai-failure" value="«extend»" style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;dashPattern=8 4;endArrow=open;endFill=0;fontFamily=Arial;fontSize=11;labelBackgroundColor=#F8FAFC;" edge="1" parent="1" source="handle-ai-failure" target="validate-ai"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="i-process-resource" value="«include»" style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;dashPattern=8 4;endArrow=open;endFill=0;fontFamily=Arial;fontSize=12;labelBackgroundColor=#F8FAFC;" edge="1" parent="1" source="process-assessment" target="generate-resources"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="i-process-persist" value="«include»" style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;dashPattern=8 4;endArrow=open;endFill=0;fontFamily=Arial;fontSize=12;labelBackgroundColor=#F8FAFC;" edge="1" parent="1" source="process-assessment" target="persist-outputs"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="i-persist-audit" value="«include»" style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;dashPattern=8 4;endArrow=open;endFill=0;fontFamily=Arial;fontSize=12;labelBackgroundColor=#F8FAFC;" edge="1" parent="1" source="persist-outputs" target="record-audit"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="x-recompute-process" value="«extend»&#xa;[failed, stale, or legacy assessment]" style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;dashPattern=8 4;endArrow=open;endFill=0;fontFamily=Arial;fontSize=11;labelBackgroundColor=#F8FAFC;" edge="1" parent="1" source="request-recompute" target="process-assessment"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1390" y="770" /><mxPoint x="1125" y="770" /><mxPoint x="1125" y="196" /></Array></mxGeometry></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

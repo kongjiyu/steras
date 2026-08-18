@@ -2,7 +2,7 @@
 
 **Owner:** Module 3 teammate
 
-**PRD requirements:** FR-16 to FR-22
+**PRD requirements:** FR-M3-01 to FR-M3-32
 
 ## Goal
 
@@ -89,14 +89,14 @@ Push notification is optional until FCM configuration exists. A push failure mus
 |---|---|
 | M1 | Event/version data, evidence paths, organiser ownership, and required authorities |
 | M2 | Official HIRARC residual hazards, separate readiness/compliance gates, advisory explanation, evidence confidence, resource planning ranges/rationale, and AI retry status |
-| M4 | Incident/complaint queues and investigation status where authority review is required |
+| M4 | Incident triage, assignment, and investigation queues where authority action is required |
 
 ## Outputs To Other Modules
 
 | Consumer | M3 provides |
 |---|---|
 | M1 | Aggregate status, current/history decisions, revision/rejection rationale, notifications, and public publication |
-| M4 | Authority identity/scope and decision links for incident or complaint escalation |
+| M4 | Authority identity/scope and decision links for incident assignment or escalation |
 | M5 | Decision outcomes, timestamps, reviewers/authority type, overrides, review duration, and publication state |
 
 ## Remaining Work
@@ -107,7 +107,7 @@ Push notification is optional until FCM configuration exists. A push failure mus
 - Implement durable in-app notifications and optional FCM delivery.
 - Add editable AI-assisted rejection/revision wording only after the human-edit boundary is tested.
 - Decide whether `/authority/audit` needs a standalone page or remains part of event review.
-- Add M4 incident/complaint navigation when those queues exist.
+- Add M4 incident navigation when the triage and investigation queue exists.
 - Add browser and emulator tests for each aggregate decision branch and resubmission.
 
 ## Definition of Done
