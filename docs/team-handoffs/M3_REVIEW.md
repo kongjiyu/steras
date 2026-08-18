@@ -1,9 +1,9 @@
 # M3 — Authority Approval and Notification · Review Pack
 
 **For:** M3 teammate (the human who owns the module)
-**Last commit on `anny_cont`:** `ab8b33d`
+**Last commit on `anny_cont`:** `683a108`
 **Reviewer entry point:** this file
-**Status:** 28/28 @M3 Playwright specs pass on the deployed Firebase project (`linkos-496505`) — split across 3 projects (`m3-smoke` 12, `m3-full` 14, `m3-workstream1` 2).
+**Status:** 35/35 @M3 Playwright specs pass on the deployed Firebase project (`linkos-496505`) — split across 3 projects (`m3-smoke` 13, `m3-full` 15, `m3-workstream1` 7).
 
 This document is a self-contained review pack. It tells you:
 
@@ -252,7 +252,27 @@ The Stage-1 control verification flow used to operate on a single flat `event_co
 
 **Migration status:** Round 1 (rename + types + UI + tests) and Round 2 (delete the old flat `verifiedControlIds` logic) shipped in `ab8b33d`. Round 3 (post-merge legacy-data cleanup via Admin SDK) not blocking — only matters once we cut a release with prior data.
 
-**Test status:** 28/28 across 3 projects (`m3-smoke` 12/12, `m3-full` 14/14, `m3-workstream1` 2/2). The 3-project split (commit `777bb55`) was essential — the per-doc tests sign in/out 5+ times each, and cumulative Firebase Auth slowness was the previous flake source.
+**Test status:** 35/35 across 3 projects (`m3-smoke` 13/13, `m3-full` 15/15, `m3-workstream1` 7/7). The 3-project split (commit `777bb55`) was essential — the per-doc tests sign in/out 5+ times each, and cumulative Firebase Auth slowness was the previous flake source.
+
+---
+
+## 5c. Workstream 1 polish — unassign + audit log + checkbox + notification split (shipped in `7bd47f1` + `683a108`)
+
+The plan for this round lived in `docs/team-handoffs/M3_WORKSTREAM1_POLISH_PLAN.md`. Five of the six items shipped in this round; the sixth (`makeInitialReviewDecision` / FR-M3-02..04) is deferred to its own round (see plan doc §1 for the 3 reasons).
+
+**#2 `unassignAuthorityOfficers` (A15 backup officer swap)** — new admin-only Cloud Function. Reverses an `assignAuthorityOfficers` call (per-authority or all). Refuses if any targeted assignment has `status: 'completed'` (a proposal has been recorded; admin must go through `makeSecondReviewDecision` to close out). Decrements officer `workloadCount`, writes `assignment_revoked` audit log per revocation, resets `event.reviewStage = null` when all assignments are revoked. UI: per-row "Unassign" button in `AdminAssignment` (visible only when no officer has yet recorded a proposal) + top-level "Unassign all" when > 1 active assignment.
+
+**#3 Audit log for assignment actions (FR-M3-09..12)** — `assignAuthorityOfficers` now writes one `assignment_created` audit log per assigned officer in the same transaction as the assignment (atomic — no consistency window). Captures `actorId`, `actorRole`, `notes`, and `metadata` (authorityType, officerUid, venueState, previous/new workloadCount). `unassignAuthorityOfficers` writes `assignment_revoked` audit logs. New `AuditAction` values: `'assignment_created'`, `'assignment_revoked'`.
+
+**#5 FR-M3-16 officer approval checkbox** — `recordOfficerProposal` and the legacy `makeAuthorityDecision` both refuse `Approve` unless `confirmedReview: true`. `AuthorityEventReview.tsx` renders a "I have reviewed the assessment, AI advisory, submitted evidence, and recommended resource ranges" checkbox above the Approve button. The Approve button is disabled without it. Reject and AmendmentRequested don't require the checkbox (per the PRD's "I have reviewed everything before I bless this" intent).
+
+**#6 FR-M3-08 reason + suggestion split fields in notifications** — `Notification` interface gains optional `reason?: string` and `suggestion?: string`. `createNotification` helper accepts and writes them. The two callers that have reason + suggestion (`recordOfficerProposal` on Reject/Amend, `makeSecondReviewDecision` on the featured officer) now pass them as separate fields. `NotificationBell.tsx` renders them on separate lines under the message. Legacy notifications without these fields degrade gracefully.
+
+**#4 Link from `/admin/applications` queue to assignment page** — `AdminApplicationQueue.tsx` row gets a per-row "Assign" link on the right edge (hidden when `reviewStage === 'second'` or status is `Approved` / `Rejected` / `Withdrawn`).
+
+**Test plan:** 28 → 35 specs across 3 projects. `m3-smoke` 12 → 13, `m3-full` 14 → 15, `m3-workstream1` 2 → 7 (added the 3 unassign-officer.spec.ts specs + 2 confirmedReview gate tests in officer-assignment.spec.ts + 1 reason/suggestion test in m3-controls-notifications.spec.ts). Latent fix: the new "second-review notification" test now filters by `sourceActionId` (the new path's id is `second_review_*`, distinct from the legacy path's `v1_*_notif`) so it's robust to notification order.
+
+**Test infra detail:** the new tests read the event's `currentVersionId` before constructing assignment paths. `evt-004-kl-marathon` is seeded with `currentVersionId: 'v2'` (per `seedMockData.js`), so assignments are `v2_PDRM` not `v1_PDRM`. A small `readVersionId(api)` helper returns the actual id (defaulting to `'v1'` if missing).
 
 ---
 
@@ -309,7 +329,7 @@ Commits before `e1263fe` were either the original M3 foundation (already in main
 
 **TL;DR for the impatient:**
 - Your module: **M3 — Authority Approval and Notification** (M3 teammate role).
-- The 13-point diff in §2 is what changed; everything else is the existing M3 foundation. The Q1 refactor (§5b) is the biggest single change this round.
+- The diff in §2 spans 3 rounds: Workstream 1 (`44a7840` + `2b8db0d`), Q1 refactor (`ab8b33d`), Workstream 1 polish (`7bd47f1` + `683a108`). Each is a focused, reviewable commit. The Q1 refactor (§5b) is the biggest single change.
 - 5-minute smoke test in §4 step 1 is the fastest way to feel the whole thing work.
-- 28/28 Playwright specs pass across 3 projects.
+- 35/35 Playwright specs pass across 3 projects (28 → 35 across the 3 rounds).
 - Branch is `anny_cont` — not merged. Tell me when you want to merge.

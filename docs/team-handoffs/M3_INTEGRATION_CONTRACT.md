@@ -52,8 +52,11 @@ Deployed to `asia-southeast1`, project `linkos-496505`. Callable from any signed
 
 | Function | Signature | Notes for callers |
 |---|---|---|
-| `makeAuthorityDecision` | `(eventId, decision: 'Approved'\|'Rejected'\|'AmendmentRequested', rationale, reviewStage?: 'initial'\|'authority')` | **CALLABLE BY M3 USERS ONLY.** Enforces: authority must be in `requiredAuthorities`; status must be in `Pending`/`UnderReview`; `complianceStatus !== 'blocked'` if `decision === 'Approved'`; rationale ≥80 chars if readiness is `provisional`/`insufficient_data`. Returns `{ eventId, versionId, decisionId, decision, status, idempotent }`. |
-| `makeSecondReviewDecision` | *(planned, this round)* `(eventId, decision: 'Approved'\|'Rejected', reason, suggestion)` | Admin only. Aggregates officer decisions. Reason + suggestion split (FR-M3-05). |
+| `makeAuthorityDecision` | `(eventId, decision, rationale, confirmedReview?: boolean)` | **CALLABLE BY M3 USERS ONLY** (legacy path; the new officer flow uses `recordOfficerProposal`). Enforces: authority must be in `requiredAuthorities`; status must be in `Pending`/`UnderReview`; `complianceStatus !== 'blocked'` if `decision === 'Approved'`; rationale ≥80 chars if readiness is `provisional`/`insufficient_data`; **FR-M3-16: `confirmedReview: true` required when `decision === 'Approved'`** (UI checkbox drives this). Returns `{ eventId, versionId, decisionId, decision, status, idempotent }`. |
+| `recordOfficerProposal` | `({ eventId, decision, reason, suggestion?, confirmedReview?: boolean })` | **SHIPPED (`44a7840` + `7bd47f1`).** The new officer flow (replaces the legacy `makeAuthorityDecision` for assigned officers). Requires an active `assignments/{versionId}_{auth}` doc for the calling officer. `decision === 'Approved'` requires `confirmedReview: true` (FR-M3-16). `decision === 'Rejected'` requires non-empty `suggestion`. Sets `event.reviewStage = 'second'` when all officers complete; emits admin + organiser notifications. Idempotent on `(versionId, authType)`. |
+| `makeSecondReviewDecision` | **SHIPPED (`44a7840`).** `({ eventId, confirmedDecision, adminNote? })` | Admin only. Pure aggregator (A7: refuses to override the aggregated decision). Decrements officer workload, writes `decision_made` audit log, writes the `application_approved` / `application_rejected` / `amendment_requested` notification to the organiser with the **featured officer's `reason` + `suggestion` as separate fields** (FR-M3-08). |
+| `unassignAuthorityOfficers` | **SHIPPED (`7bd47f1`).** `({ eventId, authorityType? })` | Admin only. Reverses an `assignAuthorityOfficers` call. `authorityType` is optional — when omitted, unassigns all. **Refuses** if any targeted assignment has `status === 'completed'` (a proposal has been recorded; admin must go through `makeSecondReviewDecision` to close out the work). Decrements officer `workloadCount`, writes `assignment_revoked` audit log per revocation, resets `event.reviewStage = null` when all assignments are revoked. Idempotent (revoking an already-revoked assignment is a no-op). |
+| `assignAuthorityOfficers` | **SHIPPED (`44a7840` + `7bd47f1`).** `({ eventId, assignmentMap, dryRun? })` | Admin only. Two modes: `dryRun: true` (default) returns the proposed checklist (default-checked by lowest workloadCount + state-scope matching, per A4) without writing. `dryRun: false` commits: writes `events/{id}/assignments/{versionId}_{auth}` per authority, increments each officer's `workloadCount`, sets `event.reviewStage = 'authority'`, writes one `assignment_created` audit log per assignment in the same transaction. Refuses if the event has no required authorities, the event is already in `reviewStage === 'authority'`, any officer is at the workload limit, or any officer is state-scoped to a different venue state. |
 | `verifyStage1Doc` | `({ eventId, controlId, docId, status: 'verified'\|'rejected', rationale, evidencePath? })` | **SHIPPED (`ab8b33d`)** — renamed from `verifyEventControl`. Officer must be in `requiredAuthorities` of the event. Operates on `event_controls/{controlId}/stage1_docs/{docId}`; carries provenance (`status`/`verifiedBy`/`verifiedAt`/`rejectionReason`) on the doc itself. Recomputes parent control's aggregate `label`; maintains `event.verifiedControlIds`; writes audit + organiser notification. Idempotent on `(versionId, controlId, docId, authorityType)`. **BREAKING CHANGE** — see §6. |
 | `generateEventControlList` | *(this round)* `(eventId, versionId)` | Admin only. Calls M2's `proposeEventControlList` AI proposal (Q5) → admin may edit → system writes `event_controls/{controlId}` with `stage1Docs` + `stage2Docs` template entries. |
 | `editEventControlList` | *(this round)* `(eventId, addControls?, removeControlIds?)` | Admin only. Replaces the inline edit UI call. |
@@ -91,18 +94,26 @@ Read-by-rules is already configured. Writes are server-only.
   versionId?: string,
   type: 'decision_made' | 'application_approved' | 'application_rejected'
       | 'amendment_requested' | 'control_verified' | 'control_rejected'
-      | 'stage1_doc_approved' | 'stage1_doc_rejected'        // NEW
-      | 'control_list_published' | 'control_resubmit_required' | 'control_restored'  // NEW
-      | 'withdrawn_cleanup',                                     // NEW
+      | 'stage1_doc_approved' | 'stage1_doc_rejected'        // Q1 refactor
+      | 'control_list_published' | 'control_resubmit_required' | 'control_restored'  // planned
+      | 'withdrawn_cleanup',                                     // planned
   title: string,
   message: string,
   sourceActionId: string,          // idempotency key
   read: boolean,
   createdAt: number,
   readAt?: number,
+  // FR-M3-08 (SHIPPED `7bd47f1`): rejection / second-review
+  // notifications carry the reason and suggestion as separate,
+  // structured fields (not just mashed into `message`). The bell UI
+  // surfaces them on separate lines. Optional for legacy /
+  // non-rejection notifications — old docs without these fields
+  // degrade gracefully.
+  reason?: string,
+  suggestion?: string,
 }
 ```
-**Other modules:** subscribe to the relevant `recipientUid` to surface notifications in your own UI if needed.
+**Other modules:** subscribe to the relevant `recipientUid` to surface notifications in your own UI if needed. When writing a notification that has a reason / suggestion, **pass them as separate fields**, not just into the `message`. The bell UI surfaces them on separate lines.
 
 #### `events/{eventId}/event_controls/{controlId}` (existing flat) → `event_controls/{controlId}/stage1_docs/{docId}` + `stage2_docs/{docId}` (this round)
 ```ts
@@ -302,7 +313,7 @@ Read-by-rules is already configured. Writes are server-only.
 - [x] Round 2: deleted the old flat `verifiedControlIds` logic from `verifyEventControl` (function removed). Old `event_controls/{id}` flat-doc shape gone.
 - [ ] Round 3 (post-merge): clean up legacy data via Admin SDK one-shot script. Not blocking — only matters once we cut a release with prior data.
 
-**Verification:** 28/28 M3 Playwright specs pass (m3-smoke 12/12, m3-full 14/14, m3-workstream1 2/2). The 3-project split (commit `777bb55`) keeps cumulative Firebase Auth slowness from flaking the new per-doc tests.
+**Verification:** 35/35 M3 Playwright specs pass as of the Workstream 1 polish round (`7bd47f1` + `683a108`): m3-smoke 13/13, m3-full 15/15, m3-workstream1 7/7. The 3-project split (commit `777bb55`) keeps cumulative Firebase Auth slowness from flaking the new per-doc tests.
 
 **Notification:** other modules don't need to migrate. Only the test fixture and the existing Playwright spec needed updating. M2's `verifiedControlIds` read still works (same field on the parent event doc, just sourced from a different sub-collection).
 
@@ -441,9 +452,14 @@ Withdrawn                 ← M1.withdrawEvent (anytime post-Pending)
 | What | When | Where |
 |---|---|---|
 | Q1 refactor: `verifyEventControl` → `verifyStage1Doc` on a doc sub-collection | **SHIPPED** (`ab8b33d`) | `functions/src/http/verifyStage1Doc.ts` (renamed + new path) + `shared/types.ts` (Stage 1 doc types) + `frontend/src/pages/authority/AuthorityEventReview.tsx` (per-doc UI) |
-| Q4: `PublicReport` type | SHIPPED (in `bf79619`) | `shared/types.ts` |
+| Q4: `PublicReport` type | SHIPPED (`bf79619`) | `shared/types.ts` |
 | Workstream 1: officer assignment Cloud Function (`assignAuthorityOfficers`) | **SHIPPED** (`44a7840`) | `functions/src/http/assignAuthorityOfficers.ts` + `frontend/src/pages/admin/AdminAssignment.tsx` |
 | Workstream 1: `makeSecondReviewDecision` Cloud Function | **SHIPPED** (`44a7840`) | `functions/src/http/makeSecondReviewDecision.ts` |
+| Workstream 1 polish: `unassignAuthorityOfficers` Cloud Function (A15 backup officer swap) | **SHIPPED** (`7bd47f1`) | `functions/src/http/unassignAuthorityOfficers.ts` + per-row "Unassign" buttons in `AdminAssignment.tsx` |
+| Workstream 1 polish: audit log for assignment actions (FR-M3-09..12) | **SHIPPED** (`7bd47f1`) | `assignAuthorityOfficers` writes one `assignment_created` audit per officer; `unassignAuthorityOfficers` writes one `assignment_revoked` per revocation. New `AuditAction` values: `'assignment_created'`, `'assignment_revoked'`. |
+| Workstream 1 polish: FR-M3-16 officer approval checkbox | **SHIPPED** (`7bd47f1`) | `recordOfficerProposal` and the legacy `makeAuthorityDecision` both refuse `Approve` unless `confirmedReview: true`. UI checkbox in `AuthorityEventReview.tsx`. |
+| Workstream 1 polish: FR-M3-08 reason + suggestion split fields in notifications | **SHIPPED** (`7bd47f1`) | `Notification` interface gains `reason?: string` and `suggestion?: string`. `createNotification` helper accepts them; `makeSecondReviewDecision` and `recordOfficerProposal` pass them as separate fields. `NotificationBell.tsx` surfaces them on separate lines. |
+| Workstream 1 polish: per-row "Assign" link in `/admin/applications` queue | **SHIPPED** (`7bd47f1`) | `AdminApplicationQueue.tsx` row gets a per-row "Assign" link. |
 | Workstream 2: `generateEventControlList` + `editEventControlList` + new admin page `AdminControlListEditor` | Round after | `functions/src/http/controlList.ts` + `frontend/src/pages/admin/AdminControlListEditor.tsx` |
 | Workstream 3: `uploadStage1Doc` + `usePrevious` + organiser page | Round after | `functions/src/http/stage1Upload.ts` + `frontend/src/pages/organizer/EventControls.tsx` |
 | Workstream 4: `confirmStage2Doc` + `reportStage2Doc` + public UI | Round after | `functions/src/http/stage2Public.ts` + extension to `frontend/src/pages/public/PublicEventDetail.tsx` |

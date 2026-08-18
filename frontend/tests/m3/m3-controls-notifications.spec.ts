@@ -148,14 +148,21 @@ test.describe('@M3 organiser notifications', () => {
 
     // Organiser lists their notifications; the second-review
     // `application_approved` notification should carry reason +
-    // suggestion as separate fields.
+    // suggestion as separate fields. Filter by sourceActionId to
+    // pick the one written by the new flow (`second_review_*`),
+    // since the legacy path's notification for the same eventId
+    // doesn't carry reason/suggestion.
     await api.signOut();
     await loginAs('organizer');
-    const result = await api.callFunction<{ limit?: number }, { items: Array<{ notificationId: string; type: string; eventId: string; reason?: string; suggestion?: string }>; unread: number }>(
+    const result = await api.callFunction<{ limit?: number }, { items: Array<{ notificationId: string; type: string; eventId: string; sourceActionId: string; reason?: string; suggestion?: string }>; unread: number }>(
       'listMyNotifications',
       { limit: 50 },
     );
-    const approvedNotif = result.items.find((n) => n.eventId === eventId && n.type === 'application_approved');
+    const approvedNotif = result.items.find((n) =>
+      n.eventId === eventId
+      && n.type === 'application_approved'
+      && n.sourceActionId?.startsWith('second_review_'),
+    );
     expect(approvedNotif).toBeTruthy();
     expect(approvedNotif?.reason).toBeTruthy();
     expect(approvedNotif?.suggestion).toBeTruthy();
