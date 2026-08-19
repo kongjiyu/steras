@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-19
 **Owner:** M3 teammate (Chia Yu Xin)
-**Status:** Locked against decisions in `STERAS_M3_FR_v4.md` + `M3_GAP_ANALYSIS.md` (Q1=A, Q2=C, Q3=D, Q4=A, Q5=A) — Workstream 3 SHIPPED (`ddf22d7` + `3799d64`); organizer Stage 1 upload + "Use Previous" (one-click, A25 receipt-only, A26 gate dropped)
+**Status:** Locked against decisions in `STERAS_M3_FR_v4.md` + `M3_GAP_ANALYSIS.md` (Q1=A, Q2=C, Q3=D, Q4=A, Q5=A) — Workstream 4 SHIPPED; Stage 2 organizer upload + public confirm/report (FR-M3-27/28/29, UC-35..38)
 **For:** M1, M2, M4, M5 owners — and future-M3
 
 This document is the **handoff contract** for cross-module integration. It tells every other module:
