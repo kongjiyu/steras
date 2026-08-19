@@ -1,8 +1,8 @@
 # M3 — Cross-Module Integration Contract
 
-**Date:** 2026-08-17
+**Date:** 2026-08-18
 **Owner:** M3 teammate (Chia Yu Xin)
-**Status:** Locked against decisions in `STERAS_M3_FR_v4.md` + `M3_GAP_ANALYSIS.md` (Q1=A, Q2=C, Q3=D, Q4=A, Q5=A)
+**Status:** Locked against decisions in `STERAS_M3_FR_v4.md` + `M3_GAP_ANALYSIS.md` (Q1=A, Q2=C, Q3=D, Q4=A, Q5=A) — Workstream 2 SHIPPED (`af9805f` + `630dfa7`); admin-initiated control list (no `onEventApproved` trigger)
 **For:** M1, M2, M4, M5 owners — and future-M3
 
 This document is the **handoff contract** for cross-module integration. It tells every other module:
@@ -58,9 +58,9 @@ Deployed to `asia-southeast1`, project `linkos-496505`. Callable from any signed
 | `unassignAuthorityOfficers` | **SHIPPED (`7bd47f1`).** `({ eventId, authorityType? })` | Admin only. Reverses an `assignAuthorityOfficers` call. `authorityType` is optional — when omitted, unassigns all. **Refuses** if any targeted assignment has `status === 'completed'` (a proposal has been recorded; admin must go through `makeSecondReviewDecision` to close out the work). Decrements officer `workloadCount`, writes `assignment_revoked` audit log per revocation, resets `event.reviewStage = null` when all assignments are revoked. Idempotent (revoking an already-revoked assignment is a no-op). |
 | `assignAuthorityOfficers` | **SHIPPED (`44a7840` + `7bd47f1`).** `({ eventId, assignmentMap, dryRun? })` | Admin only. Two modes: `dryRun: true` (default) returns the proposed checklist (default-checked by lowest workloadCount + state-scope matching, per A4) without writing. `dryRun: false` commits: writes `events/{id}/assignments/{versionId}_{auth}` per authority, increments each officer's `workloadCount`, sets `event.reviewStage = 'authority'`, writes one `assignment_created` audit log per assignment in the same transaction. Refuses if the event has no required authorities, the event is already in `reviewStage === 'authority'`, any officer is at the workload limit, or any officer is state-scoped to a different venue state. |
 | `verifyStage1Doc` | `({ eventId, controlId, docId, status: 'verified'\|'rejected', rationale, evidencePath? })` | **SHIPPED (`ab8b33d`)** — renamed from `verifyEventControl`. Officer must be in `requiredAuthorities` of the event. Operates on `event_controls/{controlId}/stage1_docs/{docId}`; carries provenance (`status`/`verifiedBy`/`verifiedAt`/`rejectionReason`) on the doc itself. Recomputes parent control's aggregate `label`; maintains `event.verifiedControlIds`; writes audit + organiser notification. Idempotent on `(versionId, controlId, docId, authorityType)`. **BREAKING CHANGE** — see §6. |
-| `generateEventControlList` | *(this round)* `(eventId, versionId)` | Admin only. Calls M2's `proposeEventControlList` AI proposal (Q5) → admin may edit → system writes `event_controls/{controlId}` with `stage1Docs` + `stage2Docs` template entries. |
-| `editEventControlList` | *(this round)* `(eventId, addControls?, removeControlIds?)` | Admin only. Replaces the inline edit UI call. |
-| `uploadStage1Doc` | *(this round)* `(eventId, controlId, filePath, usePrevious?: boolean)` | Organiser only. Writes `event_controls/{controlId}/stage1_docs/{docId}` with `status: 'pending_verification'`. If `usePrevious` → `status: 'verified'`, audit `Reused from event X`. |
+| `generateEventControlList` | **SHIPPED (`af9805f`).** `({ eventId, force?: boolean })` | Admin only. Returns `{ items: ProposedControlItem[], cached: boolean, source: 'proposeEventControlList' \| 'cache' }`. Delegates to the extracted `proposeControlItemsForEvent` helper. When `event.controlListGenerated === true`, returns the persisted snapshot with `cached: true / source: 'cache'` (A23 — don't regenerate without explicit reason). Pass `force: true` to skip the cache. **Admin-initiated** — no `onEventApproved` trigger (M3 owner decided 2026-08-18). M3 ships a stub for `proposeControlItemsForEvent`; M2 owner replaces the stub with the real AI-backed `proposeEventControlList` (Q5). |
+| `editEventControlList` | **SHIPPED (`af9805f`).** `({ eventId, items: ProposedControlItem[] })` | Admin only. The commit point. Wipes existing `event_controls/*` + per-control `stage1_docs/*`, writes one `event_controls/{controlId}` doc per item, sets `event.controlListGenerated = true` + writes `event.controlListSnapshot`, writes a `control_list_published` audit log entry (`controlItemVersion=1, controlIds=[…]`), notifies the organiser. Does NOT pre-seed `stage1_docs` — that's Workstream 3 (organizer upload). Idempotent. |
+| `uploadStage1Doc` | *(Workstream 3)* `(eventId, controlId, filePath, usePrevious?: boolean)` | Organiser only. Writes `event_controls/{controlId}/stage1_docs/{docId}` with `status: 'pending_verification'`. If `usePrevious` → `status: 'verified'`, audit `Reused from event X`. |
 | `uploadStage2Doc` | *(this round)* `(eventId, controlId, filePath)` | Organiser only. Writes `event_controls/{controlId}/stage2_docs/{docId}` with `status: 'pending_public_confirmation'`. |
 | `overrideResources` | `(eventId, quantities, rationale)` | Existing. Officer in `requiredAuthorities`. Captures original + revised + UID + authority + timestamp for audit. |
 | `listMyNotifications` | `({ limit?: number })` | **USE THIS for the bell.** Returns `{ items: Notification[], unread: number }`. Scoped to `request.auth.uid`. |
@@ -68,9 +68,9 @@ Deployed to `asia-southeast1`, project `linkos-496505`. Callable from any signed
 | `publishControlDocument` | *(this round)* `(eventId, controlId, stage: 'stage1'\|'stage2', docId)` | Admin only. Sanitises (strips PII) and writes to `public_event_controls/{eventId}/{controlId}`. |
 | `confirmStage2Doc` | *(this round)* `(eventId, controlId, docId)` | Any signed-in user. Rate-limited: 1 confirmation per user per doc. Increments `publicConfirmCount`. |
 | `reportStage2Doc` | *(this round)* `(eventId, controlId, docId, category, description)` | Any signed-in user. Rate-limited: 1 report per user per doc. Writes to M4's intake (or `public_reports/{id}` if M4 isn't ready). |
-| `onM4ReportOutcome` | *(this round, Firestore trigger)* listens to `public_reports/{id}.update` | Server-only. When `outcome: 'confirmed_true'` → marks control `Resubmit Required`. When `outcome: 'dismissed_fake'` → restores to `Approved`. Writes to `event_controls/{controlId}` + organiser notification. |
-| `onEventStatusChanged` | *(this round, Firestore trigger)* listens to `events/{id}.update` | Server-only. When `status: 'Withdrawn'` → FR-M3-01 cleanup: unpublishes control docs, closes pending reviews, retains records. |
-| `onEventApproved` | *(this round, Firestore trigger)* listens to `events/{id}.update` | Server-only. When `status: 'Approved'` (post-second-review) → kicks off `generateEventControlList` for the admin to review. |
+| `onM4ReportOutcome` | *(Workstream 6, Firestore trigger)* listens to `public_reports/{id}.update` | Server-only. When `outcome: 'confirmed_true'` → marks control `Resubmit Required`. When `outcome: 'dismissed_fake'` → restores to `Approved`. Writes to `event_controls/{controlId}` + organiser notification. |
+| `onEventStatusChanged` | *(deferred, Firestore trigger)* listens to `events/{id}.update` | Server-only. When `status: 'Withdrawn'` → FR-M3-01 cleanup: unpublishes control docs, closes pending reviews, retains records. |
+| ~~`onEventApproved`~~ | **REMOVED** (`538948c`) | The M3 owner decided on 2026-08-18 that the control list generation is admin-initiated, not trigger-initiated. The admin clicks "Generate proposal" then "Commit changes" in `AdminControlListEditor`. No Firestore trigger auto-runs the generation. Rationale: keeps the AI call auditable and lets the admin edit before any control is committed. |
 
 **Direct-use note for other modules:**
 - M1 — if you ever need to know "did this event get an authority decision?", call `listMyNotifications` (scoped to the organiser UID) from your side OR query the `events/{id}/decisions` subcollection directly.
@@ -85,6 +85,29 @@ Read-by-rules is already configured. Writes are server-only.
 
 ### Top-level collections M3 writes
 
+#### `events/{eventId}` *(new fields this round)*
+```ts
+{
+  // ... all the existing M1 fields (status, currentVersionId, eventDetails, ...)
+
+  // Workstream 1: review stage machine
+  reviewStage: 'initial' | 'authority' | 'second' | null,
+
+  // Workstream 2 (SHIPPED `af9805f`): admin-driven control list
+  controlListGenerated?: boolean,                                   // set by editEventControlList
+  controlListSnapshot?: Array<{
+    controlId: string,                                              // e.g. 'evt-001-ctrl-pdrm'
+    authority: 'PDRM'|'BOMBA'|'KKM'|'DBKL'|'MOTAC',
+    controlName: string,
+    stage1RequirementsCount: number,
+    controlItemVersion: number,                                     // starts at 1; bumped on resubmission
+    label: 'pending',                                               // only 'pending' at snapshot time; per-doc verification (Workstream 3+) moves this through approved / resubmit_required
+  }>,
+}
+```
+
+**Other modules:** if you read `event.controlListGenerated` to know "is there a published control list?" — that's the canonical signal. `controlListSnapshot` is the persisted copy of the last committed list (used by `generateEventControlList`'s cache path; safe to read but do not write).
+
 #### `notifications/{notificationId}`
 ```ts
 {
@@ -95,8 +118,9 @@ Read-by-rules is already configured. Writes are server-only.
   type: 'decision_made' | 'application_approved' | 'application_rejected'
       | 'amendment_requested' | 'control_verified' | 'control_rejected'
       | 'stage1_doc_approved' | 'stage1_doc_rejected'        // Q1 refactor
-      | 'control_list_published' | 'control_resubmit_required' | 'control_restored'  // planned
-      | 'withdrawn_cleanup',                                     // planned
+      | 'control_list_published'                                 // SHIPPED `af9805f` (Workstream 2)
+      | 'control_resubmit_required' | 'control_restored'         // planned (Workstream 6)
+      | 'withdrawn_cleanup',                                     // planned (FR-M3-01)
   title: string,
   message: string,
   sourceActionId: string,          // idempotency key
@@ -313,7 +337,7 @@ Read-by-rules is already configured. Writes are server-only.
 - [x] Round 2: deleted the old flat `verifiedControlIds` logic from `verifyEventControl` (function removed). Old `event_controls/{id}` flat-doc shape gone.
 - [ ] Round 3 (post-merge): clean up legacy data via Admin SDK one-shot script. Not blocking — only matters once we cut a release with prior data.
 
-**Verification:** 35/35 M3 Playwright specs pass as of the Workstream 1 polish round (`7bd47f1` + `683a108`): m3-smoke 13/13, m3-full 15/15, m3-workstream1 7/7. The 3-project split (commit `777bb55`) keeps cumulative Firebase Auth slowness from flaking the new per-doc tests.
+**Verification:** 38/38 M3 Playwright specs pass as of the Workstream 2 round (`af9805f` + `630dfa7`): m3-smoke 14/14, m3-full 17/17, m3-workstream1 7/7. The 3-project split (commit `777bb55`) keeps cumulative Firebase Auth slowness from flaking the new per-doc tests.
 
 **Notification:** other modules don't need to migrate. Only the test fixture and the existing Playwright spec needed updating. M2's `verifiedControlIds` read still works (same field on the parent event doc, just sourced from a different sub-collection).
 
@@ -406,7 +430,7 @@ M3 owns `notifications/{id}` writes. Other modules don't need to write here.
 | Any authority requested amendment (aggregate) | `amendment_requested` | organiser |
 | `verifyStage1Doc` verified | `stage1_doc_approved` | organiser |
 | `verifyStage1Doc` rejected | `stage1_doc_rejected` | organiser |
-| `publishControlDocument` | `control_list_published` | organiser |
+| `publishControlDocument` (Workstream 5) / `editEventControlList` (Workstream 2) | `control_list_published` | organiser |
 | `onM4ReportOutcome` confirmed_true | `control_resubmit_required` | organiser |
 | `onM4ReportOutcome` dismissed_fake | `control_restored` | organiser + admin |
 | `onEventStatusChanged` → `Withdrawn` | `withdrawn_cleanup` | admin + organiser |
@@ -435,8 +459,8 @@ Draft (M1)                ← organiser creates
               │     └─→ (organiser revises → Pending v2)
               └─→ UnderSecondReview   ← admin opens second review (NEW, this round)
                     ├─→ Approved       ← admin final approval (NEW)
-                    │     └─→ onEventApproved trigger → kick off generateEventControlList
-                    │           └─→ Stage 1/2 workflow (UC-22..38)
+                    │     └─→ Stage 1/2 workflow (UC-22..38) — admin opens /admin/applications/:id/controls
+                    │           and clicks "Generate proposal" then "Commit changes" (no trigger, see §10)
                     └─→ Rejected       ← admin second-review reject (NEW)
                           └─→ (organiser revises → Pending v2)
 Withdrawn                 ← M1.withdrawEvent (anytime post-Pending)
@@ -460,7 +484,7 @@ Withdrawn                 ← M1.withdrawEvent (anytime post-Pending)
 | Workstream 1 polish: FR-M3-16 officer approval checkbox | **SHIPPED** (`7bd47f1`) | `recordOfficerProposal` and the legacy `makeAuthorityDecision` both refuse `Approve` unless `confirmedReview: true`. UI checkbox in `AuthorityEventReview.tsx`. |
 | Workstream 1 polish: FR-M3-08 reason + suggestion split fields in notifications | **SHIPPED** (`7bd47f1`) | `Notification` interface gains `reason?: string` and `suggestion?: string`. `createNotification` helper accepts them; `makeSecondReviewDecision` and `recordOfficerProposal` pass them as separate fields. `NotificationBell.tsx` surfaces them on separate lines. |
 | Workstream 1 polish: per-row "Assign" link in `/admin/applications` queue | **SHIPPED** (`7bd47f1`) | `AdminApplicationQueue.tsx` row gets a per-row "Assign" link. |
-| Workstream 2: `generateEventControlList` + `editEventControlList` + new admin page `AdminControlListEditor` | Round after | `functions/src/http/controlList.ts` + `frontend/src/pages/admin/AdminControlListEditor.tsx` |
+| Workstream 2: `generateEventControlList` (cached, `force: true` to skip) + `editEventControlList` (commit point) + `proposeControlItemsForEvent` helper + `AdminControlListEditor` admin page + `OrganizerEventControls` organizer read-only view + 2 new routes + new event fields (`controlListGenerated`, `controlListSnapshot`) + new audit + new notification type | **SHIPPED** (`af9805f` + `630dfa7`) | `functions/src/http/generateEventControlList.ts` + `functions/src/http/editEventControlList.ts` + `functions/src/http/proposeEventControlList.ts` (refactored) + `frontend/src/pages/admin/AdminControlListEditor.tsx` + `frontend/src/pages/organizer/OrganizerEventControls.tsx` |
 | Workstream 3: `uploadStage1Doc` + `usePrevious` + organiser page | Round after | `functions/src/http/stage1Upload.ts` + `frontend/src/pages/organizer/EventControls.tsx` |
 | Workstream 4: `confirmStage2Doc` + `reportStage2Doc` + public UI | Round after | `functions/src/http/stage2Public.ts` + extension to `frontend/src/pages/public/PublicEventDetail.tsx` |
 | Workstream 5: `publishControlDocument` + `AdminPublishControls` | Round after | `functions/src/http/publishControls.ts` + `frontend/src/pages/admin/AdminPublishControls.tsx` |

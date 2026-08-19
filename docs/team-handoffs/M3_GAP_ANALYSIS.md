@@ -1,6 +1,6 @@
 # M3 — Gap Analysis vs. FR v4 + Use Case Diagram
 
-**Date:** 2026-08-18 (updated post Workstream 1 polish)
+**Date:** 2026-08-18 (updated post Workstream 2)
 **For:** M3 teammate (Chia Yu Xin)
 **Sources cross-referenced:**
 - `STERAS_PRD_v5.0.md` §5.3 (M3, 31 FRs)
@@ -8,7 +8,7 @@
 - `STERAS_M3_Modified_Scope_Enhancement_Proposals.md` (the locked workflow + 31 assumptions A1–A30)
 - `STERAS_M3_Use_Case_Descriptions_v4.md` (40 UCs, 1-UC-per-bubble)
 - `Collaborative - Use Case Diagram.svg` (2026-08-15, "Anny Use case diagram Finalize")
-- Current code on `anny_cont` branch (latest: `683a108`)
+- Current code on `anny_cont` branch (latest: `630dfa7`)
 
 This analysis maps **every one of the 40 UCs** to a status: ✅ implemented, ⚠️ partially implemented, ❌ not implemented. Then groups the gaps by workstream and gives my recommended order to attack them.
 
@@ -18,17 +18,18 @@ This analysis maps **every one of the 40 UCs** to a status: ✅ implemented, ⚠
 
 | Status | Count | % of 40 UCs |
 |---|---:|---:|
-| ✅ Implemented | 20 | 50% |
+| ✅ Implemented | 23 | 58% |
 | ⚠️ Partially implemented | 3 | 7% |
-| ❌ Not implemented | 17 | 43% |
+| ❌ Not implemented | 14 | 35% |
 
-**Current state** (after Q1 refactor + Workstream 1 + Workstream 1 polish, on `anny_cont`):
+**Current state** (after Q1 refactor + Workstream 1 + Workstream 1 polish + Workstream 2, on `anny_cont`):
 
 - **Workstream 1 shipped** (`44a7840`): officer assignment, multi-stage review, second review aggregator. Cleared UC-06..12, UC-20, UC-39 (13 UCs).
 - **Q1 refactor shipped** (`ab8b33d`): per-doc Stage 1 verification. Cleared UC-22..25 (4 UCs).
 - **Workstream 1 polish shipped** (`7bd47f1`): unassign swap, audit log, FR-M3-16 checkbox, FR-M3-08 reason/suggestion split, queue link. Lifted UC-20 from ⚠️ to ✅ and UC-27 from ⚠️ to ✅.
+- **Workstream 2 shipped** (`af9805f`): event control list model + admin-driven AI generation. Cleared UC-13, UC-33, UC-34. The flow is admin-initiated (no `onEventApproved` trigger) — the M3 owner decided on 2026-08-18 that the admin must click "Generate proposal" then "Commit changes". M3 ships a stub `proposeControlItemsForEvent` helper that returns one item per required authority; the M2 owner will replace it with the real AI-backed version.
 - **Initial review stage** (FR-M3-02, FR-M3-03/04) is the only remaining piece of the "review and decide" lane. Deferred to its own round (UC-03, UC-04 still ⚠️).
-- **Stage 1 / Stage 2 upload UI** (Workstream 2-4) is the next big chunk. 13 UCs remaining: UC-01, 02, 05, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 40 (15 if you count the still-partial UC-17, which is a small UI-only fix).
+- **Stage 1 / Stage 2 upload UI** (Workstream 3+) is the next big chunk. 11 UCs remaining: UC-01, 02, 05, 28, 29, 30, 31, 32, 35, 36, 37, 38, 40 (13 if you count the still-partial UC-17, which is a small UI-only fix).
 
 ---
 
@@ -52,7 +53,7 @@ Legend: ✅ implemented · ⚠️ partial · ❌ missing
 | UC-10 | Second Review | FR-M3-17 | ✅ | **`makeSecondReviewDecision` Cloud Function** (`44a7840`) — pure aggregator (A7: refuses to override). Auto-advances `event.reviewStage = 'second'` when all officers complete. |
 | UC-11 | Reject at Second Review | FR-M3-05, -07 | ✅ | Same function. Featured officer's `reason` + `suggestion` are surfaced in the organiser notification. |
 | UC-12 | Grant Final Approval | FR-M3-07 | ✅ | Same function. `event.status` only updates after the second review confirms. |
-| UC-13 | Edit Event Control List | FR-M3-19 | ❌ | Workstream 2. No event control list UI yet. |
+| UC-13 | Edit Event Control List | FR-M3-19 | ✅ | **`editEventControlList` Cloud Function** + `AdminControlListEditor.tsx` (`af9805f`). Admin clicks "Generate proposal" → edits items inline (rename control, add/remove Stage 1 requirements, add/remove control items) → "Commit changes". Commit wipes existing `event_controls/*` + per-control `stage1_docs/*`, writes one `event_controls/{controlId}` doc per item, sets `event.controlListGenerated = true` + writes the snapshot, and writes a `control_list_published` audit log entry (controlItemVersion=1, controlIds=[…]). Does NOT pre-seed `stage1_docs` (that's Workstream 3 — organizer upload). |
 | UC-14 | Publish Event Control Document to Public View | FR-M3-21 | ❌ | Workstream 5. |
 | UC-15 | Sanitise Event Control Document | FR-M3-21 | ❌ | Workstream 5. |
 
@@ -92,8 +93,8 @@ Legend: ✅ implemented · ⚠️ partial · ❌ missing
 
 | UC | Title | FR | Status | Where / why |
 |---|---|---|---|---|
-| UC-33 | Generate Proposed Event Control List | FR-M3-18 | ❌ | **No AI control-list generation.** FR-M3-18 explicitly says "send … to MiniMax M3 to generate a proposed event control list." M2's `ruleBased.ts` has the hazard-to-control mapping knowledge but doesn't write per-event control docs. (This is the gap I flagged in the review pack as item #1.) |
-| UC-34 | Display Stage 1 and Stage 2 Requirements | FR-M3-25 | ❌ | No event control list view at all. |
+| UC-33 | Generate Proposed Event Control List | FR-M3-18 | ✅ | **`generateEventControlList` Cloud Function** + `proposeControlItemsForEvent` helper (`af9805f`). Admin-initiated: admin calls `generateEventControlList({eventId})`, which delegates to `proposeControlItemsForEvent` and returns `{items, cached, source: 'proposeEventControlList'}`. The first call re-runs the propose logic; subsequent calls (when `event.controlListGenerated === true`) return the persisted snapshot with `cached: true / source: 'cache'` (A23 — don't regenerate without explicit reason). Pass `force: true` to skip the cache. **M3 ships a stub** that returns one item per required authority (PDRM, BOMBA, KKM, DBKL, MOTAC) with reasonable per-authority Stage 1 + Stage 2 templates. The M2 owner replaces the stub with the real AI-backed version (FR-M3-18's "send to MiniMax"). |
+| UC-34 | Display Stage 1 and Stage 2 Requirements | FR-M3-25 | ✅ | **`OrganizerEventControls.tsx`** read-only view at `/organizer/events/:id/controls` (`af9805f`). Empty state ("admin hasn't published the control list yet") when `!event.controlListGenerated`. Once the admin has committed, one card per required authority with the control name, authority badge, "Stage 1 documents required: N" count, and "Stage 2 (visual evidence): <label>" line. Header badge toggles to "List published" on commit. |
 
 ### F. Public Viewer (4 UCs)
 
@@ -136,13 +137,15 @@ I recommend grouping the 28 missing + 6 partial UCs into **6 workstreams**. Orde
 - `confirmedReview` checkbox in `AuthorityEventReview` "Your decision" section (only required for Approve).
 
 ### Workstream 2 — Event control list model + AI generation (UC-13, UC-33, UC-34)
-**Why second:** the control list is the container that the rest of the post-approval work attaches to.
+**Status: SHIPPED** on `anny_cont` (`af9805f`).
 
-- New `EventControl` type (full shape, not just the flat `event_controls/{id}` doc I built). Stage 1 docs (`Stage1Doc[]`), Stage 2 docs (`Stage2Doc[]`), `controlName`, `authority`, `stageRequirement`, `controlItemVersion`, `publicConfirmCount`, `label`, `usePreviousSourceEventId`. (See `frontend/src/mock_data/controls.ts` for the planned shape.)
-- New Cloud Function: `generateEventControlList(eventId, assessmentId)`. Called by admin (or `onEventCreated` for the second review) → sends approved event + official risk + resource recommendation to MiniMax → returns the proposed list → admin edits (UC-13) → system writes to `event_controls/{controlId}`.
-- New admin page: `AdminControlListEditor` (per-event). Read-only list view of Stage 1 + Stage 2 requirements for organizer (UC-34).
-
-**Owner decision needed:** who generates the AI proposal? Per the FR it's M2's job (FR-M3-18 says "send to MiniMax"). I'd add a `proposeEventControlList` callable in M2 — it has the hazard model — and a thin M3 wrapper that calls it.
+- New `EventRecord.controlListGenerated?: boolean` + `EventRecord.controlListSnapshot?: Array<{controlId, authority, controlName, stage1RequirementsCount, controlItemVersion, label}>` fields. New `AuditAction: 'control_list_published'` + `NotificationType: 'control_list_published'`.
+- `generateEventControlList(eventId, {force?})` (admin): calls `proposeControlItemsForEvent` and returns `{items, cached, source}`. Cached on re-call (A23) when `event.controlListGenerated === true` — reads from `event.controlListSnapshot` and returns `cached: true / source: 'cache'`. `force: true` to skip cache. **The M3 owner decided on 2026-08-18 that the admin must click "Generate proposal"** — there's no Firestore trigger on `events/{id}.update` auto-running the generation. Rationale: keeps the AI call auditable and lets the admin edit before any control is committed.
+- `editEventControlList(eventId, items)` (admin, commit point): wipes existing `event_controls/*` and per-control `stage1_docs/*`, writes one `event_controls/{controlId}` doc per item, sets `event.controlListGenerated = true` + writes the snapshot, writes a `control_list_published` audit log entry (controlItemVersion=1, controlIds=[…]). Does NOT pre-seed `stage1_docs` — that's Workstream 3 (organizer upload).
+- `proposeEventControlList` was refactored to extract `proposeControlItemsForEvent` for reuse — so `generateEventControlList` can call it without going through the onCall surface. The M3 stub returns one item per required authority with a sensible per-authority template (PDRM/BOMBA/KKM/DBKL/MOTAC). The M2 owner will replace the stub with the real AI-backed version.
+- `AdminControlListEditor` page at `/admin/applications/:id/controls`: table with inline edit (rename control / Stage 1 doc), per-row Add / Remove buttons, "Generate proposal" + "Commit changes" buttons. Shows `cached: true / source: 'cache'` badge when re-opening after commit.
+- `OrganizerEventControls` page at `/organizer/events/:id/controls`: read-only view (UC-34). Empty state ("admin hasn't published the control list yet") when `!event.controlListGenerated`. One card per required authority once committed.
+- `AdminApplicationReview` now has an "Open event control list" link to the editor.
 
 **UCs cleared:** UC-13, UC-33, UC-34.
 
@@ -210,14 +213,14 @@ For traceability against the 31 FRs:
 | FR-M3-15 | Officer reject (reason + suggestion) | UC-21 | ✅ (separate `reason` + `suggestion` fields) |
 | FR-M3-16 | Officer approve (checkbox confirmation) | UC-20 | ✅ (checkbox in `AuthorityEventReview`; `confirmedReview: true` required in Cloud Function) |
 | FR-M3-17 | Admin second review | UC-10 | ✅ (`makeSecondReviewDecision` — pure aggregator) |
-| FR-M3-18 | AI proposes event control list | UC-33 | ❌ (Workstream 2) |
-| FR-M3-19 | Admin modify control list | UC-13 | ❌ (Workstream 2) |
+| FR-M3-18 | AI proposes event control list | UC-33 | ✅ (Workstream 2 — `generateEventControlList` + stub `proposeControlItemsForEvent`; M2 owner replaces the stub with the real AI) |
+| FR-M3-19 | Admin modify control list | UC-13 | ✅ (Workstream 2 — `editEventControlList` + `AdminControlListEditor`) |
 | FR-M3-20 | Organiser upload documentation | UC-28 | ❌ (Workstream 3) |
 | FR-M3-21 | Admin publish to public | UC-14, -15 | ❌ (Workstream 5) |
 | FR-M3-22 | Officer verify Stage 1 | UC-22, -23 | ✅ (Q1 refactor + per-doc UI) |
 | FR-M3-23 | Officer reject Stage 1 | UC-24, -25 | ✅ (Q1 refactor) |
 | FR-M3-24 | Resource override (full audit) | UC-18, -19 | ✅ |
-| FR-M3-25 | Stage 1 + Stage 2 listed together | UC-34 | ❌ (Workstream 2 + 3) |
+| FR-M3-25 | Stage 1 + Stage 2 listed together | UC-34 | ✅ (Workstream 2 — `OrganizerEventControls` read-only view; the "upload" half lands in Workstream 3) |
 | FR-M3-26 | "Use Previous" | UC-29 | ❌ (Workstream 3 — A26 gate dropped per M3 owner decision 2026-08-17) |
 | FR-M3-27 | Public confirm Stage 2 | UC-35 | ❌ (Workstream 4) |
 | FR-M3-28 | Public confirmation count | UC-37 | ❌ (Workstream 4) |
@@ -225,13 +228,13 @@ For traceability against the 31 FRs:
 | FR-M3-30 | Resubmit on confirmed-true report | UC-31 | ❌ (Workstream 6) |
 | FR-M3-31 | Restore on dismissed report | UC-32 | ❌ (Workstream 6) |
 
-**Counts (after Workstream 1 + Q1 + polish, on `anny_cont`):**
+**Counts (after Workstream 1 + Q1 + polish + Workstream 2, on `anny_cont`):**
 
 | FR | Status |
 |---|---|
-| ✅ Fully implemented | FR-M3-05, -08, -09, -10, -11, -12, -13, -15, -16, -17, -24 = **11** |
+| ✅ Fully implemented | FR-M3-05, -08, -09, -10, -11, -12, -13, -15, -16, -17, -18, -19, -22, -23, -24, -25 = **16** |
 | ⚠️ Partial | FR-M3-02, -07, -14 = **3** (FR-M3-02 + the second half of FR-M3-07 are deferred to the initial-review round; FR-M3-14 is missing the "override scores" half) |
-| ❌ Not implemented | FR-M3-01, -03, -04, -06, -18, -19, -20, -21, -22, -23, -25, -26, -27, -28, -29, -30, -31 = **17** |
+| ❌ Not implemented | FR-M3-01, -03, -04, -06, -20, -21, -26, -27, -28, -29, -30, -31 = **12** |
 
 (FYI: the `compliance` + `readiness` gates I added count as implementation of FR-M2-03 / FR-M2-08 enforcement, but those are M2's FRs not M3's. They land in M3's "decision" code path.)
 
@@ -247,8 +250,9 @@ So the conversation we're having makes sense, here's what the `anny_cont` rounds
 | `44a7840` + `2b8db0d` | Workstream 1: `assignAuthorityOfficers` + `recordOfficerProposal` + `makeSecondReviewDecision`; `AdminAssignment` page; per-row "Assign" link from queue; `OfficerProfile` + `Assignment` types | UC-06, UC-07, UC-08, UC-09, UC-10, UC-11, UC-12, UC-39, UC-20 (all ✅) |
 | `ab8b33d` | Q1 refactor: `verifyStage1Doc` per-doc sub-collection; per-doc UI in `AuthorityEventReview`; `Stage1Doc` type | UC-22, UC-23, UC-24, UC-25 (all ✅ — flipped from ❌/⚠️) |
 | `7bd47f1` + `683a108` | Workstream 1 polish: `unassignAuthorityOfficers`; audit log for assignment actions; FR-M3-16 checkbox; FR-M3-08 reason/suggestion split; per-row "Assign" link; `unassign-officer.spec.ts` (3 specs) | UC-20 (✅, was ⚠️), UC-27 (✅, was ⚠️); plus UC-07 gets a "swap" affordance via the new unassign function. |
+| `af9805f` + `630dfa7` | **Workstream 2**: `generateEventControlList` (admin, cached on re-call, `force: true` to skip cache); `editEventControlList` (admin, commit point — wipes + writes `event_controls/*`, sets `controlListGenerated`, writes `control_list_published` audit log); `proposeControlItemsForEvent` helper extracted from `proposeEventControlList`; `AdminControlListEditor` (table with inline edit, Add/Remove per row, "Generate proposal" + "Commit changes"); `OrganizerEventControls` (read-only view, UC-34); `AdminApplicationReview` "Open event control list" link; new types (`AuditAction: 'control_list_published'`, `NotificationType: 'control_list_published'`, `EventRecord.controlListGenerated?`, `EventRecord.controlListSnapshot?`); 4 new E2E specs (3 generate + 1 organizer) | UC-13, UC-33, UC-34 (all ✅, were ❌) |
 
-**Net result:** 14 UCs moved to ✅, 2 UCs moved from ⚠️ to ✅, 4 UCs moved from ❌ to ✅ (Q1 refactor). Total ✅ count went from 6 → 20 (50% of 40).
+**Net result:** 14 UCs moved to ✅ (WS1), 2 UCs moved from ⚠️ to ✅ (WS1 polish), 4 UCs moved from ❌ to ✅ (Q1 refactor), 3 UCs moved from ❌ to ✅ (WS2). Total ✅ count went from 6 → 23 (58% of 40). Total ⚠️: 3 (unchanged — UC-03, UC-04, UC-17).
 
 ---
 
@@ -312,12 +316,12 @@ If you only have time for **one** workstream this round, **Workstream 1** is the
 
 ---
 
-## 8. Commit / deploy state as of `ccc5db7`
+## 8. Commit / deploy state as of `630dfa7`
 
 - `anny_cont` is **not merged to main**. Safe to refactor.
-- All Cloud Functions deployed to `asia-southeast1` (verified via `firebase functions:list`).
-- 14/14 Playwright specs pass.
+- All Cloud Functions deployed to `asia-southeast1` (verified via `firebase functions:list`). Latest additions: `generateEventControlList`, `editEventControlList` (Workstream 2).
+- **38/38 Playwright specs pass** across 3 projects: m3-smoke (14), m3-full (17), m3-workstream1 (7). 4 new specs since `683a108` (3 generate-control-list + 1 organizer-event-controls). One retry recovered a cold-start timeout in m3-smoke; m3-full; m3-workstream1 was clean.
 - Firestore rules + indexes deployed.
-- Frontend hosted at `https://linkos-496505.web.app`.
+- Frontend hosted at `https://linkos-496505.web.app`. Latest deploy: Workstream 2 (`AdminControlListEditor`, `OrganizerEventControls`, route additions, "Open event control list" link).
 
-If you want to start workstream 1, the cleanest entry is to extend the `EventRecord` model + add the `officers` subcollection, then the `makeAuthorityDecision` Cloud Function (the one I already touched) needs a `reviewStage` parameter, and `AdminAssignment` becomes a new page that reuses the existing `AdminLayout`.
+If you want to start Workstream 3 (Stage 1 organizer upload), the cleanest entry is to add the Stage 1 file-upload component to `OrganizerEventControls`, then a `submitStage1Doc(eventId, controlId, docId, fileBase64)` Cloud Function. The shape is in `shared/types.ts` (the `Stage1Doc` type already exists, populated by `verifyStage1Doc`'s `use_previous` path).

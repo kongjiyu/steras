@@ -1,9 +1,9 @@
 # M3 — Authority Approval and Notification · Review Pack
 
 **For:** M3 teammate (the human who owns the module)
-**Last commit on `anny_cont`:** `683a108`
+**Last commit on `anny_cont`:** `630dfa7` (Workstream 2 — 3 commits landing on top of `683a108`)
 **Reviewer entry point:** this file
-**Status:** 35/35 @M3 Playwright specs pass on the deployed Firebase project (`linkos-496505`) — split across 3 projects (`m3-smoke` 13, `m3-full` 15, `m3-workstream1` 7).
+**Status:** 38/38 @M3 Playwright specs pass on the deployed Firebase project (`linkos-496505`) — split across 3 projects (`m3-smoke` 14, `m3-full` 17, `m3-workstream1` 7).
 
 This document is a self-contained review pack. It tells you:
 
@@ -276,22 +276,52 @@ The plan for this round lived in `docs/team-handoffs/M3_WORKSTREAM1_POLISH_PLAN.
 
 ---
 
+## 5d. Workstream 2 — event control list model + admin-driven AI generation (shipped in `af9805f` + `630dfa7`)
+
+The plan for this round lived in `docs/team-handoffs/M3_WORKSTREAM2_PLAN.md` (locked 2026-08-18). UC-13, UC-33, UC-34 ship. The flow is **admin-initiated** — there is no `onEventApproved` Firestore trigger that auto-runs the generation. The M3 owner decided on 2026-08-18 that the admin must click "Generate proposal" then "Commit changes" in `AdminControlListEditor`. Rationale: keeps the AI call auditable, and lets the admin edit the proposal before any control is committed.
+
+**`generateEventControlList` (admin, callable)** — delegates to the extracted `proposeControlItemsForEvent` helper. Returns `{ items, cached, source }`. When `event.controlListGenerated === true`, the function reads the persisted `event.controlListSnapshot` and returns `cached: true / source: 'cache'` (A23 — don't regenerate without explicit reason). Pass `force: true` to skip the cache. **M3 ships a stub** for `proposeControlItemsForEvent` that returns one item per required authority with a sensible per-authority Stage 1 + Stage 2 template (PDRM, BOMBA, KKM, DBKL, MOTAC). The M2 owner replaces the stub with the real AI-backed `proposeEventControlList` callable (Q5 contract — see `M3_INTEGRATION_CONTRACT.md` §7).
+
+**`editEventControlList` (admin, callable)** — the commit point. Wipes existing `event_controls/*` and per-control `stage1_docs/*`, writes one `event_controls/{controlId}` doc per item, sets `event.controlListGenerated = true` + writes `event.controlListSnapshot`, writes a `control_list_published` audit log entry (`controlItemVersion=1, controlIds=[…]`), notifies the organiser. Does NOT pre-seed `stage1_docs` — that's Workstream 3 (organizer upload).
+
+**Frontend — `AdminControlListEditor` page** at `/admin/applications/:id/controls`. Table with inline edit (rename control / Stage 1 doc label), per-row "Add" / "Remove" buttons (for both Stage 1 requirements and whole control items), "Generate proposal" button (calls `generateEventControlList`), and "Commit changes" button (calls `editEventControlList`). When re-opening an event with a published list, the page shows a "cached · source: cache" badge so the admin knows nothing re-ran. Linked from `AdminApplicationReview`'s "Open event control list" link.
+
+**Frontend — `OrganizerEventControls` page** at `/organizer/events/:id/controls`. UC-34 read-only view. Empty state ("admin hasn't published the control list yet") when `!event.controlListGenerated`. Otherwise one card per required authority with the control name, authority badge, "Stage 1 documents required: N" count, and "Stage 2 (visual evidence): <label>" line. Header badge toggles to "List published" on commit.
+
+**Types (shared/types.ts)** — `AuditAction: 'control_list_published'` + `NotificationType: 'control_list_published'`. `EventRecord` gains `controlListGenerated?: boolean` + `controlListSnapshot?: Array<{ controlId, authority, controlName, stage1RequirementsCount, controlItemVersion, label }>`.
+
+**Test plan:** 35 → 38 specs across 3 projects. `m3-smoke` 13 → 14 (+1 organizer-event-controls.spec.ts: organizer sees the list when generated, empty state when not). `m3-full` 15 → 17 (+3 generate-control-list.spec.ts: generate proposal; commit + audit + controlListGenerated; cached on re-call + force: true to skip). `m3-workstream1` unchanged. **Latent fix during dev:** `organizer-event-controls.spec.ts` initially imported `functions` from `../../src/config/firebase` at the top of the test file, which broke the spec under Playwright's transformer (`import.meta.env` is undefined outside Vite). Fixed by using the `api` fixture's `callFunction` helper instead. **Test infra:** new `resetApprovedEvent()` helper in `admin-reset.ts` — sets `evt-001-kl-music-festival` back to a known clean state (clears `controlListGenerated` + `controlListSnapshot` + any pre-existing `event_controls/*` and per-control `stage1_docs/*` sub-collections). Used by both new specs.
+
+**Deployed:** `generateEventControlList` + `editEventControlList` live in `asia-southeast1`. Frontend rebuilt + hosting deployed.
+
+---
+
 ## 6. Open items & questions for you
 
-1. **Stage-1 control list generation is NOT in this round.** `verifyEventControl` and the UI form work great against pre-existing `event_controls` docs, but no production code path creates those docs. Today they come from `functions/scripts/seedMockData.js` (mock seed) or `tests/m3/global-setup.ts` (test fixture). Per the handoffs, **M2 should generate the canonical control list from the HIRARC residual-hazard analysis** (each residual hazard implies a Stage-1 control to verify). M3 only verifies what's declared. M2 doesn't yet write `event_controls/{controlId}` docs after assessment finalisation. Three options: (a) hand it to M2 owner, (b) M3 generates on approval (couples M3 to M2's hazard model), (c) defer until M2 lands it. I recommend (a) — cleanest module split.
-2. **Merge to main.** `anny_cont` has 6 new commits on top of `main`. Ready when you say so. I held off per your earlier "don't merge until I signal".
-3. **`/authority/audit` standalone page.** Still planned (the route currently redirects to event review). M3 handoff says it can be part of the event review page or a standalone page. Your call.
-4. **AI-assisted rejection/revision wording.** Explicitly out of scope for this round. The handoff says "after the human-edit boundary is tested" — let me know when M2's advisory export is stable.
-5. **Push notification (FCM).** Not implemented. Spec says it's optional until FCM is configured. If you want it, I can layer it on top of the existing `createNotification` without touching the decision path.
-6. **M4 escalation links.** The handoff calls for them; M4 doesn't exist yet. When M4 lands, I'll add the link shape.
-7. **Debug specs removed.** `tests/m3/debug.spec.ts` and `debug2.spec.ts` were scratch; removed in `0526286`. If you want them back as regression scratchpads, say the word.
-8. **Pre-existing TS errors in `frontend/src/`.** 41 errors (date-fns types, firebase/storage types, unused imports, etc.) exist in the codebase independent of M3. The vite build still succeeds. Worth a separate cleanup pass; I left them alone to keep the diff focused.
+1. **Merge to main.** `anny_cont` has 9 new commits on top of `main` (3 from Workstream 1, 2 from Q1, 4 from Workstream 1 polish, 3 from Workstream 2). Ready when you say so. I held off per your earlier "don't merge until I signal".
+2. **`makeInitialReviewDecision` (FR-M3-02/03/04) — Initial Review stage.** Deferred to its own round (per `M3_WORKSTREAM1_POLISH_PLAN.md` §1). The current flow is `Pending → UnderReview → reviewStage:'authority' → reviewStage:'second' → Approved`. Adding a distinct "initial review" stage needs a new `reviewStage: 'initial'` and a `makeInitialReviewDecision` Cloud Function. UC-03, UC-04 still ⚠️.
+3. **Workstream 3 (Stage 1 organizer upload) — NEXT.** Now that the control list exists (Workstream 2), the next move is the Stage 1 file-upload UI in `OrganizerEventControls` + a `submitStage1Doc(eventId, controlId, docId, fileBase64)` Cloud Function. The `Stage1Doc` type is already in `shared/types.ts` (populated by `verifyStage1Doc`'s `use_previous` path). The "Use Previous" gate is dropped per your 2026-08-17 decision (A26 — Stage 2 image is the public-verification backstop).
+4. **M2 owner action: `proposeEventControlList` callable.** The stub `proposeControlItemsForEvent` ships in Workstream 2; M2 replaces the stub body with the real AI-backed version. See `M3_INTEGRATION_CONTRACT.md` §7 for the full contract.
+5. **`/authority/audit` standalone page.** Still planned (the route currently redirects to event review). M3 handoff says it can be part of the event review page or a standalone page. Your call.
+6. **AI-assisted rejection/revision wording.** Explicitly out of scope for this round. The handoff says "after the human-edit boundary is tested" — let me know when M2's advisory export is stable.
+7. **Push notification (FCM).** Not implemented. Spec says it's optional until FCM is configured. If you want it, I can layer it on top of the existing `createNotification` without touching the decision path.
+8. **M4 escalation links.** The handoff calls for them; M4 doesn't exist yet. When M4 lands, I'll add the link shape.
+9. **Pre-existing TS errors in `frontend/src/`.** 41 errors (date-fns types, firebase/storage types, unused imports, etc.) exist in the codebase independent of M3. The vite build still succeeds. Worth a separate cleanup pass; I left them alone to keep the diff focused.
 
 ---
 
 ## 7. Commit log under review
 
 ```
+630dfa7  test(m3): Workstream 2 specs (3 generate-control-list + 1 organizer-event-controls)
+af9805f  feat(m3): Workstream 2 - event control list model + admin-driven AI generation
+538948c  docs(m3): Workstream 2 plan - admin must click (drop onEventApproved trigger)
+5c0a06a  docs(m3): Workstream 2 plan - event control list model + AI generation
+6d16d1b  docs(m3): sync docs to shipped state + harden notification test
+683a108  test(m3): extend specs for the 5 Workstream 1 polish items
+7bd47f1  feat(m3): Workstream 1 polish - unassign + audit log + checkbox + notification split + queue link
+e67a566  docs(m3): Workstream 1 polish plan — scope + approach for items 2-6
+bf78644  docs(m3): reflect Q1 refactor + Workstream 1 shipped
 ab8b33d  refactor(m3)!: verifyStage1Doc — per-doc verification under event_controls/{id}/stage1_docs/{docId}
 2b8db0d  chore: rebuild functions lib artifacts for Workstream 1
 44a7840  feat(m3): Workstream 1 - officer assignment + second review flow
@@ -329,7 +359,7 @@ Commits before `e1263fe` were either the original M3 foundation (already in main
 
 **TL;DR for the impatient:**
 - Your module: **M3 — Authority Approval and Notification** (M3 teammate role).
-- The diff in §2 spans 3 rounds: Workstream 1 (`44a7840` + `2b8db0d`), Q1 refactor (`ab8b33d`), Workstream 1 polish (`7bd47f1` + `683a108`). Each is a focused, reviewable commit. The Q1 refactor (§5b) is the biggest single change.
+- The diff in §2 spans 4 rounds: Workstream 1 (`44a7840` + `2b8db0d`), Q1 refactor (`ab8b33d`), Workstream 1 polish (`7bd47f1` + `683a108`), Workstream 2 (`af9805f` + `630dfa7`). Each is a focused, reviewable commit. The Q1 refactor (§5b) is the biggest single change.
 - 5-minute smoke test in §4 step 1 is the fastest way to feel the whole thing work.
-- 35/35 Playwright specs pass across 3 projects (28 → 35 across the 3 rounds).
+- 38/38 Playwright specs pass across 3 projects (28 → 35 → 38 across the 4 rounds).
 - Branch is `anny_cont` — not merged. Tell me when you want to merge.
