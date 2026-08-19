@@ -47,10 +47,16 @@ test.describe('@M3 Workstream 2: organizer reads the control list', () => {
     await expect(cards).toHaveCount(5);
     // The header badge is now "List published".
     await expect(page.getByText(/^List published$/i)).toBeVisible();
-    // Spot-check the PDRM card.
+    // Spot-check the PDRM card. Post-Workstream 3, the per-control
+    // card now lists the Stage 1 requirements as individual rows
+    // (with Upload / Use Previous buttons) and a Stage 2 placeholder
+    // at the bottom.
     const pdrmCard = page.locator('[data-testid="organizer-control-PDRM"]');
     await expect(pdrmCard).toBeVisible();
-    await expect(pdrmCard).toContainText('Stage 1 documents required:');
-    await expect(pdrmCard).toContainText('Stage 2 (visual evidence):');
+    // The Stage 2 placeholder is at the bottom of the card.
+    await expect(pdrmCard.locator('[data-testid="organizer-stage2-PDRM"]')).toContainText('Stage 2 (visual evidence)');
+    // At least one Stage 1 requirement row (the stub ships 3 for PDRM).
+    const pdrmRows = pdrmCard.locator('[data-testid^="stage1-row-"]');
+    await expect(pdrmRows.first()).toBeVisible();
   });
 });
