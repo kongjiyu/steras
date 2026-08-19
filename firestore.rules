@@ -195,7 +195,7 @@ service cloud.firestore {
       // ---- Sub-collection: stage1_docs (M3 round N+1, Workstream 3) ----
       // Per-doc Stage 1 evidence (application, license, insurance, ...).
       // Read by assigned authority + event owner + admin. Writes server-only
-      // (verifyStage1Doc / uploadStage1Doc Cloud Functions).
+      // (verifyStage1Doc + submitStage1Doc Cloud Functions).
       match /event_controls/{controlId}/stage1_docs/{docId} {
         allow read: if isAdmin()
                     || (isSignedIn() && isAssignedAuthority(eventId))

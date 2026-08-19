@@ -38,6 +38,7 @@ import {
 } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
 import { createNotification, resolveAuthUid } from '../utils/notifications';
+import { aggregateLabel } from '../utils/controlAggregate';
 
 interface VerifyStage1DocRequest {
   eventId?: string;
@@ -239,12 +240,4 @@ export async function verifyStage1DocForUser(
       idempotent: result.idempotent,
     };
   });
-}
-
-/** Compute the aggregate control label from its stage1 docs. */
-function aggregateLabel(docs: Stage1Doc[]): EventControl['label'] {
-  if (docs.length === 0) return 'pending';
-  if (docs.some((d) => d.status === 'rejected')) return 'resubmit_required';
-  if (docs.every((d) => d.status === 'verified' || d.status === 'use_previous')) return 'approved';
-  return 'pending';
 }

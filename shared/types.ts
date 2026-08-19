@@ -506,7 +506,9 @@ export type AuditAction =
   | 'control_verified'
   | 'control_rejected'
   | 'assignment_revoked'
-  | 'control_list_published';
+  | 'control_list_published'
+  // M3 round N+1 (Workstream 3) — organizer Stage 1 upload
+  | 'stage1_doc_submitted';
 
 export type NotificationType =
   | 'decision_made'
@@ -518,7 +520,9 @@ export type NotificationType =
   | 'control_list_published'
   // Q1 refactor: per-doc Stage 1 verification notifications
   | 'stage1_doc_approved'
-  | 'stage1_doc_rejected';
+  | 'stage1_doc_rejected'
+  // M3 round N+1 (Workstream 3) — organizer Stage 1 upload
+  | 'stage1_doc_submitted';
 
 export interface Notification {
   notificationId: string;

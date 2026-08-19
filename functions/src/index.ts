@@ -41,3 +41,8 @@ export { unassignAuthorityOfficers } from './http/unassignAuthorityOfficers';
 // M3 Workstream 2 — event control list model + AI generation (admin).
 export { generateEventControlList } from './http/generateEventControlList';
 export { editEventControlList } from './http/editEventControlList';
+// M3 Workstream 3 — organizer Stage 1 upload (FR-M3-20, FR-M3-26,
+// UC-28, UC-29). Two paths: upload (base64 in Firestore) or
+// use_previous (one-click receipt shortcut per M3 owner decision
+// 2026-08-19).
+export { submitStage1Doc } from './http/submitStage1Doc';
