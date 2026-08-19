@@ -78,7 +78,8 @@ export default defineConfig({
     {
       name: 'm3-full',
       // smoke + control-verification-ui + generate-control-list +
-      // organizer-stage1-upload. Excludes officer-assignment (its 5-6
+      // organizer-stage1-upload + Workstream 4 (organizer Stage 2 +
+      // public confirm/report). Excludes officer-assignment (its 5-6
       // sequential Firebase Auth logins flake when run immediately
       // after the other 12 specs).
       testMatch: [
@@ -89,6 +90,8 @@ export default defineConfig({
         'control-verification-ui.spec.ts',
         'generate-control-list.spec.ts',
         'organizer-stage1-upload.spec.ts',
+        'stage2-organizer-upload.spec.ts',
+        'stage2-public-confirm-report.spec.ts',
       ],
       use: { ...devices['Desktop Chrome'], channel: undefined },
     },

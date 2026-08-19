@@ -46,6 +46,16 @@ export async function resetFoodFair(): Promise<void> {
   await db.collection('public_events').doc('evt-002-pj-food-fair').delete().catch(() => undefined);
 }
 
+/**
+ * Write a public_events/{eventId} doc directly via the Admin SDK. The
+ * client-side `setDoc` would be blocked by the Firestore rules (write
+ * is server-only). Workstream 4 tests use this to mirror the effect of
+ * the second-review flow on the Approved event fixture.
+ */
+export async function seedPublicEvent(eventId: string, payload: Record<string, unknown>): Promise<void> {
+  await db.collection('public_events').doc(eventId).set(payload, { merge: true });
+}
+
 /** Reset evt-003 to a clean Pending state. */
 export async function resetMountainRun(): Promise<void> {
   const eventRef = db.collection('events').doc('evt-003-kl-mountain-run');
@@ -66,15 +76,48 @@ export async function resetMountainRun(): Promise<void> {
 export async function resetApprovedEvent(): Promise<void> {
   const eventId = 'evt-001-kl-music-festival';
   const eventRef = db.collection('events').doc(eventId);
-  // Wipe per-control docs + their stage1_docs sub-collections.
+  // Wipe per-control docs + their stage1_docs, stage2_docs, and
+  // the Workstream 4 rate-limit counter sub-collections.
   const ctrls = await eventRef.collection('event_controls').get();
   const b1 = db.batch();
   for (const c of ctrls.docs) {
     const s1 = await c.ref.collection('stage1_docs').get();
     for (const d of s1.docs) b1.delete(d.ref);
+    const s2 = await c.ref.collection('stage2_docs').get();
+    for (const d of s2.docs) b1.delete(d.ref);
+    const confirms = await c.ref.collection('stage2_confirms').get();
+    for (const d of confirms.docs) b1.delete(d.ref);
+    const reports = await c.ref.collection('stage2_reports').get();
+    for (const d of reports.docs) b1.delete(d.ref);
     b1.delete(c.ref);
   }
   await b1.commit();
+  // Also wipe orphan sub-collections at the known controlId paths.
+  // This is needed when a previous test run's editEventControlList
+  // deleted the parent control doc but left the stage2_docs sub-
+  // collection behind (Firestore doesn't auto-delete sub-collections
+  // when the parent is deleted). These orphans would otherwise block
+  // a fresh upload in this run (e.g. a stale m4TicketId would trip
+  // the "A report is open" guard).
+  const allAuthorities = ['PDRM', 'BOMBA', 'KKM', 'DBKL', 'MOTAC'];
+  for (const auth of allAuthorities) {
+    const ctrlId = `${eventId}-ctrl-${auth.toLowerCase()}-v1`;
+    const ctrlRef = eventRef.collection('event_controls').doc(ctrlId);
+    const subCollections = ['stage1_docs', 'stage2_docs', 'stage2_confirms', 'stage2_reports'];
+    for (const subName of subCollections) {
+      const docs = await ctrlRef.collection(subName).get();
+      const b = db.batch();
+      for (const d of docs.docs) b.delete(d.ref);
+      if (!docs.empty) await b.commit();
+    }
+    // Wipe the control doc itself if it exists.
+    await ctrlRef.delete().catch(() => undefined);
+  }
+  // Wipe any public_reports for this event (M4 handoff target).
+  const reportsSnap = await db.collection('public_reports').where('eventId', '==', eventId).get();
+  const bReports = db.batch();
+  for (const r of reportsSnap.docs) bReports.delete(r.ref);
+  await bReports.commit();
   // Wipe audit logs (in case prior runs wrote them).
   const audits = await eventRef.collection('audit_logs').get();
   const bAudit = db.batch();

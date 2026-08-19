@@ -53,8 +53,9 @@ test.describe('@M3 Workstream 2: organizer reads the control list', () => {
     // at the bottom.
     const pdrmCard = page.locator('[data-testid="organizer-control-PDRM"]');
     await expect(pdrmCard).toBeVisible();
-    // The Stage 2 placeholder is at the bottom of the card.
-    await expect(pdrmCard.locator('[data-testid="organizer-stage2-PDRM"]')).toContainText('Stage 2 (visual evidence)');
+    // The Stage 2 row is at the bottom of the card (Workstream 4:
+    // editable — "Stage 2" badge + label + Upload/Replace buttons).
+    await expect(pdrmCard.locator('[data-testid="organizer-stage2-PDRM"]')).toContainText('Photo of PDRM officers on-site at venue');
     // At least one Stage 1 requirement row (the stub ships 3 for PDRM).
     const pdrmRows = pdrmCard.locator('[data-testid^="stage1-row-"]');
     await expect(pdrmRows.first()).toBeVisible();
