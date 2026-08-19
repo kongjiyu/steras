@@ -15,17 +15,19 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
-import { ClipboardList, Image as ImageIcon, Info } from 'lucide-react';
+import { ClipboardList, Info } from 'lucide-react';
 import {
   COLLECTIONS,
   EventControl,
   EventRecord,
   Stage1Doc,
+  Stage2Doc,
 } from '@shared/types';
 import { db } from '../../config/firebase';
 import EmptyState from '../../components/ui/EmptyState';
 import StatusBadge from '../../components/ui/StatusBadge';
-import Stage1RequirementRow, { type Stage1Requirement } from '../../components/stage1/Stage1RequirementRow';
+import Stage1RequirementRow from '../../components/stage1/Stage1RequirementRow';
+import Stage2RequirementRow from '../../components/stage2/Stage2RequirementRow';
 
 type Toast = { kind: 'success' | 'error'; message: string };
 
@@ -36,6 +38,7 @@ export default function OrganizerEventControls() {
   const [loadError, setLoadError] = useState('');
   const [controls, setControls] = useState<EventControl[]>([]);
   const [docs, setDocs] = useState<Record<string, Stage1Doc | null>>({});
+  const [stage2Docs, setStage2Docs] = useState<Record<string, Stage2Doc | null>>({});
   const [toast, setToast] = useState<Toast | null>(null);
 
   useEffect(() => {
@@ -73,6 +76,16 @@ export default function OrganizerEventControls() {
     });
   }, [eventId, versionId]);
 
+  // Stable key based on the control IDs, so the effect only re-runs when
+  // the set of controls changes (not on every re-render where the
+  // `controls` array gets a new reference). The old version depended
+  // on `[eventId, controls]` which caused the per-control subscriptions
+  // to be torn down and re-created on every snapshot, and on metadata
+  // re-fires — the race left the stage2_docs subscription torn down
+  // before it could deliver the doc, so the organizer page rendered
+  // `data-status='pending'` even after a successful upload.
+  const controlsKey = useMemo(() => controls.map((c) => c.controlId).join('|'), [controls]);
+
   // Subscribe to all stage1_docs across the per-control sub-collections.
   // The onSnapshot fan-out is small (5 controls × 3 docs each in the test
   // fixture; 25 docs total worst case). If this gets bigger we'll switch
@@ -80,11 +93,12 @@ export default function OrganizerEventControls() {
   useEffect(() => {
     if (!eventId || controls.length === 0) {
       setDocs({});
+      setStage2Docs({});
       return;
     }
     const unsubscribes: Array<() => void> = [];
     for (const ctrl of controls) {
-      const unsub = onSnapshot(
+      const unsub1 = onSnapshot(
         collection(db, COLLECTIONS.EVENTS, eventId, COLLECTIONS.EVENT_CONTROLS, ctrl.controlId, COLLECTIONS.STAGE1_DOCS),
         (snapshot) => {
           setDocs((prev) => {
@@ -99,10 +113,26 @@ export default function OrganizerEventControls() {
           console.warn(`[OrganizerEventControls] stage1_docs subscribe failed for ${ctrl.controlId}`, err);
         },
       );
-      unsubscribes.push(unsub);
+      const unsub2 = onSnapshot(
+        collection(db, COLLECTIONS.EVENTS, eventId, COLLECTIONS.EVENT_CONTROLS, ctrl.controlId, COLLECTIONS.STAGE2_DOCS),
+        (snapshot) => {
+          setStage2Docs((prev) => {
+            const next: Record<string, Stage2Doc | null> = { ...prev };
+            for (const d of snapshot.docs) {
+              next[d.id] = d.data() as Stage2Doc;
+            }
+            return next;
+          });
+        },
+        (err) => {
+          console.warn(`[OrganizerEventControls] stage2_docs subscribe failed for ${ctrl.controlId}`, err);
+        },
+      );
+      unsubscribes.push(unsub1, unsub2);
     }
     return () => { for (const u of unsubscribes) u(); };
-  }, [eventId, controls]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventId, controlsKey]);
 
   // Aggregate stats across all controls.
   const stats = useMemo(() => {
@@ -237,17 +267,16 @@ export default function OrganizerEventControls() {
                     </div>
                   )}
                   {ctrl.stage2Requirement && (
-                    <div className="rounded-md border border-dashed border-ink-300 bg-ink-50 p-3 text-sm text-ink-700" data-testid={`organizer-stage2-${ctrl.authority}`}>
-                      <div className="flex items-start gap-2">
-                        <ImageIcon size={16} className="mt-0.5 text-ink-500" />
-                        <div>
-                          <div className="font-semibold">Stage 2 (visual evidence)</div>
-                          <p className="mt-0.5">{ctrl.stage2Requirement.label}</p>
-                          <p className="mt-1 text-xs text-ink-500">
-                            Publicly verifiable — upload comes in Workstream 4.
-                          </p>
-                        </div>
-                      </div>
+                    <div data-testid={`organizer-stage2-${ctrl.authority}`}>
+                      <Stage2RequirementRow
+                        eventId={eventId!}
+                        controlId={ctrl.controlId}
+                        authority={ctrl.authority}
+                        label={ctrl.stage2Requirement.label}
+                        doc={stage2Docs[`${ctrl.controlId}-s2`] ?? null}
+                        onSubmitted={() => showToast('success', 'Stage 2 image published. Public verification can now begin.')}
+                        onError={(m) => showToast('error', m)}
+                      />
                     </div>
                   )}
                 </div>
