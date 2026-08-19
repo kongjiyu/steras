@@ -40,19 +40,19 @@ submitStage1Doc: httpsCallable<{
   controlId: string;
   docId: string;
   // Upload path (the common case):
-  fileName: string;
-  mimeType: string;       // 'image/jpeg' | 'image/png' | 'application/pdf' (PDFs allowed for receipts)
-  fileBase64: string;     // raw base64 of the file bytes (no data: prefix)
-  label?: string;         // optional human-readable; defaults to the requirement label
+  fileName?: string;
+  mimeType?: string;       // 'image/jpeg' | 'image/png' | 'application/pdf'
+  fileBase64?: string;     // raw base64 of the file bytes (no data: prefix)
+  label?: string;          // optional human-readable; defaults to the requirement label
   // "Use Previous" path (the receipt shortcut, FR-M3-26, A25, A26 dropped):
-  usePrevious?: { sourceEventId: string };
+  // M3 owner decision 2026-08-19: no source-event picker. Just a flag.
+  usePrevious?: boolean;
 }, {
   status: 'pending_verification' | 'use_previous';
   docId: string;
   controlId: string;
   // mirror for the UI to confirm what was written:
   uploadedAt: number;
-  usePreviousSourceEventId?: string;
 }>
 ```
 
@@ -62,9 +62,7 @@ submitStage1Doc: httpsCallable<{
 - `event_controls/{controlId}` exists and is for the current `versionId`.
 - `docId` is in the control's `stage1Requirements` (the admin-defined template) — i.e. the organizer can't add new doc slots.
 - If the existing doc has `status: 'verified'`, refuse (organizer can't re-upload after officer approved; must contact admin).
-- If `usePrevious` is set:
-  - `docType` of the requirement must be `'receipt'` (A25).
-  - `sourceEventId` must be one of the organizer's prior events (read `events where organizerId == caller && status == 'Approved'`, look for a `stage1_docs/{docId}` with `status: 'verified'` and matching `docType: 'receipt'`).
+- If `usePrevious` is set: `docType` of the requirement must be `'receipt'` (A25). No source-event query — just marks the doc with `status: 'use_previous'`. The `usePreviousSourceEventId` field stays optional on the type for future use; Workstream 3 doesn't set it.
 - If upload path: file size ≤ 700 KB binary (~940 KB base64 — under the 1 MB Firestore doc limit with headroom; see §6 Q1). MIME in `{image/jpeg, image/png, application/pdf}`. Per project convention: **base64 in Firestore, NOT Firebase Storage**.
 
 **Writes (transaction):**
@@ -120,7 +118,7 @@ Currently read-only with "you'll be able to upload files here. (Workstream 3)" p
     - `rejected`: "Rejected: [reason]. Suggestion: [suggestion]." — show Resubmit + Use Previous (if receipt).
     - `use_previous`: "Reused from event [name]" — show View source + Switch to upload.
 - File input component: `<input type="file" accept="image/jpeg,image/png,application/pdf">` with size guard. Show a small inline preview for images (uses the `data:` URL in `filePath`).
-- "Use Previous" opens a small modal listing the organizer's prior Approved events that have a verified Stage 1 receipt of the same docType. Each row: `[event name] [start date] [authority] [verified date]`. Click to select.
+- "Use Previous" is a one-click button (no modal). On `docType: 'receipt'` slots only. Marks the doc as `use_previous` immediately. M3 owner decision 2026-08-19: no source-event picker — Stage 2 is the public verification backstop.
 - "Stage 2 (visual evidence)" row stays read-only (Workstream 4 ships the upload).
 - Header: counts of "X of Y Stage 1 docs verified" computed from the live sub-collection.
 
@@ -134,7 +132,7 @@ New file: `frontend/tests/m3/organizer-stage1-upload.spec.ts` (m3-full, 4 specs)
 
 1. **Organizer uploads a Stage 1 doc** — logs in as organizer, navigates to `/organizer/events/evt-001-kl-music-festival/controls`, picks the PDRM card → application letter slot, uploads a small JPEG (encoded as base64 in the test), submits, asserts the row now shows "Awaiting officer review" + the doc has `status: 'pending_verification'` + `filePath` starts with `data:image/jpeg;base64,` + audit log has `stage1_doc_submitted` + assigned PDRM officer got a `stage1_doc_submitted` notification.
 
-2. **Organizer uses "Use Previous" on a receipt slot** — picks a receipt slot, opens the modal, picks a prior event, submits, asserts `status: 'use_previous'` + `usePreviousSourceEventId` set + audit metadata includes the source eventId. (Need to seed a prior event with a verified receipt in the test fixture; can do this inline via the Admin SDK in `beforeEach`.)
+2. **Organizer uses "Use Previous" on a receipt slot** — picks a receipt slot, clicks the "Use Previous" button, asserts `status: 'use_previous'` + `usePreviousSourceEventId` left unset + audit `notes` contains the rationale text. No prior event query in the test.
 
 3. **"Use Previous" refuses on non-receipt** — picks the application letter slot, asserts the "Use Previous" button is NOT rendered (only Upload is).
 
@@ -185,7 +183,7 @@ Update in commit 3 (the docs commit):
 |---|---|
 | 1 MB Firestore doc limit on the base64 file | Cap at 700 KB binary (~940 KB base64). PDFs are denser so 700 KB covers most receipts. Show a friendly error for larger files. |
 | Resubmit after rejection breaks audit trail | Audit log writes a new entry per submit; previous rejection entry remains in `audit_logs` for history. |
-| "Use Previous" source event has no verified receipt of the same docType | Server query checks for `status: 'verified'` + matching `docType`; refuses if not found. UI hides events that don't qualify. |
+| "Use Previous" without source event — no audit trail of "which prior event" | Acceptable per M3 owner decision 2026-08-19: Stage 2 is the public verification backstop. The audit `notes` records the rationale so the trail is in `audit_logs`. |
 | Two organizers on the same event (shouldn't happen, but…) | `event.organizerId` is the only key; the function refuses if `callerOrganizerId !== event.organizerId`. |
 | Cloud Function cold-start flake | Use the same try/catch + log pattern as `verifyStage1Doc` (`console.warn` for `HttpsError`, `console.error` for unknown). |
 | File upload size in the Playwright test (encoding 700 KB in JSON) | Test uses a small synthetic JPEG (~5 KB) so the payload is tiny. |
@@ -223,13 +221,9 @@ Per the project convention ("Base64 in Firestore, NOT Firebase Storage"), the fi
 
 ### Q2. "Use Previous" eligibility scope
 
-A25 says "only for purchase receipts". A26 was dropped (M3 owner decision, 2026-08-17) — no conditions on "is there prior data". So the simplest interpretation: the "Use Previous" button shows up on any `docType: 'receipt'` slot, and the source event is a free picker from the organizer's prior Approved events with a verified receipt of the same docType.
+**M3 owner decision (2026-08-19):** the "Use Previous" button is just a flag — no source-event picker. The organizer clicks it on a receipt slot to mark the doc as `use_previous` without uploading anything. No prior event query, no sourceEventId parameter, no modal. The rationale (which matches the dropped-A26 decision): **Stage 2 is the public verification backstop** — if the item isn't actually at the venue, the public sees the gap via Stage 2 and can report via M4. The "Use Previous" button is a UX shortcut (skip the upload), not a verification bypass.
 
-**My pick: free picker.** Modal shows organizer's prior Approved events with a matching verified receipt; organizer picks one. Server validates the pick.
-
-- A: Free picker (my pick — straightforward, matches the dropped-A26 spirit).
-- B: Auto-pick the most recent verified receipt from the same authority (no organizer choice).
-- C: Hardcode "use the previous event" with no UI (lazy, but unblocks the demo).
+**Implementation:** the button calls `submitStage1Doc({eventId, controlId, docId, usePrevious: true})`. The server validates `docType === 'receipt'`, then writes the doc with `status: 'use_previous'`. `usePreviousSourceEventId` stays optional on the type (for future use) but the Workstream 3 path doesn't set it. Audit `notes` records "Use Previous: organizer asserted item already procured; Stage 2 is the verification backstop."
 
 ### Q3. Notification targets on submit
 
