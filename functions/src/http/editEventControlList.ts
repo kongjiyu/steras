@@ -128,10 +128,22 @@ export const editEventControlList = onCall<EditEventControlListRequest>({ region
     // Wipe any existing controls for this version (idempotent re-commit).
     const existingControls = await tx.get(eventRef.collection(COLLECTIONS.EVENT_CONTROLS).where('versionId', '==', versionId));
     existingControls.docs.forEach((d) => tx.delete(d.ref));
-    // Also wipe any per-control stage1_docs that were created by previous commits.
+    // Also wipe all per-control sub-collections (stage1_docs +
+    // stage2_docs + Workstream 4 rate-limit counters) that may have
+    // been left from previous commits. Without this, orphan docs from
+    // a prior test run can leak into a new test that uses the same
+    // controlId (e.g. a stale m4TicketId would block the new upload).
     for (const ctrl of existingControls.docs) {
-      const docs = await tx.get(ctrl.ref.collection(COLLECTIONS.STAGE1_DOCS));
-      for (const d of docs.docs) tx.delete(d.ref);
+      const subCollections = [
+        COLLECTIONS.STAGE1_DOCS,
+        COLLECTIONS.STAGE2_DOCS,
+        COLLECTIONS.STAGE2_CONFIRMS,
+        COLLECTIONS.STAGE2_REPORTS,
+      ];
+      for (const subName of subCollections) {
+        const docs = await tx.get(ctrl.ref.collection(subName));
+        for (const d of docs.docs) tx.delete(d.ref);
+      }
     }
 
     // Writes — one event_controls/{id} per item, with the agreed shape.

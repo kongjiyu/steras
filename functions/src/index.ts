@@ -46,3 +46,10 @@ export { editEventControlList } from './http/editEventControlList';
 // use_previous (one-click receipt shortcut per M3 owner decision
 // 2026-08-19).
 export { submitStage1Doc } from './http/submitStage1Doc';
+// M3 Workstream 4 — Stage 2 organizer upload + public confirm/report
+// (FR-M3-27, FR-M3-28, FR-M3-29 first half, UC-35..38). submitStage2Doc
+// is organizer-only (auto-publishes on upload); confirmStage2Doc +
+// reportStage2Doc are any-signed-in-public with per-user rate limits.
+export { submitStage2Doc } from './http/submitStage2Doc';
+export { confirmStage2Doc } from './http/confirmStage2Doc';
+export { reportStage2Doc } from './http/reportStage2Doc';

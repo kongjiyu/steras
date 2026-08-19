@@ -508,7 +508,11 @@ export type AuditAction =
   | 'assignment_revoked'
   | 'control_list_published'
   // M3 round N+1 (Workstream 3) — organizer Stage 1 upload
-  | 'stage1_doc_submitted';
+  | 'stage1_doc_submitted'
+  // M3 round N+1 (Workstream 4) — Stage 2 + public flow
+  | 'stage2_doc_submitted'
+  | 'stage2_confirmed'
+  | 'stage2_reported';
 
 export type NotificationType =
   | 'decision_made'
@@ -522,7 +526,10 @@ export type NotificationType =
   | 'stage1_doc_approved'
   | 'stage1_doc_rejected'
   // M3 round N+1 (Workstream 3) — organizer Stage 1 upload
-  | 'stage1_doc_submitted';
+  | 'stage1_doc_submitted'
+  // M3 round N+1 (Workstream 4) — Stage 2 public flow
+  | 'stage2_doc_submitted'
+  | 'stage2_reported';
 
 export interface Notification {
   notificationId: string;
@@ -694,6 +701,11 @@ export const COLLECTIONS = {
   ASSIGNMENTS: 'assignments',
   STAGE1_DOCS: 'stage1_docs',
   STAGE2_DOCS: 'stage2_docs',
+  // M3 round N+1 (Workstream 4) — per-user rate-limit counters
+  // under each control. Server-only writes; client reads for the
+  // UI to show "You confirmed" / "You reported" states.
+  STAGE2_CONFIRMS: 'stage2_confirms',
+  STAGE2_REPORTS: 'stage2_reports',
   PUBLIC_EVENT_CONTROLS: 'public_event_controls',
   PUBLIC_REPORTS: 'public_reports',
 } as const;

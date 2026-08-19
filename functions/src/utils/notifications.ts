@@ -34,8 +34,13 @@ export interface NotificationInput {
   type: NotificationType;
   title: string;
   message: string;
-  /** Idempotency key. If a notification with this id already exists, no-op. */
+  /** Idempotency key. The notification doc id is derived from this
+   *  (default: sourceActionId alone; for fan-out, set `notificationId`
+   *  to make it unique per recipient — e.g. `${sourceActionId}_${recipientUid}`). */
   sourceActionId: string;
+  /** Optional override for the doc id. Use when fanning out the same
+   *  source action to multiple recipients (one doc per recipient). */
+  notificationId?: string;
   /**
    * FR-M3-08: rejection / second-review notifications must carry the
    * reason and suggestion as separate, structured fields (not just
@@ -73,14 +78,15 @@ export async function createNotification(input: NotificationInput, now = Date.no
   }
 
   const db = firestore();
-  const notifRef = db.collection(COLLECTIONS.NOTIFICATIONS ?? 'notifications').doc(input.sourceActionId);
+  const notifId = input.notificationId ?? input.sourceActionId;
+  const notifRef = db.collection(COLLECTIONS.NOTIFICATIONS ?? 'notifications').doc(notifId);
   const notifSnap = await notifRef.get();
   if (notifSnap.exists) {
     // Idempotent: same sourceActionId already produced a notification.
     return;
   }
   await notifRef.set({
-    notificationId: input.sourceActionId,
+    notificationId: notifId,
     recipientUid: input.recipientUid,
     eventId: input.eventId,
     versionId: input.versionId ?? null,
