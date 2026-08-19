@@ -1,8 +1,8 @@
 # M3 — Cross-Module Integration Contract
 
-**Date:** 2026-08-18
+**Date:** 2026-08-19
 **Owner:** M3 teammate (Chia Yu Xin)
-**Status:** Locked against decisions in `STERAS_M3_FR_v4.md` + `M3_GAP_ANALYSIS.md` (Q1=A, Q2=C, Q3=D, Q4=A, Q5=A) — Workstream 2 SHIPPED (`af9805f` + `630dfa7`); admin-initiated control list (no `onEventApproved` trigger)
+**Status:** Locked against decisions in `STERAS_M3_FR_v4.md` + `M3_GAP_ANALYSIS.md` (Q1=A, Q2=C, Q3=D, Q4=A, Q5=A) — Workstream 3 SHIPPED (`ddf22d7` + `3799d64`); organizer Stage 1 upload + "Use Previous" (one-click, A25 receipt-only, A26 gate dropped)
 **For:** M1, M2, M4, M5 owners — and future-M3
 
 This document is the **handoff contract** for cross-module integration. It tells every other module:
@@ -60,7 +60,7 @@ Deployed to `asia-southeast1`, project `linkos-496505`. Callable from any signed
 | `verifyStage1Doc` | `({ eventId, controlId, docId, status: 'verified'\|'rejected', rationale, evidencePath? })` | **SHIPPED (`ab8b33d`)** — renamed from `verifyEventControl`. Officer must be in `requiredAuthorities` of the event. Operates on `event_controls/{controlId}/stage1_docs/{docId}`; carries provenance (`status`/`verifiedBy`/`verifiedAt`/`rejectionReason`) on the doc itself. Recomputes parent control's aggregate `label`; maintains `event.verifiedControlIds`; writes audit + organiser notification. Idempotent on `(versionId, controlId, docId, authorityType)`. **BREAKING CHANGE** — see §6. |
 | `generateEventControlList` | **SHIPPED (`af9805f`).** `({ eventId, force?: boolean })` | Admin only. Returns `{ items: ProposedControlItem[], cached: boolean, source: 'proposeEventControlList' \| 'cache' }`. Delegates to the extracted `proposeControlItemsForEvent` helper. When `event.controlListGenerated === true`, returns the persisted snapshot with `cached: true / source: 'cache'` (A23 — don't regenerate without explicit reason). Pass `force: true` to skip the cache. **Admin-initiated** — no `onEventApproved` trigger (M3 owner decided 2026-08-18). M3 ships a stub for `proposeControlItemsForEvent`; M2 owner replaces the stub with the real AI-backed `proposeEventControlList` (Q5). |
 | `editEventControlList` | **SHIPPED (`af9805f`).** `({ eventId, items: ProposedControlItem[] })` | Admin only. The commit point. Wipes existing `event_controls/*` + per-control `stage1_docs/*`, writes one `event_controls/{controlId}` doc per item, sets `event.controlListGenerated = true` + writes `event.controlListSnapshot`, writes a `control_list_published` audit log entry (`controlItemVersion=1, controlIds=[…]`), notifies the organiser. Does NOT pre-seed `stage1_docs` — that's Workstream 3 (organizer upload). Idempotent. |
-| `uploadStage1Doc` | *(Workstream 3)* `(eventId, controlId, filePath, usePrevious?: boolean)` | Organiser only. Writes `event_controls/{controlId}/stage1_docs/{docId}` with `status: 'pending_verification'`. If `usePrevious` → `status: 'verified'`, audit `Reused from event X`. |
+| `uploadStage1Doc` → renamed to `submitStage1Doc` (per WS3) | **SHIPPED (`ddf22d7`).** `({ eventId, controlId, docId, fileName?, mimeType?, fileBase64?, label?, usePrevious? })` | Organiser only. Two paths: (1) **upload**: writes `event_controls/{controlId}/stage1_docs/{docId}` with `status: 'pending_verification'` + a data: URL `filePath` (700 KB binary cap = ~940 KB base64, under the 1 MB Firestore doc limit). Accepted mimes: JPEG, PNG, PDF. (2) **`usePrevious: true`**: one-click flag, only allowed when `docType === 'receipt'` (A25). Writes `status: 'use_previous'`. M3 owner decision 2026-08-19: NO source-event picker — Stage 2 is the public verification backstop. Both paths: refills the `stage1_doc_submitted` audit log; notifies the assigned officer (looked up from `events/{id}/assignments/{versionId}_{auth}`) + all admin users. Refuses if the existing doc is `status: 'verified'` (organizer cannot re-upload after an officer approved without admin involvement). On resubmit after a rejection, preserves the prior `rejectionReason` on the doc (Q4) — cleared on the next verification. Idempotent on `(eventId, controlId, docId)`; new submit overwrites. |
 | `uploadStage2Doc` | *(this round)* `(eventId, controlId, filePath)` | Organiser only. Writes `event_controls/{controlId}/stage2_docs/{docId}` with `status: 'pending_public_confirmation'`. |
 | `overrideResources` | `(eventId, quantities, rationale)` | Existing. Officer in `requiredAuthorities`. Captures original + revised + UID + authority + timestamp for audit. |
 | `listMyNotifications` | `({ limit?: number })` | **USE THIS for the bell.** Returns `{ items: Notification[], unread: number }`. Scoped to `request.auth.uid`. |
@@ -118,6 +118,7 @@ Read-by-rules is already configured. Writes are server-only.
   type: 'decision_made' | 'application_approved' | 'application_rejected'
       | 'amendment_requested' | 'control_verified' | 'control_rejected'
       | 'stage1_doc_approved' | 'stage1_doc_rejected'        // Q1 refactor
+      | 'stage1_doc_submitted'                                 // SHIPPED `ddf22d7` (Workstream 3)
       | 'control_list_published'                                 // SHIPPED `af9805f` (Workstream 2)
       | 'control_resubmit_required' | 'control_restored'         // planned (Workstream 6)
       | 'withdrawn_cleanup',                                     // planned (FR-M3-01)
@@ -337,7 +338,7 @@ Read-by-rules is already configured. Writes are server-only.
 - [x] Round 2: deleted the old flat `verifiedControlIds` logic from `verifyEventControl` (function removed). Old `event_controls/{id}` flat-doc shape gone.
 - [ ] Round 3 (post-merge): clean up legacy data via Admin SDK one-shot script. Not blocking — only matters once we cut a release with prior data.
 
-**Verification:** 38/38 M3 Playwright specs pass as of the Workstream 2 round (`af9805f` + `630dfa7`): m3-smoke 14/14, m3-full 17/17, m3-workstream1 7/7. The 3-project split (commit `777bb55`) keeps cumulative Firebase Auth slowness from flaking the new per-doc tests.
+**Verification:** 43/43 M3 Playwright specs pass as of the Workstream 3 round (`ddf22d7` + `3799d64`): m3-smoke 14/14, m3-full 22/22, m3-workstream1 7/7. The 3-project split (commit `777bb55`) keeps cumulative Firebase Auth slowness from flaking the new per-doc tests.
 
 **Notification:** other modules don't need to migrate. Only the test fixture and the existing Playwright spec needed updating. M2's `verifiedControlIds` read still works (same field on the parent event doc, just sourced from a different sub-collection).
 
@@ -430,6 +431,7 @@ M3 owns `notifications/{id}` writes. Other modules don't need to write here.
 | Any authority requested amendment (aggregate) | `amendment_requested` | organiser |
 | `verifyStage1Doc` verified | `stage1_doc_approved` | organiser |
 | `verifyStage1Doc` rejected | `stage1_doc_rejected` | organiser |
+| `submitStage1Doc` (upload or use_previous) | `stage1_doc_submitted` | assigned officer (looked up from `events/{id}/assignments/{versionId}_{auth}`) + all admins |
 | `publishControlDocument` (Workstream 5) / `editEventControlList` (Workstream 2) | `control_list_published` | organiser |
 | `onM4ReportOutcome` confirmed_true | `control_resubmit_required` | organiser |
 | `onM4ReportOutcome` dismissed_fake | `control_restored` | organiser + admin |
@@ -485,7 +487,7 @@ Withdrawn                 ← M1.withdrawEvent (anytime post-Pending)
 | Workstream 1 polish: FR-M3-08 reason + suggestion split fields in notifications | **SHIPPED** (`7bd47f1`) | `Notification` interface gains `reason?: string` and `suggestion?: string`. `createNotification` helper accepts them; `makeSecondReviewDecision` and `recordOfficerProposal` pass them as separate fields. `NotificationBell.tsx` surfaces them on separate lines. |
 | Workstream 1 polish: per-row "Assign" link in `/admin/applications` queue | **SHIPPED** (`7bd47f1`) | `AdminApplicationQueue.tsx` row gets a per-row "Assign" link. |
 | Workstream 2: `generateEventControlList` (cached, `force: true` to skip) + `editEventControlList` (commit point) + `proposeControlItemsForEvent` helper + `AdminControlListEditor` admin page + `OrganizerEventControls` organizer read-only view + 2 new routes + new event fields (`controlListGenerated`, `controlListSnapshot`) + new audit + new notification type | **SHIPPED** (`af9805f` + `630dfa7`) | `functions/src/http/generateEventControlList.ts` + `functions/src/http/editEventControlList.ts` + `functions/src/http/proposeEventControlList.ts` (refactored) + `frontend/src/pages/admin/AdminControlListEditor.tsx` + `frontend/src/pages/organizer/OrganizerEventControls.tsx` |
-| Workstream 3: `uploadStage1Doc` + `usePrevious` + organiser page | Round after | `functions/src/http/stage1Upload.ts` + `frontend/src/pages/organizer/EventControls.tsx` |
+| Workstream 3: `submitStage1Doc` (organizer; two paths — upload with 700 KB base64 cap OR one-click `usePrevious` flag for receipts) + `aggregateLabel` extracted helper + `Stage1RequirementRow` component + `OrganizerEventControls` made editable + 4 new E2E specs | **SHIPPED** (`ddf22d7` + `3799d64`) | `functions/src/http/submitStage1Doc.ts` + `functions/src/utils/controlAggregate.ts` + `functions/src/http/verifyStage1Doc.ts` (refactored to use the helper) + `frontend/src/components/stage1/Stage1RequirementRow.tsx` + `frontend/src/pages/organizer/OrganizerEventControls.tsx` (editable) + `frontend/tests/m3/organizer-stage1-upload.spec.ts` |
 | Workstream 4: `confirmStage2Doc` + `reportStage2Doc` + public UI | Round after | `functions/src/http/stage2Public.ts` + extension to `frontend/src/pages/public/PublicEventDetail.tsx` |
 | Workstream 5: `publishControlDocument` + `AdminPublishControls` | Round after | `functions/src/http/publishControls.ts` + `frontend/src/pages/admin/AdminPublishControls.tsx` |
 | Workstream 6: `onM4ReportOutcome` trigger (depends on M4 shape) | When M4 lands | `functions/src/triggers/onM4ReportOutcome.ts` |

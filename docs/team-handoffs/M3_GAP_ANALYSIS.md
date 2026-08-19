@@ -1,6 +1,6 @@
 # M3 — Gap Analysis vs. FR v4 + Use Case Diagram
 
-**Date:** 2026-08-18 (updated post Workstream 2)
+**Date:** 2026-08-19 (updated post Workstream 3)
 **For:** M3 teammate (Chia Yu Xin)
 **Sources cross-referenced:**
 - `STERAS_PRD_v5.0.md` §5.3 (M3, 31 FRs)
@@ -8,7 +8,7 @@
 - `STERAS_M3_Modified_Scope_Enhancement_Proposals.md` (the locked workflow + 31 assumptions A1–A30)
 - `STERAS_M3_Use_Case_Descriptions_v4.md` (40 UCs, 1-UC-per-bubble)
 - `Collaborative - Use Case Diagram.svg` (2026-08-15, "Anny Use case diagram Finalize")
-- Current code on `anny_cont` branch (latest: `630dfa7`)
+- Current code on `anny_cont` branch (latest: `3799d64`)
 
 This analysis maps **every one of the 40 UCs** to a status: ✅ implemented, ⚠️ partially implemented, ❌ not implemented. Then groups the gaps by workstream and gives my recommended order to attack them.
 
@@ -18,18 +18,19 @@ This analysis maps **every one of the 40 UCs** to a status: ✅ implemented, ⚠
 
 | Status | Count | % of 40 UCs |
 |---|---:|---:|
-| ✅ Implemented | 23 | 58% |
+| ✅ Implemented | 25 | 62% |
 | ⚠️ Partially implemented | 3 | 7% |
-| ❌ Not implemented | 14 | 35% |
+| ❌ Not implemented | 12 | 30% |
 
-**Current state** (after Q1 refactor + Workstream 1 + Workstream 1 polish + Workstream 2, on `anny_cont`):
+**Current state** (after Q1 refactor + Workstream 1 + Workstream 1 polish + Workstream 2 + Workstream 3, on `anny_cont`):
 
 - **Workstream 1 shipped** (`44a7840`): officer assignment, multi-stage review, second review aggregator. Cleared UC-06..12, UC-20, UC-39 (13 UCs).
 - **Q1 refactor shipped** (`ab8b33d`): per-doc Stage 1 verification. Cleared UC-22..25 (4 UCs).
 - **Workstream 1 polish shipped** (`7bd47f1`): unassign swap, audit log, FR-M3-16 checkbox, FR-M3-08 reason/suggestion split, queue link. Lifted UC-20 from ⚠️ to ✅ and UC-27 from ⚠️ to ✅.
 - **Workstream 2 shipped** (`af9805f`): event control list model + admin-driven AI generation. Cleared UC-13, UC-33, UC-34. The flow is admin-initiated (no `onEventApproved` trigger) — the M3 owner decided on 2026-08-18 that the admin must click "Generate proposal" then "Commit changes". M3 ships a stub `proposeControlItemsForEvent` helper that returns one item per required authority; the M2 owner will replace it with the real AI-backed version.
+- **Workstream 3 shipped** (`ddf22d7`): organizer Stage 1 upload + "Use Previous" (UC-28, UC-29). `OrganizerEventControls` converted from read-only to editable. `submitStage1Doc` Cloud Function takes either an upload (base64 in Firestore, 700 KB cap) or a `usePrevious: true` flag (A25 receipt-only, no source-event picker per M3 owner decision 2026-08-19).
 - **Initial review stage** (FR-M3-02, FR-M3-03/04) is the only remaining piece of the "review and decide" lane. Deferred to its own round (UC-03, UC-04 still ⚠️).
-- **Stage 1 / Stage 2 upload UI** (Workstream 3+) is the next big chunk. 11 UCs remaining: UC-01, 02, 05, 28, 29, 30, 31, 32, 35, 36, 37, 38, 40 (13 if you count the still-partial UC-17, which is a small UI-only fix).
+- **Stage 2 + public verification** (Workstream 4) is the next big chunk. 11 UCs remaining: UC-01, 02, 05, 30, 31, 32, 35, 36, 37, 38, 40 (12 if you count the still-partial UC-17, which is a small UI-only fix).
 
 ---
 
@@ -78,8 +79,8 @@ Legend: ✅ implemented · ⚠️ partial · ❌ missing
 |---|---|---|---|---|
 | UC-26 | Receive Result of Event Application | FR-M3-08 | ✅ | `notifications/{id}` written by `createNotification` post-decision. NotificationBell surfaces it. |
 | UC-27 | View Application Result and Feedback | FR-M3-08 | ✅ | **FR-M3-08 split fields** (`7bd47f1`). `Notification` interface carries `reason?` + `suggestion?` as separate fields. `makeSecondReviewDecision` passes the featured officer's `reason` + `suggestion` verbatim. `NotificationBell.tsx` renders them on separate lines under the `message`. |
-| UC-28 | Upload Event Control Document | FR-M3-20, -25 | ❌ | No upload UI. No Stage 1 / Stage 2 doc model. |
-| UC-29 | Reuse Previous Event Item | FR-M3-26 | ❌ | No "Use Previous" button. A25: only for purchase receipts of items already procured. A26: only when system has prior event data. |
+| UC-28 | Upload Event Control Document | FR-M3-20, -25 | ✅ | **`submitStage1Doc` Cloud Function** + `Stage1RequirementRow.tsx` + `OrganizerEventControls` editable view (`ddf22d7`). Organizer picks a file (JPEG / PNG / PDF, <= 700 KB binary — ~940 KB base64, under the 1 MB Firestore doc limit). The function writes the doc with `status: 'pending_verification'` + a data: URL `filePath` (per project convention, NOT Firebase Storage). Per-doc `usePrevious: true` path also shipped (see UC-29). Notifies the assigned officer + admin; writes a `stage1_doc_submitted` audit log entry. Refuses if the existing doc is `status: 'verified'` (organizer cannot re-upload after an officer approved without admin involvement). |
+| UC-29 | Reuse Previous Event Item | FR-M3-26 | ✅ | **One-click "Use Previous" button** on `docType: 'receipt'` slots only (A25). M3 owner decision 2026-08-19: NO source-event picker — the organizer just marks the slot as `use_previous`, and Stage 2 is the public verification backstop (per the dropped-A26 decision from 2026-08-17). The function refuses `usePrevious` on non-receipt slots with a clear error. Audit `notes` records the rationale ("Use Previous: organizer asserted item already procured; Stage 2 is the verification backstop."). |
 
 ### D. M4 Outcome (3 UCs)
 
@@ -215,26 +216,26 @@ For traceability against the 31 FRs:
 | FR-M3-17 | Admin second review | UC-10 | ✅ (`makeSecondReviewDecision` — pure aggregator) |
 | FR-M3-18 | AI proposes event control list | UC-33 | ✅ (Workstream 2 — `generateEventControlList` + stub `proposeControlItemsForEvent`; M2 owner replaces the stub with the real AI) |
 | FR-M3-19 | Admin modify control list | UC-13 | ✅ (Workstream 2 — `editEventControlList` + `AdminControlListEditor`) |
-| FR-M3-20 | Organiser upload documentation | UC-28 | ❌ (Workstream 3) |
+| FR-M3-20 | Organiser upload documentation | UC-28 | ✅ (Workstream 3 — `submitStage1Doc` + `Stage1RequirementRow`) |
 | FR-M3-21 | Admin publish to public | UC-14, -15 | ❌ (Workstream 5) |
 | FR-M3-22 | Officer verify Stage 1 | UC-22, -23 | ✅ (Q1 refactor + per-doc UI) |
 | FR-M3-23 | Officer reject Stage 1 | UC-24, -25 | ✅ (Q1 refactor) |
 | FR-M3-24 | Resource override (full audit) | UC-18, -19 | ✅ |
-| FR-M3-25 | Stage 1 + Stage 2 listed together | UC-34 | ✅ (Workstream 2 — `OrganizerEventControls` read-only view; the "upload" half lands in Workstream 3) |
-| FR-M3-26 | "Use Previous" | UC-29 | ❌ (Workstream 3 — A26 gate dropped per M3 owner decision 2026-08-17) |
+| FR-M3-25 | Stage 1 + Stage 2 listed together | UC-34 | ✅ (Workstream 2 read-only view; Workstream 3 made Stage 1 editable; Stage 2 upload still in Workstream 4) |
+| FR-M3-26 | "Use Previous" | UC-29 | ✅ (Workstream 3 — one-click flag, A25 receipt-only, A26 gate dropped per M3 owner decisions 2026-08-17 + 2026-08-19) |
 | FR-M3-27 | Public confirm Stage 2 | UC-35 | ❌ (Workstream 4) |
 | FR-M3-28 | Public confirmation count | UC-37 | ❌ (Workstream 4) |
 | FR-M3-29 | Public report → M4 | UC-36, -38 | ❌ (Workstream 4 + 6) |
 | FR-M3-30 | Resubmit on confirmed-true report | UC-31 | ❌ (Workstream 6) |
 | FR-M3-31 | Restore on dismissed report | UC-32 | ❌ (Workstream 6) |
 
-**Counts (after Workstream 1 + Q1 + polish + Workstream 2, on `anny_cont`):**
+**Counts (after Workstream 1 + Q1 + polish + Workstream 2 + Workstream 3, on `anny_cont`):**
 
 | FR | Status |
 |---|---|
-| ✅ Fully implemented | FR-M3-05, -08, -09, -10, -11, -12, -13, -15, -16, -17, -18, -19, -22, -23, -24, -25 = **16** |
+| ✅ Fully implemented | FR-M3-05, -08, -09, -10, -11, -12, -13, -15, -16, -17, -18, -19, -20, -22, -23, -24, -25, -26 = **18** |
 | ⚠️ Partial | FR-M3-02, -07, -14 = **3** (FR-M3-02 + the second half of FR-M3-07 are deferred to the initial-review round; FR-M3-14 is missing the "override scores" half) |
-| ❌ Not implemented | FR-M3-01, -03, -04, -06, -20, -21, -26, -27, -28, -29, -30, -31 = **12** |
+| ❌ Not implemented | FR-M3-01, -03, -04, -06, -21, -27, -28, -29, -30, -31 = **10** |
 
 (FYI: the `compliance` + `readiness` gates I added count as implementation of FR-M2-03 / FR-M2-08 enforcement, but those are M2's FRs not M3's. They land in M3's "decision" code path.)
 
@@ -251,8 +252,9 @@ So the conversation we're having makes sense, here's what the `anny_cont` rounds
 | `ab8b33d` | Q1 refactor: `verifyStage1Doc` per-doc sub-collection; per-doc UI in `AuthorityEventReview`; `Stage1Doc` type | UC-22, UC-23, UC-24, UC-25 (all ✅ — flipped from ❌/⚠️) |
 | `7bd47f1` + `683a108` | Workstream 1 polish: `unassignAuthorityOfficers`; audit log for assignment actions; FR-M3-16 checkbox; FR-M3-08 reason/suggestion split; per-row "Assign" link; `unassign-officer.spec.ts` (3 specs) | UC-20 (✅, was ⚠️), UC-27 (✅, was ⚠️); plus UC-07 gets a "swap" affordance via the new unassign function. |
 | `af9805f` + `630dfa7` | **Workstream 2**: `generateEventControlList` (admin, cached on re-call, `force: true` to skip cache); `editEventControlList` (admin, commit point — wipes + writes `event_controls/*`, sets `controlListGenerated`, writes `control_list_published` audit log); `proposeControlItemsForEvent` helper extracted from `proposeEventControlList`; `AdminControlListEditor` (table with inline edit, Add/Remove per row, "Generate proposal" + "Commit changes"); `OrganizerEventControls` (read-only view, UC-34); `AdminApplicationReview` "Open event control list" link; new types (`AuditAction: 'control_list_published'`, `NotificationType: 'control_list_published'`, `EventRecord.controlListGenerated?`, `EventRecord.controlListSnapshot?`); 4 new E2E specs (3 generate + 1 organizer) | UC-13, UC-33, UC-34 (all ✅, were ❌) |
+| `ddf22d7` + `3799d64` | **Workstream 3**: `submitStage1Doc` (organizer, two paths — upload with 700 KB base64 cap OR one-click `usePrevious` flag for receipts); `aggregateLabel` helper extracted to `utils/controlAggregate.ts`; `Stage1RequirementRow` (per-doc row with 5 status states + 4 button states); `OrganizerEventControls` converted from read-only to editable (subscribes to per-control `stage1_docs/*` via `onSnapshot`); 4 new E2E specs; 1 existing spec updated to match the new editable UI | UC-28, UC-29 (both ✅, were ❌) |
 
-**Net result:** 14 UCs moved to ✅ (WS1), 2 UCs moved from ⚠️ to ✅ (WS1 polish), 4 UCs moved from ❌ to ✅ (Q1 refactor), 3 UCs moved from ❌ to ✅ (WS2). Total ✅ count went from 6 → 23 (58% of 40). Total ⚠️: 3 (unchanged — UC-03, UC-04, UC-17).
+**Net result:** 14 UCs moved to ✅ (WS1), 2 UCs moved from ⚠️ to ✅ (WS1 polish), 4 UCs moved from ❌ to ✅ (Q1 refactor), 3 UCs moved from ❌ to ✅ (WS2), 2 UCs moved from ❌ to ✅ (WS3). Total ✅ count went from 6 → 25 (62% of 40). Total ⚠️: 3 (unchanged — UC-03, UC-04, UC-17).
 
 ---
 
@@ -316,12 +318,12 @@ If you only have time for **one** workstream this round, **Workstream 1** is the
 
 ---
 
-## 8. Commit / deploy state as of `630dfa7`
+## 8. Commit / deploy state as of `3799d64`
 
 - `anny_cont` is **not merged to main**. Safe to refactor.
-- All Cloud Functions deployed to `asia-southeast1` (verified via `firebase functions:list`). Latest additions: `generateEventControlList`, `editEventControlList` (Workstream 2).
-- **38/38 Playwright specs pass** across 3 projects: m3-smoke (14), m3-full (17), m3-workstream1 (7). 4 new specs since `683a108` (3 generate-control-list + 1 organizer-event-controls). One retry recovered a cold-start timeout in m3-smoke; m3-full; m3-workstream1 was clean.
+- All Cloud Functions deployed to `asia-southeast1` (verified via `firebase functions:list`). Latest addition: `submitStage1Doc` (Workstream 3).
+- **43/43 Playwright specs pass** across 3 projects: m3-smoke (14), m3-full (22), m3-workstream1 (7). 4 new specs since `630dfa7` (the 4 organizer-stage1-upload specs).
 - Firestore rules + indexes deployed.
-- Frontend hosted at `https://linkos-496505.web.app`. Latest deploy: Workstream 2 (`AdminControlListEditor`, `OrganizerEventControls`, route additions, "Open event control list" link).
+- Frontend hosted at `https://linkos-496505.web.app`. Latest deploy: Workstream 3 (`OrganizerEventControls` editable view, `Stage1RequirementRow`, submit buttons).
 
-If you want to start Workstream 3 (Stage 1 organizer upload), the cleanest entry is to add the Stage 1 file-upload component to `OrganizerEventControls`, then a `submitStage1Doc(eventId, controlId, docId, fileBase64)` Cloud Function. The shape is in `shared/types.ts` (the `Stage1Doc` type already exists, populated by `verifyStage1Doc`'s `use_previous` path).
+If you want to start Workstream 4 (Stage 2 + public verification), the cleanest entry is to add the Stage 2 file-upload to `OrganizerEventControls` (next to the existing "Stage 2 (visual evidence)" placeholder) and a `submitStage2Doc` Cloud Function. Then `PublicEventDetail` extension: 👍 Confirm + 🚩 Report buttons on each verified Stage 2 image. Rate limit per user (A30).

@@ -1,9 +1,9 @@
 # M3 — Authority Approval and Notification · Review Pack
 
 **For:** M3 teammate (the human who owns the module)
-**Last commit on `anny_cont`:** `630dfa7` (Workstream 2 — 3 commits landing on top of `683a108`)
+**Last commit on `anny_cont`:** `3799d64` (Workstream 3 — 2 commits landing on top of `8d324a9`)
 **Reviewer entry point:** this file
-**Status:** 38/38 @M3 Playwright specs pass on the deployed Firebase project (`linkos-496505`) — split across 3 projects (`m3-smoke` 14, `m3-full` 17, `m3-workstream1` 7).
+**Status:** 43/43 @M3 Playwright specs pass on the deployed Firebase project (`linkos-496505`) — split across 3 projects (`m3-smoke` 14, `m3-full` 22, `m3-workstream1` 7).
 
 This document is a self-contained review pack. It tells you:
 
@@ -296,11 +296,50 @@ The plan for this round lived in `docs/team-handoffs/M3_WORKSTREAM2_PLAN.md` (lo
 
 ---
 
+## 5e. Workstream 3 — organizer Stage 1 upload + "Use Previous" (shipped in `ddf22d7` + `3799d64`)
+
+The plan for this round lived in `docs/team-handoffs/M3_WORKSTREAM3_PLAN.md` (locked 2026-08-19). UC-28, UC-29 ship. FR-M3-20 + FR-M3-26 flip to ✅. The view half of FR-M3-25 (the read-only `OrganizerEventControls`) shipped in Workstream 2; this workstream turns it into an editable page.
+
+**`submitStage1Doc` (organizer, callable)** — two paths:
+
+1. **UPLOAD.** `({eventId, controlId, docId, fileName, mimeType, fileBase64, label?})`. Writes the `stage1_docs/{docId}` doc with `status: 'pending_verification'`, stashing the bytes as a data URL in `filePath` (per the project convention: base64 in Firestore, NOT Firebase Storage). 700 KB binary cap (≈940 KB base64, under the 1 MB Firestore doc limit with headroom). Accepted mimes: JPEG, PNG, PDF.
+
+2. **`usePrevious: true`.** One-click flag, no source-event picker (M3 owner decision 2026-08-19). Only allowed when the requirement's `docType === 'receipt'` (A25). Writes the doc with `status: 'use_previous'`. **Stage 2 is the public verification backstop** — if the item isn't actually at the venue, the public sees the gap via Stage 2 and can report via M4.
+
+Both paths:
+- Refuse if the existing doc is `status: 'verified'` (organizer cannot re-upload after an officer approved without admin involvement).
+- Refill the `stage1_doc_submitted` audit log entry (`actorRole: 'organizer'`, `metadata.path: 'upload' | 'use_previous'`, `metadata.fileName?` / `metadata.fileSizeBytes?` / `metadata.mimeType?`).
+- Recompute the parent control's aggregate `label` via the extracted `aggregateLabel()` helper (so the UI immediately reflects the new state).
+- Notify the assigned officer (looked up from `events/{id}/assignments/{versionId}_{auth}`) + all admin users (`type: 'stage1_doc_submitted'`, idempotent `sourceActionId`).
+- On resubmit after a rejection, preserve the prior `rejectionReason` on the doc (Q4) — cleared on the next verification.
+
+**`aggregateLabel` extraction** — moved to `functions/src/utils/controlAggregate.ts` from `verifyStage1Doc.ts` so both functions can call it. ~10 lines, no behaviour change.
+
+**Frontend — `Stage1RequirementRow` component** at `frontend/src/components/stage1/Stage1RequirementRow.tsx`. Per-doc row with 5 status states (`pending_submission` | `pending_verification` | `verified` | `rejected` | `use_previous`) and 4 button states (Upload | Use Previous | Replace | Resubmit). Includes the rejection reason + suggestion display on a rejected doc. File picker with size + mime guard. Calls `submitStage1Doc` via `httpsCallable`.
+
+**Frontend — `OrganizerEventControls` page** at `/organizer/events/:id/controls`. Converted from read-only (Workstream 2) to editable (Workstream 3). Subscribes to `events/{id}/event_controls` (filtered by current `versionId`) + per-control `stage1_docs/*` via `onSnapshot`. Renders one `Stage1RequirementRow` per requirement in the control's `stage1Requirements` template. Header shows "X of Y required Stage 1 docs done" summary with rejected/awaiting/to-upload counts. Stage 2 row stays read-only (Workstream 4 ships the upload).
+
+**Types (shared/types.ts)** — `AuditAction: 'stage1_doc_submitted'` + `NotificationType: 'stage1_doc_submitted'`.
+
+**Firestore rules** — the existing `stage1_docs` rule from Q1 refactor already allows client read for admin, assigned authority, and event owner. No new client writes (the Cloud Function is the only writer). Comment updated to point at `submitStage1Doc`.
+
+**Test plan:** 38 → 43 specs across 3 projects. `m3-smoke` unchanged at 14. `m3-full` 18 → 22 (+4 organizer-stage1-upload). `m3-workstream1` unchanged at 7. **Latent bugs caught + fixed during dev:**
+1. `Control ... was not found for this event` — the deployed `editEventControlList` uses `controlId = ${eventId}-ctrl-${authority}-v${controlItemVersion}` (with `-v1` suffix). Test now reads the controlId from `commit.controlIds`.
+2. `Cannot use undefined as a Firestore value (rejectionSuggestion)` — the function was copying `existingDoc.rejectionSuggestion` even when undefined. Fixed: only set the field when defined (same pattern as the Q1 fix in `verifyEventControl`).
+3. `Missing or insufficient permissions` on `audit_logs` — the organizer role can't read `audit_logs` per the rules (admin or assigned authority only). Tests now sign in as admin for the audit assertion.
+4. UI row not visible — `OrganizerEventControls` was keying the row by `requirement.docId` (undefined — the type doesn't carry a `docId` field on the requirement template). Fixed: compute the `docId` on the parent and pass it through on the requirement object.
+
+Also: `organizer-event-controls.spec.ts` (m3-smoke) updated to match the new editable UI (the old "Stage 1 documents required: N" inline summary is gone — replaced by the per-requirement row list).
+
+**Deployed:** `submitStage1Doc` live in `asia-southeast1`. Frontend rebuilt + hosting deployed.
+
+---
+
 ## 6. Open items & questions for you
 
-1. **Merge to main.** `anny_cont` has 9 new commits on top of `main` (3 from Workstream 1, 2 from Q1, 4 from Workstream 1 polish, 3 from Workstream 2). Ready when you say so. I held off per your earlier "don't merge until I signal".
+1. **Merge to main.** `anny_cont` has 12 new commits on top of `main` (3 from Workstream 1, 2 from Q1, 4 from Workstream 1 polish, 3 from Workstream 2, 2 from Workstream 3, + 2 plan-doc commits). Ready when you say so. I held off per your earlier "don't merge until I signal".
 2. **`makeInitialReviewDecision` (FR-M3-02/03/04) — Initial Review stage.** Deferred to its own round (per `M3_WORKSTREAM1_POLISH_PLAN.md` §1). The current flow is `Pending → UnderReview → reviewStage:'authority' → reviewStage:'second' → Approved`. Adding a distinct "initial review" stage needs a new `reviewStage: 'initial'` and a `makeInitialReviewDecision` Cloud Function. UC-03, UC-04 still ⚠️.
-3. **Workstream 3 (Stage 1 organizer upload) — NEXT.** Now that the control list exists (Workstream 2), the next move is the Stage 1 file-upload UI in `OrganizerEventControls` + a `submitStage1Doc(eventId, controlId, docId, fileBase64)` Cloud Function. The `Stage1Doc` type is already in `shared/types.ts` (populated by `verifyStage1Doc`'s `use_previous` path). The "Use Previous" gate is dropped per your 2026-08-17 decision (A26 — Stage 2 image is the public-verification backstop).
+3. **Workstream 4 (Stage 2 + public verification) — NEXT.** Now that the organizer can upload Stage 1 (Workstream 3), the next move is the Stage 2 file-upload in `OrganizerEventControls` (next to the existing "Stage 2 (visual evidence)" placeholder) + a `submitStage2Doc` Cloud Function. Then `PublicEventDetail` extension: 👍 Confirm + 🚩 Report buttons on each verified Stage 2 image. Rate limit per user (A30).
 4. **M2 owner action: `proposeEventControlList` callable.** The stub `proposeControlItemsForEvent` ships in Workstream 2; M2 replaces the stub body with the real AI-backed version. See `M3_INTEGRATION_CONTRACT.md` §7 for the full contract.
 5. **`/authority/audit` standalone page.** Still planned (the route currently redirects to event review). M3 handoff says it can be part of the event review page or a standalone page. Your call.
 6. **AI-assisted rejection/revision wording.** Explicitly out of scope for this round. The handoff says "after the human-edit boundary is tested" — let me know when M2's advisory export is stable.
@@ -313,6 +352,10 @@ The plan for this round lived in `docs/team-handoffs/M3_WORKSTREAM2_PLAN.md` (lo
 ## 7. Commit log under review
 
 ```
+3799d64  test(m3): Workstream 3 specs (4 organizer-stage1-upload) + UI fix to existing read-only spec
+ddf22d7  feat(m3): Workstream 3 - organizer Stage 1 upload + Use Previous
+b0ab9f1  docs(m3): Workstream 3 plan - simplify Use Previous (Q2 owner decision)
+8da8868  docs(m3): Workstream 3 plan - organizer Stage 1 upload + Use Previous
 630dfa7  test(m3): Workstream 2 specs (3 generate-control-list + 1 organizer-event-controls)
 af9805f  feat(m3): Workstream 2 - event control list model + admin-driven AI generation
 538948c  docs(m3): Workstream 2 plan - admin must click (drop onEventApproved trigger)
@@ -359,7 +402,7 @@ Commits before `e1263fe` were either the original M3 foundation (already in main
 
 **TL;DR for the impatient:**
 - Your module: **M3 — Authority Approval and Notification** (M3 teammate role).
-- The diff in §2 spans 4 rounds: Workstream 1 (`44a7840` + `2b8db0d`), Q1 refactor (`ab8b33d`), Workstream 1 polish (`7bd47f1` + `683a108`), Workstream 2 (`af9805f` + `630dfa7`). Each is a focused, reviewable commit. The Q1 refactor (§5b) is the biggest single change.
+- The diff in §2 spans 5 rounds: Workstream 1 (`44a7840` + `2b8db0d`), Q1 refactor (`ab8b33d`), Workstream 1 polish (`7bd47f1` + `683a108`), Workstream 2 (`af9805f` + `630dfa7`), Workstream 3 (`ddf22d7` + `3799d64`). Each is a focused, reviewable commit. The Q1 refactor (§5b) is the biggest single change.
 - 5-minute smoke test in §4 step 1 is the fastest way to feel the whole thing work.
-- 38/38 Playwright specs pass across 3 projects (28 → 35 → 38 across the 4 rounds).
+- 43/43 Playwright specs pass across 3 projects (28 → 35 → 38 → 43 across the 5 rounds).
 - Branch is `anny_cont` — not merged. Tell me when you want to merge.
