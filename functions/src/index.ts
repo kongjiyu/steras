@@ -53,3 +53,10 @@ export { submitStage1Doc } from './http/submitStage1Doc';
 export { submitStage2Doc } from './http/submitStage2Doc';
 export { confirmStage2Doc } from './http/confirmStage2Doc';
 export { reportStage2Doc } from './http/reportStage2Doc';
+// M3 Workstream 5 — admin publish gate (FR-M3-21, UC-14, UC-15). The
+// admin reviews each organizer upload and either publishes (makes it
+// public) or rejects (with a reason; organizer can re-upload). This
+// is what lets us tighten the `stage2_docs` Firestore rule back to a
+// per-doc `published == true` check.
+export { publishStage2Doc } from './http/publishStage2Doc';
+export { unpublishStage2Doc } from './http/unpublishStage2Doc';

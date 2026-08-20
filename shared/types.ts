@@ -512,7 +512,10 @@ export type AuditAction =
   // M3 round N+1 (Workstream 4) — Stage 2 + public flow
   | 'stage2_doc_submitted'
   | 'stage2_confirmed'
-  | 'stage2_reported';
+  | 'stage2_reported'
+  // M3 round N+1 (Workstream 5) — admin publish gate
+  | 'stage2_doc_published'
+  | 'stage2_doc_rejected';
 
 export type NotificationType =
   | 'decision_made'
@@ -529,7 +532,10 @@ export type NotificationType =
   | 'stage1_doc_submitted'
   // M3 round N+1 (Workstream 4) — Stage 2 public flow
   | 'stage2_doc_submitted'
-  | 'stage2_reported';
+  | 'stage2_reported'
+  // M3 round N+1 (Workstream 5) — admin publish gate
+  | 'stage2_doc_published'
+  | 'stage2_doc_rejected';
 
 export interface Notification {
   notificationId: string;
@@ -794,6 +800,10 @@ export interface Stage2Doc {
   published: boolean;
   publishedAt?: number;
   publishedBy?: string;
+  /** Workstream 5 — set when an admin rejects the image pre-publish. */
+  rejectionReason?: string;
+  rejectionAt?: number;
+  rejectedBy?: string;
 }
 
 /** Full Event Control canonical shape — replaces the flat `event_controls`

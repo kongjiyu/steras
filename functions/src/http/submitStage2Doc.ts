@@ -154,15 +154,19 @@ export async function submitStage2DocForUser(
     }
 
     // Build the new doc.
+    // Workstream 5: the doc is written with `published: false`. An
+    // admin must explicitly publish via `publishStage2Doc` before the
+    // image goes public (FR-M3-21, UC-14/15). The confirm/report
+    // functions gate on `published === true`, so they correctly
+    // no-op for pending images. On a re-upload, we also clear any
+    // prior rejection fields (so the organizer gets a clean slate).
     const newDoc: Stage2Doc = {
       docId,
       imageUrl: `data:${mimeType};base64,${fileBase64}`,
       uploadedAt: now,
       uploadedBy: uid,
       publicConfirmCount: 0, // fresh on every upload — the prior image's confirms don't carry over
-      published: true,
-      publishedAt: now,
-      publishedBy: uid,
+      published: false,
     };
     // Preserve m4TicketId if it existed (it can't per the Q4 check above, but be defensive).
     if (existingDoc?.m4TicketId) newDoc.m4TicketId = existingDoc.m4TicketId;
@@ -216,7 +220,7 @@ export async function submitStage2DocForUser(
     eventId: result.eventId,
     controlId: result.controlId,
     docId: result.docId,
-    status: 'published' as const,
+    status: 'pending' as const,
     uploadedAt: result.uploadedAt,
   };
 }
@@ -232,8 +236,10 @@ async function fireSubmitStage2Notifications(args: {
 }): Promise<void> {
   const db = firestore();
   const sourceActionId = `${args.eventId}_${args.controlId}_stage2_submitted_${args.uploadedAt}`;
-  const title = 'Stage 2 image submitted';
-  const baseMessage = `${args.authorityType}: organizer submitted a Stage 2 image for "${args.controlName}". File: ${args.fileName}. Public verification can now begin.`;
+  const title = 'Stage 2 image submitted (pending admin review)';
+  // Workstream 5 — the image is NOT public yet. Notify the assigned
+  // officer (FYI) and all admins (action required to publish or reject).
+  const baseMessage = `${args.authorityType}: organizer submitted a Stage 2 image for "${args.controlName}". File: ${args.fileName}. The image is pending admin review — public verification starts once an admin publishes it.`;
 
   // Find the assigned officer for this authority + version.
   const assignmentId = `${args.versionId}_${args.authorityType}`;

@@ -207,27 +207,33 @@ service cloud.firestore {
         allow write: if false; // server-only
       }
 
-      // ---- Sub-collection: stage2_docs (M3 round N+1, Workstream 4) ----
+      // ---- Sub-collection: stage2_docs (M3 round N+1, Workstream 5) ----
       // Visual evidence (public-verifiable). Read scope:
-      //   - any signed-in user (the organizer's auto-publish on
-      //     upload makes the image visible immediately; the public
-      //     EventDetail page renders the per-control Stage 2 cards
-      //     and needs the metadata)
-      //   - admin reads go via the Admin SDK (bypasses rules)
-      // Writes are server-only (submitStage2Doc Cloud Function).
+      //   - any signed-in user, IF the doc is published == true
+      //     (the admin publish gate is the Workstream 5 trust
+      //     boundary — the organizer's upload lands at
+      //     `published: false`, and the admin clicks Publish before
+      //     the public sees it).
+      //   - admin (for audit + WS5 review UI).
+      //   - the event's organiser (so the organizer can see their
+      //     own pending / rejected image + the rejection reason when
+      //     re-uploading). Same `isOwner + get(event)` pattern as
+      //     `event_controls` above; the public user can't read the
+      //     event doc, but the rule only fires for the organiser.
+      // Writes are server-only (submitStage2Doc / publishStage2Doc
+      // / unpublishStage2Doc Cloud Functions).
       //
-      // We use a single `isSignedIn()` check instead of gating on
-      // `resource.data.published` because Firestore collection
-      // queries evaluate the rule on the collection metadata, and
-      // `resource.data` is null for the collection path — that
-      // caused the prior `(isSignedIn() && resource.data.published
-      // == true) || isAdmin()` rule to fail with "Missing or
-      // insufficient permissions" for every controls fan-out
-      // subscription. Workstream 5 (admin publish + sanitise) can
-      // tighten this back to a per-doc `published == true` check
-      // once the sanitisation step is in place.
+      // The collection-subscription form (e.g. `collection(db, ...,
+      // stage2_docs).onSnapshot(...)`) is what the public page uses.
+      // For a collection path `resource.data` is null — accessing
+      // `resource.data.published` would throw and break the
+      // subscription. We short-circuit with `resource.data == null`
+      // so the subscription always succeeds; the per-doc
+      // `published == true` check only kicks in for document reads.
       match /event_controls/{controlId}/stage2_docs/{docId} {
-        allow read: if isSignedIn();
+        allow read: if isSignedIn() && (resource.data == null || resource.data.published == true);
+        allow read: if isSignedIn() && isAdmin();
+        allow read: if isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId);
         allow write: if false; // server-only
       }
 
