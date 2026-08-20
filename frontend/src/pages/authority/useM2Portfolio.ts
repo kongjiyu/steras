@@ -43,20 +43,24 @@ export function useM2Portfolio(previewRecords?: M2PortfolioRecord[]) {
           const event = { eventId: eventDocument.id, ...eventDocument.data() } as EventRecord;
           const eventReference = doc(db, COLLECTIONS.EVENTS, event.eventId);
           const assessmentId = event.currentAssessmentId ?? event.currentVersionId;
-          const resourceId = event.currentResourceId ?? event.currentVersionId;
+          const resourceId = event.currentResourceId;
           const [assessmentDocument, resourceDocument] = await Promise.all([
             assessmentId ? getDoc(doc(eventReference, COLLECTIONS.ASSESSMENTS, assessmentId)) : Promise.resolve(null),
             resourceId ? getDoc(doc(eventReference, COLLECTIONS.RESOURCES, resourceId)) : Promise.resolve(null),
           ]);
           const rawAssessment = assessmentDocument?.data() as AssessmentRecord | undefined;
           const rawResources = resourceDocument?.data();
+          const validResources = isCurrentResourceRecommendation(rawResources)
+            && rawResources.resourceId === resourceId
+            && rawResources.eventId === event.eventId
+            && rawResources.versionId === event.currentVersionId;
           return {
             event,
             assessment: isCurrentRiskAssessment(rawAssessment) ? rawAssessment : undefined,
             assessmentStatus: rawAssessment?.status,
-            resources: isCurrentResourceRecommendation(rawResources) ? rawResources : undefined,
+            resources: validResources ? rawResources : undefined,
             legacyAssessment: Boolean(assessmentDocument?.exists() && !isCurrentAssessmentRecord(rawAssessment)),
-            legacyResources: Boolean(rawResources) && !isCurrentResourceRecommendation(rawResources),
+            legacyResources: Boolean(rawResources) && !validResources,
           } satisfies M2PortfolioRecord;
         }));
 

@@ -1,129 +1,690 @@
+import { createHash } from 'node:crypto';
 import {
+  AISuccessfulProposal,
   DeterministicCategoryResult,
   EventDetails,
-  ResourceQuantities,
+  HARD_RULE_VERSION,
+  PROVISIONAL_FORMULA_VERSION,
+  ProvisionalAssessmentResult,
+  RESOURCE_KEYS,
+  RESOURCE_SCHEMA_VERSION,
+  ResourceAppliedRule,
+  ResourceAssumption,
+  ResourceInputReference,
+  ResourceKey,
   ResourceRecommendationItem,
-  ResourceRationale,
+  ResourceSourceSnapshot,
+  RiskLevel,
+  hirarcRiskLevelFor,
+  riskLevelFor,
 } from '@shared/types';
+import {
+  ACTIVE_RESOURCE_CONFIG,
+  RESOURCE_SOURCE_REGISTRY,
+  ResourceRecommendationConfig,
+} from '../config/resourceRecommendationConfig';
+import { ACTIVE_CATEGORY_SCHEMA } from '../config/categorySchema';
+import { evaluateCategoryHardRules } from './hardRuleEvaluator';
 
-const SECURITY_MULTIPLIER: Record<EventDetails['type'], number> = {
-  concert: 2,
-  festival: 1.5,
-  sports: 1.5,
-  cultural: 1,
-  religious: 1.5,
-  exhibition: 1,
-  fair: 1,
-  conference: 1,
-  other: 1,
-};
-
-export interface ResourceCalculation {
-  quantities: ResourceQuantities;
-  rationales: Record<keyof ResourceQuantities, ResourceRationale>;
-  items: ResourceRecommendationItem[];
+export interface ResourceCalculationInput {
+  eventId: string;
+  versionId: string;
+  assessmentId: string;
+  eventDetails: EventDetails;
+  assessmentResult: ProvisionalAssessmentResult;
 }
 
-/**
- * Prototype-only deterministic resource mapping.
- *
- * Ratios and modifiers remain deliberately versioned as unverified prototype
- * values until the team supplies the exact WHO/PDRM/Bomba source passages and
- * an authority reviewer approves their interpretation.
- */
+export type ResourceCalculationFailureCode =
+  | 'missing_input'
+  | 'invalid_input'
+  | 'unsafe_calculation'
+  | 'incomplete_provenance';
+
+export type ResourceCalculationResult =
+  | {
+      ok: true;
+      resourceInputHash: string;
+      formulaVersion: string;
+      configVersion: string;
+      sourceRegistryVersion: string;
+      items: Record<ResourceKey, ResourceRecommendationItem>;
+    }
+  | {
+      ok: false;
+      code: ResourceCalculationFailureCode;
+      message: string;
+    };
+
+class ResourceCalculationFault extends Error {
+  constructor(readonly code: ResourceCalculationFailureCode, message: string) {
+    super(message);
+  }
+}
+
+/** Deterministic provisional calculation; callers add revision and timestamps. */
 export function computeResources(
-  eventDetails: EventDetails,
-  officialResult: DeterministicCategoryResult,
-): ResourceCalculation {
-  const attendance = Number.isFinite(eventDetails.expectedAttendance)
-    ? Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(eventDetails.expectedAttendance)))
-    : 0;
-  const highOfficialRisk = officialResult.officialRiskLevel === 'High';
-  const categoryRisk = new Map(officialResult.categoryAssignments.map((category) => [category.categoryId, category.riskLevel]));
-  const highCrowdRisk = categoryRisk.get('crowd') === 'High';
-  const highWeatherRisk = categoryRisk.get('weather_environment') === 'High';
-  const highVenueRisk = categoryRisk.get('venue_fire') === 'High';
-
-  const quantities: ResourceQuantities = {
-    police: Math.max(2, Math.ceil(attendance / 250)) + (highOfficialRisk ? 10 : 0) + (highCrowdRisk ? 5 : 0),
-    medicalTeams: Math.max(1, Math.ceil(attendance / 1_000)) + (highOfficialRisk ? 1 : 0) + (highWeatherRisk ? 1 : 0),
-    ambulances: Math.max(1, Math.ceil(attendance / 5_000)) + (highOfficialRisk ? 1 : 0),
-    toilets: Math.ceil(attendance / 50) + Math.ceil(attendance / 75),
-    wasteBins: Math.ceil(attendance / 100),
-    security: Math.ceil(Math.ceil(attendance / 100) * (SECURITY_MULTIPLIER[eventDetails.type] ?? 1)) + (highCrowdRisk ? 5 : 0),
-    fireOfficers: Math.max(1, Math.ceil(attendance / 500)) + (eventDetails.environment === 'indoor' ? 1 : 0) + (highVenueRisk ? 2 : 0),
-  };
-
-  const rationales = {
-    police: rationale('police', quantities.police, [
-      `Prototype attendance ratio: 1 officer per 250 attendees, minimum 2.`,
-      ...(highOfficialRisk ? ['High official risk modifier: +10 officers.'] : []),
-      ...(highCrowdRisk ? ['High crowd-category modifier: +5 officers.'] : []),
-    ], ['internal.resource-baseline.v3', 'who.mass-gathering.all-hazards.2023']),
-    medicalTeams: rationale('medicalTeams', quantities.medicalTeams, [
-      `Prototype attendance ratio: 1 medical team per 1,000 attendees, minimum 1.`,
-      ...(highOfficialRisk ? ['High official risk modifier: +1 team.'] : []),
-      ...(highWeatherRisk ? ['High weather-category modifier: +1 team.'] : []),
-    ], ['internal.resource-baseline.v3', 'who.mass-gathering.all-hazards.2023']),
-    ambulances: rationale('ambulances', quantities.ambulances, [
-      `Prototype attendance ratio: 1 ambulance per 5,000 attendees, minimum 1.`,
-      ...(highOfficialRisk ? ['High official risk modifier: +1 ambulance.'] : []),
-    ], ['internal.resource-baseline.v3']),
-    toilets: rationale('toilets', quantities.toilets, [
-      'Prototype sanitation ratio combines 1 unit per 50 and 1 unit per 75 attendees.',
-    ], ['internal.resource-baseline.v3']),
-    wasteBins: rationale('wasteBins', quantities.wasteBins, [
-      'Prototype waste ratio: 1 bin per 100 attendees.',
-    ], ['internal.resource-baseline.v3']),
-    security: rationale('security', quantities.security, [
-      `Prototype base ratio: 1 guard per 100 attendees with ${SECURITY_MULTIPLIER[eventDetails.type] ?? 1}x ${eventDetails.type} multiplier.`,
-      ...(highCrowdRisk ? ['High crowd-category modifier: +5 personnel.'] : []),
-    ], ['internal.resource-baseline.v3', 'who.mass-gathering.all-hazards.2023']),
-    fireOfficers: rationale('fireOfficers', quantities.fireOfficers, [
-      'Prototype attendance ratio: 1 fire-safety officer per 500 attendees, minimum 1.',
-      ...(eventDetails.environment === 'indoor' ? ['Indoor-event modifier: +1 officer.'] : []),
-      ...(highVenueRisk ? ['High venue-category modifier: +2 officers.'] : []),
-    ], ['internal.resource-baseline.v3', 'my.fire-services-act.1988']),
-  };
-  return {
-    quantities,
-    rationales,
-    items: (Object.keys(quantities) as Array<keyof ResourceQuantities>).map((resource) => resourceItem(
+  input: ResourceCalculationInput,
+  config: ResourceRecommendationConfig = ACTIVE_RESOURCE_CONFIG,
+): ResourceCalculationResult {
+  try {
+    validateInput(input, config);
+    const source = numericSource(config);
+    const categoryLevels = categoryRiskLevels(input.assessmentResult, config.assessmentCategoryIds);
+    const items = Object.fromEntries(RESOURCE_KEYS.map((resource) => [
       resource,
-      quantities[resource],
-      rationales[resource],
-    )),
-  };
+      calculateItem(resource, input.eventDetails, input.assessmentResult.overallRiskLevel, categoryLevels, config, source),
+    ])) as Record<ResourceKey, ResourceRecommendationItem>;
+    validateCompleteItems(items);
+    return {
+      ok: true,
+      resourceInputHash: resourceInputHash(input, config),
+      formulaVersion: config.formulaVersion,
+      configVersion: config.configVersion,
+      sourceRegistryVersion: config.sourceRegistryVersion,
+      items,
+    };
+  } catch (error) {
+    if (error instanceof ResourceCalculationFault) return { ok: false, code: error.code, message: error.message };
+    return {
+      ok: false,
+      code: 'unsafe_calculation',
+      message: error instanceof Error ? error.message : 'Unknown resource calculation failure.',
+    };
+  }
 }
 
-function resourceItem(
-  resource: keyof ResourceQuantities,
-  baseline: number,
-  rationaleValue: ResourceRationale,
+function validateInput(input: ResourceCalculationInput, config: ResourceRecommendationConfig): void {
+  for (const [field, value] of Object.entries({
+    eventId: input.eventId,
+    versionId: input.versionId,
+    assessmentId: input.assessmentId,
+    proposalId: input.assessmentResult?.proposalId,
+  })) {
+    if (typeof value !== 'string' || value.trim().length === 0) {
+      throw new ResourceCalculationFault('missing_input', `${field} is required.`);
+    }
+  }
+  const attendance = input.eventDetails?.expectedAttendance;
+  if (attendance === undefined || attendance === null) {
+    throw new ResourceCalculationFault('missing_input', 'expectedAttendance is required.');
+  }
+  if (!Number.isFinite(attendance) || !Number.isSafeInteger(attendance) || attendance <= 0) {
+    throw new ResourceCalculationFault('invalid_input', 'expectedAttendance must be a positive safe integer.');
+  }
+  if (!(input.eventDetails.type in config.securityEventMultipliers)) {
+    throw new ResourceCalculationFault('invalid_input', `Unsupported event type: ${String(input.eventDetails.type)}.`);
+  }
+  if (!['indoor', 'outdoor', 'mixed'].includes(input.eventDetails.environment)) {
+    throw new ResourceCalculationFault('invalid_input', `Unsupported event environment: ${String(input.eventDetails.environment)}.`);
+  }
+  if (!isRiskLevel(input.assessmentResult.overallRiskLevel)) {
+    throw new ResourceCalculationFault('invalid_input', 'Assessment overallRiskLevel is invalid.');
+  }
+  const assessmentErrors = validateProvisionalAssessmentResult(input.assessmentResult, config.assessmentCategoryIds);
+  if (assessmentErrors.length > 0) {
+    throw new ResourceCalculationFault('invalid_input', `Invalid provisional assessment result: ${assessmentErrors.join(', ')}.`);
+  }
+  const versions = [config.formulaVersion, config.configVersion, config.sourceRegistryVersion];
+  if (versions.some((version) => typeof version !== 'string' || version.trim().length === 0)) {
+    throw new ResourceCalculationFault('incomplete_provenance', 'Resource calculation versions are incomplete.');
+  }
+  if (!Number.isFinite(config.planningRangeMultiplier) || config.planningRangeMultiplier < 1) {
+    throw new ResourceCalculationFault('invalid_input', 'Planning range multiplier must be finite and at least 1.');
+  }
+  for (const resource of RESOURCE_KEYS) {
+    const baseline = config.baselines[resource];
+    if (!baseline || !positiveFinite(baseline.divisor) || !nonNegativeSafeInteger(baseline.minimum)) {
+      throw new ResourceCalculationFault('invalid_input', `Invalid baseline configuration for ${resource}.`);
+    }
+    if (!config.reviewingAuthorities[resource]) {
+      throw new ResourceCalculationFault('incomplete_provenance', `Reviewing authority is missing for ${resource}.`);
+    }
+  }
+  if (!positiveFinite(config.toiletSecondaryDivisor)) {
+    throw new ResourceCalculationFault('invalid_input', 'Toilet secondary divisor must be positive and finite.');
+  }
+  for (const [eventType, multiplier] of Object.entries(config.securityEventMultipliers)) {
+    if (!positiveFinite(multiplier)) {
+      throw new ResourceCalculationFault('invalid_input', `Invalid security multiplier for ${eventType}.`);
+    }
+  }
+  const modifierGroups: Array<Partial<Record<ResourceKey, number>>> = [
+    config.highOverallModifiers,
+    config.indoorModifiers,
+    ...Object.values(config.highCategoryModifiers),
+  ];
+  for (const modifiers of modifierGroups) {
+    for (const [resource, modifier] of Object.entries(modifiers)) {
+      if (!nonNegativeSafeInteger(modifier)) {
+        throw new ResourceCalculationFault('invalid_input', `Invalid resource modifier for ${resource}.`);
+      }
+    }
+  }
+}
+
+function numericSource(config: ResourceRecommendationConfig): ResourceSourceSnapshot {
+  const source = RESOURCE_SOURCE_REGISTRY[config.numericSourceId];
+  if (!source || source.verificationStatus !== 'prototype_unverified' || source.kind !== 'internal_prototype') {
+    throw new ResourceCalculationFault(
+      'incomplete_provenance',
+      'Numeric resource rules require an internal prototype_unverified source snapshot.',
+    );
+  }
+  return { ...source };
+}
+
+function categoryRiskLevels(result: ProvisionalAssessmentResult, expectedCategoryIds: readonly string[]): Map<string, RiskLevel> {
+  if (!Array.isArray(result.categories)) {
+    throw new ResourceCalculationFault('missing_input', 'Assessment categories are required.');
+  }
+  const levels = new Map<string, RiskLevel>();
+  for (const category of result.categories) {
+    if (levels.has(category.categoryId)) {
+      throw new ResourceCalculationFault('invalid_input', `Duplicate assessment category: ${category.categoryId}.`);
+    }
+    if (!isRiskLevel(category.riskLevel)) {
+      throw new ResourceCalculationFault('invalid_input', `Invalid risk level for category ${category.categoryId}.`);
+    }
+    levels.set(category.categoryId, category.riskLevel);
+  }
+  if (levels.size !== expectedCategoryIds.length) {
+    throw new ResourceCalculationFault('missing_input', 'The complete validated assessment category set is required.');
+  }
+  for (const required of expectedCategoryIds) {
+    if (!levels.has(required)) {
+      throw new ResourceCalculationFault('missing_input', `Required assessment category is missing: ${required}.`);
+    }
+  }
+  for (const categoryId of levels.keys()) {
+    if (!expectedCategoryIds.includes(categoryId)) {
+      throw new ResourceCalculationFault('invalid_input', `Unknown assessment category: ${categoryId}.`);
+    }
+  }
+  return levels;
+}
+
+function calculateItem(
+  resource: ResourceKey,
+  details: EventDetails,
+  overallRisk: RiskLevel,
+  categoryLevels: Map<string, RiskLevel>,
+  config: ResourceRecommendationConfig,
+  source: ResourceSourceSnapshot,
 ): ResourceRecommendationItem {
-  const authority = resource === 'medicalTeams' || resource === 'ambulances' || resource === 'toilets'
-    ? 'KKM'
-    : resource === 'fireOfficers'
-      ? 'BOMBA'
-      : 'PDRM';
+  const attendanceReference: ResourceInputReference = {
+    inputId: 'event.expectedAttendance', kind: 'event_field', path: 'eventDetails.expectedAttendance', value: details.expectedAttendance,
+  };
+  const overallReference: ResourceInputReference = {
+    inputId: 'assessment.overallRiskLevel',
+    kind: 'assessment_overall',
+    path: 'assessmentResult.overallRiskLevel',
+    value: overallRisk,
+  };
+  const inputReferences: ResourceInputReference[] = [attendanceReference, overallReference];
+  const appliedRules: ResourceAppliedRule[] = [];
+  const baselineConfig = config.baselines[resource];
+  let baseline: number;
+
+  if (resource === 'security') {
+    const eventTypeReference: ResourceInputReference = {
+      inputId: 'event.type', kind: 'event_field', path: 'eventDetails.type', value: details.type,
+    };
+    inputReferences.push(eventTypeReference);
+    const attendanceBase = safeCeil(details.expectedAttendance / baselineConfig.divisor, `${resource} attendance ratio`);
+    const multiplier = config.securityEventMultipliers[details.type];
+    baseline = Math.max(baselineConfig.minimum, safeCeil(attendanceBase * multiplier, `${resource} event type multiplier`));
+    appliedRules.push(rule(
+      'resource.security.attendance-event-type',
+      `Ceiling of 1 per ${baselineConfig.divisor} attendees, multiplied by ${multiplier} for ${details.type}, with minimum ${baselineConfig.minimum}.`,
+      [attendanceReference.inputId, eventTypeReference.inputId], source.sourceId, baseline,
+    ));
+  } else if (resource === 'toilets') {
+    const primary = safeCeil(details.expectedAttendance / baselineConfig.divisor, 'toilets primary attendance ratio');
+    const secondary = safeCeil(details.expectedAttendance / config.toiletSecondaryDivisor, 'toilets secondary attendance ratio');
+    baseline = Math.max(baselineConfig.minimum, safeAdd(primary, secondary, 'toilets combined attendance ratios'));
+    appliedRules.push(rule(
+      'resource.toilets.combined-attendance',
+      `Sum of ceilings at 1 per ${baselineConfig.divisor} and 1 per ${config.toiletSecondaryDivisor} attendees, with minimum ${baselineConfig.minimum}.`,
+      [attendanceReference.inputId], source.sourceId, baseline,
+    ));
+  } else {
+    const attendanceBase = safeCeil(details.expectedAttendance / baselineConfig.divisor, `${resource} attendance ratio`);
+    baseline = Math.max(baselineConfig.minimum, attendanceBase);
+    appliedRules.push(rule(
+      `resource.${resource}.attendance`,
+      `Ceiling of 1 per ${baselineConfig.divisor} attendees with minimum ${baselineConfig.minimum}.`,
+      [attendanceReference.inputId], source.sourceId, baseline,
+    ));
+  }
+
+  const overallModifier = config.highOverallModifiers[resource] ?? 0;
+  if (overallModifier > 0) {
+    if (overallRisk === 'High') {
+      baseline = safeAdd(baseline, overallModifier, `${resource} overall risk modifier`);
+      appliedRules.push(rule(
+        `resource.${resource}.high-overall-risk`, 'Add the configured high overall risk uplift.',
+        [overallReference.inputId], source.sourceId, overallModifier,
+      ));
+    }
+  }
+
+  for (const categoryId of ['crowd', 'weather_environment', 'venue_fire'] as const) {
+    const modifier = config.highCategoryModifiers[categoryId]?.[resource] ?? 0;
+    if (modifier <= 0) continue;
+    const reference: ResourceInputReference = {
+      inputId: `assessment.category.${categoryId}.riskLevel`,
+      kind: 'assessment_category',
+      path: `assessmentResult.categories.${categoryId}.riskLevel`,
+      value: categoryLevels.get(categoryId) as RiskLevel,
+    };
+    inputReferences.push(reference);
+    if (reference.value === 'High') {
+      baseline = safeAdd(baseline, modifier, `${resource} ${categoryId} modifier`);
+      appliedRules.push(rule(
+        `resource.${resource}.high-${categoryId}`, `Add the configured uplift when ${categoryId} risk is High.`,
+        [reference.inputId], source.sourceId, modifier,
+      ));
+    }
+  }
+
+  const indoorModifier = config.indoorModifiers[resource] ?? 0;
+  if (indoorModifier > 0) {
+    const reference: ResourceInputReference = {
+      inputId: 'event.environment', kind: 'event_field', path: 'eventDetails.environment', value: details.environment,
+    };
+    inputReferences.push(reference);
+    if (details.environment === 'indoor') {
+      baseline = safeAdd(baseline, indoorModifier, `${resource} indoor modifier`);
+      appliedRules.push(rule(
+        `resource.${resource}.indoor`, 'Add the configured indoor-event uplift.',
+        [reference.inputId], source.sourceId, indoorModifier,
+      ));
+    }
+  }
+
+  const planningMax = safeCeil(baseline * config.planningRangeMultiplier, `${resource} planning range`);
+  appliedRules.push(rule(
+    `resource.${resource}.planning-range`,
+    `Apply the configured ${config.planningRangeMultiplier} planning-range multiplier to the calculated baseline.`,
+    inputReferences.map((reference) => reference.inputId),
+    source.sourceId,
+    planningMax - baseline,
+  ));
+  const assumptions: ResourceAssumption[] = [{
+    assumptionId: `resource.${resource}.prototype-baseline`,
+    statement: 'This numeric baseline is an internal academic prototype, not an authority minimum.',
+    sourceIds: [source.sourceId],
+  }];
   return {
+    status: 'ready',
     resource,
     baseline,
-    planningRange: { min: baseline, max: Math.ceil(baseline * 1.25) },
-    assumptions: rationaleValue.factors,
-    riskModifiers: rationaleValue.factors.filter((factor) => /modifier/i.test(factor)),
+    planningRange: { min: baseline, max: planningMax },
+    inputReferences,
+    assumptions,
+    appliedRules,
+    sourceSnapshots: [{ ...source }],
+    authoritySource: {
+      status: 'not_supplied',
+      reason: 'No verified authority-issued numeric resource ratio has been supplied for this prototype.',
+    },
     confidence: 'prototype',
-    guidelineReferences: rationaleValue.guidelineReferences,
-    reviewingAuthority: authority,
+    reviewingAuthority: config.reviewingAuthorities[resource],
     authorityReviewRequired: true,
   };
 }
 
-function rationale(
-  resource: keyof ResourceQuantities,
-  baselineQuantity: number,
-  factors: string[],
-  guidelineReferences: string[],
-): ResourceRationale {
-  return { resource, baselineQuantity, factors, guidelineReferences };
+export function validateProvisionalAssessmentResult(
+  result: ProvisionalAssessmentResult,
+  expectedCategoryIds: readonly string[] = ACTIVE_RESOURCE_CONFIG.assessmentCategoryIds,
+): string[] {
+  const errors: string[] = [];
+  const evidenceKeys = new Set(['weather', 'crowd', 'venue', 'history', 'holiday', 'public_health', 'sanitation', 'medical', 'security', 'transport', 'compliance']);
+  if (!result || typeof result !== 'object') return ['result'];
+  if (typeof result.proposalId !== 'string' || !result.proposalId.trim()) errors.push('proposal-id');
+  if (result.formulaVersion !== PROVISIONAL_FORMULA_VERSION) errors.push('formula-version');
+  if (result.hardRuleVersion !== HARD_RULE_VERSION) errors.push('hard-rule-version');
+  if (result.categorySchemaVersion !== ACTIVE_CATEGORY_SCHEMA.version) errors.push('category-schema-version');
+  if (!Array.isArray(result.validatedHazards)) errors.push('validated-hazards');
+  if (!Array.isArray(result.categories)) return [...errors, 'categories'];
+  const validatedHazards = Array.isArray(result.validatedHazards) ? result.validatedHazards : [];
+
+  const expected = new Map<string, number>(ACTIVE_CATEGORY_SCHEMA.categories.map((category) => [category.id, category.weight]));
+  const expectedDefinitions = new Map<string, (typeof ACTIVE_CATEGORY_SCHEMA.categories)[number]>(
+    ACTIVE_CATEGORY_SCHEMA.categories.map((category) => [category.id, category]),
+  );
+  const seen = new Set<string>();
+  const hazardIds = new Set<string>();
+  for (const hazard of validatedHazards) {
+    if (!hazard || typeof hazard !== 'object'
+      || typeof hazard.hazardId !== 'string' || !hazard.hazardId.trim() || hazardIds.has(hazard.hazardId)
+      || typeof hazard.hazardName !== 'string' || !hazard.hazardName.trim()
+      || !expected.has(hazard.categoryId)
+      || !Array.isArray(hazard.evidenceReferences) || hazard.evidenceReferences.length === 0
+      || new Set(hazard.evidenceReferences).size !== hazard.evidenceReferences.length
+      || hazard.evidenceReferences.some((reference) => typeof reference !== 'string' || !evidenceKeys.has(reference))
+      || typeof hazard.rationale !== 'string' || !hazard.rationale.trim()) {
+      errors.push('validated-hazard-shape');
+    } else {
+      hazardIds.add(hazard.hazardId);
+    }
+  }
+  let weightedScore = 0;
+  let highest: RiskLevel = 'Low';
+  if (result.categories.length !== expectedCategoryIds.length) errors.push('category-count');
+  for (const rawCategory of result.categories as unknown[]) {
+    if (!isRuntimeRecord(rawCategory)) { errors.push('category-shape'); continue; }
+    const category = rawCategory as unknown as ProvisionalAssessmentResult['categories'][number];
+    const weight = expected.get(category.categoryId);
+    const definition = expectedDefinitions.get(category.categoryId);
+    if (!expectedCategoryIds.includes(category.categoryId) || weight === undefined || seen.has(category.categoryId)) {
+      errors.push(`category-${category.categoryId || 'unknown'}`);
+      continue;
+    }
+    seen.add(category.categoryId);
+    const matrix = category.validatedLikelihood * category.validatedSeverity;
+    const normalized = matrix * 4;
+    const hardRuleErrors = validateAppliedHardRules(category);
+    if (!isScore(category.proposedLikelihood) || !isScore(category.proposedSeverity)
+      || !isScore(category.validatedLikelihood) || !isScore(category.validatedSeverity)
+      || category.validatedLikelihood < category.proposedLikelihood
+      || category.validatedSeverity < category.proposedSeverity
+      || category.matrixScore !== matrix
+      || category.normalizedScore !== normalized
+      || category.weight !== weight
+      || category.weightedContribution !== round(normalized * weight)
+      || category.riskLevel !== hirarcRiskLevelFor(matrix)
+      || typeof category.categoryName !== 'string' || category.categoryName !== definition?.name
+      || !Array.isArray(category.evidenceReferences) || category.evidenceReferences.length === 0
+      || new Set(category.evidenceReferences).size !== category.evidenceReferences.length
+      || category.evidenceReferences.some((reference) => typeof reference !== 'string' || !evidenceKeys.has(reference))
+      || typeof category.rationale !== 'string' || !category.rationale.trim()
+      || !['low', 'medium', 'high'].includes(category.confidence)
+      || !stringArray(category.concerns) || !stringArray(category.missingInformation)
+      || !sameStringSet(category.guidelineChecks, definition?.guidelineChecks ?? [])
+      || hardRuleErrors.length > 0) errors.push(`calculation-${category.categoryId}`);
+    weightedScore += normalized * weight;
+    highest = higherRisk(highest, hirarcRiskLevelFor(matrix));
+  }
+  if (expectedCategoryIds.some((categoryId) => !seen.has(categoryId))) errors.push('missing-category');
+  const overallScore = round(weightedScore);
+  const weightedRisk = riskLevelFor(overallScore);
+  if (result.overallScore !== overallScore
+    || result.weightedRiskLevel !== weightedRisk
+    || result.highestCategoryRiskLevel !== highest
+    || result.overallRiskLevel !== higherRisk(weightedRisk, highest)) errors.push('overall-calculation');
+  if (!Number.isFinite(result.calculatedAt)) errors.push('calculated-at');
+  return [...new Set(errors)];
+}
+
+export function validateAssessmentResultAgainstProposal(
+  result: ProvisionalAssessmentResult,
+  proposal: AISuccessfulProposal,
+): string[] {
+  const errors: string[] = [];
+  const proposedCategories = new Map(proposal.categories.map((category) => [category.categoryId, category]));
+  if (proposedCategories.size !== ACTIVE_CATEGORY_SCHEMA.categories.length) errors.push('proposal-category-count');
+  for (const category of result.categories) {
+    const proposed = proposedCategories.get(category.categoryId);
+    if (!proposed
+      || proposed.likelihood !== category.proposedLikelihood
+      || proposed.severity !== category.proposedSeverity
+      || proposed.rationale !== category.rationale
+      || proposed.confidence !== category.confidence
+      || stableStringify(proposed.concerns) !== stableStringify(category.concerns)
+      || stableStringify(proposed.missingInformation) !== stableStringify(category.missingInformation)
+      || category.evidenceReferences.some((reference) => !proposed.evidenceReferences.includes(reference))) {
+      errors.push(`proposal-category-${category.categoryId}`);
+    }
+  }
+  const proposedHazards = new Map(proposal.hazards.map((hazard) => [hazard.hazardId, hazard]));
+  for (const hazard of result.validatedHazards) {
+    const proposed = proposedHazards.get(hazard.hazardId);
+    if (!proposed
+      || proposed.hazardName !== hazard.hazardName
+      || proposed.categoryId !== hazard.categoryId
+      || proposed.rationale !== hazard.rationale
+      || hazard.evidenceReferences.some((reference) => !proposed.evidenceReferences.includes(reference))) {
+      errors.push(`proposal-hazard-${hazard.hazardId}`);
+    }
+  }
+  return errors;
+}
+
+export function validateAssessmentResultAgainstHardRules(
+  result: ProvisionalAssessmentResult,
+  baseline: DeterministicCategoryResult,
+): string[] {
+  const errors: string[] = [];
+  const constraints = new Map<string, ReturnType<typeof evaluateCategoryHardRules>[number]>(
+    evaluateCategoryHardRules(baseline).map((constraint) => [constraint.categoryId, constraint]),
+  );
+  for (const category of result.categories) {
+    const constraint = constraints.get(category.categoryId);
+    if (!constraint) { errors.push(`hard-rule-${category.categoryId}`); continue; }
+    for (const axis of ['likelihood', 'severity'] as const) {
+      const proposed = axis === 'likelihood' ? category.proposedLikelihood : category.proposedSeverity;
+      const validated = axis === 'likelihood' ? category.validatedLikelihood : category.validatedSeverity;
+      const floor = axis === 'likelihood' ? constraint.likelihoodFloor : constraint.severityFloor;
+      const applied = category.appliedHardRules.filter((rule) => rule.axis === axis);
+      if (validated !== Math.max(proposed, floor)) errors.push(`hard-rule-floor-${category.categoryId}-${axis}`);
+      if (proposed < floor) {
+        const expectedId = `${constraint.ruleId}.${axis}`;
+        if (applied.length !== 1
+          || applied[0].ruleId !== expectedId
+          || applied[0].categoryId !== category.categoryId
+          || applied[0].proposedValue !== proposed
+          || applied[0].constrainedValue !== floor
+          || applied[0].rationale !== `${constraint.rationale} The ${axis} floor is ${floor}.`
+          || !sameStringSet(applied[0].guidelineReferences, constraint.guidelineReferences)) {
+          errors.push(`hard-rule-record-${category.categoryId}-${axis}`);
+        }
+      } else if (applied.length !== 0) errors.push(`hard-rule-unexpected-${category.categoryId}-${axis}`);
+    }
+  }
+  return errors;
+}
+
+function validateAppliedHardRules(category: ProvisionalAssessmentResult['categories'][number]): string[] {
+  if (!Array.isArray(category.appliedHardRules)) return ['hard-rules'];
+  const errors: string[] = [];
+  for (const axis of ['likelihood', 'severity'] as const) {
+    const proposed = axis === 'likelihood' ? category.proposedLikelihood : category.proposedSeverity;
+    const validated = axis === 'likelihood' ? category.validatedLikelihood : category.validatedSeverity;
+    const rules = category.appliedHardRules.filter((rule) => rule?.axis === axis);
+    if ((validated > proposed && rules.length !== 1) || (validated === proposed && rules.length !== 0)) errors.push(axis);
+    for (const rule of rules) {
+      if (typeof rule.ruleId !== 'string' || !rule.ruleId.trim()
+        || rule.categoryId !== category.categoryId
+        || rule.proposedValue !== proposed
+        || rule.constrainedValue !== validated
+        || typeof rule.rationale !== 'string' || !rule.rationale.trim()
+        || !stringArray(rule.guidelineReferences) || rule.guidelineReferences.length === 0) errors.push(axis);
+    }
+  }
+  if (category.appliedHardRules.some((rule) => !isRuntimeRecord(rule))) errors.push('shape');
+  const validRules = category.appliedHardRules.filter(isRuntimeRecord);
+  if (validRules.some((rule, index, rules) =>
+    rules.findIndex((candidate) => candidate.ruleId === rule.ruleId) !== index)) errors.push('duplicate');
+  return errors;
+}
+
+function isRuntimeRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function stringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
+function sameStringSet(value: unknown, expected: readonly string[]): boolean {
+  return Array.isArray(value)
+    && value.length === expected.length
+    && new Set(value).size === value.length
+    && new Set(expected).size === expected.length
+    && value.every((entry) => typeof entry === 'string' && (expected as readonly string[]).includes(entry))
+    && expected.every((entry) => value.includes(entry));
+}
+
+function rule(
+  ruleId: string,
+  description: string,
+  inputReferenceIds: string[],
+  sourceId: string,
+  contribution: number,
+): ResourceAppliedRule {
+  return { ruleId, description, inputReferenceIds, sourceIds: [sourceId], contribution };
+}
+
+function validateCompleteItems(items: Record<ResourceKey, ResourceRecommendationItem>): void {
+  const keys = Object.keys(items);
+  if (keys.length !== RESOURCE_KEYS.length || RESOURCE_KEYS.some((key) => !items[key])) {
+    throw new ResourceCalculationFault('incomplete_provenance', 'Exactly seven resource items are required.');
+  }
+  for (const resource of RESOURCE_KEYS) {
+    const item = items[resource];
+    if (item.resource !== resource
+      || !nonNegativeSafeInteger(item.baseline)
+      || !nonNegativeSafeInteger(item.planningRange.min)
+      || !nonNegativeSafeInteger(item.planningRange.max)
+      || item.planningRange.min !== item.baseline
+      || item.planningRange.max < item.planningRange.min) {
+      throw new ResourceCalculationFault('unsafe_calculation', `Unsafe result for ${resource}.`);
+    }
+    if (item.appliedRules.length === 0
+      || item.inputReferences.length === 0
+      || item.assumptions.length === 0
+      || item.sourceSnapshots.length === 0
+      || item.authoritySource.status !== 'not_supplied') {
+      throw new ResourceCalculationFault('incomplete_provenance', `Incomplete provenance for ${resource}.`);
+    }
+  }
+}
+
+function resourceInputHash(input: ResourceCalculationInput, config: ResourceRecommendationConfig): string {
+  const payload = {
+    schemaVersion: RESOURCE_SCHEMA_VERSION,
+    formulaVersion: config.formulaVersion,
+    configVersion: config.configVersion,
+    sourceRegistryVersion: config.sourceRegistryVersion,
+    config,
+    numericSource: RESOURCE_SOURCE_REGISTRY[config.numericSourceId],
+    eventId: input.eventId,
+    versionId: input.versionId,
+    assessmentId: input.assessmentId,
+    eventDetails: input.eventDetails,
+    assessmentResult: input.assessmentResult,
+  };
+  return createHash('sha256').update(stableStringify(payload)).digest('hex');
+}
+
+export function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map((entry) => stableStringify(entry)).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stableStringify(entry)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/**
+ * Official resource records may add authority-owned validation metadata, but
+ * the numeric recommendation and every calculator-owned provenance field must
+ * remain identical to the deterministic calculation.
+ */
+export function matchesDeterministicResourceItems(
+  actual: Record<ResourceKey, ResourceRecommendationItem>,
+  expected: Record<ResourceKey, ResourceRecommendationItem>,
+): boolean {
+  return RESOURCE_KEYS.every((resource) => {
+    const actualItem = actual[resource];
+    const expectedItem = expected[resource];
+    if (!actualItem || !expectedItem) return false;
+    const expectedAssumptionIds = new Set(expectedItem.assumptions.map((assumption) => assumption.assumptionId));
+    const expectedRuleIds = new Set(expectedItem.appliedRules.map((rule) => rule.ruleId));
+    const expectedSourceIds = new Set(expectedItem.sourceSnapshots.map((source) => source.sourceId));
+    const extraAssumptions = actualItem.assumptions.filter((assumption) => !expectedAssumptionIds.has(assumption.assumptionId));
+    const extraRules = actualItem.appliedRules.filter((rule) => !expectedRuleIds.has(rule.ruleId));
+    const extraSources = actualItem.sourceSnapshots.filter((source) => !expectedSourceIds.has(source.sourceId));
+    const authoritySourceId = actualItem.authoritySource.status === 'supplied'
+      ? actualItem.authoritySource.source.sourceId
+      : undefined;
+    const validAuthorityExtras = authoritySourceId
+      ? extraSources.length === 1
+        && extraSources[0].sourceId === authoritySourceId
+        && stableStringify(extraSources[0]) === stableStringify(actualItem.authoritySource.status === 'supplied'
+          ? actualItem.authoritySource.source : undefined)
+        && [...extraAssumptions, ...extraRules].length > 0
+        && extraAssumptions.every((assumption) => assumption.sourceIds.length === 1 && assumption.sourceIds[0] === authoritySourceId)
+        && extraRules.every((rule) => rule.contribution === 0
+          && rule.sourceIds.length === 1 && rule.sourceIds[0] === authoritySourceId)
+      : extraSources.length === 0 && extraAssumptions.length === 0 && extraRules.length === 0;
+    return validAuthorityExtras && stableStringify({
+      resource: actualItem.resource,
+      status: actualItem.status,
+      baseline: actualItem.baseline,
+      planningRange: actualItem.planningRange,
+      inputReferences: actualItem.inputReferences,
+      reviewingAuthority: actualItem.reviewingAuthority,
+    }) === stableStringify({
+      resource: expectedItem.resource,
+      status: expectedItem.status,
+      baseline: expectedItem.baseline,
+      planningRange: expectedItem.planningRange,
+      inputReferences: expectedItem.inputReferences,
+      reviewingAuthority: expectedItem.reviewingAuthority,
+    })
+      && containsStableEntries(actualItem.assumptions, expectedItem.assumptions)
+      && containsStableEntries(actualItem.sourceSnapshots, expectedItem.sourceSnapshots)
+      && containsStableEntries(actualItem.appliedRules, expectedItem.appliedRules)
+      && extraRules.every((rule) => rule.contribution === 0);
+  });
+}
+
+function containsStableEntries(actual: unknown[], expected: unknown[]): boolean {
+  return expected.every((entry) => actual.some((candidate) => stableStringify(candidate) === stableStringify(entry)));
+}
+
+function safeCeil(value: number, label: string): number {
+  const result = Math.ceil(value);
+  if (!nonNegativeSafeInteger(result)) {
+    throw new ResourceCalculationFault('unsafe_calculation', `${label} produced an unsafe quantity.`);
+  }
+  return result;
+}
+
+function safeAdd(left: number, right: number, label: string): number {
+  const result = left + right;
+  if (!nonNegativeSafeInteger(result)) {
+    throw new ResourceCalculationFault('unsafe_calculation', `${label} produced an unsafe quantity.`);
+  }
+  return result;
+}
+
+function positiveFinite(value: number): boolean {
+  return Number.isFinite(value) && value > 0;
+}
+
+function nonNegativeSafeInteger(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+function isRiskLevel(value: unknown): value is RiskLevel {
+  return value === 'Low' || value === 'Medium' || value === 'High';
+}
+
+function isScore(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 5;
+}
+
+function round(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function higherRisk(left: RiskLevel, right: RiskLevel): RiskLevel {
+  const order: Record<RiskLevel, number> = { Low: 0, Medium: 1, High: 2 };
+  return order[left] >= order[right] ? left : right;
 }

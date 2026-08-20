@@ -560,9 +560,15 @@ export interface OrganizerAssessmentSummary {
   complianceStatus?: ComplianceStatus;
   authorityReviewRequired: boolean;
   resourceQuantities?: ResourceQuantities;
+  resourceRecommendation?: OrganizerResourceRecommendation;
   computedAt: number;
 }
 
+/**
+ * A lossy, presentation-only projection of the canonical resource items.
+ * ResourceRecommendation does not extend this type so the stored baseline
+ * cannot diverge from the provenance attached to its item.
+ */
 export interface ResourceQuantities {
   police: number;
   medicalTeams: number;
@@ -573,44 +579,137 @@ export interface ResourceQuantities {
   fireOfficers: number;
 }
 
-export interface ResourceRationale {
-  resource: keyof ResourceQuantities;
-  baselineQuantity: number;
-  factors: string[];
-  guidelineReferences: string[];
+export const RESOURCE_SCHEMA_VERSION = '2026-08-19-prd-v5';
+export const RESOURCE_FORMULA_VERSION = '2026-08-19-deterministic-v4';
+export const RESOURCE_CONFIG_VERSION = '2026-08-19-prototype-v1';
+export const RESOURCE_SOURCE_REGISTRY_VERSION = '2026-08-19-v1';
+export const RESOURCE_KEYS = [
+  'police',
+  'security',
+  'medicalTeams',
+  'ambulances',
+  'fireOfficers',
+  'toilets',
+  'wasteBins',
+] as const;
+export type ResourceKey = typeof RESOURCE_KEYS[number];
+export type ResourceRecommendationStage = 'provisional' | 'official';
+export type ResourceConfidence = 'prototype' | 'low' | 'medium' | 'authority_validated';
+export type ResourceSourceVerificationStatus = 'prototype_unverified' | 'verified';
+
+export interface ResourcePlanningRange {
+  min: number;
+  max: number;
 }
 
+export interface ResourceInputReference {
+  inputId: string;
+  kind: 'event_field' | 'assessment_overall' | 'assessment_category';
+  path: string;
+  value: string | number | boolean;
+}
+
+export interface ResourceSourceSnapshot {
+  sourceId: string;
+  title: string;
+  issuer: string;
+  kind: 'internal_prototype' | 'law' | 'official_guidance' | 'voluntary_standard';
+  locator: string;
+  version: string;
+  retrievedAt: number;
+  verificationStatus: ResourceSourceVerificationStatus;
+}
+
+export interface ResourceAssumption {
+  assumptionId: string;
+  statement: string;
+  sourceIds: string[];
+}
+
+export interface ResourceAppliedRule {
+  ruleId: string;
+  description: string;
+  inputReferenceIds: string[];
+  sourceIds: string[];
+  contribution: number;
+}
+
+export type ResourceAuthoritySource =
+  | {
+      status: 'not_supplied';
+      reason: string;
+    }
+  | {
+      status: 'supplied';
+      source: ResourceSourceSnapshot;
+    };
+
 export interface ResourceRecommendationItem {
-  resource: keyof ResourceQuantities;
+  status: 'ready';
+  resource: ResourceKey;
   baseline: number;
-  planningRange: { min: number; max: number };
-  assumptions: string[];
-  riskModifiers: string[];
-  confidence: 'prototype' | 'low' | 'medium' | 'authorityValidated';
-  guidelineReferences: string[];
+  planningRange: ResourcePlanningRange;
+  inputReferences: ResourceInputReference[];
+  assumptions: ResourceAssumption[];
+  appliedRules: ResourceAppliedRule[];
+  sourceSnapshots: ResourceSourceSnapshot[];
+  authoritySource: ResourceAuthoritySource;
+  confidence: ResourceConfidence;
   reviewingAuthority: AuthorityType;
   authorityReviewRequired: boolean;
 }
 
-export interface ResourceRecommendation extends ResourceQuantities {
+export interface OrganizerResourceRecommendation {
+  resourceId: string;
+  revision: number;
+  stage: 'provisional' | 'official';
+  items: Record<ResourceKey, { baseline: number; planningRange: ResourcePlanningRange }>;
+  disclaimer: string;
+}
+
+export type ResourceAssessmentReference =
+  | {
+      stage: 'provisional';
+      assessmentId: string;
+      proposalId: string;
+    }
+  | {
+      stage: 'official';
+      assessmentId: string;
+      proposalId: string;
+      finalizedAt: number;
+      finalizedBy: string;
+    };
+
+interface ResourceRecommendationBase {
   resourceId: string;
   eventId: string;
   versionId: string;
   assessmentId: string;
+  schemaVersion: typeof RESOURCE_SCHEMA_VERSION;
+  revision: number;
+  supersedesResourceId: string | null;
+  resourceInputHash: string;
   formulaVersion: string;
-  guidelineVersion: string;
-  guidelineStatus: CategorySchemaStatus;
-  rationales: Record<keyof ResourceQuantities, ResourceRationale>;
-  items?: ResourceRecommendationItem[];
-  aiConsiderations: string[];
-  confidenceLevel: 'prototype' | 'authorityValidated';
-  assessmentStage: 'provisional' | 'official';
+  configVersion: string;
+  sourceRegistryVersion: string;
+  items: Record<ResourceKey, ResourceRecommendationItem>;
+  confidenceLevel: ResourceConfidence;
+  authorityReviewRequired: boolean;
   notes?: string;
-  overriddenBy?: string;
-  overrideRationale?: string;
-  overriddenAt?: number;
   computedAt: number;
 }
+
+export type ResourceRecommendation = ResourceRecommendationBase & (
+  | {
+      stage: 'provisional';
+      assessmentReference: Extract<ResourceAssessmentReference, { stage: 'provisional' }>;
+    }
+  | {
+      stage: 'official';
+      assessmentReference: Extract<ResourceAssessmentReference, { stage: 'official' }>;
+    }
+);
 
 export type DecisionValue = 'Approved' | 'Rejected' | 'AmendmentRequested';
 
@@ -634,6 +733,7 @@ export type AuditAction =
   | 'status_changed'
   | 'risk_score_computed'
   | 'assessment_schema_cutover'
+  | 'resource_schema_cutover'
   | 'resource_recommended'
   | 'resource_overridden'
   | 'amendment_requested'
@@ -782,8 +882,6 @@ export const SCORING_LOGIC_VERSION = '2026-07-24-hirarc-residual-v2';
 export const HARD_RULE_VERSION = '2026-08-18-hirarc-floor-v1';
 export const PROVISIONAL_FORMULA_VERSION = '2026-08-18-weighted-safety-floor-v1';
 export const CATEGORY_SCHEMA_STATUS: CategorySchemaStatus = 'prototype';
-export const RESOURCE_FORMULA_VERSION = '2026-07-24-prototype-range-v3';
-export const RESOURCE_GUIDELINE_VERSION = '2026-07-24-malaysia-research-v2';
 
 export function riskLevelFor(score: number): RiskLevel {
   if (score >= 70) return 'High';

@@ -15,6 +15,12 @@ const summary: OrganizerAssessmentSummary = {
   ].map(([categoryId, categoryName]) => ({ categoryId, categoryName, normalizedScore: 64, riskLevel: 'High' as const })),
   assessmentReadiness: 'complete', complianceStatus: 'pass', authorityReviewRequired: true,
   resourceQuantities: { police: 10, security: 12, medicalTeams: 2, ambulances: 1, fireOfficers: 3, toilets: 20, wasteBins: 10 },
+  resourceRecommendation: {
+    resourceId: 'provisional-v1-hash', revision: 1, stage: 'provisional',
+    items: Object.fromEntries(Object.entries({ police: 10, security: 12, medicalTeams: 2, ambulances: 1, fireOfficers: 3, toilets: 20, wasteBins: 10 })
+      .map(([key, baseline]) => [key, { baseline, planningRange: { min: baseline, max: baseline + 2 } }])) as OrganizerAssessmentSummary['resourceRecommendation'] extends { items: infer Items } ? Items : never,
+    disclaimer: 'Provisional prototype planning ranges.',
+  },
   computedAt: 1,
 };
 
@@ -29,6 +35,8 @@ describe('UC-M2-18 organizer-safe assessment summary', () => {
     render(<><OrganizerAssessmentSummaryView summary={hostile} /><OrganizerResourceSummaryView summary={hostile} /></>);
     expect(screen.getByText('Crowd safety')).toBeInTheDocument();
     expect(screen.getByText('Police officers')).toBeInTheDocument();
+    expect(screen.getAllByText('Planning range 10–12').length).toBeGreaterThan(0);
+    expect(screen.getByText('Provisional prototype planning ranges.')).toBeInTheDocument();
     expect(screen.queryByText(/SECRET PROMPT|INTERNAL RATIONALE|INTERNAL WARNING|INTERNAL RULE/)).not.toBeInTheDocument();
   });
 
@@ -42,7 +50,7 @@ describe('UC-M2-18 organizer-safe assessment summary', () => {
   it('shows a safe manual-review state without fabricating a score', () => {
     const manual: OrganizerAssessmentSummary = {
       ...summary, status: 'manual_review_required', categories: [], authorityReviewRequired: true,
-      overallScore: undefined, overallRiskLevel: undefined, resourceQuantities: undefined,
+      overallScore: undefined, overallRiskLevel: undefined, resourceQuantities: undefined, resourceRecommendation: undefined,
     };
     render(<OrganizerAssessmentSummaryView summary={manual} />);
     expect(screen.getByText('Manual Review Required')).toBeInTheDocument();

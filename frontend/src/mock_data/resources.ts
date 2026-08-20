@@ -1,8 +1,7 @@
-import { ResourceQuantities, ResourceRecommendation, AuthorityType } from '@shared/types';
+import { RESOURCE_KEYS, RESOURCE_SCHEMA_VERSION, ResourceQuantities, ResourceRecommendation, AuthorityType } from '@shared/types';
 import { EVENT_IDS, USER_IDS, daysAgo, hoursAgo } from './ids';
 import { mockEventsById } from './events';
 import { findAssessmentByEventVersion } from './assessments';
-import { assessmentRiskLevel } from '../components/m2/m2Contract';
 
 /**
  * MOCK-only: the `resource_overrides/{overrideId}` document shape. Inline
@@ -21,8 +20,9 @@ export interface MockResourceOverride {
   overriddenAt: number;
 }
 
-const RESOURCE_FORMULA_VERSION = '2026-07-24-prototype-range-v3';
-const RESOURCE_GUIDELINE_VERSION = '2026-07-24-malaysia-research-v2';
+const RESOURCE_FORMULA_VERSION = '2026-08-19-deterministic-v4';
+const RESOURCE_CONFIG_VERSION = '2026-08-19-prototype-v1';
+const RESOURCE_SOURCE_REGISTRY_VERSION = '2026-08-19-v1';
 
 const mkQuantities = (overrides: Partial<ResourceQuantities>): ResourceQuantities => ({
   police: 0,
@@ -51,69 +51,61 @@ const mkRecommendation = (o: ResourceOverrides): ResourceRecommendation => {
   const event = mockEventsById[o.eventId];
   if (!event) throw new Error(`mkRecommendation: unknown event ${o.eventId}`);
   const assessment = findAssessmentByEventVersion(o.eventId, o.versionId);
-  if (!assessment) throw new Error(`mkRecommendation: missing assessment for ${o.eventId}/${o.versionId}`);
 
   const q = o.quantities;
-  const riskLevel = assessmentRiskLevel(assessment) ?? 'Low';
-  const rationaleFor = (resource: keyof ResourceQuantities, baseline: number, factors: string[], refs: string[]) => ({
+  const stage = assessment?.status === 'official_ready' ? 'official' : 'provisional';
+  const resourceInputHash = 'a'.repeat(64);
+  const source = {
+    sourceId: 'internal.resource-baseline.v4',
+    title: 'STERAS internal prototype resource baseline assumptions',
+    issuer: 'STERAS',
+    kind: 'internal_prototype' as const,
+    locator: 'functions/src/config/resourceRecommendationConfig.ts',
+    version: RESOURCE_CONFIG_VERSION,
+    retrievedAt: Date.UTC(2026, 7, 19),
+    verificationStatus: 'prototype_unverified' as const,
+  };
+  const items = Object.fromEntries(RESOURCE_KEYS.map((resource) => [resource, {
+    status: 'ready' as const,
     resource,
-    baselineQuantity: baseline,
-    factors,
-    guidelineReferences: refs,
-  });
+    baseline: q[resource],
+    planningRange: { min: q[resource], max: Math.ceil(q[resource] * 1.25) },
+    inputReferences: [{ inputId: 'event.expectedAttendance', kind: 'event_field' as const, path: 'eventDetails.expectedAttendance', value: event.eventDetails.expectedAttendance }],
+    assumptions: [{ assumptionId: `resource.${resource}.prototype-baseline`, statement: 'Internal academic prototype; not an authority minimum.', sourceIds: [source.sourceId] }],
+    appliedRules: [{ ruleId: `resource.${resource}.mock`, description: 'Mock deterministic resource rule.', inputReferenceIds: ['event.expectedAttendance'], sourceIds: [source.sourceId], contribution: q[resource] }],
+    sourceSnapshots: [source],
+    authoritySource: { status: 'not_supplied' as const, reason: 'No verified authority-issued numeric ratio is supplied.' },
+    confidence: stage === 'official' ? 'authority_validated' as const : 'prototype' as const,
+    reviewingAuthority: resource === 'fireOfficers' ? 'BOMBA' as const
+      : resource === 'medicalTeams' || resource === 'ambulances' ? 'KKM' as const
+        : resource === 'toilets' || resource === 'wasteBins' ? 'DBKL' as const
+          : 'PDRM' as const,
+    authorityReviewRequired: stage !== 'official',
+  }])) as ResourceRecommendation['items'];
+  const proposalId = assessment?.aiProposal?.status === 'success' ? assessment.aiProposal.proposalId : `mock-${o.eventId}`;
 
   return {
-    resourceId: o.versionId,
+    resourceId: `${stage}-${o.versionId}-${resourceInputHash}`,
     eventId: o.eventId,
     versionId: o.versionId,
     assessmentId: o.versionId,
-    ...q,
+    schemaVersion: RESOURCE_SCHEMA_VERSION,
+    stage,
+    revision: 1,
+    supersedesResourceId: null,
+    assessmentReference: stage === 'official'
+      ? { stage: 'official', assessmentId: o.versionId, proposalId, finalizedAt: o.computedAt, finalizedBy: o.overriddenBy ?? 'mock-authority' }
+      : { stage: 'provisional', assessmentId: o.versionId, proposalId },
+    resourceInputHash,
     formulaVersion: RESOURCE_FORMULA_VERSION,
-    guidelineVersion: RESOURCE_GUIDELINE_VERSION,
-    guidelineStatus: 'prototype',
-    assessmentStage: assessment.status === 'official_ready' ? 'official' : 'provisional',
-    confidenceLevel: o.overridden ? 'authorityValidated' : 'prototype',
-    rationales: {
-      police: rationaleFor('police', q.police,
-        [`Baseline scaled to ${event.eventDetails.expectedAttendance} attendees.`, riskLevel === 'High' ? 'High-risk event: +50% on baseline.' : ''].filter(Boolean),
-        ['PDRM Mass Event Safety Guidelines 2020 §4', 'WHO Mass Gathering Planning 2015']),
-      security: rationaleFor('security', q.security,
-        ['Baseline 1:200 attendees for outdoor venues.'],
-        ['PDRM Private Security Cooperation SOP 2019']),
-      medicalTeams: rationaleFor('medicalTeams', q.medicalTeams,
-        ['Baseline per KKM Mass Gathering Medical Guidelines (1 team per 5,000 attendees).'],
-        ['KKM Mass Gathering Medical Guidelines 2018 §3']),
-      ambulances: rationaleFor('ambulances', q.ambulances,
-        ['Baseline per KKM (1 ambulance per 10,000 attendees, minimum 1).'],
-        ['KKM Mass Gathering Medical Guidelines 2018 §4']),
-      toilets: rationaleFor('toilets', q.toilets,
-        ['Baseline per WHO (1 per 250 attendees for events >4 hours).'],
-        ['WHO Sanitation Guidelines for Mass Gatherings']),
-      wasteBins: rationaleFor('wasteBins', q.wasteBins,
-        ['Baseline 1 per 100 attendees, scaled by event duration.'],
-        ['SWCorp Event Waste Management SOP 2021']),
-      fireOfficers: rationaleFor('fireOfficers', q.fireOfficers,
-        ['Baseline 1 per 2,000 attendees, minimum 2.'],
-        ['BOMBA Fire Safety Act 1988 §11']),
-    },
-    items: [
-      { resource: 'police', baseline: q.police, planningRange: { min: Math.max(0, q.police - 4), max: q.police + 8 }, assumptions: [`Attendance: ${event.eventDetails.expectedAttendance}`], riskModifiers: riskLevel === 'High' ? ['High-risk +50%'] : [], confidence: 'prototype', guidelineReferences: ['PDRM §4'], reviewingAuthority: 'PDRM', authorityReviewRequired: true },
-      { resource: 'security', baseline: q.security, planningRange: { min: Math.max(0, q.security - 4), max: q.security + 8 }, assumptions: [], riskModifiers: [], confidence: 'prototype', guidelineReferences: ['PDRM Private Security SOP'], reviewingAuthority: 'PDRM', authorityReviewRequired: true },
-      { resource: 'medicalTeams', baseline: q.medicalTeams, planningRange: { min: Math.max(0, q.medicalTeams - 1), max: q.medicalTeams + 2 }, assumptions: [], riskModifiers: [], confidence: 'prototype', guidelineReferences: ['KKM §3'], reviewingAuthority: 'KKM', authorityReviewRequired: true },
-      { resource: 'ambulances', baseline: q.ambulances, planningRange: { min: Math.max(0, q.ambulances - 1), max: q.ambulances + 1 }, assumptions: [], riskModifiers: [], confidence: 'prototype', guidelineReferences: ['KKM §4'], reviewingAuthority: 'KKM', authorityReviewRequired: true },
-      { resource: 'toilets', baseline: q.toilets, planningRange: { min: Math.max(0, q.toilets - 4), max: q.toilets + 8 }, assumptions: [], riskModifiers: [], confidence: 'prototype', guidelineReferences: ['WHO Sanitation'], reviewingAuthority: 'DBKL', authorityReviewRequired: true },
-      { resource: 'wasteBins', baseline: q.wasteBins, planningRange: { min: Math.max(0, q.wasteBins - 10), max: q.wasteBins + 20 }, assumptions: [], riskModifiers: [], confidence: 'prototype', guidelineReferences: ['SWCorp SOP'], reviewingAuthority: 'DBKL', authorityReviewRequired: true },
-      { resource: 'fireOfficers', baseline: q.fireOfficers, planningRange: { min: Math.max(0, q.fireOfficers - 1), max: q.fireOfficers + 2 }, assumptions: [], riskModifiers: [], confidence: 'prototype', guidelineReferences: ['BOMBA §11'], reviewingAuthority: 'BOMBA', authorityReviewRequired: true },
-    ],
-    aiConsiderations: assessment.aiProposal?.status === 'success' ? assessment.aiProposal.categories.flatMap((category) => category.concerns) : [],
-    notes: o.overridden
-      ? `Authority override: ${o.overrideRationale}`
-      : 'Prototype category mappings and resource guidance pending team and authority validation.',
-    overriddenBy: o.overridden ? o.overriddenBy : undefined,
-    overrideRationale: o.overridden ? o.overrideRationale : undefined,
-    overriddenAt: o.overridden ? o.overriddenAt : undefined,
+    configVersion: RESOURCE_CONFIG_VERSION,
+    sourceRegistryVersion: RESOURCE_SOURCE_REGISTRY_VERSION,
+    items,
+    confidenceLevel: stage === 'official' ? 'authority_validated' : 'prototype',
+    authorityReviewRequired: stage !== 'official',
+    notes: 'Indicative academic prototype guidance; not an operational deployment authorisation.',
     computedAt: o.computedAt,
-  };
+  } as ResourceRecommendation;
 };
 
 // ---------------------------------------------------------------------------

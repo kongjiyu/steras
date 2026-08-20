@@ -20,7 +20,7 @@ export interface M2PortfolioRecord {
 }
 
 export type RiskPortfolioFilter = RiskLevel | 'Unassessed' | 'all';
-export type ResourcePortfolioFilter = 'all' | 'prototype' | 'authorityValidated' | 'missing';
+export type ResourcePortfolioFilter = 'all' | 'prototype' | 'authority_validated' | 'missing';
 
 export function filterRiskPortfolio(
   records: M2PortfolioRecord[],
@@ -85,8 +85,8 @@ export function resourcePortfolioSummary(records: M2PortfolioRecord[]) {
     if (record.legacyResources) requiresRecompute += 1;
     if (!record.resources) return;
     recommended += 1;
-    if (record.resources.confidenceLevel === 'authorityValidated') authorityValidated += 1;
-    RESOURCE_FIELDS.forEach(({ key }) => { totals[key] += record.resources?.[key] ?? 0; });
+    if (record.resources.confidenceLevel === 'authority_validated') authorityValidated += 1;
+    RESOURCE_FIELDS.forEach(({ key }) => { totals[key] += record.resources?.items[key].baseline ?? 0; });
   });
   return { totals, recommended, authorityValidated, missing: records.length - recommended, requiresRecompute };
 }

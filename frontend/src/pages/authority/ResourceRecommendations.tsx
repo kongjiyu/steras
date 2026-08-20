@@ -81,7 +81,7 @@ export default function ResourceRecommendations({ previewRecords, previewAgency 
             <select className="input" value={filter} onChange={(event) => setFilter(event.target.value as ResourcePortfolioFilter)}>
               <option value="all">All assigned ({records.length})</option>
               <option value="prototype">Prototype ({records.filter((item) => item.resources?.confidenceLevel === 'prototype').length})</option>
-              <option value="authorityValidated">Authority validated ({summary.authorityValidated})</option>
+              <option value="authority_validated">Authority validated ({summary.authorityValidated})</option>
               <option value="missing">Awaiting plan ({summary.missing})</option>
             </select>
           </label>
@@ -119,7 +119,7 @@ export default function ResourceRecommendations({ previewRecords, previewAgency 
 function ResourceRecord({ record }: { record: M2PortfolioRecord }) {
   const { event, assessment, resources } = record;
   const level = assessmentRiskLevel(assessment) ?? 'Unassessed';
-  const people = resources ? resources.police + resources.security + resources.fireOfficers : 0;
+  const people = resources ? resources.items.police.baseline + resources.items.security.baseline + resources.items.fireOfficers.baseline : 0;
 
   return (
     <li className="m2-record" data-risk={level}>
@@ -135,13 +135,13 @@ function ResourceRecord({ record }: { record: M2PortfolioRecord }) {
 
         <div className="text-xs text-ink-600">
           <p className="font-semibold text-ink-800">{resources ? `${people} recommended field personnel` : resourceState(record)}</p>
-          <p className="mt-1">{resources ? `${quantityLabel(resources.medicalTeams, 'medical team')} · ${quantityLabel(resources.ambulances, 'ambulance')}` : 'No current versioned quantities'}</p>
+          <p className="mt-1">{resources ? `${quantityLabel(resources.items.medicalTeams.baseline, 'medical team')} · ${quantityLabel(resources.items.ambulances.baseline, 'ambulance')}` : 'No current versioned quantities'}</p>
         </div>
 
         <div className="m2-score">
           {assessmentRiskLevel(assessment) ? <RiskMeter level={assessmentRiskLevel(assessment)!} size="compact" /> : <span className="text-xs font-semibold text-ink-500">Risk pending</span>}
-          <span className={`badge ${resources?.confidenceLevel === 'authorityValidated' ? 'badge-green' : resources ? 'badge-amber' : 'badge-gray'}`}>
-            {resources?.confidenceLevel === 'authorityValidated' ? 'Validated' : resources ? 'Prototype' : 'Missing'}
+          <span className={`badge ${resources?.confidenceLevel === 'authority_validated' ? 'badge-green' : resources ? 'badge-amber' : 'badge-gray'}`}>
+            {resources?.confidenceLevel === 'authority_validated' ? 'Validated' : resources ? 'Prototype' : 'Missing'}
           </span>
         </div>
       </div>
@@ -153,9 +153,9 @@ function ResourceRecord({ record }: { record: M2PortfolioRecord }) {
             <section className="border-t-2 border-brand-300 bg-white p-4 sm:p-5">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <h4 className="font-display text-sm font-semibold text-ink-800">Versioned recommendation</h4>
-                <Link to={`/authority/events/${event.eventId}`} className="btn-secondary !min-h-10 !px-3">Review or adjust <ArrowRight size={15} /></Link>
+                <Link to={`/authority/events/${event.eventId}`} className="btn-secondary !min-h-10 !px-3">Review details <ArrowRight size={15} /></Link>
               </div>
-              <ResourceRecommendation recommendation={resources} showOverrideProvenance />
+              <ResourceRecommendation recommendation={resources} />
             </section>
           </div>
         </details>
