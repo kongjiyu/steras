@@ -49,6 +49,12 @@ export default function Stage2RequirementRow(props: Stage2RequirementRowProps) {
 
   const reported = !!doc?.m4TicketId;
   const published = !!doc?.published;
+  // Workstream 5: an admin may reject the image pre-publish. The
+  // rejection fields are set on the doc so the organizer can see
+  // why + re-upload. We treat `published: false + rejectionReason`
+  // as the "rejected" state for the row.
+  const rejected = !published && !!doc?.rejectionReason;
+  const pending = !published && !rejected;
   const imageUrl = doc?.imageUrl;
 
   async function handleFileSelected(e: ChangeEvent<HTMLInputElement>) {
@@ -72,9 +78,9 @@ export default function Stage2RequirementRow(props: Stage2RequirementRowProps) {
     try {
       const dataUrl = await readFileAsDataUrl(file);
       const base64 = dataUrl.split(',', 2)[1];
-      const fn = httpsCallable<{ eventId: string; controlId: string; fileName: string; mimeType: string; fileBase64: string }, { status: 'published'; docId: string }>(functions, 'submitStage2Doc');
+      const fn = httpsCallable<{ eventId: string; controlId: string; fileName: string; mimeType: string; fileBase64: string }, { status: 'pending'; docId: string }>(functions, 'submitStage2Doc');
       const result = await fn({ eventId, controlId, fileName: file.name, mimeType: file.type, fileBase64: base64 });
-      onSubmitted?.({ docId: result.data.docId, status: 'published' });
+      onSubmitted?.({ docId: result.data.docId, status: 'pending' });
     } catch (err) {
       const msg = errorMessageFrom(err);
       setErrorMessage(msg);
@@ -88,7 +94,7 @@ export default function Stage2RequirementRow(props: Stage2RequirementRowProps) {
     <div
       className="rounded-md border border-ink-200 bg-white p-3"
       data-testid={`stage2-row-${authority}`}
-      data-status={reported ? 'reported' : published ? 'published' : 'pending'}
+      data-status={reported ? 'reported' : published ? 'published' : rejected ? 'rejected' : pending && imageUrl ? 'pending' : 'pending_upload'}
     >
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 flex-1">
@@ -105,7 +111,17 @@ export default function Stage2RequirementRow(props: Stage2RequirementRowProps) {
                 <CheckCircle2 size={11} className="mr-0.5 inline" /> Published
               </span>
             )}
-            {!published && (
+            {rejected && !reported && (
+              <span className="badge bg-red-100 text-red-700 text-xs" data-testid={`stage2-rejected-badge-${authority}`}>
+                <AlertTriangle size={11} className="mr-0.5 inline" /> Rejected by admin
+              </span>
+            )}
+            {pending && !reported && imageUrl && (
+              <span className="badge bg-amber-100 text-amber-800 text-xs" data-testid={`stage2-pending-badge-${authority}`}>
+                <Clock size={11} className="mr-0.5 inline" /> Pending admin review
+              </span>
+            )}
+            {pending && !reported && !imageUrl && (
               <span className="badge bg-ink-100 text-ink-600 text-xs">
                 <Clock size={11} className="mr-0.5 inline" /> Awaiting upload
               </span>
@@ -128,6 +144,12 @@ export default function Stage2RequirementRow(props: Stage2RequirementRowProps) {
                   · {doc.publicConfirmCount} confirm{doc.publicConfirmCount === 1 ? '' : 's'} from the public
                 </span>
               )}
+            </div>
+          )}
+          {rejected && doc?.rejectionReason && (
+            <div className="mt-2 rounded bg-red-50 px-2 py-1.5 text-xs text-red-800" data-testid={`stage2-rejection-reason-${authority}`}>
+              <div className="font-semibold">Admin feedback:</div>
+              <div className="mt-0.5">{doc.rejectionReason}</div>
             </div>
           )}
           {errorMessage && (
@@ -174,6 +196,30 @@ export default function Stage2RequirementRow(props: Stage2RequirementRowProps) {
             <span className="inline-flex min-h-9 items-center gap-1.5 rounded-md bg-ink-100 px-3 py-1.5 text-xs font-medium text-ink-700">
               Replace disabled (M4 ticket open)
             </span>
+          )}
+          {rejected && !reported && (
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isBusy}
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-ink-300 bg-white px-3 py-1.5 text-xs font-medium text-ink-700 hover:bg-ink-50 disabled:opacity-50"
+              data-testid={`stage2-replace-${authority}`}
+            >
+              <Replace size={14} />
+              Re-upload
+            </button>
+          )}
+          {pending && !reported && imageUrl && !rejected && (
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isBusy}
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-ink-300 bg-white px-3 py-1.5 text-xs font-medium text-ink-700 hover:bg-ink-50 disabled:opacity-50"
+              data-testid={`stage2-replace-${authority}`}
+            >
+              <Replace size={14} />
+              Replace
+            </button>
           )}
         </div>
       </div>

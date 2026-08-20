@@ -41,6 +41,7 @@ import AdminAnalytics from './pages/admin/AdminAnalytics';
 import AdminAudit from './pages/admin/AdminAudit';
 import AdminAssignment from './pages/admin/AdminAssignment';
 import AdminControlListEditor from './pages/admin/AdminControlListEditor';
+import AdminStage2Review from './pages/admin/AdminStage2Review';
 import OrganizerEventControls from './pages/organizer/OrganizerEventControls';
 
 export default function App() {
@@ -111,6 +112,7 @@ export default function App() {
         <Route path="/admin/applications/:eventId" element={<AdminApplicationReview />} />
         <Route path="/admin/applications/:eventId/assign" element={<AdminAssignment />} />
         <Route path="/admin/applications/:eventId/controls" element={<AdminControlListEditor />} />
+        <Route path="/admin/applications/:eventId/stage2-review" element={<AdminStage2Review />} />
         <Route path="/admin/users" element={<AdminUsers />} />
         <Route path="/admin/venues" element={<AdminVenues />} />
         <Route path="/admin/analytics" element={<AdminAnalytics />} />

@@ -626,6 +626,11 @@ export default function AdminApplicationReview() {
                   <Link to={`/admin/applications/${event.eventId}/controls`} className="btn-secondary !py-1.5 !px-3 text-xs">
                     Open event control list →
                   </Link>
+                  {event.controlListGenerated === true && (
+                    <Link to={`/admin/applications/${event.eventId}/stage2-review`} className="btn-secondary !py-1.5 !px-3 text-xs">
+                      Review Stage 2 images →
+                    </Link>
+                  )}
                 </div>
               )}
             </div>

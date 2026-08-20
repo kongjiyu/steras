@@ -148,7 +148,18 @@ interface EventContentProps {
 }
 
 function EventContent({ event, controls, stage2Docs, currentUid, eventId, toast, showToast }: EventContentProps) {
-  const visibleControls = useMemo(() => controls.filter((c) => !!stage2Docs[`${c.controlId}-s2`]), [controls, stage2Docs]);
+  // Workstream 5: only show controls where the admin has actually
+  // published the Stage 2 doc. Pending + rejected images stay hidden
+  // from the public view (per FR-M3-21 / UC-14). The Firestore rule
+  // is the authoritative gate; this filter is the application-side
+  // mirror that keeps the UI consistent.
+  const visibleControls = useMemo(
+    () => controls.filter((c) => {
+      const d = stage2Docs[`${c.controlId}-s2`];
+      return !!d && d.published === true;
+    }),
+    [controls, stage2Docs],
+  );
   const [reportingControl, setReportingControl] = useState<EventControl | null>(null);
 
   return (
