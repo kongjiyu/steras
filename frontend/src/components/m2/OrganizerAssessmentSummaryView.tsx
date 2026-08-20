@@ -33,15 +33,22 @@ export default function OrganizerAssessmentSummaryView({ summary }: { summary: O
 }
 
 export function OrganizerResourceSummaryView({ summary }: { summary: OrganizerAssessmentSummary }) {
-  if (!summary.resourceQuantities) return <p className="text-sm text-ink-500">Resources appear after a provisional assessment is available.</p>;
+  if (!summary.resourceRecommendation) return <p className="text-sm text-ink-500">Resources appear after a provisional assessment is available.</p>;
   return (
-    <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="organizer-resource-summary">
-      {RESOURCE_FIELDS.map(({ key, label }) => (
-        <div key={key} className="border border-[#ded5c5] bg-cream-50 p-4">
-          <dt className="text-xs text-ink-500">{label}</dt>
-          <dd className="mt-1 font-display text-2xl font-bold text-ink-900">{summary.resourceQuantities![key]}</dd>
-        </div>
-      ))}
-    </dl>
+    <div className="space-y-3" data-testid="organizer-resource-summary">
+      <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {RESOURCE_FIELDS.map(({ key, label }) => {
+          const item = summary.resourceRecommendation!.items[key];
+          return (
+            <div key={key} className="border border-[#ded5c5] bg-cream-50 p-4">
+              <dt className="text-xs text-ink-500">{label}</dt>
+              <dd className="mt-1 font-display text-2xl font-bold text-ink-900">{item.baseline}</dd>
+              <dd className="mt-1 text-[11px] text-ink-500">Planning range {item.planningRange.min}–{item.planningRange.max}</dd>
+            </div>
+          );
+        })}
+      </dl>
+      <p className="border-l-4 border-gold-300 bg-gold-50 p-3 text-xs leading-5 text-ink-700">{summary.resourceRecommendation.disclaimer}</p>
+    </div>
   );
 }

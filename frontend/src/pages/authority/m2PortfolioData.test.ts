@@ -12,6 +12,7 @@ import {
   riskPortfolioSummary,
 } from './m2PortfolioData';
 import { mockAssessments } from '../../mock_data/assessments';
+import { mockResourceRecommendations } from '../../mock_data/resources';
 
 const makeEvent = (eventId: string, name: string, updatedAt: number): EventRecord => ({
   eventId,
@@ -75,14 +76,13 @@ const makeAssessment = (risk: RiskLevel, aiStatus: 'success' | 'unavailable' = '
   };
 };
 
-const makeResources = (confidenceLevel: 'prototype' | 'authorityValidated'): ResourceRecommendation => ({
-  resourceId: 'v1', eventId: 'event-1', versionId: 'v1', assessmentId: 'v1',
-  police: 10, security: 20, medicalTeams: 2, ambulances: 1, fireOfficers: 3, toilets: 8, wasteBins: 12,
-  formulaVersion: 'formula-v1', guidelineVersion: 'guideline-v1', guidelineStatus: 'prototype', confidenceLevel,
-  assessmentStage: confidenceLevel === 'authorityValidated' ? 'official' : 'provisional',
-  rationales: Object.fromEntries((['police', 'security', 'medicalTeams', 'ambulances', 'fireOfficers', 'toilets', 'wasteBins'] as const)
-    .map((resource) => [resource, { resource, baselineQuantity: 1, factors: ['attendance'], guidelineReferences: ['prototype'] }])) as ResourceRecommendation['rationales'],
-  aiConsiderations: [], computedAt: 10,
+const makeResources = (confidenceLevel: 'prototype' | 'authority_validated'): ResourceRecommendation => ({
+  ...structuredClone(mockResourceRecommendations[0]),
+  confidenceLevel,
+  items: {
+    ...structuredClone(mockResourceRecommendations[0].items),
+    police: { ...structuredClone(mockResourceRecommendations[0].items.police), baseline: 10, planningRange: { min: 10, max: 13 } },
+  },
 });
 
 describe('M2 portfolio data', () => {
@@ -114,9 +114,34 @@ describe('M2 portfolio data', () => {
     expect(isCurrentAssessmentRecord({ status: 'processing' })).toBe(false);
     expect(isCurrentResourceRecommendation(makeResources('prototype'))).toBe(true);
     const legacyResource = { ...makeResources('prototype') } as Partial<ResourceRecommendation>;
-    delete legacyResource.assessmentStage;
+    delete legacyResource.schemaVersion;
     expect(isCurrentResourceRecommendation(legacyResource)).toBe(false);
     expect(isCurrentResourceRecommendation({ police: 10, security: 20 })).toBe(false);
+    expect(isCurrentResourceRecommendation({ ...makeResources('prototype'), police: 10 })).toBe(false);
+    const missingItem = structuredClone(makeResources('prototype')) as unknown as Record<string, unknown>;
+    delete (missingItem.items as Record<string, unknown>).police;
+    expect(isCurrentResourceRecommendation(missingItem)).toBe(false);
+    const invalidRange = structuredClone(makeResources('prototype'));
+    invalidRange.items.police.planningRange = { min: 11, max: 10 };
+    expect(isCurrentResourceRecommendation(invalidRange)).toBe(false);
+    const dishonestSource = structuredClone(makeResources('prototype'));
+    dishonestSource.items.police.sourceSnapshots[0].kind = 'law';
+    expect(isCurrentResourceRecommendation(dishonestSource)).toBe(false);
+    const aliasedIdentity = structuredClone(makeResources('prototype'));
+    aliasedIdentity.resourceId = 'provisional-v1-alias';
+    expect(isCurrentResourceRecommendation(aliasedIdentity)).toBe(false);
+    const duplicateInput = structuredClone(makeResources('prototype'));
+    duplicateInput.items.police.inputReferences.push(duplicateInput.items.police.inputReferences[0]);
+    expect(isCurrentResourceRecommendation(duplicateInput)).toBe(false);
+    const invalidAuthority = structuredClone(makeResources('prototype')) as unknown as { items: { police: { reviewingAuthority: string } } };
+    invalidAuthority.items.police.reviewingAuthority = 'UNKNOWN';
+    expect(isCurrentResourceRecommendation(invalidAuthority)).toBe(false);
+    const falseAuthoritySource = structuredClone(makeResources('prototype'));
+    falseAuthoritySource.items.police.authoritySource = {
+      status: 'supplied',
+      source: falseAuthoritySource.items.police.sourceSnapshots[0],
+    };
+    expect(isCurrentResourceRecommendation(falseAuthoritySource)).toBe(false);
   });
 
   it('filters by current assessment risk and orders higher risk first', () => {

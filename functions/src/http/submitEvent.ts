@@ -10,6 +10,7 @@ import {
   EventVersion,
 } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
+import { RESOURCE_CUTOVER_LOCK_PATH } from '../config/resourceCutoverLock';
 
 interface SubmitEventRequest {
   eventId?: string;
@@ -28,10 +29,14 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
   const userReference = db.collection(COLLECTIONS.USERS).doc(uid);
 
   return db.runTransaction(async (transaction) => {
-    const [userSnapshot, eventSnapshot] = await Promise.all([
+    const [userSnapshot, eventSnapshot, cutoverLockSnapshot] = await Promise.all([
       transaction.get(userReference),
       transaction.get(eventReference),
+      transaction.get(db.doc(RESOURCE_CUTOVER_LOCK_PATH)),
     ]);
+    if (cutoverLockSnapshot.exists) {
+      throw new HttpsError('unavailable', 'Resource migration is in progress. Retry the submission shortly.');
+    }
     if (!userSnapshot.exists || userSnapshot.data()?.role !== 'organizer') {
       throw new HttpsError('permission-denied', 'Only organizer accounts can submit applications.');
     }

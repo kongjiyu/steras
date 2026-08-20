@@ -4,7 +4,7 @@ import { collection, doc, onSnapshot, query } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { getBlob, ref } from 'firebase/storage';
 import { format } from 'date-fns';
-import { Check, ChevronLeft, Download, FileText, Pencil, RotateCcw, X } from 'lucide-react';
+import { Check, ChevronLeft, Download, FileText, RotateCcw, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
   AssessmentRecord,
@@ -14,7 +14,6 @@ import {
   DecisionValue,
   EventRecord,
   EventVersion,
-  ResourceQuantities,
   ResourceRecommendation,
   RiskAssessment,
 } from '@shared/types';
@@ -24,7 +23,6 @@ import CategoryProfile from '../../components/m2/CategoryProfile';
 import ContextEvidence from '../../components/m2/ContextEvidence';
 import ResourceRecommendationView from '../../components/m2/ResourceRecommendation';
 import { assessmentRiskLevel, isCurrentAssessmentRecord, isCurrentResourceRecommendation, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
-import { RESOURCE_FIELDS, toResourceQuantities } from '../../components/m2/m2Presentation';
 import EmptyState from '../../components/ui/EmptyState';
 import StatusBadge from '../../components/ui/StatusBadge';
 
@@ -43,10 +41,6 @@ export default function AuthorityEventReview() {
   const [downloadingPath, setDownloadingPath] = useState<string | null>(null);
   const [rationale, setRationale] = useState('');
   const [submittingDecision, setSubmittingDecision] = useState<DecisionValue | null>(null);
-  const [editingResources, setEditingResources] = useState(false);
-  const [resourceDraft, setResourceDraft] = useState<ResourceQuantities | null>(null);
-  const [resourceRationale, setResourceRationale] = useState('');
-  const [savingResources, setSavingResources] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [supportingDataError, setSupportingDataError] = useState('');
@@ -71,6 +65,7 @@ export default function AuthorityEventReview() {
 
   useEffect(() => {
     const versionId = event?.currentVersionId;
+    const resourceId = event?.currentResourceId;
     if (!isFirebaseConfigured || !eventId || !versionId) {
       setAssessment(null);
       setResources(null);
@@ -87,11 +82,21 @@ export default function AuthorityEventReview() {
       setLegacyAssessment(snapshot.exists() && !isCurrentAssessmentRecord(record));
       setSupportingDataError('');
     }, supportingError);
-    const unsubscribeResources = onSnapshot(doc(eventReference, COLLECTIONS.RESOURCES, versionId), (snapshot) => {
-      const record = snapshot.data();
-      setResources(isCurrentResourceRecommendation(record) ? record : null);
-      setLegacyResources(snapshot.exists() && !isCurrentResourceRecommendation(record));
-    }, supportingError);
+    const unsubscribeResources = resourceId
+      ? onSnapshot(doc(eventReference, COLLECTIONS.RESOURCES, resourceId), (snapshot) => {
+          const record = snapshot.data();
+          const valid = isCurrentResourceRecommendation(record)
+            && record.resourceId === resourceId
+            && record.eventId === eventId
+            && record.versionId === versionId;
+          setResources(valid ? record : null);
+          setLegacyResources(snapshot.exists() && !valid);
+        }, supportingError)
+      : (() => {
+          setResources(null);
+          setLegacyResources(false);
+          return () => undefined;
+        })();
     const unsubscribeDecisions = onSnapshot(query(collection(eventReference, COLLECTIONS.DECISIONS)), (snapshot) => {
       setDecisions(snapshot.docs.map((item) => item.data() as AuthorityDecision));
     }, supportingError);
@@ -108,12 +113,7 @@ export default function AuthorityEventReview() {
       unsubscribeDecisionHistory();
       unsubscribeVersions();
     };
-  }, [event?.currentVersionId, eventId]);
-
-  useEffect(() => {
-    if (!resources || editingResources) return;
-    setResourceDraft(toResourceQuantities(resources));
-  }, [resources, editingResources]);
+  }, [event?.currentResourceId, event?.currentVersionId, eventId]);
 
   const currentDecisions = useMemo(() => new Map(
     decisions
@@ -128,7 +128,13 @@ export default function AuthorityEventReview() {
 
   const details = event.eventDetails;
   const reviewOpen = ['Pending', 'UnderReview'].includes(event.status);
-  const evidenceReady = Boolean(assessment?.status === 'official_ready' && resources);
+  const evidenceReady = Boolean(
+    assessment?.status === 'official_ready'
+    && assessment.complianceStatus !== 'blocked'
+    && resources?.stage === 'official'
+    && event.currentResourceId === resources.resourceId
+    && resources.versionId === event.currentVersionId,
+  );
   const canDecide = reviewOpen && evidenceReady && rationale.trim().length >= 10;
 
   const submitDecision = async (decision: DecisionValue) => {
@@ -143,22 +149,6 @@ export default function AuthorityEventReview() {
       toast.error(error instanceof Error ? error.message : 'Unable to record decision.');
     } finally {
       setSubmittingDecision(null);
-    }
-  };
-
-  const saveResourceOverride = async () => {
-    if (!eventId || !resourceDraft || resourceRationale.trim().length < 10) return;
-    setSavingResources(true);
-    try {
-      const command = httpsCallable<{ eventId: string; quantities: ResourceQuantities; rationale: string }>(functions, 'overrideResources');
-      await command({ eventId, quantities: resourceDraft, rationale: resourceRationale.trim() });
-      toast.success('Resource recommendation updated.');
-      setEditingResources(false);
-      setResourceRationale('');
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Unable to update resources.');
-    } finally {
-      setSavingResources(false);
     }
   };
 
@@ -217,31 +207,18 @@ export default function AuthorityEventReview() {
             <div className="card-header">
               <div>
                 <h2 className="font-semibold">Recommended resources</h2>
-                {resources?.confidenceLevel === 'authorityValidated' && <p className="mt-0.5 text-xs text-status-approved">Authority validated</p>}
+                {resources?.confidenceLevel === 'authority_validated' && <p className="mt-0.5 text-xs text-status-approved">Authority validated</p>}
               </div>
-              {resources && reviewOpen && !editingResources && <button type="button" className="btn-secondary !px-3 !py-1.5" onClick={() => setEditingResources(true)}><Pencil size={14} /> Adjust</button>}
             </div>
             <div className="card-body">
-              {!resources || !resourceDraft ? <p className="text-sm text-ink-500">{legacyResources ? 'Legacy resource record detected. Recompute this event version before review.' : 'No recommendation yet.'}</p> : editingResources ? (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                    {RESOURCE_FIELDS.map(({ key, label }) => (
-                      <label key={key} className="text-xs font-medium text-ink-600">{label}
-                        <input type="number" min={0} step={1} className="input mt-1" value={resourceDraft[key]} onChange={(e) => setResourceDraft({ ...resourceDraft, [key]: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} />
-                      </label>
-                    ))}
-                  </div>
-                  <label className="block text-xs font-medium text-ink-600">Reason for adjustment
-                    <textarea className="input mt-1 resize-y" rows={3} maxLength={1000} value={resourceRationale} onChange={(e) => setResourceRationale(e.target.value)} placeholder="Explain the operational basis for this change." />
-                  </label>
-                  <div className="flex justify-end gap-2">
-                    <button type="button" className="btn-secondary" onClick={() => { setEditingResources(false); setResourceDraft(toResourceQuantities(resources)); setResourceRationale(''); }}><RotateCcw size={15} /> Cancel</button>
-                    <button type="button" className="btn-primary" disabled={savingResources || resourceRationale.trim().length < 10} onClick={saveResourceOverride}>{savingResources ? 'Saving...' : 'Save adjustment'}</button>
-                  </div>
-                </div>
-              ) : (
-                <ResourceRecommendationView recommendation={resources} showOverrideProvenance />
-              )}
+              {!resources
+                ? <p className="text-sm text-ink-500">{legacyResources ? 'Legacy resource record detected. Recompute this event version before review.' : 'No recommendation yet.'}</p>
+                : <>
+                    <p className="mb-4 rounded-md border border-gold-200 bg-gold-50 p-3 text-xs leading-5 text-gold-700">
+                      Resource adjustments remain unavailable until the append-only authority finalisation workflow is enabled.
+                    </p>
+                    <ResourceRecommendationView recommendation={resources} />
+                  </>}
             </div>
           </section>
 

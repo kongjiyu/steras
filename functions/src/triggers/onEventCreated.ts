@@ -8,16 +8,18 @@ import {
   AssessmentRecord,
   CATEGORY_SCHEMA_VERSION,
   COLLECTIONS,
-  DeterministicCategoryResult,
   EventRecord,
   EventVersion,
   HARD_RULE_VERSION,
   ManualReviewRiskAssessment,
   OrganizerAssessmentSummary,
+  OrganizerResourceRecommendation,
   PROVISIONAL_FORMULA_VERSION,
   ProvisionalRiskAssessment,
+  RESOURCE_CONFIG_VERSION,
   RESOURCE_FORMULA_VERSION,
-  RESOURCE_GUIDELINE_VERSION,
+  RESOURCE_SCHEMA_VERSION,
+  RESOURCE_SOURCE_REGISTRY_VERSION,
   SCORING_LOGIC_VERSION,
   ResourceRecommendation,
   RiskAssessment,
@@ -26,12 +28,21 @@ import {
 } from '@shared/types';
 import { AI_RESPONSE_SCHEMA_VERSION, PROMPT_VERSION, analyseWithAI } from '../engines/aiPredictor';
 import { validateAndCalculateProvisional } from '../engines/assessmentValidator';
-import { computeResources } from '../engines/resourceCalculator';
+import {
+  computeResources,
+  ResourceCalculationResult,
+  stableStringify,
+  validateAssessmentResultAgainstHardRules,
+  validateAssessmentResultAgainstProposal,
+  validateProvisionalAssessmentResult,
+} from '../engines/resourceCalculator';
+import { validateResourceRecommendation, validateResourceRevisionChain } from '../engines/resourceContract';
 import { computeCategoryBasedAssessment, fetchHistoricalContext, fetchVenueContext } from '../engines/ruleBased';
 import { getCalendarContext } from '../utils/holidays';
 import { fetchWeather } from '../utils/weather';
 import { ASSESSMENT_SECRETS, MINIMAX_API_KEY, OPENWEATHER_API_KEY } from '../config/secrets';
 import { FUNCTION_REGION } from '../config/runtime';
+import { createResourceCutoverQueueToken, RESOURCE_CUTOVER_LOCK_PATH } from '../config/resourceCutoverLock';
 
 const CLAIM_LEASE_MS = 2 * 60 * 1000;
 
@@ -64,10 +75,9 @@ export async function runRiskAndResourcePipeline(
   const versionReference = eventReference.collection(COLLECTIONS.VERSIONS).doc(versionId);
   const assessmentReference = eventReference.collection(COLLECTIONS.ASSESSMENTS).doc(versionId);
   const summaryReference = eventReference.collection(COLLECTIONS.ASSESSMENT_SUMMARIES).doc(versionId);
-  const resourceReference = eventReference.collection(COLLECTIONS.RESOURCES).doc(versionId);
   const versionSnapshot = await versionReference.get();
   if (!versionSnapshot.exists) {
-    await recordMissingVersionFailure(eventReference, assessmentReference, summaryReference, resourceReference, eventId, versionId, now);
+    await recordMissingVersionFailure(eventReference, assessmentReference, summaryReference, eventId, versionId, now);
     return { status: 'processed', eventId, versionId, reason: 'version-not-found' };
   }
   const version = versionSnapshot.data() as EventVersion;
@@ -78,11 +88,13 @@ export async function runRiskAndResourcePipeline(
     const retryUserReference = retryAuthorization
       ? db.collection(COLLECTIONS.USERS).doc(retryAuthorization.uid)
       : undefined;
-    const [currentEventSnapshot, existingSnapshot, retryUserSnapshot] = await Promise.all([
+    const [currentEventSnapshot, existingSnapshot, retryUserSnapshot, cutoverLockSnapshot] = await Promise.all([
       transaction.get(eventReference),
       transaction.get(assessmentReference),
       retryUserReference ? transaction.get(retryUserReference) : Promise.resolve(undefined),
+      transaction.get(db.doc(RESOURCE_CUTOVER_LOCK_PATH)),
     ]);
+    if (cutoverLockSnapshot.exists) return false;
     const currentEvent = currentEventSnapshot.data() as EventRecord | undefined;
     if (!currentEvent || currentEvent.status !== 'Pending' || currentEvent.currentVersionId !== versionId) return false;
     if (retryManual) {
@@ -116,7 +128,15 @@ export async function runRiskAndResourcePipeline(
   });
   if (claimed === 'retry-not-authorized') return { status: 'skipped', eventId, versionId, reason: claimed };
   if (claimed === 'retry-not-retryable') return { status: 'skipped', eventId, versionId, reason: claimed };
-  if (!claimed) return { status: 'skipped', eventId, versionId, reason: 'already-claimed-or-ready' };
+  if (!claimed) {
+    const resourceResult = await recomputeResourceForStoredAssessment(eventId, now);
+    return {
+      status: 'skipped',
+      eventId,
+      versionId,
+      reason: resourceResult.status === 'failed' ? 'already-claimed-or-ready' : `assessment-ready-resource-${resourceResult.status}`,
+    };
+  }
 
   try {
     const assessedEvent: EventRecord = { ...event, eventDetails: version.eventDetails };
@@ -153,7 +173,7 @@ export async function runRiskAndResourcePipeline(
     } as const;
 
     let assessment: RiskAssessment;
-    let resources: ResourceRecommendation | undefined;
+    let resourceCalculation: ResourceCalculationResult | undefined;
     const readinessWarnings: ValidationWarning[] = [];
     if (common.assessmentReadiness === 'provisional') readinessWarnings.push({
       warningId: 'missing_evidence.assessment.provisional',
@@ -202,27 +222,44 @@ export async function runRiskAndResourcePipeline(
             authorityReviewRequired: true,
             provisionalResult: validation.result,
           } satisfies ProvisionalRiskAssessment;
-          resources = provisionalResources(version, validation.result, baseline, aiProposal.categories.flatMap((category) => category.concerns), createdAt);
+          resourceCalculation = computeResources({
+            eventId,
+            versionId,
+            assessmentId: assessment.assessmentId,
+            eventDetails: version.eventDetails,
+            assessmentResult: validation.result,
+          });
         }
       }
     }
 
     const finalized = await db.runTransaction(async (transaction) => {
-      const [claimSnapshot, currentEventSnapshot] = await Promise.all([
+      const [claimSnapshot, currentEventSnapshot, cutoverLockSnapshot] = await Promise.all([
         transaction.get(assessmentReference),
         transaction.get(eventReference),
+        transaction.get(db.doc(RESOURCE_CUTOVER_LOCK_PATH)),
       ]);
+      if (cutoverLockSnapshot.exists) {
+        transaction.update(db.doc(RESOURCE_CUTOVER_LOCK_PATH), {
+          queuedEvents: firestore.FieldValue.arrayUnion(createResourceCutoverQueueToken({
+            eventId,
+            currentVersionId: versionId,
+            currentAssessmentId: assessment.assessmentId,
+            assessmentInputHash: assessment.inputHash,
+            generationId: claimId,
+            queuedAt: createdAt,
+          })),
+        });
+      }
       const claim = claimSnapshot.data() as AssessmentRecord | undefined;
       const currentEvent = currentEventSnapshot.data() as EventRecord | undefined;
       if (claim?.status !== 'processing' || claim.claimId !== claimId) return false;
       if (!currentEvent || currentEvent.status !== 'Pending' || currentEvent.currentVersionId !== versionId) return false;
       transaction.set(assessmentReference, assessment);
-      transaction.set(summaryReference, organizerSummary(assessment, resources, createdAt));
-      if (resources) transaction.set(resourceReference, resources);
-      else transaction.delete(resourceReference);
+      transaction.set(summaryReference, organizerSummary(assessment, undefined, createdAt));
       transaction.update(eventReference, {
         currentAssessmentId: versionId,
-        currentResourceId: resources ? versionId : firestore.FieldValue.delete(),
+        currentResourceId: firestore.FieldValue.delete(),
         updatedAt: createdAt,
       });
       transaction.set(eventReference.collection(COLLECTIONS.AUDIT_LOGS).doc(`${versionId}-risk-score-computed-v3`), {
@@ -236,17 +273,16 @@ export async function runRiskAndResourcePipeline(
           inputHash,
         },
       });
-      if (resources) transaction.set(eventReference.collection(COLLECTIONS.AUDIT_LOGS).doc(`${versionId}-resource-recommended-v3`), {
-        id: `${versionId}-resource-recommended-v3`, eventId, versionId, action: 'resource_recommended', actorId: 'system', actorRole: 'system', timestamp: createdAt,
-        metadata: { resourceId: versionId, assessmentStage: 'provisional', formulaVersion: RESOURCE_FORMULA_VERSION, guidelineVersion: RESOURCE_GUIDELINE_VERSION },
-      });
       return true;
     });
     if (!finalized) return { status: 'skipped', eventId, versionId, reason: 'claim-lost-or-version-changed' };
+    if (assessment.status === 'provisional_ready' && resourceCalculation) {
+      await persistResourceCalculation(eventReference, version, assessment, resourceCalculation, createdAt);
+    }
     logger.info(`[assessment] ${eventId}/${versionId}: status=${assessment.status}, ai=${assessment.aiProposal?.status ?? 'not-attempted'}`);
     return { status: 'processed', eventId, versionId };
   } catch (error) {
-    await markFailed(assessmentReference, summaryReference, claimId, inputHash, error);
+    await markFailed(eventReference, assessmentReference, summaryReference, claimId, inputHash, error);
     throw error;
   }
 }
@@ -255,17 +291,26 @@ async function recordMissingVersionFailure(
   eventReference: FirebaseFirestore.DocumentReference,
   assessmentReference: FirebaseFirestore.DocumentReference,
   summaryReference: FirebaseFirestore.DocumentReference,
-  resourceReference: FirebaseFirestore.DocumentReference,
   eventId: string,
   versionId: string,
   now: number,
 ): Promise<void> {
+  const db = firestore();
   const inputHash = processingHash(`missing-version:${versionId}`);
   const claimId = randomUUID();
-  await firestore().runTransaction(async (transaction) => {
-    const currentSnapshot = await transaction.get(eventReference);
+  await db.runTransaction(async (transaction) => {
+    const [currentSnapshot, cutoverLockSnapshot] = await Promise.all([
+      transaction.get(eventReference),
+      transaction.get(db.doc(RESOURCE_CUTOVER_LOCK_PATH)),
+    ]);
     const current = currentSnapshot.data() as EventRecord | undefined;
     if (!current || current.status !== 'Pending' || current.currentVersionId !== versionId) return;
+    if (cutoverLockSnapshot.exists) transaction.update(db.doc(RESOURCE_CUTOVER_LOCK_PATH), {
+      queuedEvents: firestore.FieldValue.arrayUnion(createResourceCutoverQueueToken({
+        eventId, currentVersionId: versionId, currentAssessmentId: versionId,
+        assessmentInputHash: inputHash, generationId: claimId, queuedAt: now,
+      })),
+    });
     transaction.set(assessmentReference, {
       assessmentId: versionId,
       eventId,
@@ -282,7 +327,6 @@ async function recordMissingVersionFailure(
       assessmentId: versionId, eventId, versionId, schemaVersion: ASSESSMENT_SCHEMA_VERSION,
       status: 'failed', categories: [], authorityReviewRequired: true, computedAt: now,
     } satisfies OrganizerAssessmentSummary);
-    transaction.delete(resourceReference);
     transaction.update(eventReference, {
       currentAssessmentId: versionId,
       currentResourceId: firestore.FieldValue.delete(),
@@ -305,50 +349,6 @@ function manualAssessment(
   return { ...common, status: 'manual_review_required', aiProposal, warnings, authorityReviewRequired: true, manualReviewReason: reason };
 }
 
-function provisionalResources(
-  version: EventVersion,
-  provisional: ProvisionalRiskAssessment['provisionalResult'],
-  baseline: DeterministicCategoryResult,
-  aiConsiderations: string[],
-  computedAt: number,
-): ResourceRecommendation {
-  const compatible: DeterministicCategoryResult = {
-    ...baseline,
-    categoryAssignments: provisional.categories.map((category) => ({
-      categoryId: category.categoryId,
-      categoryName: category.categoryName,
-      score: category.normalizedScore,
-      riskLevel: category.riskLevel,
-      weight: category.weight,
-      weightedContribution: category.weightedContribution,
-      rationale: category.rationale,
-      evidenceKeys: category.evidenceReferences,
-      guidelineChecks: category.guidelineChecks,
-    })),
-    officialScore: provisional.overallScore,
-    officialRiskLevel: provisional.overallRiskLevel,
-    computedAt,
-  };
-  const calculation = computeResources(version.eventDetails, compatible);
-  return {
-    resourceId: version.versionId,
-    eventId: version.eventId,
-    versionId: version.versionId,
-    assessmentId: version.versionId,
-    ...calculation.quantities,
-    rationales: calculation.rationales,
-    items: calculation.items,
-    formulaVersion: RESOURCE_FORMULA_VERSION,
-    guidelineVersion: RESOURCE_GUIDELINE_VERSION,
-    guidelineStatus: 'prototype',
-    aiConsiderations,
-    confidenceLevel: 'prototype',
-    assessmentStage: 'provisional',
-    notes: 'Provisional planning ranges; authority validation and official assessment are pending.',
-    computedAt,
-  };
-}
-
 function processingHash(versionInputHash: string): string {
   return createHash('sha256').update(JSON.stringify({
     versionInputHash,
@@ -359,12 +359,11 @@ function processingHash(versionInputHash: string): string {
     provisionalFormulaVersion: PROVISIONAL_FORMULA_VERSION,
     promptVersion: PROMPT_VERSION,
     aiResponseSchemaVersion: AI_RESPONSE_SCHEMA_VERSION,
-    resourceFormulaVersion: RESOURCE_FORMULA_VERSION,
-    resourceGuidelineVersion: RESOURCE_GUIDELINE_VERSION,
   })).digest('hex');
 }
 
 async function markFailed(
+  eventReference: FirebaseFirestore.DocumentReference,
   reference: FirebaseFirestore.DocumentReference,
   summaryReference: FirebaseFirestore.DocumentReference,
   claimId: string,
@@ -373,16 +372,32 @@ async function markFailed(
 ): Promise<void> {
   const db = firestore();
   await db.runTransaction(async (transaction) => {
-    const snapshot = await transaction.get(reference);
+    const [snapshot, cutoverLockSnapshot, eventSnapshot] = await Promise.all([
+      transaction.get(reference),
+      transaction.get(db.doc(RESOURCE_CUTOVER_LOCK_PATH)),
+      transaction.get(eventReference),
+    ]);
     const current = snapshot.data() as AssessmentRecord | undefined;
     if (current?.status !== 'processing' || current.claimId !== claimId) return;
-    transaction.set(reference, {
+    const event = eventSnapshot.data() as EventRecord | undefined;
+    const failureAssessment = {
       ...current,
-      status: 'failed',
+      status: 'failed' as const,
       inputHash,
       error: error instanceof Error ? error.message.slice(0, 500) : 'Unknown assessment failure',
       leaseExpiresAt: Date.now(),
-    } satisfies AssessmentJob);
+    } satisfies AssessmentJob;
+    if (!event || event.status !== 'Pending' || event.currentVersionId !== current.versionId) {
+      transaction.set(reference, failureAssessment);
+      return;
+    }
+    if (cutoverLockSnapshot.exists) transaction.update(db.doc(RESOURCE_CUTOVER_LOCK_PATH), {
+      queuedEvents: firestore.FieldValue.arrayUnion(createResourceCutoverQueueToken({
+        eventId: current.eventId, currentVersionId: current.versionId, currentAssessmentId: current.assessmentId,
+        assessmentInputHash: inputHash, generationId: claimId, queuedAt: Date.now(),
+      })),
+    });
+    transaction.set(reference, failureAssessment);
     transaction.set(summaryReference, {
       assessmentId: current.assessmentId,
       eventId: current.eventId,
@@ -393,8 +408,16 @@ async function markFailed(
       authorityReviewRequired: true,
       computedAt: Date.now(),
     } satisfies OrganizerAssessmentSummary);
+    transaction.update(eventReference, {
+      currentAssessmentId: current.assessmentId,
+      currentResourceId: firestore.FieldValue.delete(),
+      updatedAt: Date.now(),
+    });
   });
 }
+
+/** Transaction-level race harness; not exported from the deployed Functions entrypoint. */
+export const __testOnlyMarkFailed = markFailed;
 
 function organizerSummary(
   assessment: RiskAssessment,
@@ -419,19 +442,393 @@ function organizerSummary(
       normalizedScore: category.normalizedScore,
       riskLevel: category.riskLevel,
     })) ?? [],
-    assessmentReadiness: assessment.assessmentReadiness,
-    complianceStatus: assessment.complianceStatus,
-    authorityReviewRequired: assessment.authorityReviewRequired,
-    ...(resources ? { resourceQuantities: {
-      police: resources.police,
-      security: resources.security,
-      medicalTeams: resources.medicalTeams,
-      ambulances: resources.ambulances,
-      fireOfficers: resources.fireOfficers,
-      toilets: resources.toilets,
-      wasteBins: resources.wasteBins,
-    } } : {}),
+    ...(assessment.assessmentReadiness ? { assessmentReadiness: assessment.assessmentReadiness } : {}),
+    ...(assessment.complianceStatus ? { complianceStatus: assessment.complianceStatus } : {}),
+    authorityReviewRequired: (assessment as { authorityReviewRequired?: boolean }).authorityReviewRequired
+      ?? assessment.status !== 'official_ready',
+    ...(resources ? {
+      resourceQuantities: resourceQuantities(resources),
+      resourceRecommendation: organizerResourceRecommendation(resources),
+    } : {}),
     computedAt,
+  };
+}
+
+export async function recomputeResourceForStoredAssessment(
+  eventId: string,
+  now = Date.now(),
+  hooks: { beforePersist?: () => Promise<void>; cutoverSessionId?: string } = {},
+): Promise<{ status: 'created' | 'reused' | 'failed'; resourceId?: string; reason?: string }> {
+  const db = firestore();
+  const eventReference = db.collection(COLLECTIONS.EVENTS).doc(eventId);
+  const eventSnapshot = await eventReference.get();
+  const event = eventSnapshot.exists ? { eventId, ...eventSnapshot.data() } as EventRecord : undefined;
+  if (!event?.currentVersionId || !event.currentAssessmentId) return { status: 'failed', reason: 'missing-current-input' };
+  const [versionSnapshot, assessmentSnapshot] = await Promise.all([
+    eventReference.collection(COLLECTIONS.VERSIONS).doc(event.currentVersionId).get(),
+    eventReference.collection(COLLECTIONS.ASSESSMENTS).doc(event.currentAssessmentId).get(),
+  ]);
+  const version = versionSnapshot.data() as EventVersion | undefined;
+  const assessment = assessmentSnapshot.data();
+  if (!version
+    || version.versionId !== event.currentVersionId
+    || version.eventId !== eventId
+    || !isResourceEligibleAssessment(assessment, eventId, version.versionId, version.eventDetails)) {
+    return { status: 'failed', reason: 'provisional-assessment-not-ready' };
+  }
+  const calculation = computeResources({
+    eventId,
+    versionId: version.versionId,
+    assessmentId: assessment.assessmentId,
+    eventDetails: version.eventDetails,
+    assessmentResult: assessment.provisionalResult,
+  });
+  await hooks.beforePersist?.();
+  return persistResourceCalculation(eventReference, version, assessment, calculation, now, hooks.cutoverSessionId);
+}
+
+async function persistResourceCalculation(
+  eventReference: FirebaseFirestore.DocumentReference,
+  version: EventVersion,
+  assessment: ProvisionalRiskAssessment,
+  calculation: ResourceCalculationResult,
+  computedAt: number,
+  cutoverSessionId?: string,
+): Promise<{ status: 'created' | 'reused' | 'failed'; resourceId?: string; reason?: string }> {
+  const db = firestore();
+  if (!calculation.ok) {
+    const failureId = `${version.versionId}-resource-calculation-${calculation.code}-${computedAt}-${randomUUID()}`;
+    const failurePersisted = await db.runTransaction(async (transaction) => {
+      const assessmentReference = eventReference.collection(COLLECTIONS.ASSESSMENTS).doc(assessment.assessmentId);
+      const [currentSnapshot, currentAssessmentSnapshot, cutoverLockSnapshot] = await Promise.all([
+        transaction.get(eventReference),
+        transaction.get(assessmentReference),
+        transaction.get(db.doc(RESOURCE_CUTOVER_LOCK_PATH)),
+      ]);
+      const current = currentSnapshot.data() as EventRecord | undefined;
+      const currentAssessment = currentAssessmentSnapshot.data();
+      const leaseNow = Date.now();
+      const cutoverAllowed = cutoverSessionId
+        ? cutoverLockSnapshot.exists
+          && cutoverLockSnapshot.data()?.active === true
+          && cutoverLockSnapshot.data()?.sessionId === cutoverSessionId
+          && Number.isFinite(cutoverLockSnapshot.data()?.leaseExpiresAt)
+          && cutoverLockSnapshot.data()!.leaseExpiresAt > leaseNow
+        : !cutoverLockSnapshot.exists;
+      if (!cutoverAllowed) return false;
+      if (cutoverAllowed
+        && current?.currentVersionId === version.versionId
+        && current.currentAssessmentId === assessment.assessmentId
+        && isSameResourceAssessment(currentAssessment, assessment, version.eventDetails)) {
+        transaction.update(eventReference, { currentResourceId: firestore.FieldValue.delete(), updatedAt: computedAt });
+        transaction.set(
+          eventReference.collection(COLLECTIONS.ASSESSMENT_SUMMARIES).doc(version.versionId),
+          organizerSummary(assessment, undefined, computedAt),
+        );
+      }
+      transaction.create(eventReference.collection(COLLECTIONS.AUDIT_LOGS).doc(failureId), {
+        id: failureId,
+        eventId: version.eventId,
+        versionId: version.versionId,
+        action: 'resource_recommended',
+        actorId: 'system',
+        actorRole: 'system',
+        timestamp: computedAt,
+        metadata: { outcome: 'failed', code: calculation.code, reason: calculation.message, schemaVersion: RESOURCE_SCHEMA_VERSION },
+      });
+      return true;
+    });
+    if (!failurePersisted) return { status: 'failed', reason: 'resource-cutover-fencing-failed' };
+    return { status: 'failed', reason: calculation.code };
+  }
+  const resourceId = resourceDocumentId('provisional', version.versionId, calculation.resourceInputHash);
+  return db.runTransaction(async (transaction) => {
+    const assessmentReference = eventReference.collection(COLLECTIONS.ASSESSMENTS).doc(assessment.assessmentId);
+    const [currentEventSnapshot, currentAssessmentSnapshot, cutoverLockSnapshot] = await Promise.all([
+      transaction.get(eventReference),
+      transaction.get(assessmentReference),
+      transaction.get(db.doc(RESOURCE_CUTOVER_LOCK_PATH)),
+    ]);
+    const currentEvent = currentEventSnapshot.data() as EventRecord | undefined;
+    const currentAssessment = currentAssessmentSnapshot.data();
+    const leaseNow = Date.now();
+    const cutoverAllowed = cutoverSessionId
+      ? cutoverLockSnapshot.exists
+        && cutoverLockSnapshot.data()?.active === true
+        && cutoverLockSnapshot.data()?.sessionId === cutoverSessionId
+        && Number.isFinite(cutoverLockSnapshot.data()?.leaseExpiresAt)
+        && cutoverLockSnapshot.data()!.leaseExpiresAt > leaseNow
+      : !cutoverLockSnapshot.exists;
+    if (!cutoverAllowed) {
+      return { status: 'failed' as const, reason: cutoverSessionId
+        ? 'resource-cutover-fencing-failed'
+        : 'resource-cutover-in-progress' };
+    }
+    if (!currentEvent
+      || currentEvent.status !== 'Pending'
+      || currentEvent.currentVersionId !== version.versionId
+      || currentEvent.currentAssessmentId !== assessment.assessmentId
+      || !isResourceEligibleAssessment(currentAssessment, version.eventId, version.versionId, version.eventDetails)
+      || !isSameResourceAssessment(currentAssessment, assessment, version.eventDetails)) {
+      return { status: 'failed' as const, reason: 'event-or-assessment-changed' };
+    }
+    const currentCalculation = computeResources({
+      eventId: version.eventId,
+      versionId: version.versionId,
+      assessmentId: currentAssessment.assessmentId,
+      eventDetails: version.eventDetails,
+      assessmentResult: currentAssessment.provisionalResult,
+    });
+    if (!currentCalculation.ok || currentCalculation.resourceInputHash !== calculation.resourceInputHash) {
+      return { status: 'failed' as const, reason: 'event-or-assessment-changed' };
+    }
+    const resourceReference = eventReference.collection(COLLECTIONS.RESOURCES).doc(resourceId);
+    const [existingSnapshot, historicalSnapshot] = await Promise.all([
+      transaction.get(resourceReference),
+      transaction.get(eventReference.collection(COLLECTIONS.RESOURCES)
+        .where('versionId', '==', version.versionId)
+        .where('stage', '==', 'provisional')),
+    ]);
+    const history = historicalSnapshot.docs
+      .map((document) => validateResourceRecommendation(document.data()).ok
+        ? document.data() as ResourceRecommendation
+        : undefined)
+      .filter((resource): resource is ResourceRecommendation => Boolean(resource));
+    if (history.length !== historicalSnapshot.size) {
+      return { status: 'failed' as const, reason: 'invalid-resource-history' };
+    }
+    const historyTip = latestValidHistoricalResource(history);
+    const chainPointer = currentEvent.currentResourceId ?? historyTip?.resourceId;
+    if (history.length > 0 && (!chainPointer
+      || validateResourceRevisionChain(history, chainPointer).length > 0)) {
+      return { status: 'failed' as const, reason: 'invalid-resource-revision-chain' };
+    }
+    if (existingSnapshot.exists) {
+      const existing = existingSnapshot.data() as ResourceRecommendation;
+      if (existing.resourceInputHash !== calculation.resourceInputHash
+        || existing.stage !== 'provisional'
+        || existing.eventId !== version.eventId
+        || existing.versionId !== version.versionId
+        || existing.assessmentId !== currentAssessment.assessmentId
+        || existing.assessmentReference.stage !== 'provisional'
+        || existing.assessmentReference.proposalId !== currentAssessment.provisionalResult.proposalId
+        || existing.formulaVersion !== calculation.formulaVersion
+        || existing.configVersion !== calculation.configVersion
+        || existing.sourceRegistryVersion !== calculation.sourceRegistryVersion
+        || stableStringify(existing.items) !== stableStringify(calculation.items)) {
+        return { status: 'failed' as const, reason: 'resource-id-collision' };
+      }
+      if (!validateResourceRecommendation(existing).ok) return { status: 'failed' as const, reason: 'invalid-existing-resource' };
+      const pointedResource = chainPointer && chainPointer !== resourceId
+        ? history.find((resource) => resource.resourceId === chainPointer)
+        : undefined;
+      if (pointedResource && (!validateResourceRecommendation(pointedResource).ok
+        || pointedResource.eventId !== version.eventId
+        || pointedResource.versionId !== version.versionId
+        || pointedResource.stage !== 'provisional')) {
+        return { status: 'failed' as const, reason: 'invalid-current-resource' };
+      }
+      if (pointedResource && pointedResource.revision === existing.revision
+        && pointedResource.resourceId !== existing.resourceId) {
+        return { status: 'failed' as const, reason: 'ambiguous-resource-revision' };
+      }
+      if (pointedResource && pointedResource.revision > existing.revision) {
+        transaction.set(
+          eventReference.collection(COLLECTIONS.ASSESSMENT_SUMMARIES).doc(version.versionId),
+          organizerSummary(currentAssessment, pointedResource, computedAt),
+        );
+        return { status: 'reused' as const, resourceId: pointedResource.resourceId };
+      }
+      if (currentEvent.currentResourceId !== resourceId) {
+        transaction.update(eventReference, { currentResourceId: resourceId, updatedAt: computedAt });
+      }
+      transaction.set(
+        eventReference.collection(COLLECTIONS.ASSESSMENT_SUMMARIES).doc(version.versionId),
+        organizerSummary(currentAssessment, existing, computedAt),
+      );
+      return { status: 'reused' as const, resourceId };
+    }
+    const previousId = currentEvent.currentResourceId && currentEvent.currentResourceId !== resourceId
+      ? currentEvent.currentResourceId
+      : undefined;
+    const previousSnapshot = previousId
+      ? await transaction.get(eventReference.collection(COLLECTIONS.RESOURCES).doc(previousId))
+      : undefined;
+    if (previousId && !previousSnapshot?.exists) {
+      return { status: 'failed' as const, reason: 'dangling-current-resource' };
+    }
+    const previousCandidate = previousSnapshot?.exists ? previousSnapshot.data() : undefined;
+    if (previousCandidate && (!validateResourceRecommendation(previousCandidate).ok
+      || previousCandidate.eventId !== version.eventId
+      || previousCandidate.versionId !== version.versionId
+      || previousCandidate.stage !== 'provisional')) {
+      return { status: 'failed' as const, reason: 'invalid-current-resource' };
+    }
+    const previous = previousCandidate
+      ? previousCandidate as ResourceRecommendation
+      : historyTip;
+    if (previous?.revision === Number.MAX_SAFE_INTEGER) {
+      return { status: 'failed' as const, reason: 'resource-revision-overflow' };
+    }
+    const nextRevision = nextResourceRevision(previous);
+    const recommendation: ResourceRecommendation = {
+      resourceId,
+      eventId: version.eventId,
+      versionId: version.versionId,
+      assessmentId: currentAssessment.assessmentId,
+      schemaVersion: RESOURCE_SCHEMA_VERSION,
+      stage: 'provisional',
+      revision: nextRevision.revision,
+      supersedesResourceId: nextRevision.supersedesResourceId,
+      assessmentReference: {
+        stage: 'provisional', assessmentId: currentAssessment.assessmentId, proposalId: currentAssessment.provisionalResult.proposalId,
+      },
+      resourceInputHash: calculation.resourceInputHash,
+      formulaVersion: calculation.formulaVersion,
+      configVersion: calculation.configVersion,
+      sourceRegistryVersion: calculation.sourceRegistryVersion,
+      items: calculation.items,
+      confidenceLevel: 'prototype',
+      authorityReviewRequired: true,
+      notes: 'Provisional internal prototype planning ranges; authority validation and official assessment are pending.',
+      computedAt,
+    };
+    transaction.create(resourceReference, recommendation);
+    transaction.update(eventReference, { currentResourceId: resourceId, updatedAt: computedAt });
+    transaction.set(
+      eventReference.collection(COLLECTIONS.ASSESSMENT_SUMMARIES).doc(version.versionId),
+      organizerSummary(currentAssessment, recommendation, computedAt),
+    );
+    const auditReference = eventReference.collection(COLLECTIONS.AUDIT_LOGS).doc(`${resourceId}-recommended`);
+    transaction.create(auditReference, {
+      id: auditReference.id,
+      eventId: version.eventId,
+      versionId: version.versionId,
+      action: 'resource_recommended',
+      actorId: 'system',
+      actorRole: 'system',
+      timestamp: computedAt,
+      metadata: {
+        resourceId,
+        previousResourceId: previous?.resourceId ?? null,
+        assessmentId: currentAssessment.assessmentId,
+        stage: 'provisional',
+        schemaVersion: RESOURCE_SCHEMA_VERSION,
+        formulaVersion: RESOURCE_FORMULA_VERSION,
+        configVersion: RESOURCE_CONFIG_VERSION,
+        sourceRegistryVersion: RESOURCE_SOURCE_REGISTRY_VERSION,
+        resourceInputHash: calculation.resourceInputHash,
+      },
+    });
+    return { status: 'created' as const, resourceId };
+  });
+}
+
+export function resourceDocumentId(stage: 'provisional' | 'official', versionId: string, resourceInputHash: string): string {
+  return `${stage}-${versionId}-${resourceInputHash}`;
+}
+
+export function nextResourceRevision(previous?: Pick<ResourceRecommendation, 'resourceId' | 'revision'>): {
+  revision: number;
+  supersedesResourceId: string | null;
+} {
+  if (previous && (!Number.isSafeInteger(previous.revision)
+    || previous.revision < 1
+    || previous.revision >= Number.MAX_SAFE_INTEGER)) {
+    throw new Error('Cannot create a resource revision after an invalid or exhausted revision number.');
+  }
+  return {
+    revision: previous ? previous.revision + 1 : 1,
+    supersedesResourceId: previous?.resourceId ?? null,
+  };
+}
+
+export function latestValidHistoricalResource(values: unknown[] | undefined): ResourceRecommendation | undefined {
+  return values
+    ?.map((value) => validateResourceRecommendation(value).ok ? value as ResourceRecommendation : undefined)
+    .filter((value): value is ResourceRecommendation => Boolean(value))
+    .sort((left, right) => right.revision - left.revision || right.computedAt - left.computedAt)[0];
+}
+
+export function isResourceEligibleAssessment(
+  value: unknown,
+  eventId: string,
+  versionId: string,
+  eventDetails: EventVersion['eventDetails'],
+): value is ProvisionalRiskAssessment {
+  if (!value || typeof value !== 'object') return false;
+  const assessment = value as Partial<ProvisionalRiskAssessment>;
+  if (!((assessment.status === 'provisional_ready' || assessment.status === 'authority_review')
+    && assessment.schemaVersion === ASSESSMENT_SCHEMA_VERSION
+    && assessment.eventId === eventId
+    && assessment.versionId === versionId
+    && assessment.assessmentId === versionId
+    && assessment.aiProposal?.status === 'success'
+    && Array.isArray(assessment.aiProposal.categories)
+    && Array.isArray(assessment.aiProposal.hazards)
+    && assessment.aiProposal.proposalId === assessment.provisionalResult?.proposalId
+    && Boolean(assessment.provisionalResult)
+    && assessment.contextSnapshot
+    && Array.isArray(assessment.evidence)
+    && validateProvisionalAssessmentResult(assessment.provisionalResult as ProvisionalRiskAssessment['provisionalResult']).length === 0)) return false;
+  const result = assessment.provisionalResult as ProvisionalRiskAssessment['provisionalResult'];
+  const proposal = assessment.aiProposal as ProvisionalRiskAssessment['aiProposal'];
+  try {
+    const eligibleEvidence = new Set(assessment.evidence
+      .filter((item) => item && typeof item.status === 'string'
+        && item.quality !== 'missing'
+        && !['unavailable', 'unmatched', 'missing'].includes(item.status.trim().toLowerCase()))
+      .map((item) => item.key));
+    if (result.categories.some((category) => category.evidenceReferences.some((reference) => !eligibleEvidence.has(reference)))
+      || result.validatedHazards.some((hazard) => hazard.evidenceReferences.some((reference) => !eligibleEvidence.has(reference)))) return false;
+    const baseline = computeCategoryBasedAssessment(
+      { eventId, eventDetails } as EventRecord,
+      assessment.contextSnapshot,
+      assessment.createdAt,
+    );
+    return validateAssessmentResultAgainstProposal(result, proposal).length === 0
+      && validateAssessmentResultAgainstHardRules(result, baseline).length === 0;
+  } catch {
+    return false;
+  }
+}
+
+function isSameResourceAssessment(
+  current: unknown,
+  expected: ProvisionalRiskAssessment,
+  eventDetails: EventVersion['eventDetails'],
+): current is ProvisionalRiskAssessment {
+  if (!isResourceEligibleAssessment(current, expected.eventId, expected.versionId, eventDetails)) return false;
+  return current.inputHash === expected.inputHash
+    && current.aiProposal.proposalId === expected.aiProposal.proposalId
+    && current.provisionalResult.proposalId === expected.provisionalResult.proposalId
+    && current.provisionalResult.calculatedAt === expected.provisionalResult.calculatedAt;
+}
+
+function resourceQuantities(resources: ResourceRecommendation) {
+  return {
+    police: resources.items.police.baseline,
+    security: resources.items.security.baseline,
+    medicalTeams: resources.items.medicalTeams.baseline,
+    ambulances: resources.items.ambulances.baseline,
+    fireOfficers: resources.items.fireOfficers.baseline,
+    toilets: resources.items.toilets.baseline,
+    wasteBins: resources.items.wasteBins.baseline,
+  };
+}
+
+function organizerResourceRecommendation(resources: ResourceRecommendation): OrganizerResourceRecommendation {
+  return {
+    resourceId: resources.resourceId,
+    revision: resources.revision,
+    stage: resources.stage,
+    items: Object.fromEntries(Object.entries(resources.items).map(([key, item]) => [key, {
+      baseline: item.baseline,
+      planningRange: { ...item.planningRange },
+    }])) as OrganizerResourceRecommendation['items'],
+    disclaimer: resources.stage === 'provisional'
+      ? 'Provisional internal prototype planning ranges; not statutory or authority-issued minimums.'
+      : 'Official authority-validated planning ranges for the finalized assessment.',
   };
 }
 

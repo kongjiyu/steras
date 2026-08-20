@@ -12,6 +12,8 @@ import {
   EventStatus,
   HARD_RULE_VERSION,
   PROVISIONAL_FORMULA_VERSION,
+  RESOURCE_KEYS,
+  RESOURCE_SCHEMA_VERSION,
   ResourceQuantities,
   ResourceRecommendation,
   RiskAssessment,
@@ -23,8 +25,6 @@ import { DashboardRecord } from './authority/dashboardData';
 import RiskAssessments from './authority/RiskAssessments';
 import ResourceRecommendations from './authority/ResourceRecommendations';
 import { M2PortfolioRecord } from './authority/m2PortfolioData';
-import { RESOURCE_FIELDS } from '../components/m2/m2Presentation';
-import { assessmentRiskLevel } from '../components/m2/m2Contract';
 
 const MOCK_USER = { name: 'Admin Officer', role: 'PDRM', initials: 'AO' };
 
@@ -75,6 +75,7 @@ function previewRecord(
   };
   const assessment = risk ? previewAssessment(event, risk, versionId) : undefined;
   const resources = assessment ? previewResources(event, assessment, versionId) : undefined;
+  if (resources) event.currentResourceId = resources.resourceId;
   return { event, assessment, assessmentStatus: risk ? 'provisional_ready' : 'processing', resources };
 }
 
@@ -191,24 +192,33 @@ function previewResources(event: EventRecord, assessment: RiskAssessment, versio
     toilets: Math.ceil(attendance / 300),
     wasteBins: Math.ceil(attendance / 180),
   };
+  const source = {
+    sourceId: 'internal.resource-baseline.v4', title: 'STERAS internal prototype resource baseline assumptions', issuer: 'STERAS',
+    kind: 'internal_prototype' as const, locator: 'preview', version: '2026-08-19-prototype-v1', retrievedAt: now,
+    verificationStatus: 'prototype_unverified' as const,
+  };
+  const items = Object.fromEntries(RESOURCE_KEYS.map((resource) => [resource, {
+    status: 'ready' as const, resource, baseline: quantities[resource],
+    planningRange: { min: quantities[resource], max: Math.ceil(quantities[resource] * 1.25) },
+    inputReferences: [{ inputId: 'event.expectedAttendance', kind: 'event_field' as const, path: 'eventDetails.expectedAttendance', value: attendance }],
+    assumptions: [{ assumptionId: `${resource}.preview`, statement: 'Internal academic prototype; not an authority minimum.', sourceIds: [source.sourceId] }],
+    appliedRules: [{ ruleId: `${resource}.preview`, description: 'Preview-only resource rule.', inputReferenceIds: ['event.expectedAttendance'], sourceIds: [source.sourceId], contribution: quantities[resource] }],
+    sourceSnapshots: [source], authoritySource: { status: 'not_supplied' as const, reason: 'Preview has no verified authority ratio.' },
+    confidence: 'prototype' as const, reviewingAuthority: resource === 'fireOfficers' ? 'BOMBA' as const : resource === 'medicalTeams' || resource === 'ambulances' ? 'KKM' as const : 'PDRM' as const,
+    authorityReviewRequired: true,
+  }])) as ResourceRecommendation['items'];
   return {
-    resourceId: versionId,
+    resourceId: `provisional-${versionId}-${event.eventId}`,
     eventId: event.eventId,
     versionId,
     assessmentId: assessment.assessmentId,
-    ...quantities,
-    formulaVersion: '2026-07-21-prototype-v2',
-    guidelineVersion: '2026-07-21-unverified-guidance-v1',
-    guidelineStatus: 'prototype',
-    assessmentStage: assessment.status === 'official_ready' ? 'official' : 'provisional',
-    rationales: Object.fromEntries(RESOURCE_FIELDS.map(({ key }) => [key, {
-      resource: key,
-      baselineQuantity: quantities[key],
-      factors: [`${attendance.toLocaleString()} expected attendees`, `${assessmentRiskLevel(assessment) ?? 'Unassessed'} provisional risk`],
-      guidelineReferences: [`prototype.${key}.v1`],
-    }])) as ResourceRecommendation['rationales'],
-    aiConsiderations: ['Plan staggered deployment around the highest arrival period.'],
-    confidenceLevel: event.status === 'Approved' ? 'authorityValidated' : 'prototype',
+    schemaVersion: RESOURCE_SCHEMA_VERSION,
+    stage: 'provisional', revision: 1, supersedesResourceId: null,
+    assessmentReference: { stage: 'provisional', assessmentId: assessment.assessmentId, proposalId: assessment.aiProposal?.status === 'success' ? assessment.aiProposal.proposalId : `preview-${event.eventId}` },
+    resourceInputHash: 'b'.repeat(64),
+    formulaVersion: '2026-08-19-deterministic-v4', configVersion: '2026-08-19-prototype-v1', sourceRegistryVersion: '2026-08-19-v1',
+    items,
+    confidenceLevel: 'prototype', authorityReviewRequired: true,
     notes: 'Indicative academic prototype guidance; not an operational deployment authorisation.',
     computedAt: now,
   };

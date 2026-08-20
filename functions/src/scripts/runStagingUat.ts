@@ -8,6 +8,7 @@ import {
   COLLECTIONS,
   EventDetails,
   EventRecord,
+  RESOURCE_SCHEMA_VERSION,
   RiskAssessment,
   UserProfile,
 } from '@shared/types';
@@ -265,7 +266,13 @@ async function waitForAssessment(eventId: string, versionId: string): Promise<Ev
   const eventReference = db.collection(COLLECTIONS.EVENTS).doc(eventId);
   while (Date.now() < deadline) {
     const event = (await eventReference.get()).data() as EventRecord | undefined;
-    if (event?.currentAssessmentId === versionId && event.currentResourceId === versionId) return event;
+    if (event?.currentAssessmentId === versionId && event.currentResourceId) {
+      const resource = await eventReference.collection(COLLECTIONS.RESOURCES).doc(event.currentResourceId).get();
+      if (resource.exists
+        && resource.data()?.schemaVersion === RESOURCE_SCHEMA_VERSION
+        && resource.data()?.stage === 'provisional'
+        && resource.data()?.versionId === versionId) return event;
+    }
     const assessment = await eventReference.collection(COLLECTIONS.ASSESSMENTS).doc(versionId).get();
     if (assessment.data()?.status === 'failed') throw new Error(`Assessment failed: ${assessment.data()?.error ?? 'unknown error'}`);
     await new Promise((resolve) => setTimeout(resolve, 2_000));

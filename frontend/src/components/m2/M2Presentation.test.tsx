@@ -1,18 +1,14 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { ResourceRecommendation } from '@shared/types';
 import { mockAssessments } from '../../mock_data/assessments';
+import { mockResourceRecommendations } from '../../mock_data/resources';
 import AIAdvisory from './AIAdvisory';
 import CategoryProfile from './CategoryProfile';
 import ResourceRecommendationView from './ResourceRecommendation';
 import { assessmentRiskLevel } from './m2Contract';
 
 const assessment = mockAssessments.find((item) => item.status === 'provisional_ready')!;
-const recommendation = {
-  police: 12, security: 20, medicalTeams: 2, ambulances: 1, fireOfficers: 3, toilets: 8, wasteBins: 10,
-  formulaVersion: 'formula-v1', guidelineVersion: 'guideline-v1', guidelineStatus: 'prototype', confidenceLevel: 'prototype',
-  rationales: {}, aiConsiderations: ['Keep an additional ingress team on standby.'],
-} as unknown as ResourceRecommendation;
+const recommendation = mockResourceRecommendations[0];
 
 describe('M2 presentation components', () => {
   it('labels a V3 result as provisional', () => {
@@ -38,9 +34,9 @@ describe('M2 presentation components', () => {
 
   it('shows versioned prototype resource quantities and considerations', () => {
     render(<ResourceRecommendationView recommendation={recommendation} />);
-    expect(screen.getByText('Police officers')).toBeInTheDocument();
+    expect(screen.getAllByText('Police officers').length).toBeGreaterThan(0);
     expect(screen.getByText('Prototype guidance')).toBeInTheDocument();
-    expect(screen.getByText('formula-v1')).toBeInTheDocument();
-    expect(screen.getByText(/additional ingress team/)).toBeInTheDocument();
+    expect(screen.getByText('2026-08-19-deterministic-v4')).toBeInTheDocument();
+    expect(screen.getAllByText(/internal academic prototype/i).length).toBeGreaterThan(0);
   });
 });
