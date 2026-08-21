@@ -25,6 +25,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Sparkles,
+  Star,
   Upload,
   UserRound,
   UsersRound,
@@ -389,7 +390,7 @@ function PageHeader({ role, onRoleChange }: { role: Role; onRoleChange: (role: R
   );
 }
 
-function IncidentCard({ incident, selected, onSelect }: { incident: Incident; selected: boolean; onSelect: () => void }) {
+function IncidentCard({ incident, selected, onSelect, showOperationalSignals = true }: { incident: Incident; selected: boolean; onSelect: () => void; showOperationalSignals?: boolean }) {
   return (
     <button type="button" onClick={onSelect} className={'group w-full border-b border-[#e7dfd0] px-4 py-4 text-left transition-colors last:border-b-0 hover:bg-cream-50 sm:px-5 ' + (selected ? 'bg-brand-50/70' : 'bg-[#fffdf8]')}>
       <div className="flex items-start justify-between gap-3">
@@ -397,7 +398,7 @@ function IncidentCard({ incident, selected, onSelect }: { incident: Incident; se
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-bold tracking-[0.05em] text-ink-500">{incident.id}</span>
             <StatusPill status={incident.status} />
-            {incident.actionRequired && <span className="badge bg-red-50 text-risk-high-text"><Flag size={11} /> Action required</span>}
+            {showOperationalSignals && incident.actionRequired && <span className="badge bg-red-50 text-risk-high-text"><Flag size={11} /> Action required</span>}
           </div>
           <h3 className="mt-2 truncate font-display text-sm font-bold text-ink-900">{incident.title}</h3>
           <p className="mt-1 truncate text-xs text-ink-500">{incident.event} · {incident.occurredAt}</p>
@@ -405,15 +406,15 @@ function IncidentCard({ incident, selected, onSelect }: { incident: Incident; se
         <ChevronRight size={17} className={'mt-1 shrink-0 text-ink-300 transition-transform group-hover:translate-x-0.5 ' + (selected ? 'text-brand-600' : '')} aria-hidden="true" />
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-ink-500">
-        <SeverityPill severity={incident.severity} />
+        {showOperationalSignals && <SeverityPill severity={incident.severity} />}
         <span className="inline-flex items-center gap-1"><MapPin size={13} />{incident.location.split('·')[0].trim()}</span>
       </div>
-      {incident.actionRequired && <p className="mt-2 flex items-start gap-1.5 text-xs font-semibold leading-5 text-risk-high-text"><ClipboardCheck size={13} className="mt-0.5 shrink-0" />{incident.recommendedAction}</p>}
+      {showOperationalSignals && incident.actionRequired && <p className="mt-2 flex items-start gap-1.5 text-xs font-semibold leading-5 text-risk-high-text"><ClipboardCheck size={13} className="mt-0.5 shrink-0" />{incident.recommendedAction}</p>}
     </button>
   );
 }
 
-function IncidentList({ incidents, selectedId, onSelect, query, onQueryChange, filter, onFilterChange, filterOptions, heading, subheading, emptyLabel }: {
+function IncidentList({ incidents, selectedId, onSelect, query, onQueryChange, filter, onFilterChange, filterOptions, heading, subheading, emptyLabel, showOperationalSignals = true }: {
   incidents: Incident[];
   selectedId: string;
   onSelect: (incident: Incident) => void;
@@ -425,6 +426,7 @@ function IncidentList({ incidents, selectedId, onSelect, query, onQueryChange, f
   heading: string;
   subheading: string;
   emptyLabel: string;
+  showOperationalSignals?: boolean;
 }) {
   const filtered = useMemo(() => {
     const severityRank: Record<Severity, number> = { High: 0, Medium: 1, Low: 2 };
@@ -460,7 +462,7 @@ function IncidentList({ incidents, selectedId, onSelect, query, onQueryChange, f
           </div>
         </div>
       </div>
-      {filtered.length > 0 ? filtered.map((incident) => <IncidentCard key={incident.id} incident={incident} selected={incident.id === selectedId} onSelect={() => onSelect(incident)} />) : <div className="px-5 py-12 text-center text-sm text-ink-500">{emptyLabel}</div>}
+      {filtered.length > 0 ? filtered.map((incident) => <IncidentCard key={incident.id} incident={incident} selected={incident.id === selectedId} onSelect={() => onSelect(incident)} showOperationalSignals={showOperationalSignals} />) : <div className="px-5 py-12 text-center text-sm text-ink-500">{emptyLabel}</div>}
     </div>
   );
 }
@@ -574,6 +576,8 @@ function OrganizerActionPanel({ incident, onAssignInternalTeam, onRequestExterna
   const [recordPath, setRecordPath] = useState<ResponsePath>(incident.responsePath ?? 'internal');
   const [recordOwner, setRecordOwner] = useState(incident.responseTeam ?? INTERNAL_TEAMS[0]);
   const [actionNote, setActionNote] = useState('');
+  const aiRecommendedAuthority = incident.recommendedAuthorities?.[0]
+    ?? (incident.category.includes('Medical') ? 'KKM medical response' : incident.severity === 'High' ? 'PDRM Kuala Lumpur' : 'DBKL event operations');
 
   const selectRecordPath = (path: ResponsePath) => {
     setRecordPath(path);
@@ -609,8 +613,19 @@ function OrganizerActionPanel({ incident, onAssignInternalTeam, onRequestExterna
         {mode === 'external' && (
           <div className="mt-4 rounded-md border border-gold-200 bg-gold-50/60 p-4">
             <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-bold text-ink-800">Request external authority</p><p className="mt-1 text-xs text-ink-600">Select a recommended authority and describe the assistance needed.</p></div><button type="button" onClick={() => setMode(null)} className="text-ink-400 hover:text-ink-700" aria-label="Close authority directory"><X size={16} /></button></div>
+            <div className="mt-4 flex items-start gap-3 rounded-md border border-gold-300 bg-[#fffdf8] px-3 py-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-gold-100 text-gold-600"><Star size={18} fill="currentColor" /></div>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2"><p className="text-sm font-bold text-ink-800">AI-recommended authority</p><span className="badge bg-gold-100 text-gold-700"><Star size={11} fill="currentColor" /> Outstanding match</span></div>
+                <p className="mt-1 text-xs leading-5 text-ink-600">{aiRecommendedAuthority} is highlighted based on the incident category, severity and immediate-action signal.</p>
+                <button type="button" onClick={() => { setAuthority(aiRecommendedAuthority); setRecordOwner(aiRecommendedAuthority); }} className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-gold-700">Use AI recommendation <ArrowRight size={13} /></button>
+              </div>
+            </div>
             <div className="mt-4 grid gap-2 sm:grid-cols-2">
-              {AUTHORITY_DIRECTORY.map((item) => <button key={item.name} type="button" onClick={() => { setAuthority(item.name); setRecordOwner(item.name); }} className={'rounded-md border p-3 text-left ' + (authority === item.name ? 'border-gold-500 bg-[#fffdf8]' : 'border-gold-200 bg-[#fffdf8]/70 hover:bg-[#fffdf8]')}><div className="flex items-start justify-between gap-2"><span className="text-sm font-semibold text-ink-800">{item.name}</span>{authority === item.name && <CheckCircle2 size={15} className="shrink-0 text-gold-600" />}</div><p className="mt-1 text-xs leading-5 text-ink-500">{item.service}</p><p className="mt-2 text-[11px] text-ink-400">{item.area} · {item.contact}</p></button>)}
+              {AUTHORITY_DIRECTORY.map((item) => {
+                const isAiRecommended = item.name === aiRecommendedAuthority;
+                return <button key={item.name} type="button" onClick={() => { setAuthority(item.name); setRecordOwner(item.name); }} className={'rounded-md border p-3 text-left ' + (authority === item.name ? 'border-gold-500 bg-[#fffdf8]' : 'border-gold-200 bg-[#fffdf8]/70 hover:bg-[#fffdf8]')}><div className="flex items-start justify-between gap-2"><span className="text-sm font-semibold text-ink-800">{item.name}</span>{isAiRecommended ? <Star size={15} className="shrink-0 text-gold-600" fill="currentColor" /> : authority === item.name && <CheckCircle2 size={15} className="shrink-0 text-gold-600" />}</div>{isAiRecommended && <p className="mt-1 flex items-center gap-1 text-[11px] font-bold text-gold-700"><Star size={11} fill="currentColor" /> AI recommended</p>}<p className="mt-1 text-xs leading-5 text-ink-500">{item.service}</p><p className="mt-2 text-[11px] text-ink-400">{item.area} · {item.contact}</p></button>;
+              })}
             </div>
             <label className="mt-3 block"><span className="field-label">Request details</span><textarea value={assignmentNote} onChange={(event) => setAssignmentNote(event.target.value)} className="input min-h-20 resize-y" placeholder="Example: inspect crowd-control route and advise on immediate access management." /></label>
             <button type="button" onClick={() => { onRequestExternalAuthority(authority, assignmentNote); setAssignmentNote(''); }} className="btn-primary mt-3 !min-h-9 !px-3 text-xs"><LifeBuoy size={14} /> Request external authority</button>
@@ -664,7 +679,7 @@ function ReporterProgress({ incident }: { incident: Incident }) {
       <div className="card-body">
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="rounded-md bg-cream-50 p-3"><span className="text-xs text-ink-500">Current status</span><div className="mt-1"><StatusPill status={incident.status} /></div></div>
-          <div className="rounded-md bg-cream-50 p-3"><span className="text-xs text-ink-500">AI severity</span><div className="mt-1"><SeverityPill severity={incident.severity} /></div></div>
+          <div className="rounded-md bg-cream-50 p-3"><span className="text-xs text-ink-500">Submitted</span><p className="mt-1 text-sm font-semibold text-ink-800">{incident.submittedAt}</p></div>
           <div className="rounded-md bg-cream-50 p-3"><span className="text-xs text-ink-500">Assigned response</span><p className="mt-1 truncate text-sm font-semibold text-ink-800">{incident.authority ?? incident.responseTeam ?? 'Pending organizer action'}</p></div>
         </div>
         <div className="mt-4 rounded-md border border-brand-200 bg-brand-50 px-3 py-3 text-xs leading-5 text-brand-800"><strong>Participant access:</strong> You can track progress and resolution. Organizer and authority actions are recorded by permitted staff.</div>
@@ -688,11 +703,11 @@ function IncidentDetail({ incident, role, onAssignInternalTeam, onRequestExterna
         <div className="border-b border-[#e3dacb] bg-[#fffdf8] px-5 py-5 sm:px-6">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <div className="flex flex-wrap items-center gap-2"><span className="text-xs font-bold tracking-[0.06em] text-ink-500">{incident.id}</span><StatusPill status={incident.status} />{incident.actionRequired && <span className="badge bg-red-50 text-risk-high-text"><Flag size={11} /> Action required</span>}</div>
+              <div className="flex flex-wrap items-center gap-2"><span className="text-xs font-bold tracking-[0.06em] text-ink-500">{incident.id}</span><StatusPill status={incident.status} />{role !== 'reporter' && incident.actionRequired && <span className="badge bg-red-50 text-risk-high-text"><Flag size={11} /> Action required</span>}</div>
               <h2 className="mt-3 font-display text-xl font-bold leading-tight text-ink-900">{incident.title}</h2>
               <p className="mt-2 text-sm text-ink-500">{incident.event} · {incident.eventType}</p>
             </div>
-            <SeverityPill severity={incident.severity} />
+            {role !== 'reporter' && <SeverityPill severity={incident.severity} />}
           </div>
           <div className="mt-5 grid gap-3 border-t border-[#eee8dc] pt-4 sm:grid-cols-2">
             <div className="flex items-start gap-2 text-xs text-ink-600"><MapPin size={15} className="mt-0.5 shrink-0 text-brand-600" /><span><strong className="block text-ink-800">Location</strong>{incident.location}</span></div>
@@ -702,18 +717,18 @@ function IncidentDetail({ incident, role, onAssignInternalTeam, onRequestExterna
       </section>
 
       <ReportContent incident={incident} />
-      <AiAssessment incident={incident} />
+      {role !== 'reporter' && <AiAssessment incident={incident} />}
 
       {role === 'reporter' && <ReporterProgress incident={incident} />}
       {role === 'organizer' && onAssignInternalTeam && onRequestExternalAuthority && onRecordAction && onResolve && <OrganizerActionPanel key={incident.id} incident={incident} onAssignInternalTeam={onAssignInternalTeam} onRequestExternalAuthority={onRequestExternalAuthority} onRecordAction={onRecordAction} onResolve={onResolve} />}
       {role === 'authority' && onRecordInvestigation && onResolve && <AuthorityActionPanel key={incident.id} incident={incident} onRecordInvestigation={onRecordInvestigation} onResolve={onResolve} />}
 
-      <IncidentActionList actions={incident.actions} />
+      {role !== 'reporter' && <IncidentActionList actions={incident.actions} />}
 
-      <section className="card">
+      {role !== 'reporter' && <section className="card">
         <div className="card-header"><div><p className="section-title">Incident history</p><p className="mt-1 text-xs text-ink-500">Auditable status and responsibility timeline.</p></div><History size={19} className="text-brand-600" /></div>
         <div className="card-body"><HistoryTimeline entries={incident.history} /></div>
-      </section>
+      </section>}
     </div>
   );
 }
@@ -788,7 +803,7 @@ function ReporterView({ incidents, selectedId, setSelectedId, onSubmit, notice, 
             <div className="card-body">
               <ul className="space-y-4 text-xs leading-5 text-ink-600">
                 <li className="flex gap-3"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[11px] font-bold text-brand-700">1</span><span>Participant submits the event, category, time, location, description and evidence.</span></li>
-                <li className="flex gap-3"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[11px] font-bold text-brand-700">2</span><span>AI produces an advisory severity and immediate-action assessment.</span></li>
+                <li className="flex gap-3"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[11px] font-bold text-brand-700">2</span><span>The system validates the report and routes it to organizer review.</span></li>
                 <li className="flex gap-3"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[11px] font-bold text-brand-700">3</span><span>Organizer assigns an internal team or requests external authority assistance.</span></li>
                 <li className="flex gap-3"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[11px] font-bold text-brand-700">4</span><span>Participant tracks the response and final resolution from My submitted reports.</span></li>
               </ul>
@@ -798,7 +813,7 @@ function ReporterView({ incidents, selectedId, setSelectedId, onSubmit, notice, 
         </div>
       ) : (
         <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(320px,.82fr)_minmax(0,1.18fr)]">
-          <IncidentList incidents={ownReports} selectedId={selected?.id ?? ''} onSelect={(incident) => setSelectedId(incident.id)} query={query} onQueryChange={setQuery} filter={filter} onFilterChange={setFilter} filterOptions={[{ value: 'all', label: 'All reports' }, { value: 'Action required', label: 'Action required' }, { value: 'Investigating', label: 'Investigating' }, { value: 'Resolved', label: 'Resolved' }, { value: 'High', label: 'High severity' }]} heading="My submitted reports" subheading={String(ownReports.length) + ' participant reports'} emptyLabel="You have not submitted any reports matching this filter." />
+          <IncidentList incidents={ownReports} selectedId={selected?.id ?? ''} onSelect={(incident) => setSelectedId(incident.id)} query={query} onQueryChange={setQuery} filter={filter} onFilterChange={setFilter} filterOptions={[{ value: 'all', label: 'All reports' }, { value: 'Action required', label: 'Action required' }, { value: 'Investigating', label: 'Investigating' }, { value: 'Resolved', label: 'Resolved' }]} heading="My submitted reports" subheading={String(ownReports.length) + ' participant reports'} emptyLabel="You have not submitted any reports matching this filter." showOperationalSignals={false} />
           {selected ? <IncidentDetail incident={selected} role="reporter" /> : <div className="card flex min-h-64 items-center justify-center p-8 text-center text-sm text-ink-500">Submit a report to see its progress here.</div>}
         </div>
       )}
