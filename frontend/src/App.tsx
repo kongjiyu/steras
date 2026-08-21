@@ -29,6 +29,7 @@ import Analytics from './pages/authority/Analytics';
 import RiskAssessments from './pages/authority/RiskAssessments';
 import ResourceRecommendations from './pages/authority/ResourceRecommendations';
 import DashboardPreview from './pages/DashboardPreview';
+import IncidentReportingPrototype from './pages/IncidentReportingPrototype';
 
 // Admin pages
 import AdminDashboard from './pages/admin/AdminDashboard';
@@ -51,6 +52,9 @@ export default function App() {
 
       {/* No-auth preview of the Authority Dashboard — for design review */}
       <Route path="/dashboard-preview" element={<DashboardPreview />} />
+
+      {/* No-auth preview of the M4 incident reporting workflow */}
+      <Route path="/incident-preview" element={<IncidentReportingPrototype />} />
 
       {/* Organizer routes (auth + role=organizer) */}
       <Route
