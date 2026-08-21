@@ -146,6 +146,8 @@ export const ASSESSMENT_SCHEMA_VERSION = '2026-08-18-prd-v5';
 export const SCORE_REVIEW_SCHEMA_VERSION = '2026-08-20-authority-review-v1';
 export const SCORE_RESOLUTION_SCHEMA_VERSION = '2026-08-20-score-resolution-v1';
 export const OFFICIAL_FORMULA_VERSION = '2026-08-20-authority-official-v1';
+export const MANUAL_ASSESSMENT_SCHEMA_VERSION = '2026-08-21-admin-manual-v1';
+export const MANUAL_OFFICIAL_FORMULA_VERSION = '2026-08-21-admin-manual-official-v1';
 export type AssessmentStatus =
   | 'processing'
   | 'manual_review_required'
@@ -468,6 +470,7 @@ export interface OfficialCategoryResult extends ValidatedCategoryResult {
 }
 
 export interface OfficialAssessmentResult extends Omit<ProvisionalAssessmentResult, 'categories'> {
+  sourceKind?: 'ai_authority';
   categories: OfficialCategoryResult[];
   reviewIds: string[];
   resolutionId?: string;
@@ -476,6 +479,81 @@ export interface OfficialAssessmentResult extends Omit<ProvisionalAssessmentResu
   finalizedAt: number;
   finalizedBy: string;
 }
+
+export interface AdminManualHazard {
+  hazardId: string;
+  hazardName: string;
+  categoryId: HazardDomain;
+  evidenceReferences: EvidenceKey[];
+  rationale: string;
+}
+
+export interface AdminManualCategoryInput {
+  categoryId: HazardDomain;
+  likelihood: ScoreRating;
+  severity: ScoreRating;
+  evidenceReferences: EvidenceKey[];
+  rationale: string;
+  missingInformation: string;
+}
+
+export interface AdminManualAssessment {
+  manualAssessmentId: string;
+  schemaVersion: typeof MANUAL_ASSESSMENT_SCHEMA_VERSION;
+  eventId: string;
+  versionId: string;
+  assessmentId: string;
+  assessmentInputHash: string;
+  eventVersionInputHash: string;
+  categorySchemaVersion: string;
+  hardRuleVersion: string;
+  officialFormulaVersion: typeof MANUAL_OFFICIAL_FORMULA_VERSION;
+  hazards: AdminManualHazard[];
+  categories: AdminManualCategoryInput[];
+  rationale: string;
+  submittedBy: string;
+  idempotencyKey: string;
+  createdAt: number;
+}
+
+export interface ManualOfficialCategoryResult {
+  categoryId: HazardDomain;
+  categoryName: string;
+  manualLikelihood: ScoreRating;
+  manualSeverity: ScoreRating;
+  validatedLikelihood: ScoreRating;
+  validatedSeverity: ScoreRating;
+  matrixScore: number;
+  normalizedScore: number;
+  riskLevel: RiskLevel;
+  weight: number;
+  weightedContribution: number;
+  evidenceReferences: EvidenceKey[];
+  rationale: string;
+  missingInformation: string;
+  appliedHardRules: AppliedHardRule[];
+  guidelineChecks: string[];
+}
+
+export interface ManualOfficialAssessmentResult {
+  sourceKind: 'admin_manual';
+  manualAssessmentId: string;
+  manualHazards: AdminManualHazard[];
+  categories: ManualOfficialCategoryResult[];
+  overallScore: number;
+  weightedRiskLevel: RiskLevel;
+  highestCategoryRiskLevel: RiskLevel;
+  overallRiskLevel: RiskLevel;
+  formulaVersion: typeof MANUAL_OFFICIAL_FORMULA_VERSION;
+  categorySchemaVersion: string;
+  hardRuleVersion: string;
+  officialInputHash: string;
+  calculatedAt: number;
+  finalizedAt: number;
+  finalizedBy: string;
+}
+
+export type CalculatedAssessmentResult = ProvisionalAssessmentResult | OfficialAssessmentResult | ManualOfficialAssessmentResult;
 
 interface AuthorityCategoryScoreReviewBase {
   categoryId: string;
@@ -577,6 +655,7 @@ export interface ManualReviewRiskAssessment extends AssessmentBase {
   warnings: ValidationWarning[];
   authorityReviewRequired: true;
   manualReviewReason: string;
+  activeManualAssessmentId?: string;
 }
 
 export interface OfficialRiskAssessment extends AssessmentBase {
@@ -589,7 +668,18 @@ export interface OfficialRiskAssessment extends AssessmentBase {
   authorityReviewState: AuthorityReviewState;
 }
 
-export type RiskAssessment = ProvisionalRiskAssessment | ManualReviewRiskAssessment | OfficialRiskAssessment;
+export interface AdminManualOfficialRiskAssessment extends AssessmentBase {
+  status: 'official_ready';
+  sourceKind: 'admin_manual';
+  aiProposal: AIFailedProposal | null;
+  warnings: ValidationWarning[];
+  authorityReviewRequired: false;
+  manualReviewReason: string;
+  activeManualAssessmentId: string;
+  officialResult: ManualOfficialAssessmentResult;
+}
+
+export type RiskAssessment = ProvisionalRiskAssessment | ManualReviewRiskAssessment | OfficialRiskAssessment | AdminManualOfficialRiskAssessment;
 
 export interface AssessmentJob {
   assessmentId: string;
@@ -742,6 +832,15 @@ export type ResourceAssessmentReference =
       stage: 'official';
       assessmentId: string;
       proposalId: string;
+      sourceKind?: 'ai_authority';
+      finalizedAt: number;
+      finalizedBy: string;
+    }
+  | {
+      stage: 'official';
+      assessmentId: string;
+      sourceKind: 'admin_manual';
+      manualAssessmentId: string;
       finalizedAt: number;
       finalizedBy: string;
     };
@@ -811,6 +910,10 @@ export type AuditAction =
   | 'score_conflict_resolved'
   | 'official_assessment_finalized'
   | 'official_finalization_failed'
+  | 'manual_assessment_submitted'
+  | 'manual_official_assessment_finalized'
+  | 'manual_official_finalization_failed'
+  | 'manual_official_finalization_retried'
   | 'decision_made'
   | 'public_published';
 
@@ -939,6 +1042,7 @@ export const COLLECTIONS = {
   ASSESSMENT_SUMMARIES: 'assessment_summaries',
   SCORE_REVIEWS: 'score_reviews',
   SCORE_RESOLUTIONS: 'score_resolutions',
+  MANUAL_ASSESSMENTS: 'manual_assessments',
   RESOURCES: 'resources',
   DECISIONS: 'decisions',
   DECISION_HISTORY: 'decision_history',

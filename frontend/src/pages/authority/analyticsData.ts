@@ -59,10 +59,12 @@ export function analyticsSummary(records: AnalyticsRecord[]) {
   const assessed = records.filter((record) => record.assessment);
   const approved = records.filter((record) => record.status === 'Approved');
   const fallbackCount = assessed.filter((record) => record.assessment?.aiProposal?.status !== 'success').length;
-  const comparable = assessed.filter((record) => record.assessment && assessmentResult(record.assessment));
+  const comparable = assessed.filter((record) => record.assessment && assessmentResult(record.assessment)
+    && !(record.assessment.status === 'official_ready' && 'sourceKind' in record.assessment && record.assessment.sourceKind === 'admin_manual'));
   const agreements = comparable.filter((record) => {
     const result = record.assessment ? assessmentResult(record.assessment) : undefined;
-    return result?.categories.every((category) => category.proposedLikelihood === category.validatedLikelihood && category.proposedSeverity === category.validatedSeverity);
+    return result?.categories.every((category) => !('manualLikelihood' in category)
+      && category.proposedLikelihood === category.validatedLikelihood && category.proposedSeverity === category.validatedSeverity);
   });
   const turnaround = approved
     .filter((record) => record.submittedAt && record.updatedAt >= record.submittedAt)

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { latestValidHistoricalResource, nextResourceRevision, resourceDocumentId } from './onEventCreated';
-import { RESOURCE_KEYS, RESOURCE_SCHEMA_VERSION, ResourceRecommendation } from '@shared/types';
+import { latestValidHistoricalResource, nextResourceRevision, resourceDocumentId, invalidAiProposalForManualRecovery, __testOnlyManualLockState } from './onEventCreated';
+import { isManualAssessmentSourceEligible } from '../engines/manualFinalisation';
+import { AISuccessfulProposal, RESOURCE_KEYS, RESOURCE_SCHEMA_VERSION, ResourceRecommendation } from '@shared/types';
 
 describe('resource pipeline identity and revision helpers', () => {
   it('uses stage, version and the complete input hash in deterministic IDs', () => {
@@ -24,6 +25,47 @@ describe('resource pipeline identity and revision helpers', () => {
     const latest = recommendation('latest', 2, 20);
     expect(latestValidHistoricalResource([older, { ...latest, schemaVersion: 'legacy' }, latest])?.resourceId).toBe(latest.resourceId);
     expect(latestValidHistoricalResource(undefined)).toBeUndefined();
+  });
+});
+
+describe('AI validation failure recovery', () => {
+  it('downgrades a validated-but-unusable success without retaining scores', () => {
+    const proposal: AISuccessfulProposal = {
+      status: 'success',
+      proposalId: 'proposal-1',
+      model: 'MiniMax-test',
+      promptVersion: 'prompt-v1',
+      responseSchemaVersion: 'response-v1',
+      hazards: [],
+      categories: [],
+      cacheStatus: 'miss',
+      generatedAt: 123,
+    };
+    const failed = invalidAiProposalForManualRecovery(proposal, 'category crowd has no eligible evidence');
+
+    expect(failed).toEqual(expect.objectContaining({
+      status: 'invalid',
+      model: 'MiniMax-test',
+      promptVersion: 'prompt-v1',
+      responseSchemaVersion: 'response-v1',
+      retryable: true,
+      cacheStatus: 'not-applicable',
+      generatedAt: 123,
+    }));
+    expect(failed.errorSummary).toContain('no eligible evidence');
+    expect('categories' in failed).toBe(false);
+    expect('hazards' in failed).toBe(false);
+    expect(isManualAssessmentSourceEligible({ aiProposal: failed, assessmentReadiness: 'complete' })).toBe(true);
+  });
+});
+
+describe('manual assessment lock guard', () => {
+  it('distinguishes absent, valid, and malformed lock fields', () => {
+    expect(__testOnlyManualLockState({ status: 'manual_review_required' })).toBe('absent');
+    expect(__testOnlyManualLockState({ activeManualAssessmentId: 'manual-1' })).toBe('valid');
+    expect(__testOnlyManualLockState({ activeManualAssessmentId: null })).toBe('invalid');
+    expect(__testOnlyManualLockState({ activeManualAssessmentId: 42 })).toBe('invalid');
+    expect(__testOnlyManualLockState({ activeManualAssessmentId: 'manual/child' })).toBe('invalid');
   });
 });
 

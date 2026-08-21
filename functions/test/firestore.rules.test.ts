@@ -17,6 +17,11 @@ import {
   retryOfficialFinalisationForAdmin,
 } from '../src/http/authorityScoreReview';
 import { overrideResourcesForUser } from '../src/http/overrideResources';
+import {
+  __testOnly as manualAssessmentTestOnly,
+  retryManualOfficialFinalisationForAdmin,
+  submitAdminManualAssessmentForUser,
+} from '../src/http/adminManualAssessment';
 import { fetchHistoricalContext, fetchVenueContext } from '../src/engines/ruleBased';
 import {
   ASSESSMENT_SCHEMA_VERSION, HARD_RULE_VERSION, PROVISIONAL_FORMULA_VERSION,
@@ -251,6 +256,33 @@ describe('Firestore security rules', () => {
       status: 'failed', categories: [], authorityReviewRequired: true,
     });
     expect((await adminDb.collection('events/missing-version/resources').get()).empty).toBe(true);
+
+    await Promise.all([
+      adminDb.doc('events/invalid-version').set({
+        organizerId: 'organizer-1', status: 'Pending', currentVersionId: 'v1', currentVersionNumber: 1,
+        requiredAuthorities: ['PDRM'], draftDocumentPaths: [], createdAt: 1, updatedAt: 1,
+      }),
+      adminDb.doc('events/invalid-version/versions/v1').set({
+        eventId: 'different-event', versionId: 'v1', versionNumber: 1,
+        eventDetails: validDetails, documentPaths: [], submittedBy: 'organizer-1', submittedAt: 1,
+        inputHash: 'a'.repeat(64),
+      }),
+    ]);
+    expect(await runRiskAndResourcePipeline('invalid-version', 1_100)).toMatchObject({
+      status: 'processed', reason: 'invalid-version-contract', versionId: 'v1',
+    });
+    expect((await adminDb.doc('events/invalid-version/assessments/v1').get()).data()).toMatchObject({
+      status: 'failed', error: 'Immutable event version v1 failed runtime contract validation.',
+    });
+    expect((await adminDb.collection('events/invalid-version/resources').get()).empty).toBe(true);
+
+    await adminDb.doc('events/invalid-pointer').set({
+      organizerId: 'organizer-1', status: 'Pending', currentVersionId: 'nested/version', currentVersionNumber: 1,
+      requiredAuthorities: ['PDRM'], draftDocumentPaths: [], createdAt: 1, updatedAt: 1,
+    });
+    expect(await runRiskAndResourcePipeline('invalid-pointer', 1_200)).toMatchObject({
+      status: 'skipped', reason: 'invalid-current-version',
+    });
   });
 
   it('UC-M2-07 rejects ambiguous venue names and excludes incidents that are not verified and eligible', async () => {
@@ -329,6 +361,233 @@ describe('Firestore security rules', () => {
     await assertSucceeds(getDoc(doc(environment.authenticatedContext('bomba-1').firestore(), 'events/event-1/assessments/v1/score_reviews/review-2')));
     await assertFails(getDoc(doc(environment.authenticatedContext('organizer-1').firestore(), 'events/event-1/assessments/v1/score_reviews/review-1')));
     await assertFails(setDoc(doc(environment.authenticatedContext('authority-1').firestore(), 'events/event-1/assessments/v1/score_reviews/review-2'), { reviewerId: 'authority-1' }));
+  });
+
+  it('keeps manual assessments server-only and readable only by Admin or assigned authorities', async () => {
+    await seedManualReviewEvent();
+    const adminDb = getFirestore(adminApp);
+    await adminDb.doc('events/manual-1/assessments/v1/manual_assessments/manual-1').set({ manualAssessmentId: 'manual-1' });
+    const path = 'events/manual-1/assessments/v1/manual_assessments/manual-1';
+    await assertSucceeds(getDoc(doc(environment.authenticatedContext('admin-1').firestore(), path)));
+    await assertSucceeds(getDoc(doc(environment.authenticatedContext('pdrm-1').firestore(), path)));
+    await assertFails(getDoc(doc(environment.authenticatedContext('organizer-1').firestore(), path)));
+    await assertFails(setDoc(doc(environment.authenticatedContext('admin-1').firestore(), `${path}-other`), { manualAssessmentId: 'other' }));
+  });
+
+  it('persists one append-only Admin manual assessment and atomically publishes proposal-free official output', async () => {
+    await seedManualReviewEvent();
+    const result = await submitAdminManualAssessmentForUser('admin-1', manualRequest(), 100);
+    expect(result).toMatchObject({ status: 'official_ready', idempotent: false });
+    const adminDb = getFirestore(adminApp);
+    const event = (await adminDb.doc('events/manual-1').get()).data();
+    const assessment = (await adminDb.doc('events/manual-1/assessments/v1').get()).data();
+    const manuals = await adminDb.collection('events/manual-1/assessments/v1/manual_assessments').get();
+    const resources = await adminDb.collection('events/manual-1/resources').get();
+    expect(manuals.size).toBe(1);
+    expect(assessment).toMatchObject({ status: 'official_ready', sourceKind: 'admin_manual', authorityReviewRequired: false });
+    expect(assessment?.officialResult).not.toHaveProperty('proposalId');
+    expect(resources.size).toBe(1);
+    expect(resources.docs[0].data()).toMatchObject({ stage: 'official', resourceId: event?.currentResourceId, assessmentReference: { sourceKind: 'admin_manual', manualAssessmentId: assessment?.activeManualAssessmentId } });
+    const summary = (await adminDb.doc('events/manual-1/assessment_summaries/v1').get()).data();
+    expect(summary).not.toHaveProperty('manualReviewReason');
+    expect(summary).not.toHaveProperty('activeManualAssessmentId');
+    await expect(recomputeResourceForStoredAssessment('manual-1', 105)).resolves.toMatchObject({ status: 'reused', resourceId: event?.currentResourceId });
+    expect((await adminDb.doc('events/manual-1/assessments/v1').get()).data()).toEqual(assessment);
+    // A prior provisional revision may remain beside the official record. An
+    // exact manual-submit replay must still be idempotent and inspect only the
+    // official revision chain.
+    const official = resources.docs[0].data();
+    await adminDb.doc(`events/manual-1/resources/provisional-v1-${official.resourceInputHash}`).set({
+      ...official,
+      resourceId: `provisional-v1-${official.resourceInputHash}`,
+      stage: 'provisional',
+      revision: 1,
+      supersedesResourceId: null,
+      assessmentReference: { stage: 'provisional', assessmentId: official.assessmentId, proposalId: 'manual-prototype' },
+      confidenceLevel: 'prototype',
+      authorityReviewRequired: true,
+      items: Object.fromEntries(RESOURCE_KEYS.map((key) => [key, {
+        ...official.items[key], confidence: 'prototype', authorityReviewRequired: true,
+      }])),
+    });
+    await expect(submitAdminManualAssessmentForUser('admin-1', manualRequest(), 106))
+      .resolves.toMatchObject({ status: 'official_ready', idempotent: true });
+    const decision = await makeAuthorityDecisionForUser('pdrm-1', { eventId: 'manual-1', decision: 'Approved', rationale: 'The manual official assessment and resources were reviewed.', materialsReviewed: true }, 110);
+    expect(decision.decision).toBe('Approved');
+  });
+
+  it('makes duplicate manual submission idempotent and rejects a second record or key collision', async () => {
+    await seedManualReviewEvent();
+    const [first, second] = await Promise.all([
+      submitAdminManualAssessmentForUser('admin-1', manualRequest(), 120),
+      submitAdminManualAssessmentForUser('admin-1', manualRequest(), 120),
+    ]);
+    expect(first.status).toBe('official_ready');
+    expect(second.status).toBe('official_ready');
+    const adminDb = getFirestore(adminApp);
+    expect((await adminDb.collection('events/manual-1/assessments/v1/manual_assessments').get()).size).toBe(1);
+    expect((await adminDb.collection('events/manual-1/resources').get()).size).toBe(1);
+    await expect(submitAdminManualAssessmentForUser('admin-1', {
+      ...manualRequest(), rationale: 'Different content deliberately reuses the same idempotency key and must conflict.',
+    }, 121)).rejects.toMatchObject({ code: 'already-exists' });
+    await expect(submitAdminManualAssessmentForUser('admin-1', { ...manualRequest(), idempotencyKey: 'manual-key-0002' }, 121))
+      .rejects.toMatchObject({ code: 'failed-precondition' });
+  });
+
+  it('fails closed when an orphan manual record exists without an active pointer', async () => {
+    await seedManualReviewEvent();
+    const adminDb = getFirestore(adminApp);
+    await adminDb.doc('events/manual-1/assessments/v1/manual_assessments/orphan-manual').set({
+      manualAssessmentId: 'orphan-manual',
+    });
+    await expect(submitAdminManualAssessmentForUser('admin-1', manualRequest(), 122))
+      .rejects.toMatchObject({ code: 'failed-precondition' });
+    const manuals = await adminDb.collection('events/manual-1/assessments/v1/manual_assessments').get();
+    expect(manuals.docs.map((snapshot) => snapshot.id)).toEqual(['orphan-manual']);
+    expect((await adminDb.doc('events/manual-1/assessments/v1').get()).data()?.activeManualAssessmentId).toBeUndefined();
+  });
+
+  it('does not recreate a locked manual record that has gone missing', async () => {
+    await seedManualReviewEvent();
+    const adminDb = getFirestore(adminApp);
+    const manualId = manualAssessmentTestOnly.manualId('v1', 'admin-1', manualRequest().idempotencyKey);
+    await adminDb.doc('events/manual-1/assessments/v1').update({ activeManualAssessmentId: manualId });
+    await expect(submitAdminManualAssessmentForUser('admin-1', manualRequest(), 123))
+      .rejects.toMatchObject({ code: 'failed-precondition' });
+    expect((await adminDb.collection('events/manual-1/assessments/v1/manual_assessments').get()).size).toBe(0);
+  });
+
+  it('retains the manual record when resource finalisation fails and allows a fenced Admin retry', async () => {
+    await seedManualReviewEvent();
+    const adminDb = getFirestore(adminApp);
+    await adminDb.doc('events/manual-1/resources/corrupt-official').set({ versionId: 'v1', stage: 'official' });
+    await expect(submitAdminManualAssessmentForUser('admin-1', manualRequest(), 130)).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect((await adminDb.collection('events/manual-1/assessments/v1/manual_assessments').get()).size).toBe(1);
+    expect((await adminDb.doc('events/manual-1/assessments/v1').get()).data()).toMatchObject({ status: 'manual_review_required' });
+    const failedResources = await adminDb.collection('events/manual-1/resources').get();
+    expect(failedResources.size).toBe(1);
+    expect(failedResources.docs[0].id).toBe('corrupt-official');
+    expect((await adminDb.doc('events/manual-1').get()).data()?.currentResourceId).toBeUndefined();
+    expect((await adminDb.collection('events/manual-1/audit_logs').get()).docs.some((item) => item.data().action === 'manual_official_finalization_failed')).toBe(true);
+    await adminDb.doc('events/manual-1/resources/corrupt-official').delete();
+    const manualSnapshot = await adminDb.collection('events/manual-1/assessments/v1/manual_assessments').limit(1).get();
+    const manualRef = manualSnapshot.docs[0].ref;
+    const manualId = manualSnapshot.docs[0].id;
+    await manualRef.update({ manualAssessmentId: 'embedded-id-does-not-match-document' });
+    await expect(retryManualOfficialFinalisationForAdmin('admin-1', 'manual-1', 131)).rejects.toMatchObject({ code: 'failed-precondition' });
+    await manualRef.update({ manualAssessmentId: manualId });
+    await retryManualOfficialFinalisationForAdmin('admin-1', 'manual-1', 131);
+    expect((await adminDb.collection('events/manual-1/resources').get()).size).toBe(1);
+    const audits = await adminDb.collection('events/manual-1/audit_logs').get();
+    expect(audits.docs.some((item) => item.data().action === 'manual_official_finalization_retried')).toBe(true);
+  });
+
+  it('rejects unauthorized, stale, non-manual, and cutover-locked manual submissions', async () => {
+    await seedManualReviewEvent();
+    await expect(submitAdminManualAssessmentForUser('organizer-1', manualRequest(), 140)).rejects.toMatchObject({ code: 'permission-denied' });
+    const adminDb = getFirestore(adminApp);
+    await adminDb.doc(RESOURCE_CUTOVER_LOCK_PATH).set({ active: false });
+    await expect(submitAdminManualAssessmentForUser('admin-1', manualRequest(), 140)).rejects.toMatchObject({ code: 'unavailable' });
+    await adminDb.doc(RESOURCE_CUTOVER_LOCK_PATH).delete();
+    await adminDb.doc('events/manual-1').update({ currentAssessmentId: 'stale' });
+    await expect(submitAdminManualAssessmentForUser('admin-1', manualRequest(), 140)).rejects.toMatchObject({ code: 'failed-precondition' });
+  });
+
+  it('fails closed when the active manual-assessment lock is malformed', async () => {
+    await seedManualReviewEvent();
+    const adminDb = getFirestore(adminApp);
+    const assessmentRef = adminDb.doc('events/manual-1/assessments/v1');
+    for (const malformedLock of [null, 42, '', [], 'manual/child']) {
+      await assessmentRef.update({ activeManualAssessmentId: malformedLock });
+      await expect(submitAdminManualAssessmentForUser('admin-1', manualRequest(), 141))
+        .rejects.toMatchObject({ code: 'failed-precondition' });
+      expect((await adminDb.collection('events/manual-1/assessments/v1/manual_assessments').get()).size).toBe(0);
+      await assessmentRef.update({ activeManualAssessmentId: FieldValue.delete() });
+    }
+  });
+
+  it('rejects malformed manual input without persisting a partial record', async () => {
+    await seedManualReviewEvent();
+    await expect(submitAdminManualAssessmentForUser('admin-1', { ...manualRequest(), categories: manualRequest().categories.slice(0, 7) }, 145))
+      .rejects.toMatchObject({ code: 'invalid-argument' });
+    expect((await getFirestore(adminApp).collection('events/manual-1/assessments/v1/manual_assessments').get()).size).toBe(0);
+  });
+
+  it('rejects an AI-success document even when its readiness is mislabeled insufficient', async () => {
+    await seedManualReviewEvent();
+    const adminDb = getFirestore(adminApp);
+    await adminDb.doc('events/manual-1/assessments/v1').update({
+      assessmentReadiness: 'insufficient_data',
+      aiProposal: { status: 'success', proposalId: 'unexpected-success' },
+    });
+    await expect(submitAdminManualAssessmentForUser('admin-1', manualRequest(), 146))
+      .rejects.toMatchObject({ code: 'failed-precondition' });
+    expect((await adminDb.collection('events/manual-1/assessments/v1/manual_assessments').get()).size).toBe(0);
+    await adminDb.doc('events/manual-1/assessments/v1').update({
+      assessmentReadiness: 'provisional', aiProposal: { status: 'timeout' },
+    });
+    await expect(submitAdminManualAssessmentForUser('admin-1', manualRequest(), 147))
+      .rejects.toMatchObject({ code: 'failed-precondition' });
+    expect((await adminDb.collection('events/manual-1/assessments/v1/manual_assessments').get()).size).toBe(0);
+  });
+
+  it('rejects tampered manual provenance in decision and resource-only recompute', async () => {
+    await seedManualReviewEvent();
+    await submitAdminManualAssessmentForUser('admin-1', manualRequest(), 150);
+    const adminDb = getFirestore(adminApp);
+    const assessment = (await adminDb.doc('events/manual-1/assessments/v1').get()).data()!;
+    await adminDb.doc(`events/manual-1/assessments/v1/manual_assessments/${assessment.activeManualAssessmentId}`).update({
+      rationale: 'Tampered rationale is not the signed manual input.',
+      eventVersionInputHash: 'tampered-version-hash',
+    });
+    await expect(makeAuthorityDecisionForUser('pdrm-1', { eventId: 'manual-1', decision: 'Approved', rationale: 'All official materials were reviewed and accepted.', materialsReviewed: true }, 151))
+      .rejects.toMatchObject({ code: 'failed-precondition' });
+    await expect(recomputeResourceForStoredAssessment('manual-1', 151)).resolves.toMatchObject({ status: 'failed', reason: 'official-provenance-invalid' });
+  });
+
+  it('rejects a manual official resource that points to a different manual record', async () => {
+    await seedManualReviewEvent();
+    await submitAdminManualAssessmentForUser('admin-1', manualRequest(), 155);
+    const adminDb = getFirestore(adminApp);
+    const event = (await adminDb.doc('events/manual-1').get()).data()!;
+    await adminDb.doc(`events/manual-1/resources/${event.currentResourceId}`).update({
+      'assessmentReference.manualAssessmentId': 'different-manual-record',
+    });
+    await expect(makeAuthorityDecisionForUser('pdrm-1', { eventId: 'manual-1', decision: 'Approved', rationale: 'All official materials were reviewed and accepted.', materialsReviewed: true }, 156))
+      .rejects.toMatchObject({ code: 'failed-precondition' });
+    const resource = (await adminDb.doc(`events/manual-1/resources/${event.currentResourceId}`).get()).data()!;
+    const assessment = (await adminDb.doc('events/manual-1/assessments/v1').get()).data()!;
+    await adminDb.doc(`events/manual-1/resources/${event.currentResourceId}`).update({
+      assessmentReference: { ...resource.assessmentReference, manualAssessmentId: assessment.activeManualAssessmentId, finalizedBy: 'tampered-admin' },
+    });
+    await expect(recomputeResourceForStoredAssessment('manual-1', 156)).resolves.toMatchObject({ status: 'failed' });
+  });
+
+  it('rejects a tampered manual official hash and hard-rule result', async () => {
+    await seedManualReviewEvent();
+    await submitAdminManualAssessmentForUser('admin-1', manualRequest(), 157);
+    const adminDb = getFirestore(adminApp);
+    const assessmentRef = adminDb.doc('events/manual-1/assessments/v1');
+    const assessment = (await assessmentRef.get()).data()!;
+    await assessmentRef.update({ 'officialResult.officialInputHash': 'f'.repeat(64) });
+    await expect(makeAuthorityDecisionForUser('pdrm-1', { eventId: 'manual-1', decision: 'Approved', rationale: 'All official materials were reviewed and accepted.', materialsReviewed: true }, 158))
+      .rejects.toMatchObject({ code: 'failed-precondition' });
+    const categories = assessment.officialResult.categories.map((category: Record<string, unknown>, index: number) => index === 0
+      ? { ...category, validatedLikelihood: category.validatedLikelihood === 5 ? 1 : 5 }
+      : category);
+    await assessmentRef.update({ officialResult: { ...assessment.officialResult, categories } });
+    await expect(recomputeResourceForStoredAssessment('manual-1', 159)).resolves.toMatchObject({ status: 'failed' });
+  });
+
+  it('keeps blocked manual official assessments rejectable but not approvable', async () => {
+    await seedManualReviewEvent();
+    const adminDb = getFirestore(adminApp);
+    await adminDb.doc('events/manual-1/assessments/v1').update({ complianceStatus: 'blocked' });
+    await submitAdminManualAssessmentForUser('admin-1', manualRequest(), 160);
+    await expect(makeAuthorityDecisionForUser('pdrm-1', { eventId: 'manual-1', decision: 'Approved', rationale: 'All official materials were reviewed and accepted.', materialsReviewed: true }, 161))
+      .rejects.toMatchObject({ code: 'failed-precondition' });
+    await expect(makeAuthorityDecisionForUser('pdrm-1', { eventId: 'manual-1', decision: 'Rejected', rationale: 'Blocked compliance prevents a positive recommendation.', suggestion: 'Resolve every blocked compliance check before resubmission.' }, 162))
+      .resolves.toMatchObject({ decision: 'Rejected' });
   });
 
   it('prevents authorities from reading organizer profiles or provisioning roles', async () => {
@@ -498,6 +757,21 @@ describe('Firestore security rules', () => {
     await submitScoreReviewForUser('pdrm-1', request, 31);
     await expect(submitScoreReviewForUser('pdrm-1', { ...request, idempotencyKey: 'authorization_002' }, 32))
       .rejects.toMatchObject({ code: 'failed-precondition' });
+  });
+
+  it('rejects score review submission when the stored provisional result is no longer bound to the AI proposal', async () => {
+    await seedProvisionalReviewEvent(['PDRM']);
+    const adminDb = getFirestore(adminApp);
+    const assessmentRef = adminDb.doc('events/review-1/assessments/v1');
+    const assessment = (await assessmentRef.get()).data()!;
+    const categories = assessment.provisionalResult.categories.map((category: Record<string, unknown>, index: number) => index === 0
+      ? { ...category, rationale: 'Tampered rationale no longer matches the stored AI proposal.' }
+      : category);
+    await assessmentRef.update({ provisionalResult: { ...assessment.provisionalResult, categories } });
+    await expect(submitScoreReviewForUser('pdrm-1', {
+      eventId: 'review-1', categories: confirmedReviewCategories(5), rationale: 'The complete application and risk evidence were reviewed.', idempotencyKey: 'tampered_provisional_1',
+    }, 33)).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect((await adminDb.collection('events/review-1/assessments/v1/score_reviews').get()).empty).toBe(true);
   });
 
   it('retains the final review and records a failure without publishing partial official output', async () => {
@@ -1519,6 +1793,38 @@ async function seedReviewableEvent(requiredAuthorities: string[]) {
     await setDoc(doc(db, 'events/review-1/assessments/v1/score_reviews/v1-PDRM-review'), scoreReviewFixture('v1', 'PDRM'));
     await setDoc(doc(db, 'events/review-1/assessments/v1/score_reviews/v1-BOMBA-review'), scoreReviewFixture('v1', 'BOMBA'));
   });
+}
+
+async function seedManualReviewEvent(detailsPatch: Partial<typeof validDetails> = {}) {
+  const adminDb = getFirestore(adminApp);
+  const eventDetails = { ...validDetails, ...detailsPatch };
+  await Promise.all([
+    adminDb.doc('users/organizer-1').set({ role: 'organizer' }),
+    adminDb.doc('users/pdrm-1').set({ role: 'authority', authorityType: 'PDRM' }),
+    adminDb.doc('users/admin-1').set({ role: 'admin' }),
+    adminDb.doc('events/manual-1').set({
+      eventId: 'manual-1', organizerId: 'organizer-1', eventDetails, status: 'Pending', currentVersionId: 'v1', currentVersionNumber: 1,
+      currentAssessmentId: 'v1', editableVersionId: null, draftDocumentPaths: [], requiredAuthorities: ['PDRM'], createdAt: 1, updatedAt: 1,
+    }),
+    adminDb.doc('events/manual-1/versions/v1').set({ versionId: 'v1', eventId: 'manual-1', versionNumber: 1, eventDetails, documentPaths: [], submittedBy: 'organizer-1', submittedAt: 1, inputHash: 'manual-version-hash' }),
+    adminDb.doc('events/manual-1/assessments/v1').set({
+      status: 'manual_review_required', schemaVersion: ASSESSMENT_SCHEMA_VERSION, assessmentId: 'v1', eventId: 'manual-1', versionId: 'v1',
+      assessmentReadiness: 'provisional', complianceStatus: 'pass', contextSnapshot: benignContextSnapshot(), inputHash: 'manual-assessment-hash',
+      warnings: [], sourceTimestamps: {}, contextStatuses: {}, complianceChecks: [], dataConfidenceScore: 50, dataConfidenceLevel: 'medium', authorityReviewRequired: true,
+      evidence: [{ key: 'crowd', description: 'Verified attendance and venue evidence', sourceTimestamp: 1, source: 'test', status: 'available', quality: 'verified' }],
+      createdAt: 1, aiProposal: { status: 'timeout', model: 'test-model', promptVersion: 'test-prompt', responseSchemaVersion: 'test-schema', retryable: true, errorSummary: 'Timed out', cacheStatus: 'not-applicable', generatedAt: 1 },
+      manualReviewReason: 'AI proposal timed out and no score fallback was created.',
+    }),
+  ]);
+}
+
+function manualRequest() {
+  return {
+    eventId: 'manual-1', idempotencyKey: 'manual-key-0001',
+    hazards: [{ hazardId: 'manual-hazard-1', hazardName: 'Crowd congestion', categoryId: 'crowd' as const, evidenceReferences: ['crowd' as const], rationale: 'Verified attendance evidence supports the identified congestion hazard.' }],
+    categories: ACTIVE_CATEGORY_SCHEMA.categories.map((category) => ({ categoryId: category.id, likelihood: 2 as const, severity: 2 as const, evidenceReferences: ['crowd' as const], rationale: `Admin reviewed all available evidence for ${category.name}.`, missingInformation: '' })),
+    rationale: 'The complete immutable application and available contextual evidence were assessed manually.',
+  };
 }
 
 async function seedProvisionalReviewEvent(requiredAuthorities: string[]) {

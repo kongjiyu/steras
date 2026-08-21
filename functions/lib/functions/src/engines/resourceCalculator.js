@@ -1,6 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.computeResources = computeResources;
+exports.validateCalculatedAssessmentResult = validateCalculatedAssessmentResult;
+exports.validateManualOfficialAssessmentResult = validateManualOfficialAssessmentResult;
 exports.validateProvisionalAssessmentResult = validateProvisionalAssessmentResult;
 exports.validateAssessmentResultAgainstProposal = validateAssessmentResultAgainstProposal;
 exports.validateAssessmentResultAgainstHardRules = validateAssessmentResultAgainstHardRules;
@@ -53,11 +55,13 @@ function validateInput(input, config) {
         eventId: input.eventId,
         versionId: input.versionId,
         assessmentId: input.assessmentId,
-        proposalId: input.assessmentResult?.proposalId,
     })) {
         if (typeof value !== 'string' || value.trim().length === 0) {
             throw new ResourceCalculationFault('missing_input', `${field} is required.`);
         }
+    }
+    if (!assessmentSourceId(input.assessmentResult)) {
+        throw new ResourceCalculationFault('missing_input', 'Assessment source identity is required.');
     }
     const attendance = input.eventDetails?.expectedAttendance;
     if (attendance === undefined || attendance === null) {
@@ -75,7 +79,7 @@ function validateInput(input, config) {
     if (!isRiskLevel(input.assessmentResult.overallRiskLevel)) {
         throw new ResourceCalculationFault('invalid_input', 'Assessment overallRiskLevel is invalid.');
     }
-    const assessmentErrors = validateProvisionalAssessmentResult(input.assessmentResult, config.assessmentCategoryIds);
+    const assessmentErrors = validateCalculatedAssessmentResult(input.assessmentResult, config.assessmentCategoryIds);
     if (assessmentErrors.length > 0) {
         throw new ResourceCalculationFault('invalid_input', `Invalid provisional assessment result: ${assessmentErrors.join(', ')}.`);
     }
@@ -151,6 +155,105 @@ function categoryRiskLevels(result, expectedCategoryIds) {
         }
     }
     return levels;
+}
+function validateCalculatedAssessmentResult(result, expectedCategoryIds = resourceRecommendationConfig_1.ACTIVE_RESOURCE_CONFIG.assessmentCategoryIds) {
+    return isManualOfficialResult(result)
+        ? validateManualOfficialAssessmentResult(result, expectedCategoryIds)
+        : validateProvisionalAssessmentResult(result, expectedCategoryIds);
+}
+function validateManualOfficialAssessmentResult(result, expectedCategoryIds = resourceRecommendationConfig_1.ACTIVE_RESOURCE_CONFIG.assessmentCategoryIds) {
+    const errors = [];
+    const evidenceKeys = new Set(['weather', 'crowd', 'venue', 'history', 'holiday', 'public_health', 'sanitation', 'medical', 'security', 'transport', 'compliance']);
+    if (!result || typeof result !== 'object' || result.sourceKind !== 'admin_manual')
+        return ['source-kind'];
+    if (typeof result.manualAssessmentId !== 'string' || !result.manualAssessmentId.trim())
+        errors.push('manual-assessment-id');
+    if (result.formulaVersion !== types_1.MANUAL_OFFICIAL_FORMULA_VERSION)
+        errors.push('formula-version');
+    if (result.hardRuleVersion !== types_1.HARD_RULE_VERSION)
+        errors.push('hard-rule-version');
+    if (result.categorySchemaVersion !== categorySchema_1.ACTIVE_CATEGORY_SCHEMA.version)
+        errors.push('category-schema-version');
+    if (!Array.isArray(result.manualHazards) || result.manualHazards.length < 1 || result.manualHazards.length > 40)
+        errors.push('manual-hazards');
+    const hazardIds = new Set();
+    if (Array.isArray(result.manualHazards))
+        for (const hazard of result.manualHazards) {
+            if (!hazard || typeof hazard !== 'object'
+                || typeof hazard.hazardId !== 'string' || !hazard.hazardId.trim() || hazardIds.has(hazard.hazardId)
+                || typeof hazard.hazardName !== 'string' || !hazard.hazardName.trim()
+                || !expectedCategoryIds.includes(hazard.categoryId)
+                || !Array.isArray(hazard.evidenceReferences)
+                || new Set(hazard.evidenceReferences).size !== hazard.evidenceReferences.length
+                || hazard.evidenceReferences.some((reference) => typeof reference !== 'string' || !evidenceKeys.has(reference))
+                || typeof hazard.rationale !== 'string' || !hazard.rationale.trim())
+                errors.push('manual-hazard-shape');
+            else
+                hazardIds.add(hazard.hazardId);
+        }
+    if (!Array.isArray(result.categories))
+        return [...errors, 'categories'];
+    const definitions = new Map(categorySchema_1.ACTIVE_CATEGORY_SCHEMA.categories.map((category) => [category.id, category]));
+    const seen = new Set();
+    let weightedScore = 0;
+    let highest = 'Low';
+    if (result.categories.length !== expectedCategoryIds.length)
+        errors.push('category-count');
+    for (const category of result.categories) {
+        if (!isRuntimeRecord(category)) {
+            errors.push('category-shape');
+            continue;
+        }
+        const definition = definitions.get(category.categoryId);
+        if (!definition || !expectedCategoryIds.includes(category.categoryId) || seen.has(category.categoryId)) {
+            errors.push(`category-${category.categoryId || 'unknown'}`);
+            continue;
+        }
+        seen.add(category.categoryId);
+        const matrix = category.validatedLikelihood * category.validatedSeverity;
+        const normalized = matrix * 4;
+        if (!isScore(category.manualLikelihood) || !isScore(category.manualSeverity)
+            || !isScore(category.validatedLikelihood) || !isScore(category.validatedSeverity)
+            || category.validatedLikelihood < category.manualLikelihood
+            || category.validatedSeverity < category.manualSeverity
+            || category.categoryName !== definition.name
+            || category.matrixScore !== matrix || category.normalizedScore !== normalized
+            || category.weight !== definition.weight
+            || category.weightedContribution !== round(normalized * definition.weight)
+            || category.riskLevel !== (0, types_1.hirarcRiskLevelFor)(matrix)
+            || !Array.isArray(category.evidenceReferences)
+            || new Set(category.evidenceReferences).size !== category.evidenceReferences.length
+            || category.evidenceReferences.some((reference) => typeof reference !== 'string' || !evidenceKeys.has(reference))
+            || typeof category.rationale !== 'string' || !category.rationale.trim()
+            || typeof category.missingInformation !== 'string'
+            || (category.evidenceReferences.length === 0 && category.missingInformation.trim().length < 10)
+            || !sameStringSet(category.guidelineChecks, definition.guidelineChecks)
+            || validateAppliedHardRules(category, category.manualLikelihood, category.manualSeverity).length > 0) {
+            errors.push(`calculation-${category.categoryId}`);
+        }
+        weightedScore += normalized * definition.weight;
+        highest = higherRisk(highest, (0, types_1.hirarcRiskLevelFor)(matrix));
+    }
+    if (expectedCategoryIds.some((categoryId) => !seen.has(categoryId)))
+        errors.push('missing-category');
+    const overallScore = round(weightedScore);
+    const weighted = (0, types_1.riskLevelFor)(overallScore);
+    if (result.overallScore !== overallScore || result.weightedRiskLevel !== weighted
+        || result.highestCategoryRiskLevel !== highest || result.overallRiskLevel !== higherRisk(weighted, highest))
+        errors.push('overall-calculation');
+    if (!/^[a-f0-9]{64}$/.test(result.officialInputHash))
+        errors.push('official-input-hash');
+    if (![result.calculatedAt, result.finalizedAt].every(Number.isFinite) || typeof result.finalizedBy !== 'string' || !result.finalizedBy)
+        errors.push('finalization');
+    return [...new Set(errors)];
+}
+function isManualOfficialResult(result) {
+    return isRuntimeRecord(result) && result.sourceKind === 'admin_manual';
+}
+function assessmentSourceId(result) {
+    if (!isRuntimeRecord(result))
+        return undefined;
+    return isManualOfficialResult(result) ? result.manualAssessmentId : result.proposalId;
 }
 function calculateItem(resource, details, overallRisk, categoryLevels, config, source) {
     const attendanceReference = {
@@ -346,10 +449,21 @@ function validateProvisionalAssessmentResult(result, expectedCategoryIds = resou
 }
 function validateAssessmentResultAgainstProposal(result, proposal) {
     const errors = [];
-    const proposedCategories = new Map(proposal.categories.map((category) => [category.categoryId, category]));
+    if (!isRuntimeRecord(result) || !Array.isArray(result.categories))
+        return ['result-categories'];
+    if (!isRuntimeRecord(proposal) || !Array.isArray(proposal.categories) || !Array.isArray(proposal.hazards))
+        return ['proposal-shape'];
+    const proposedCategories = new Map(proposal.categories
+        .filter(isRuntimeRecord)
+        .map((category) => [category.categoryId, category]));
     if (proposedCategories.size !== categorySchema_1.ACTIVE_CATEGORY_SCHEMA.categories.length)
         errors.push('proposal-category-count');
-    for (const category of result.categories) {
+    for (const rawCategory of result.categories) {
+        if (!isRuntimeRecord(rawCategory) || typeof rawCategory.categoryId !== 'string') {
+            errors.push('proposal-category-shape');
+            continue;
+        }
+        const category = rawCategory;
         const proposed = proposedCategories.get(category.categoryId);
         if (!proposed
             || proposed.likelihood !== category.proposedLikelihood
@@ -362,8 +476,17 @@ function validateAssessmentResultAgainstProposal(result, proposal) {
             errors.push(`proposal-category-${category.categoryId}`);
         }
     }
-    const proposedHazards = new Map(proposal.hazards.map((hazard) => [hazard.hazardId, hazard]));
-    for (const hazard of result.validatedHazards) {
+    const proposedHazards = new Map(proposal.hazards
+        .filter(isRuntimeRecord)
+        .map((hazard) => [hazard.hazardId, hazard]));
+    if (!Array.isArray(result.validatedHazards))
+        return [...new Set([...errors, 'result-hazards'])];
+    for (const rawHazard of result.validatedHazards) {
+        if (!isRuntimeRecord(rawHazard) || typeof rawHazard.hazardId !== 'string') {
+            errors.push('proposal-hazard-shape');
+            continue;
+        }
+        const hazard = rawHazard;
         const proposed = proposedHazards.get(hazard.hazardId);
         if (!proposed
             || proposed.hazardName !== hazard.hazardName
@@ -514,10 +637,21 @@ function stableStringify(value) {
  * remain identical to the deterministic calculation.
  */
 function matchesDeterministicResourceItems(actual, expected) {
+    if (!isRuntimeRecord(actual) || !isRuntimeRecord(expected))
+        return false;
     return types_1.RESOURCE_KEYS.every((resource) => {
         const actualItem = actual[resource];
         const expectedItem = expected[resource];
-        if (!actualItem || !expectedItem)
+        if (!isRuntimeRecord(actualItem) || !isRuntimeRecord(expectedItem)
+            || !Array.isArray(actualItem.assumptions) || !Array.isArray(expectedItem.assumptions)
+            || !Array.isArray(actualItem.appliedRules) || !Array.isArray(expectedItem.appliedRules)
+            || !Array.isArray(actualItem.sourceSnapshots) || !Array.isArray(expectedItem.sourceSnapshots)
+            || !actualItem.assumptions.every(isRuntimeRecord) || !expectedItem.assumptions.every(isRuntimeRecord)
+            || !actualItem.appliedRules.every(isRuntimeRecord) || !expectedItem.appliedRules.every(isRuntimeRecord)
+            || !actualItem.sourceSnapshots.every(isRuntimeRecord) || !expectedItem.sourceSnapshots.every(isRuntimeRecord)
+            || !isRuntimeRecord(actualItem.authoritySource)
+            || !['not_supplied', 'supplied'].includes(String(actualItem.authoritySource.status))
+            || (actualItem.authoritySource.status === 'supplied' && !isRuntimeRecord(actualItem.authoritySource.source)))
             return false;
         const expectedAssumptionIds = new Set(expectedItem.assumptions.map((assumption) => assumption.assumptionId));
         const expectedRuleIds = new Set(expectedItem.appliedRules.map((rule) => rule.ruleId));
@@ -526,16 +660,18 @@ function matchesDeterministicResourceItems(actual, expected) {
         const extraRules = actualItem.appliedRules.filter((rule) => !expectedRuleIds.has(rule.ruleId));
         const extraSources = actualItem.sourceSnapshots.filter((source) => !expectedSourceIds.has(source.sourceId));
         const authoritySourceId = actualItem.authoritySource.status === 'supplied'
+            && isRuntimeRecord(actualItem.authoritySource.source)
             ? actualItem.authoritySource.source.sourceId
             : undefined;
         const validAuthorityExtras = authoritySourceId
             ? extraSources.length === 1
                 && extraSources[0].sourceId === authoritySourceId
                 && stableStringify(extraSources[0]) === stableStringify(actualItem.authoritySource.status === 'supplied'
-                    ? actualItem.authoritySource.source : undefined)
+                    && isRuntimeRecord(actualItem.authoritySource.source) ? actualItem.authoritySource.source : undefined)
                 && [...extraAssumptions, ...extraRules].length > 0
-                && extraAssumptions.every((assumption) => assumption.sourceIds.length === 1 && assumption.sourceIds[0] === authoritySourceId)
-                && extraRules.every((rule) => rule.contribution === 0
+                && extraAssumptions.every((assumption) => Array.isArray(assumption.sourceIds)
+                    && assumption.sourceIds.length === 1 && assumption.sourceIds[0] === authoritySourceId)
+                && extraRules.every((rule) => rule.contribution === 0 && Array.isArray(rule.sourceIds)
                     && rule.sourceIds.length === 1 && rule.sourceIds[0] === authoritySourceId)
             : extraSources.length === 0 && extraAssumptions.length === 0 && extraRules.length === 0;
         return validAuthorityExtras && stableStringify({

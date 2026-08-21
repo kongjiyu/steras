@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EventRecord, ResourceRecommendation, RiskAssessment, RiskLevel, hirarcRiskLevelFor, riskLevelFor } from '@shared/types';
+import { AdminManualOfficialRiskAssessment, EventRecord, MANUAL_OFFICIAL_FORMULA_VERSION, ResourceRecommendation, RiskAssessment, RiskLevel, hirarcRiskLevelFor, riskLevelFor } from '@shared/types';
 import {
   assessmentFreshness,
   filterResourcePortfolio,
@@ -11,6 +11,7 @@ import {
   resourcePortfolioSummary,
   riskPortfolioSummary,
 } from './m2PortfolioData';
+import { isCurrentAuthorityDecision, isCurrentEventRecord, isCurrentEventVersion, isSafeManualAssessmentId } from '../../components/m2/m2Contract';
 import { mockAssessments } from '../../mock_data/assessments';
 import { mockResourceRecommendations } from '../../mock_data/resources';
 
@@ -85,6 +86,38 @@ const makeResources = (confidenceLevel: 'prototype' | 'authority_validated'): Re
   },
 });
 
+const makeManualOfficial = (): AdminManualOfficialRiskAssessment => {
+  const manual = makeAssessment('Low', 'unavailable');
+  const calculated = makeAssessment('Low');
+  if (manual.status !== 'manual_review_required' || !('provisionalResult' in calculated)) throw new Error('Fixtures are incomplete.');
+  const categories = calculated.provisionalResult.categories.map((category) => ({
+    categoryId: category.categoryId as import('@shared/types').HazardDomain, categoryName: category.categoryName,
+    manualLikelihood: category.proposedLikelihood, manualSeverity: category.proposedSeverity,
+    validatedLikelihood: category.validatedLikelihood, validatedSeverity: category.validatedSeverity,
+    matrixScore: category.matrixScore, normalizedScore: category.normalizedScore, riskLevel: category.riskLevel,
+    weight: category.weight, weightedContribution: category.weightedContribution,
+    evidenceReferences: category.evidenceReferences, rationale: category.rationale, missingInformation: '',
+    appliedHardRules: category.appliedHardRules, guidelineChecks: category.guidelineChecks,
+  }));
+  return {
+    ...manual, status: 'official_ready', sourceKind: 'admin_manual', authorityReviewRequired: false,
+    aiProposal: manual.aiProposal?.status === 'success' ? null : manual.aiProposal,
+    activeManualAssessmentId: 'manual-v1',
+    officialResult: {
+      sourceKind: 'admin_manual', manualAssessmentId: 'manual-v1',
+      manualHazards: [{ hazardId: 'h1', hazardName: 'Manual hazard', categoryId: 'crowd', evidenceReferences: ['crowd'], rationale: 'Admin identified the hazard from evidence.' }],
+      categories, overallScore: calculated.provisionalResult.overallScore,
+      weightedRiskLevel: calculated.provisionalResult.weightedRiskLevel,
+      highestCategoryRiskLevel: calculated.provisionalResult.highestCategoryRiskLevel,
+      overallRiskLevel: calculated.provisionalResult.overallRiskLevel,
+      formulaVersion: MANUAL_OFFICIAL_FORMULA_VERSION,
+      categorySchemaVersion: calculated.provisionalResult.categorySchemaVersion,
+      hardRuleVersion: calculated.provisionalResult.hardRuleVersion,
+      officialInputHash: 'a'.repeat(64), calculatedAt: 2, finalizedAt: 2, finalizedBy: 'admin-1',
+    },
+  };
+};
+
 describe('M2 portfolio data', () => {
   it('accepts the category contract and rejects legacy baseline records', () => {
     expect(isCurrentRiskAssessment(makeAssessment('High'))).toBe(true);
@@ -100,11 +133,25 @@ describe('M2 portfolio data', () => {
       ...malformed,
       provisionalResult: { ...malformed.provisionalResult, categories: [null] },
     })).toBe(false);
+    const malformedRule = structuredClone(malformed);
+    if (malformedRule.status !== 'provisional_ready') throw new Error('Expected provisional fixture.');
+    malformedRule.provisionalResult.categories[0].appliedHardRules = [null as never];
+    expect(() => isCurrentRiskAssessment(malformedRule)).not.toThrow();
+    expect(isCurrentRiskAssessment(malformedRule)).toBe(false);
+    const malformedProposal = structuredClone(malformed);
+    if (malformedProposal.status !== 'provisional_ready') throw new Error('Expected provisional fixture.');
+    malformedProposal.aiProposal.categories[0] = { ...malformedProposal.aiProposal.categories[0], rationale: null as never };
+    expect(() => isCurrentRiskAssessment(malformedProposal)).not.toThrow();
+    expect(isCurrentRiskAssessment(malformedProposal)).toBe(false);
     expect(isCurrentRiskAssessment({
       ...malformed,
       aiProposal: { ...malformed.aiProposal, proposalId: '' },
       provisionalResult: { ...malformed.provisionalResult, proposalId: '' },
     })).toBe(false);
+    const unsupportedEvidence = structuredClone(malformed);
+    if (unsupportedEvidence.status !== 'provisional_ready') throw new Error('Expected provisional fixture.');
+    unsupportedEvidence.provisionalResult.categories[0].evidenceReferences = ['not-in-assessment' as never];
+    expect(isCurrentRiskAssessment(unsupportedEvidence)).toBe(false);
     const job = {
       assessmentId: 'v1', eventId: 'event-1', versionId: 'v1', status: 'processing', inputHash: 'hash',
       claimId: 'claim', claimedAt: 1, leaseExpiresAt: 2, createdAt: 1,
@@ -142,6 +189,47 @@ describe('M2 portfolio data', () => {
       source: falseAuthoritySource.items.police.sourceSnapshots[0],
     };
     expect(isCurrentResourceRecommendation(falseAuthoritySource)).toBe(false);
+  });
+
+  it('fails closed for malformed event documents before authority views dereference them', () => {
+    const event = makeEvent('event-1', 'Safe event', 1);
+    expect(isCurrentEventRecord(event, 'event-1')).toBe(true);
+    expect(isCurrentEventRecord({ ...event, status: 'Draft', requiredAuthorities: [], currentVersionId: undefined, currentVersionNumber: 0 }, 'event-1')).toBe(true);
+    expect(isCurrentEventRecord({ ...event, eventDetails: null }, 'event-1')).toBe(false);
+    expect(isCurrentEventRecord({ ...event, requiredAuthorities: [null] }, 'event-1')).toBe(false);
+    expect(isCurrentEventRecord({ ...event, currentVersionNumber: Number.NaN }, 'event-1')).toBe(false);
+    expect(isCurrentEventRecord({ ...event, eventId: 'other' }, 'event-1')).toBe(false);
+    expect(isSafeManualAssessmentId('manual-v1')).toBe(true);
+    expect(isSafeManualAssessmentId('manual/child')).toBe(false);
+    const version = {
+      versionId: 'v1', eventId: 'event-1', versionNumber: 1, eventDetails: event.eventDetails,
+      documentPaths: [], submittedBy: 'organizer-1', submittedAt: 1, inputHash: 'a'.repeat(64),
+    };
+    expect(isCurrentEventVersion(version, 'event-1', 'v1')).toBe(true);
+    expect(isCurrentEventVersion({ ...version, inputHash: 'not-a-hash' }, 'event-1', 'v1')).toBe(false);
+    const decision = {
+      decisionId: 'v1_PDRM', eventId: 'event-1', versionId: 'v1', authorityType: 'PDRM',
+      decision: 'Rejected', rationale: 'A sufficiently detailed decision rationale.', suggestion: 'Provide the missing safety evidence.',
+      reviewerId: 'pdrm-1', decidedAt: 1, current: true,
+    } as const;
+    expect(isCurrentAuthorityDecision(decision, 'event-1', 'v1_PDRM')).toBe(true);
+    expect(isCurrentAuthorityDecision({ ...decision, decidedAt: Number.NaN }, 'event-1', 'v1_PDRM')).toBe(false);
+  });
+
+  it('accepts strict manual official assessment/resource provenance and rejects ambiguous AI references', () => {
+    const assessment = makeManualOfficial();
+    expect(isCurrentRiskAssessment(assessment)).toBe(true);
+    expect(isCurrentRiskAssessment({ ...assessment, officialResult: { ...assessment.officialResult, overallScore: 99 } })).toBe(false);
+    const base = makeResources('authority_validated');
+    const hash = base.resourceInputHash;
+    const resource = {
+      ...base, stage: 'official', resourceId: `official-${base.versionId}-${hash}`,
+      assessmentReference: { stage: 'official', assessmentId: base.assessmentId, sourceKind: 'admin_manual', manualAssessmentId: 'manual-v1', finalizedAt: 2, finalizedBy: 'admin-1' },
+      items: Object.fromEntries(Object.entries(base.items).map(([key, item]) => [key, { ...item, confidence: 'authority_validated', authorityReviewRequired: false }])),
+      confidenceLevel: 'authority_validated', authorityReviewRequired: false,
+    } as unknown as ResourceRecommendation;
+    expect(isCurrentResourceRecommendation(resource)).toBe(true);
+    expect(isCurrentResourceRecommendation({ ...resource, assessmentReference: { ...resource.assessmentReference, proposalId: 'fake-proposal' } })).toBe(false);
   });
 
   it('filters by current assessment risk and orders higher risk first', () => {

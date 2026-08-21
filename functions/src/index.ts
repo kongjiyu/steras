@@ -27,4 +27,5 @@ export { submitEvent } from './http/submitEvent';
 export { withdrawEvent } from './http/withdrawEvent';
 export { makeAuthorityDecision } from './http/authorityDecision';
 export { submitAuthorityScoreReview, resolveAuthorityScoreConflict, retryOfficialFinalisation } from './http/authorityScoreReview';
+export { submitAdminManualAssessment, retryManualOfficialFinalisation } from './http/adminManualAssessment';
 export { overrideResources } from './http/overrideResources';

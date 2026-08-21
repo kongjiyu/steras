@@ -8,7 +8,7 @@ import {
 } from '@shared/types';
 import { RESOURCE_FIELDS } from '../../components/m2/m2Presentation';
 import { assessmentResult, assessmentRiskLevel } from '../../components/m2/m2Contract';
-export { isCurrentAssessmentRecord, isCurrentResourceRecommendation, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
+export { isCurrentAssessmentRecord, isCurrentEventRecord, isCurrentResourceRecommendation, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
 
 export interface M2PortfolioRecord {
   event: EventRecord;

@@ -14,7 +14,7 @@
  *   - overrideResources     — validates and audits resource adjustments
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.overrideResources = exports.retryOfficialFinalisation = exports.resolveAuthorityScoreConflict = exports.submitAuthorityScoreReview = exports.makeAuthorityDecision = exports.withdrawEvent = exports.submitEvent = exports.manualRecompute = exports.recomputeRiskAndResources = exports.onEventUpdated = exports.onEventCreated = void 0;
+exports.overrideResources = exports.retryManualOfficialFinalisation = exports.submitAdminManualAssessment = exports.retryOfficialFinalisation = exports.resolveAuthorityScoreConflict = exports.submitAuthorityScoreReview = exports.makeAuthorityDecision = exports.withdrawEvent = exports.submitEvent = exports.manualRecompute = exports.recomputeRiskAndResources = exports.onEventUpdated = exports.onEventCreated = void 0;
 const app_1 = require("firebase-admin/app");
 // Initialize firebase-admin before any function code runs.
 (0, app_1.initializeApp)();
@@ -36,6 +36,9 @@ var authorityScoreReview_1 = require("./http/authorityScoreReview");
 Object.defineProperty(exports, "submitAuthorityScoreReview", { enumerable: true, get: function () { return authorityScoreReview_1.submitAuthorityScoreReview; } });
 Object.defineProperty(exports, "resolveAuthorityScoreConflict", { enumerable: true, get: function () { return authorityScoreReview_1.resolveAuthorityScoreConflict; } });
 Object.defineProperty(exports, "retryOfficialFinalisation", { enumerable: true, get: function () { return authorityScoreReview_1.retryOfficialFinalisation; } });
+var adminManualAssessment_1 = require("./http/adminManualAssessment");
+Object.defineProperty(exports, "submitAdminManualAssessment", { enumerable: true, get: function () { return adminManualAssessment_1.submitAdminManualAssessment; } });
+Object.defineProperty(exports, "retryManualOfficialFinalisation", { enumerable: true, get: function () { return adminManualAssessment_1.retryManualOfficialFinalisation; } });
 var overrideResources_1 = require("./http/overrideResources");
 Object.defineProperty(exports, "overrideResources", { enumerable: true, get: function () { return overrideResources_1.overrideResources; } });
 //# sourceMappingURL=index.js.map

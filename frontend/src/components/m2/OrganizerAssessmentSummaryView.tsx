@@ -33,7 +33,7 @@ export default function OrganizerAssessmentSummaryView({ summary }: { summary: O
 }
 
 export function OrganizerResourceSummaryView({ summary }: { summary: OrganizerAssessmentSummary }) {
-  if (!summary.resourceRecommendation) return <p className="text-sm text-ink-500">Resources appear after a provisional assessment is available.</p>;
+  if (!summary.resourceRecommendation) return <p className="text-sm text-ink-500">Resources appear after an assessment is available.</p>;
   return (
     <div className="space-y-3" data-testid="organizer-resource-summary">
       <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

@@ -74,11 +74,18 @@ export function validateResourceRecommendation(value: unknown): ResourceContract
 function validateAssessmentReference(value: Record<string, unknown>, errors: string[]): void {
   if (!isRecord(value.assessmentReference)
     || value.assessmentReference.stage !== value.stage
-    || value.assessmentReference.assessmentId !== value.assessmentId
-    || !nonEmptyString(value.assessmentReference.proposalId)) {
+    || value.assessmentReference.assessmentId !== value.assessmentId) {
     errors.push('assessment-reference');
     return;
   }
+  const manualOfficial = value.stage === 'official' && value.assessmentReference.sourceKind === 'admin_manual';
+  if (value.assessmentReference.sourceKind !== undefined
+    && value.assessmentReference.sourceKind !== 'ai_authority'
+    && value.assessmentReference.sourceKind !== 'admin_manual') errors.push('assessment-source-kind');
+  if (value.stage === 'provisional' && value.assessmentReference.sourceKind !== undefined) errors.push('assessment-source-kind');
+  if (manualOfficial
+    ? !safeDocumentId(value.assessmentReference.manualAssessmentId) || 'proposalId' in value.assessmentReference
+    : !nonEmptyString(value.assessmentReference.proposalId) || 'manualAssessmentId' in value.assessmentReference) errors.push('assessment-reference');
   if (value.stage === 'official' && (!Number.isFinite(value.assessmentReference.finalizedAt)
     || !nonEmptyString(value.assessmentReference.finalizedBy))) errors.push('official-finalization-reference');
 }
@@ -182,6 +189,10 @@ function nonEmptyString(value: unknown): boolean {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function safeDocumentId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+}
+
 function nonNegativeSafeInteger(value: unknown): boolean {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
@@ -203,6 +214,7 @@ export function validateResourceRevisionChain(
   currentResourceId: string,
 ): string[] {
   const errors: string[] = [];
+  if (!Array.isArray(resources) || resources.some((resource) => !isRecord(resource))) return ['invalid-resource'];
   const currentResource = resources.find((resource) => resource.resourceId === currentResourceId);
   if (!currentResource) return ['missing-current-resource'];
   const relevant = resources.filter((resource) =>
