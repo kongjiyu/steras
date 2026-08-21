@@ -540,7 +540,7 @@ function OrganizerView({ incidents, selectedId, setSelectedId, onSubmit, onReque
   );
 }
 
-function AuthorityView({ incidents, selectedId, setSelectedId, onRequestAssistance, onResolve, notice }: { incidents: Incident[]; selectedId: string; setSelectedId: (id: string) => void; onRequestAssistance: () => void; onResolve: () => void; notice: string | null }) {
+function AuthorityView({ incidents, selectedId, setSelectedId, onInvestigationNote, onResolve, notice }: { incidents: Incident[]; selectedId: string; setSelectedId: (id: string) => void; onInvestigationNote: () => void; onResolve: () => void; notice: string | null }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const referred = incidents.filter((incident) => incident.authority);
@@ -550,7 +550,7 @@ function AuthorityView({ incidents, selectedId, setSelectedId, onRequestAssistan
       <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between"><div><p className="page-eyebrow">Authority workspace · PDRM</p><h1 className="font-display text-3xl font-bold text-ink-900 sm:text-4xl">Incident queue</h1><p className="mt-3 max-w-2xl text-sm leading-6 text-ink-600">Review referred incidents, record investigation actions and preserve a complete outcome history.</p></div><div className="flex items-center gap-2 rounded-md border border-[#ded5c5] bg-[#fffdf8] px-3 py-2 text-xs text-ink-600"><ShieldCheck size={16} className="text-brand-600" /> Scoped to assigned authority</div></div>
       {notice && <div className="mt-5 flex items-center gap-2 rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-status-approved"><CheckCircle2 size={16} />{notice}</div>}
       <div className="mt-7 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><KpiCard icon={Flag} label="Referred" value={`${referred.length}`} detail="Assigned to this authority" /><KpiCard icon={ShieldAlert} label="Immediate action" value={`${referred.filter((incident) => incident.immediateAction).length}`} detail="Review response priority" tone="red" /><KpiCard icon={Activity} label="Investigating" value={`${referred.filter((incident) => incident.status === 'Investigating').length}`} detail="Open investigation" tone="gold" /><KpiCard icon={CheckCircle2} label="Resolved" value={`${referred.filter((incident) => incident.status === 'Resolved').length}`} detail="Outcome available" tone="green" /></div>
-      <div className="mt-7 grid gap-5 lg:grid-cols-[minmax(320px,.82fr)_minmax(0,1.18fr)]"><IncidentList incidents={referred} selectedId={selected?.id ?? ''} onSelect={(incident) => setSelectedId(incident.id)} query={query} onQueryChange={setQuery} filter={filter} onFilterChange={setFilter} emptyLabel="No referred incidents match your search." />{selected ? <IncidentDetail incident={selected} role="authority" onRequestAssistance={onRequestAssistance} onResolve={onResolve} /> : <div className="card flex min-h-64 items-center justify-center p-8 text-center text-sm text-ink-500">Select an incident to review.</div>}</div>
+      <div className="mt-7 grid gap-5 lg:grid-cols-[minmax(320px,.82fr)_minmax(0,1.18fr)]"><IncidentList incidents={referred} selectedId={selected?.id ?? ''} onSelect={(incident) => setSelectedId(incident.id)} query={query} onQueryChange={setQuery} filter={filter} onFilterChange={setFilter} emptyLabel="No referred incidents match your search." />{selected ? <IncidentDetail incident={selected} role="authority" onRequestAssistance={onInvestigationNote} onResolve={onResolve} /> : <div className="card flex min-h-64 items-center justify-center p-8 text-center text-sm text-ink-500">Select an incident to review.</div>}</div>
     </>
   );
 }
@@ -612,7 +612,7 @@ export default function IncidentReportingPrototype() {
       <PageHeader role={role} onRoleChange={changeRole} />
       <main className="mx-auto w-full max-w-[1440px] px-5 py-7 sm:px-8 sm:py-10">
         <PreviewBanner />
-        {role === 'organizer' ? <OrganizerView incidents={incidents} selectedId={selectedId} setSelectedId={setSelectedId} onSubmit={submitReport} onRequestAssistance={requestAssistance} onResolve={resolveIncident} notice={notice} form={form} onFormChange={updateForm} /> : <AuthorityView incidents={incidents} selectedId={selectedId} setSelectedId={setSelectedId} onRequestAssistance={requestAssistance} onResolve={resolveIncident} notice={notice} />}
+        {role === 'organizer' ? <OrganizerView incidents={incidents} selectedId={selectedId} setSelectedId={setSelectedId} onSubmit={submitReport} onRequestAssistance={requestAssistance} onResolve={resolveIncident} notice={notice} form={form} onFormChange={updateForm} /> : <AuthorityView incidents={incidents} selectedId={selectedId} setSelectedId={setSelectedId} onInvestigationNote={() => setNotice('Prototype action: investigation note saved for the selected incident.')} onResolve={resolveIncident} notice={notice} />}
       </main>
       <footer className="border-t border-[#ddd3c2] bg-[#fffdf8] py-5"><div className="mx-auto max-w-[1440px] px-5 text-center text-xs text-ink-500">STERAS · M4 Incident Reporting Prototype · Synthetic data only</div></footer>
     </div>
