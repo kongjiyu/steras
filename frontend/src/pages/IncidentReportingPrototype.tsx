@@ -485,6 +485,10 @@ function OrganizerView({ incidents, selectedId, setSelectedId, onSubmit, onReque
     setShowDirectory(true);
     onRequestAssistance();
   };
+  const handleSubmit = () => {
+    onSubmit();
+    setActiveTab('reports');
+  };
 
   return (
     <>
@@ -509,7 +513,7 @@ function OrganizerView({ incidents, selectedId, setSelectedId, onSubmit, onReque
       </div>
       {activeTab === 'new' ? (
         <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(300px,.85fr)]">
-          <SubmissionForm form={form} onChange={onFormChange} onSubmit={onSubmit} />
+          <SubmissionForm form={form} onChange={onFormChange} onSubmit={handleSubmit} />
           <section className="card h-fit">
             <div className="card-header"><div><p className="section-title">Before you submit</p><p className="mt-1 text-xs text-ink-500">The prototype follows the confirmed M4 requirements.</p></div><ListChecks size={19} className="text-brand-600" /></div>
             <div className="card-body">
