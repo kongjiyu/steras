@@ -2,8 +2,10 @@ import {
   ASSESSMENT_SCHEMA_VERSION,
   AssessmentJob,
   AssessmentRecord,
+  AuthorityReviewState,
   CATEGORY_SCHEMA_VERSION,
   HARD_RULE_VERSION,
+  OFFICIAL_FORMULA_VERSION,
   PROVISIONAL_FORMULA_VERSION,
   ProvisionalAssessmentResult,
   OrganizerAssessmentSummary,
@@ -38,10 +40,47 @@ export function isCurrentRiskAssessment(value: unknown): value is RiskAssessment
     || record.aiProposal.proposalId.trim().length === 0
     || !isCalculatedResult(calculated.provisionalResult, record.aiProposal.proposalId)) return false;
   if (record.status !== 'official_ready') return true;
-  return isCalculatedResult(record.officialResult, record.aiProposal.proposalId)
-    && Number.isFinite(record.officialResult.finalizedAt)
-    && typeof record.officialResult.finalizedBy === 'string'
-    && record.officialResult.finalizedBy.trim().length > 0;
+  const officialResult = record.officialResult;
+  const reviewState = record.authorityReviewState;
+  return isCalculatedResult(officialResult, record.aiProposal.proposalId)
+    && record.authorityReviewRequired === false
+    && isAuthorityReviewState(reviewState)
+    && officialResult.officialFormulaVersion === OFFICIAL_FORMULA_VERSION
+    && typeof officialResult.officialInputHash === 'string'
+    && /^[a-f0-9]{64}$/.test(officialResult.officialInputHash)
+    && Array.isArray(officialResult.reviewIds)
+    && officialResult.reviewIds.length === reviewState.requiredAuthorities.length
+    && new Set(officialResult.reviewIds).size === officialResult.reviewIds.length
+    && reviewState.activeResolutionId === officialResult.resolutionId
+    && (officialResult.resolutionId !== undefined || reviewState.conflicts.length === 0)
+    && officialResult.categories.every((category) => Number.isInteger(category.authorityLikelihood)
+      && category.authorityLikelihood >= 1 && category.authorityLikelihood <= 5
+      && Number.isInteger(category.authoritySeverity) && category.authoritySeverity >= 1 && category.authoritySeverity <= 5
+      && Array.isArray(category.sourceReviewIds) && category.sourceReviewIds.length === officialResult.reviewIds.length
+      && category.sourceReviewIds.every((reviewId) => officialResult.reviewIds.includes(reviewId))
+      && (category.resolutionId === undefined || category.resolutionId === officialResult.resolutionId))
+    && Number.isFinite(officialResult.finalizedAt)
+    && typeof officialResult.finalizedBy === 'string'
+    && officialResult.finalizedBy.trim().length > 0;
+}
+
+export function isAuthorityReviewState(value: unknown): value is AuthorityReviewState {
+  if (!isRecord(value) || !Array.isArray(value.requiredAuthorities) || value.requiredAuthorities.length === 0
+    || new Set(value.requiredAuthorities).size !== value.requiredAuthorities.length
+    || !value.requiredAuthorities.every((authority) => AUTHORITY_TYPES.has(String(authority)))
+    || !isRecord(value.activeReviewHeads) || !Array.isArray(value.conflicts) || !Number.isFinite(value.updatedAt)) return false;
+  const authorities = value.requiredAuthorities as unknown[];
+  const headKeys = Object.keys(value.activeReviewHeads);
+  if (headKeys.length !== authorities.length || !headKeys.every((authority) => authorities.includes(authority))) return false;
+  if (!Object.values(value.activeReviewHeads).every((head) => isRecord(head)
+    && typeof head.reviewId === 'string' && Boolean(head.reviewId)
+    && Number.isFinite(head.createdAt))) return false;
+  const conflicts = value.conflicts as unknown[];
+  const categoryIds = conflicts.map((conflict) => isRecord(conflict) ? conflict.categoryId : undefined);
+  return new Set(categoryIds).size === categoryIds.length && conflicts.every((conflict) => isRecord(conflict)
+    && typeof conflict.categoryId === 'string' && EXPECTED_CATEGORY_IDS.has(conflict.categoryId)
+    && Array.isArray(conflict.reviewIds) && conflict.reviewIds.length === authorities.length
+    && conflict.reviewIds.every((reviewId) => typeof reviewId === 'string' && Boolean(reviewId)));
 }
 
 export function isCurrentAssessmentJob(value: unknown): value is AssessmentJob {
@@ -79,6 +118,12 @@ export function isOrganizerAssessmentSummary(value: unknown): value is Organizer
       && Number.isFinite(category.normalizedScore)
       && category.normalizedScore >= 0 && category.normalizedScore <= 100
       && ['Low', 'Medium', 'High'].includes(String(category.riskLevel)))) return false;
+  if (value.authorityReviewProgress !== undefined && (!isRecord(value.authorityReviewProgress)
+    || !Number.isSafeInteger(value.authorityReviewProgress.completed)
+    || !Number.isSafeInteger(value.authorityReviewProgress.required)
+    || Number(value.authorityReviewProgress.completed) < 0
+    || Number(value.authorityReviewProgress.required) < 1
+    || Number(value.authorityReviewProgress.completed) > Number(value.authorityReviewProgress.required))) return false;
   const calculatedStatus = ['provisional_ready', 'authority_review', 'official_ready'].includes(String(value.status));
   if (calculatedStatus) {
     if (typeof value.overallScore !== 'number' || !Number.isFinite(value.overallScore)

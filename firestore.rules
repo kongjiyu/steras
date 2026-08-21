@@ -131,6 +131,13 @@ service cloud.firestore {
 
         match /score_reviews/{reviewId} {
           allow read: if isAdmin()
+                      || (isSignedIn() && isAssignedAuthority(eventId)
+                          && resource.data.authorityType == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.authorityType);
+          allow write: if false;
+        }
+
+        match /score_resolutions/{resolutionId} {
+          allow read: if isAdmin()
                       || (isSignedIn() && isAssignedAuthority(eventId));
           allow write: if false;
         }

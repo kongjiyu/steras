@@ -14,6 +14,7 @@ const summary: OrganizerAssessmentSummary = {
     ['security_cbrn', 'Security and CBRN'], ['transport_accessibility', 'Transport and accessibility'],
   ].map(([categoryId, categoryName]) => ({ categoryId, categoryName, normalizedScore: 64, riskLevel: 'High' as const })),
   assessmentReadiness: 'complete', complianceStatus: 'pass', authorityReviewRequired: true,
+  authorityReviewProgress: { completed: 1, required: 3 },
   resourceQuantities: { police: 10, security: 12, medicalTeams: 2, ambulances: 1, fireOfficers: 3, toilets: 20, wasteBins: 10 },
   resourceRecommendation: {
     resourceId: 'provisional-v1-hash', revision: 1, stage: 'provisional',
@@ -37,6 +38,7 @@ describe('UC-M2-18 organizer-safe assessment summary', () => {
     expect(screen.getByText('Police officers')).toBeInTheDocument();
     expect(screen.getAllByText('Planning range 10–12').length).toBeGreaterThan(0);
     expect(screen.getByText('Provisional prototype planning ranges.')).toBeInTheDocument();
+    expect(screen.getByText(/1 of 3 assigned authorities/)).toBeInTheDocument();
     expect(screen.queryByText(/SECRET PROMPT|INTERNAL RATIONALE|INTERNAL WARNING|INTERNAL RULE/)).not.toBeInTheDocument();
   });
 

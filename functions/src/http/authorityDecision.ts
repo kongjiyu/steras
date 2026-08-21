@@ -1,30 +1,25 @@
+import { createHash } from 'node:crypto';
 import { firestore } from 'firebase-admin';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import {
   ASSESSMENT_SCHEMA_VERSION,
   AssessmentRecord,
+  AuthorityScoreResolution,
+  AuthorityScoreReview,
   AuthorityDecision,
   AuthorityType,
   COLLECTIONS,
   DecisionValue,
   EventRecord,
   EventVersion,
-  HARD_RULE_VERSION,
-  PROVISIONAL_FORMULA_VERSION,
-  ProvisionalAssessmentResult,
-  PublicEvent,
   RESOURCE_CONFIG_VERSION,
   RESOURCE_FORMULA_VERSION,
   RESOURCE_SOURCE_REGISTRY_VERSION,
   ResourceRecommendation,
-  RiskLevel,
   UserProfile,
-  hirarcRiskLevelFor,
-  riskLevelFor,
 } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
 import { RESOURCE_CUTOVER_LOCK_PATH } from '../config/resourceCutoverLock';
-import { ACTIVE_CATEGORY_SCHEMA } from '../config/categorySchema';
 import {
   computeResources,
   matchesDeterministicResourceItems,
@@ -32,6 +27,8 @@ import {
   validateAssessmentResultAgainstProposal,
   validateProvisionalAssessmentResult,
 } from '../engines/resourceCalculator';
+import { stableStringify } from '../engines/resourceCalculator';
+import { buildOfficialAssessmentResult } from '../engines/authorityFinalisation';
 import { validateResourceRecommendation, validateResourceRevisionChain } from '../engines/resourceContract';
 import { computeCategoryBasedAssessment } from '../engines/ruleBased';
 import { evaluateCategoryHardRules } from '../engines/hardRuleEvaluator';
@@ -40,6 +37,8 @@ interface AuthorityDecisionRequest {
   eventId?: string;
   decision?: DecisionValue;
   rationale?: string;
+  suggestion?: string;
+  materialsReviewed?: boolean;
 }
 
 export const makeAuthorityDecision = onCall<AuthorityDecisionRequest>({ region: FUNCTION_REGION }, async (request) => {
@@ -52,12 +51,11 @@ export async function makeAuthorityDecisionForUser(
   request: AuthorityDecisionRequest,
   now = Date.now(),
 ) {
-  const { eventId, decision, rationale } = validateDecisionRequest(request);
+  const { eventId, decision, rationale, suggestion, materialsReviewed } = validateDecisionRequest(request);
 
   const db = firestore();
   const eventReference = db.collection(COLLECTIONS.EVENTS).doc(eventId);
   const userReference = db.collection(COLLECTIONS.USERS).doc(uid);
-  const publicReference = db.collection(COLLECTIONS.PUBLIC_EVENTS).doc(eventId);
 
   return db.runTransaction(async (transaction) => {
     const [userSnapshot, eventSnapshot, cutoverLockSnapshot] = await Promise.all([
@@ -75,7 +73,8 @@ export async function makeAuthorityDecisionForUser(
     if (!eventSnapshot.exists) throw new HttpsError('not-found', 'Event application was not found.');
     const event = { eventId, ...eventSnapshot.data() } as EventRecord;
     const versionId = event.currentVersionId;
-    if (!versionId) throw new HttpsError('failed-precondition', 'The application has no submitted version.');
+    const assessmentId = event.currentAssessmentId;
+    if (!versionId || !assessmentId) throw new HttpsError('failed-precondition', 'The application has no current submitted assessment.');
     if (!event.requiredAuthorities.includes(profile.authorityType)) {
       throw new HttpsError('permission-denied', 'Your authority is not assigned to this application.');
     }
@@ -83,8 +82,8 @@ export async function makeAuthorityDecisionForUser(
     const decisionId = currentDecisionId(versionId, profile.authorityType);
     const currentReference = eventReference.collection(COLLECTIONS.DECISIONS).doc(decisionId);
     const versionReference = eventReference.collection(COLLECTIONS.VERSIONS).doc(versionId);
-    const assessmentReference = eventReference.collection(COLLECTIONS.ASSESSMENTS).doc(versionId);
-    const resourceReference = eventReference.collection(COLLECTIONS.RESOURCES).doc(event.currentResourceId ?? versionId);
+    const assessmentReference = eventReference.collection(COLLECTIONS.ASSESSMENTS).doc(assessmentId);
+    const resourceReference = eventReference.collection(COLLECTIONS.RESOURCES).doc(event.currentResourceId ?? '__missing_resource__');
     const resourceHistoryQuery = eventReference.collection(COLLECTIONS.RESOURCES)
       .where('versionId', '==', versionId);
     const [currentSnapshot, versionSnapshot, assessmentSnapshot, resourceSnapshot, resourceHistorySnapshot] = await Promise.all([
@@ -96,15 +95,29 @@ export async function makeAuthorityDecisionForUser(
     ]);
     const current = currentSnapshot.data() as AuthorityDecision | undefined;
     const version = versionSnapshot.data() as EventVersion | undefined;
+    const assessmentValue = assessmentSnapshot.data() as AssessmentRecord | undefined;
+    const reviewIds = assessmentValue?.status === 'official_ready' ? assessmentValue.officialResult.reviewIds : [];
+    const reviewReferences = reviewIds.map((reviewId) => assessmentReference.collection(COLLECTIONS.SCORE_REVIEWS).doc(reviewId));
+    const reviewSnapshots = reviewReferences.length ? await transaction.getAll(...reviewReferences) : [];
+    const resolutionSnapshot = assessmentValue?.status === 'official_ready' && assessmentValue.officialResult.resolutionId
+      ? await transaction.get(assessmentReference.collection(COLLECTIONS.SCORE_RESOLUTIONS).doc(assessmentValue.officialResult.resolutionId))
+      : undefined;
     assertOfficialAssessmentReady(
       event,
       versionId,
-      assessmentSnapshot.data() as AssessmentRecord | undefined,
+      assessmentValue,
       resourceSnapshot.data() as ResourceRecommendation | undefined,
       version,
       resourceHistorySnapshot.docs.map((document) => document.data() as ResourceRecommendation),
+      reviewSnapshots.map((snapshot) => snapshot.data() as AuthorityScoreReview),
+      resolutionSnapshot?.data() as AuthorityScoreResolution | undefined,
     );
-    if (current && current.decision === decision && current.rationale === rationale && current.reviewerId === uid) {
+    const currentAssessment = assessmentSnapshot.data() as AssessmentRecord | undefined;
+    if (decision === 'Approved' && currentAssessment && 'complianceStatus' in currentAssessment && currentAssessment.complianceStatus === 'blocked') {
+      throw new HttpsError('failed-precondition', 'Blocked compliance prevents approval. Record a rejection or amendment recommendation instead.');
+    }
+    if (current && current.decision === decision && current.rationale === rationale
+      && current.suggestion === suggestion && current.materialsReviewed === materialsReviewed && current.reviewerId === uid) {
       return { eventId, versionId, decisionId, decision, status: event.status, idempotent: true };
     }
     if (!['Pending', 'UnderReview'].includes(event.status)) {
@@ -121,6 +134,7 @@ export async function makeAuthorityDecisionForUser(
       if (value?.versionId === versionId && value.current) decisions.set(value.authorityType, value.decision);
     });
     decisions.set(profile.authorityType, decision);
+    const allOfficersCompleted = event.requiredAuthorities.every((authority) => decisions.has(authority));
     const aggregateStatus = aggregateDecisionStatus(event.requiredAuthorities, decisions);
     if (!version) throw new HttpsError('failed-precondition', 'The immutable application version is missing.');
     const authorityDecision: AuthorityDecision = {
@@ -130,11 +144,13 @@ export async function makeAuthorityDecisionForUser(
       authorityType: profile.authorityType,
       decision,
       rationale,
+      ...(suggestion ? { suggestion } : {}),
+      ...(decision === 'Approved' ? { materialsReviewed: true } : {}),
       reviewerId: uid,
       decidedAt: now,
       current: true,
     };
-    const historyId = `${decisionId}_${now}`;
+    const historyId = `${decisionId}_${now}_${createHash('sha256').update(stableStringify({ decision, rationale, suggestion, materialsReviewed })).digest('hex').slice(0, 12)}`;
     const historyReference = eventReference.collection(COLLECTIONS.DECISION_HISTORY).doc(historyId);
     const auditReference = eventReference.collection(COLLECTIONS.AUDIT_LOGS).doc(`${historyId}_decision`);
 
@@ -142,8 +158,8 @@ export async function makeAuthorityDecisionForUser(
     transaction.create(historyReference, { ...authorityDecision, decisionId: historyId, current: false });
     transaction.update(eventReference, {
       status: aggregateStatus,
-      editableVersionId: aggregateStatus === 'AmendmentRequested' ? `v${event.currentVersionNumber + 1}` : null,
-      ...(aggregateStatus === 'AmendmentRequested' ? { draftDocumentPaths: [] } : {}),
+      authorityReviewCompletedAt: allOfficersCompleted ? now : firestore.FieldValue.delete(),
+      authorityReviewCompletedVersionId: allOfficersCompleted ? versionId : firestore.FieldValue.delete(),
       updatedAt: now,
     });
     transaction.create(auditReference, {
@@ -157,45 +173,33 @@ export async function makeAuthorityDecisionForUser(
       previousStatus: event.status,
       newStatus: aggregateStatus,
       notes: rationale,
-      metadata: { authorityType: profile.authorityType, decision },
+      metadata: { authorityType: profile.authorityType, decision, suggestion: suggestion ?? null, materialsReviewed: materialsReviewed ?? false, readyForSecondReview: allOfficersCompleted },
     });
-
-    if (aggregateStatus === 'Approved') {
-      const details = version.eventDetails;
-      const publicEvent: PublicEvent = {
-        eventId,
-        versionId,
-        eventName: details.name,
-        venueName: details.venueName,
-        eventType: details.type,
-        startDatetime: details.startDatetime,
-        endDatetime: details.endDatetime,
-        approvedBy: event.requiredAuthorities,
-        publicStatus: 'approved',
-      };
-      transaction.set(publicReference, publicEvent);
-      const publishAudit = eventReference.collection(COLLECTIONS.AUDIT_LOGS).doc(`${versionId}_public_published`);
-      transaction.set(publishAudit, {
-        id: publishAudit.id, eventId, versionId, action: 'public_published', actorId: 'system', actorRole: 'system', timestamp: now,
-        metadata: { approvedBy: event.requiredAuthorities },
-      });
-    } else {
-      transaction.delete(publicReference);
-    }
 
     return { eventId, versionId, decisionId, decision, status: aggregateStatus, idempotent: false };
   });
 }
 
 export function assertOfficialAssessmentReady(
-  event: Pick<EventRecord, 'eventId' | 'currentAssessmentId' | 'currentResourceId'>,
+  event: Pick<EventRecord, 'eventId' | 'currentAssessmentId' | 'currentResourceId' | 'requiredAuthorities'>,
   versionId: string,
   assessment: AssessmentRecord | undefined,
   resources: ResourceRecommendation | undefined,
   version: EventVersion | undefined,
   resourceHistory: ResourceRecommendation[] = resources ? [resources] : [],
+  reviews: AuthorityScoreReview[] = [],
+  resolution?: AuthorityScoreResolution,
 ): void {
-  const validAssessment = isValidOfficialAssessment(assessment, event.eventId, versionId);
+  const validAssessment = isValidOfficialAssessment(
+    assessment,
+    event.eventId,
+    event.currentAssessmentId,
+    versionId,
+    event.requiredAuthorities,
+    version,
+    reviews,
+    resolution,
+  );
   const validHardRuleFloors = assessment?.status === 'official_ready' && version
     ? assessmentSatisfiesCurrentHardRules(assessment, event.eventId, version)
     : false;
@@ -214,6 +218,7 @@ export function assertOfficialAssessmentReady(
     resources,
     event.eventId,
     versionId,
+    officialAssessment?.assessmentId,
     expectedHash,
     expectedCalculation?.ok ? expectedCalculation.items : undefined,
   );
@@ -225,7 +230,8 @@ export function assertOfficialAssessmentReady(
     && reference.proposalId === proposal?.proposalId
     && reference.finalizedAt === official?.finalizedAt
     && reference.finalizedBy === official?.finalizedBy);
-  if (event.currentAssessmentId !== versionId
+  if (!event.currentAssessmentId
+    || event.currentAssessmentId !== assessment?.assessmentId
     || !event.currentResourceId
     || event.currentResourceId !== resources?.resourceId
     || version?.eventId !== event.eventId
@@ -268,140 +274,56 @@ function assessmentSatisfiesCurrentHardRules(
   }
 }
 
-function isValidOfficialAssessment(assessment: AssessmentRecord | undefined, eventId: string, versionId: string): boolean {
-  if (!isRecord(assessment)) return false;
-  const aiProposal = isRecord(assessment.aiProposal) ? assessment.aiProposal : undefined;
-  const provisional = isRecord(assessment.provisionalResult) ? assessment.provisionalResult : undefined;
-  const official = isRecord(assessment.officialResult) ? assessment.officialResult : undefined;
-  if (assessment.status !== 'official_ready'
-    || assessment.schemaVersion !== ASSESSMENT_SCHEMA_VERSION
-    || assessment.complianceStatus === 'blocked'
-    || assessment.assessmentId !== versionId
+function isValidOfficialAssessment(
+  assessment: AssessmentRecord | undefined,
+  eventId: string,
+  assessmentId: string | undefined,
+  versionId: string,
+  requiredAuthorities: AuthorityType[],
+  version: EventVersion | undefined,
+  reviews: AuthorityScoreReview[],
+  resolution?: AuthorityScoreResolution,
+): boolean {
+  if (!assessment || assessment.status !== 'official_ready' || !version) return false;
+  if (assessment.schemaVersion !== ASSESSMENT_SCHEMA_VERSION
+    || assessment.assessmentId !== assessmentId
     || assessment.eventId !== eventId
     || assessment.versionId !== versionId
-    || aiProposal?.status !== 'success'
-    || typeof aiProposal.proposalId !== 'string'
-    || typeof aiProposal.model !== 'string' || !aiProposal.model.trim()
-    || typeof aiProposal.promptVersion !== 'string' || !aiProposal.promptVersion.trim()
-    || typeof aiProposal.responseSchemaVersion !== 'string' || !aiProposal.responseSchemaVersion.trim()
-    || !['hit', 'miss', 'not-applicable'].includes(String(aiProposal.cacheStatus))
-    || !Number.isFinite(aiProposal.generatedAt)
-    || !Array.isArray(aiProposal.categories)
-    || !Array.isArray(aiProposal.hazards)
-    || !Array.isArray(assessment.evidence)
-    || provisional?.proposalId !== aiProposal.proposalId
-    || official?.proposalId !== aiProposal.proposalId
-    || official.formulaVersion !== PROVISIONAL_FORMULA_VERSION
-    || official.hardRuleVersion !== HARD_RULE_VERSION
-    || official.categorySchemaVersion !== ACTIVE_CATEGORY_SCHEMA.version
-    || !Array.isArray(official.validatedHazards)
-    || !Number.isFinite(official.finalizedAt)
-    || typeof official.finalizedBy !== 'string'
-    || !official.finalizedBy.trim()
-    || !Array.isArray(official.categories)
-    || validateProvisionalAssessmentResult(provisional as unknown as ProvisionalAssessmentResult).length > 0
-    || validateProvisionalAssessmentResult(official as unknown as ProvisionalAssessmentResult).length > 0) return false;
-  const expectedCategories = new Map<string, number>(
-    ACTIVE_CATEGORY_SCHEMA.categories.map((category) => [category.id, category.weight]),
-  );
-  const seen = new Set<string>();
-  const provisionalCategories = new Map(
-    (provisional as unknown as ProvisionalAssessmentResult).categories.map((category) => [category.categoryId, category]),
-  );
-  const proposalCategories = new Map(
-    (aiProposal.categories as unknown[])
-      .filter(isRecord)
-      .map((category) => [category.categoryId, category]),
-  );
-  if (proposalCategories.size !== expectedCategories.size) return false;
-  for (const category of provisionalCategories.values()) {
-    const proposed = proposalCategories.get(category.categoryId);
-    if (!proposed
-      || proposed.likelihood !== category.proposedLikelihood
-      || proposed.severity !== category.proposedSeverity
-      || proposed.rationale !== category.rationale
-      || proposed.confidence !== category.confidence
-      || JSON.stringify(proposed.concerns) !== JSON.stringify(category.concerns)
-      || JSON.stringify(proposed.missingInformation) !== JSON.stringify(category.missingInformation)
-      || !referencesAreSubset(category.evidenceReferences, proposed.evidenceReferences)) return false;
+    || assessment.aiProposal.status !== 'success'
+    || assessment.provisionalResult.proposalId !== assessment.aiProposal.proposalId
+    || assessment.officialResult.proposalId !== assessment.aiProposal.proposalId
+    || !assessment.authorityReviewState
+    || stableStringify(assessment.authorityReviewState.requiredAuthorities) !== stableStringify(requiredAuthorities)
+    || assessment.authorityReviewState.requiredAuthorities.length === 0
+    || validateProvisionalAssessmentResult(assessment.provisionalResult).length > 0
+    || validateAssessmentResultAgainstProposal(assessment.provisionalResult, assessment.aiProposal).length > 0) return false;
+  try {
+    const expected = buildOfficialAssessmentResult({
+      assessment,
+      eventDetails: version.eventDetails,
+      requiredAuthorities: assessment.authorityReviewState.requiredAuthorities,
+      reviews,
+      resolution,
+      finalizedAt: assessment.officialResult.finalizedAt,
+      finalizedBy: assessment.officialResult.finalizedBy,
+    });
+    const expectedHeads = new Set(Object.values(assessment.authorityReviewState.activeReviewHeads).map((head) => head?.reviewId));
+    return reviews.length === assessment.authorityReviewState.requiredAuthorities.length
+      && reviews.every((review) => expectedHeads.has(review.reviewId))
+      && assessment.officialResult.reviewIds.every((reviewId) => expectedHeads.has(reviewId))
+      && assessment.authorityReviewState.conflicts.length === (resolution ? resolution.categories.length : 0)
+      && assessment.authorityReviewState.activeResolutionId === resolution?.resolutionId
+      && stableStringify(expected) === stableStringify(assessment.officialResult);
+  } catch {
+    return false;
   }
-  const proposalHazards = new Map(
-    (aiProposal.hazards as unknown[])
-      .filter(isRecord)
-      .map((hazard) => [hazard.hazardId, hazard]),
-  );
-  for (const hazard of (provisional as unknown as ProvisionalAssessmentResult).validatedHazards) {
-    const proposed = proposalHazards.get(hazard.hazardId);
-    if (!proposed
-      || proposed.hazardName !== hazard.hazardName
-      || proposed.categoryId !== hazard.categoryId
-      || proposed.rationale !== hazard.rationale
-      || !referencesAreSubset(hazard.evidenceReferences, proposed.evidenceReferences)) return false;
-  }
-  const eligibleEvidence = new Set((assessment.evidence as unknown[])
-    .filter(isRecord)
-    .filter((item) => typeof item.key === 'string'
-      && typeof item.status === 'string'
-      && item.quality !== 'missing'
-      && !['unavailable', 'unmatched', 'missing'].includes(item.status.trim().toLowerCase()))
-    .map((item) => item.key as string));
-  if (eligibleEvidence.size === 0
-    || (provisional as unknown as ProvisionalAssessmentResult).categories.some((category) =>
-      category.evidenceReferences.some((reference) => !eligibleEvidence.has(reference)))
-    || (provisional as unknown as ProvisionalAssessmentResult).validatedHazards.some((hazard) =>
-      hazard.evidenceReferences.some((reference) => !eligibleEvidence.has(reference)))) return false;
-  if (JSON.stringify(official.validatedHazards) !== JSON.stringify(provisional.validatedHazards)) return false;
-  let weightedScore = 0;
-  let highestCategoryRiskLevel: RiskLevel = 'Low';
-  if (official.categories.length !== expectedCategories.size) return false;
-  for (const value of official.categories) {
-    if (!isRecord(value) || typeof value.categoryId !== 'string') return false;
-    const expectedWeight = expectedCategories.get(value.categoryId);
-    const provisionalCategory = provisionalCategories.get(value.categoryId);
-    if (expectedWeight === undefined || seen.has(value.categoryId)) return false;
-    seen.add(value.categoryId);
-    if (!provisionalCategory
-      || value.proposedLikelihood !== provisionalCategory.proposedLikelihood
-      || value.proposedSeverity !== provisionalCategory.proposedSeverity
-      || value.categoryName !== provisionalCategory.categoryName
-      || JSON.stringify(value.evidenceReferences) !== JSON.stringify(provisionalCategory.evidenceReferences)
-      || value.rationale !== provisionalCategory.rationale
-      || value.confidence !== provisionalCategory.confidence
-      || JSON.stringify(value.concerns) !== JSON.stringify(provisionalCategory.concerns)
-      || JSON.stringify(value.missingInformation) !== JSON.stringify(provisionalCategory.missingInformation)
-      || JSON.stringify(value.appliedHardRules) !== JSON.stringify(provisionalCategory.appliedHardRules)
-      || JSON.stringify(value.guidelineChecks) !== JSON.stringify(provisionalCategory.guidelineChecks)
-      || Number(value.validatedLikelihood) < provisionalCategory.validatedLikelihood
-      || Number(value.validatedSeverity) < provisionalCategory.validatedSeverity
-      || !isScoreRating(value.validatedLikelihood)
-      || !isScoreRating(value.validatedSeverity)
-      || value.matrixScore !== value.validatedLikelihood * value.validatedSeverity
-      || value.normalizedScore !== value.matrixScore * 4
-      || value.weight !== expectedWeight
-      || value.weightedContribution !== round(value.normalizedScore * expectedWeight)
-      || value.riskLevel !== hirarcRiskLevelFor(value.matrixScore)) return false;
-    const categoryRiskLevel = hirarcRiskLevelFor(value.matrixScore);
-    weightedScore += value.normalizedScore * expectedWeight;
-    highestCategoryRiskLevel = higherRisk(highestCategoryRiskLevel, categoryRiskLevel);
-  }
-  const overallScore = round(weightedScore);
-  const weightedRiskLevel = riskLevelFor(overallScore);
-  return official.overallScore === overallScore
-    && official.weightedRiskLevel === weightedRiskLevel
-    && official.highestCategoryRiskLevel === highestCategoryRiskLevel
-    && official.overallRiskLevel === higherRisk(weightedRiskLevel, highestCategoryRiskLevel);
-}
-
-function referencesAreSubset(actual: string[], proposed: unknown): boolean {
-  return Array.isArray(proposed)
-    && proposed.every((reference) => typeof reference === 'string')
-    && actual.every((reference) => proposed.includes(reference));
 }
 
 function isValidOfficialResources(
   resources: ResourceRecommendation | undefined,
   eventId: string,
   versionId: string,
+  assessmentId: string | undefined,
   expectedHash: string | undefined,
   expectedItems: ResourceRecommendation['items'] | undefined,
 ): boolean {
@@ -409,7 +331,7 @@ function isValidOfficialResources(
     && expectedHash
     && resources.eventId === eventId
     && resources.versionId === versionId
-    && resources.assessmentId === versionId
+    && resources.assessmentId === assessmentId
     && resources.stage === 'official'
     && resources.formulaVersion === RESOURCE_FORMULA_VERSION
     && resources.configVersion === RESOURCE_CONFIG_VERSION
@@ -420,24 +342,17 @@ function isValidOfficialResources(
     && validateResourceRecommendation(resources).ok);
 }
 
-function isScoreRating(value: unknown): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 5;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function round(value: number): number {
-  return Math.round(value * 100) / 100;
-}
-
-function higherRisk(left: RiskLevel, right: RiskLevel): RiskLevel {
-  const order: Record<RiskLevel, number> = { Low: 0, Medium: 1, High: 2 };
-  return order[left] >= order[right] ? left : right;
-}
-
-export function validateDecisionRequest(request: unknown): { eventId: string; decision: DecisionValue; rationale: string } {
+export function validateDecisionRequest(request: unknown): {
+  eventId: string;
+  decision: DecisionValue;
+  rationale: string;
+  suggestion?: string;
+  materialsReviewed?: boolean;
+} {
   const value = typeof request === 'object' && request !== null ? request as Record<string, unknown> : {};
   const eventId = typeof value.eventId === 'string' ? value.eventId.trim() : '';
   const decision = value.decision;
@@ -447,16 +362,27 @@ export function validateDecisionRequest(request: unknown): { eventId: string; de
   if (rationale.length < 10 || rationale.length > 1_000) {
     throw new HttpsError('invalid-argument', 'Rationale must be between 10 and 1,000 characters.');
   }
-  return { eventId, decision, rationale };
+  if (decision === 'Approved' && value.materialsReviewed !== true) {
+    throw new HttpsError('invalid-argument', 'Confirm review of all listed materials before approval.');
+  }
+  const suggestion = typeof value.suggestion === 'string' ? value.suggestion.trim() : '';
+  if (decision !== 'Approved' && (suggestion.length < 10 || suggestion.length > 1_000)) {
+    throw new HttpsError('invalid-argument', 'A suggestion between 10 and 1,000 characters is required.');
+  }
+  return {
+    eventId,
+    decision,
+    rationale,
+    ...(decision === 'Approved' ? { materialsReviewed: true } : { suggestion }),
+  };
 }
 
 export function aggregateDecisionStatus(
   requiredAuthorities: AuthorityType[],
   decisions: ReadonlyMap<AuthorityType, DecisionValue>,
 ): EventRecord['status'] {
-  if (requiredAuthorities.some((authority) => decisions.get(authority) === 'Rejected')) return 'Rejected';
-  if (requiredAuthorities.some((authority) => decisions.get(authority) === 'AmendmentRequested')) return 'AmendmentRequested';
-  if (requiredAuthorities.length > 0 && requiredAuthorities.every((authority) => decisions.get(authority) === 'Approved')) return 'Approved';
+  void requiredAuthorities;
+  void decisions;
   return 'UnderReview';
 }
 
