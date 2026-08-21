@@ -410,6 +410,7 @@ function IncidentDetail({ incident, role, onRequestAssistance, onResolve }: { in
               <div className="rounded-md border border-[#e3dacb] p-3"><div className="flex items-center gap-2"><LifeBuoy size={16} className="text-brand-600" /><p className="text-sm font-semibold text-ink-800">Request external help</p></div><p className="mt-1 text-xs leading-5 text-ink-500">Review recommended authorities and refer the report for investigation.</p><button type="button" onClick={onRequestAssistance} className="btn-primary mt-3 !min-h-9 !px-3 text-xs">Review authorities <ArrowRight size={14} /></button></div>
             </div>
             <div className="mt-4 rounded-md bg-cream-50 px-3 py-3 text-xs text-ink-600"><span className="font-semibold text-ink-800">Current response team:</span> {incident.responseTeam ?? 'Not assigned yet'}</div>
+            {incident.eventControl && <div className="mt-4 rounded-md border border-[#e3dacb] p-3"><p className="text-xs font-bold uppercase tracking-[0.06em] text-ink-500">Event Control discrepancy outcome</p><p className="mt-1 text-xs leading-5 text-ink-500">Required before closing a report linked to a published control item.</p><div className="mt-3 flex flex-wrap gap-4 text-sm text-ink-700"><label className="flex items-center gap-2"><input type="radio" name={`discrepancy-${incident.id}`} defaultChecked className="h-4 w-4 text-brand-600 focus:ring-brand-500" /> Confirmed true</label><label className="flex items-center gap-2"><input type="radio" name={`discrepancy-${incident.id}`} className="h-4 w-4 text-brand-600 focus:ring-brand-500" /> Dismissed as false</label></div></div>}
           </div>
         </section>
       ) : (
@@ -417,7 +418,8 @@ function IncidentDetail({ incident, role, onRequestAssistance, onResolve }: { in
           <div className="card-header"><div><p className="section-title">Authority review</p><p className="mt-1 text-xs text-ink-500">Record referral and investigation progress for this incident.</p></div><ShieldCheck size={19} className="text-brand-600" /></div>
           <div className="card-body">
             <div className="grid gap-3 sm:grid-cols-2"><div className="rounded-md bg-cream-50 p-3"><span className="text-xs text-ink-500">Assigned authority</span><p className="mt-1 text-sm font-semibold text-ink-800">{incident.authority ?? 'Not assigned'}</p></div><div className="rounded-md bg-cream-50 p-3"><span className="text-xs text-ink-500">Reporter request</span><p className="mt-1 text-sm font-semibold text-ink-800">{incident.authority ? 'External assistance requested' : 'Internal handling'}</p></div></div>
-            <div className="mt-4 flex flex-wrap gap-2"><button type="button" onClick={onResolve} className="btn-primary !min-h-9 !px-3 text-xs"><CheckCircle2 size={14} /> Mark investigation complete</button><button type="button" onClick={onRequestAssistance} className="btn-secondary !min-h-9 !px-3 text-xs"><MessageSquare size={14} /> Add investigation note</button></div>
+            <label className="mt-4 block"><span className="field-label">Investigation action or finding</span><textarea className="input min-h-24 resize-y" placeholder="Record what was checked, who was contacted and what the evidence shows." /></label>
+            <div className="mt-4 flex flex-wrap gap-2"><button type="button" onClick={onResolve} className="btn-primary !min-h-9 !px-3 text-xs"><CheckCircle2 size={14} /> Mark investigation complete</button><button type="button" onClick={onRequestAssistance} className="btn-secondary !min-h-9 !px-3 text-xs"><MessageSquare size={14} /> Save investigation note</button></div>
           </div>
         </section>
       )}
@@ -468,26 +470,68 @@ function OrganizerView({ incidents, selectedId, setSelectedId, onSubmit, onReque
   selectedId: string;
   setSelectedId: (id: string) => void;
   onSubmit: () => void;
-  onRequestAssistance: () => void;
+  onRequestAssistance: (authority?: string) => void;
   onResolve: () => void;
   notice: string | null;
   form: FormState;
   onFormChange: (key: keyof FormState, value: string | boolean) => void;
 }) {
   const [activeTab, setActiveTab] = useState<'reports' | 'new'>('reports');
+  const [showDirectory, setShowDirectory] = useState(false);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const selected = incidents.find((incident) => incident.id === selectedId) ?? incidents[0];
+  const handleRequestAssistance = () => {
+    setShowDirectory(true);
+    onRequestAssistance();
+  };
+
   return (
     <>
       <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
-        <div><p className="page-eyebrow">Organizer workspace</p><h1 className="font-display text-3xl font-bold text-ink-900 sm:text-4xl">Incident reporting</h1><p className="mt-3 max-w-2xl text-sm leading-6 text-ink-600">Submit an event-related incident, follow the response progress and keep the final resolution in one auditable record.</p></div>
+        <div>
+          <p className="page-eyebrow">Organizer workspace</p>
+          <h1 className="font-display text-3xl font-bold text-ink-900 sm:text-4xl">Incident reporting</h1>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-ink-600">Submit an event-related incident, follow the response progress and keep the final resolution in one auditable record.</p>
+        </div>
         <button type="button" onClick={() => setActiveTab('new')} className="btn-primary shrink-0"><Plus size={16} /> Report an incident</button>
       </div>
       {notice && <div className="mt-5 flex items-center gap-2 rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-status-approved"><CheckCircle2 size={16} />{notice}</div>}
-      <div className="mt-7 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><KpiCard icon={FileText} label="My reports" value={`${incidents.length}`} detail="All submitted reports" /><KpiCard icon={ShieldAlert} label="Needs action" value={`${incidents.filter((incident) => incident.status === 'Action required').length}`} detail="Organizer response required" tone="red" /><KpiCard icon={Activity} label="In progress" value={`${incidents.filter((incident) => incident.status === 'Investigating').length}`} detail="Response or investigation" tone="gold" /><KpiCard icon={CheckCircle2} label="Resolved" value={`${incidents.filter((incident) => incident.status === 'Resolved').length}`} detail="Retained for history" tone="green" /></div>
-      <div className="mt-7 flex gap-1 border-b border-[#d9cdb8]" role="tablist"><button type="button" onClick={() => setActiveTab('reports')} className={`border-b-2 px-4 py-3 text-sm font-semibold ${activeTab === 'reports' ? 'border-brand-600 text-brand-700' : 'border-transparent text-ink-500'}`} role="tab" aria-selected={activeTab === 'reports'}>My incident reports</button><button type="button" onClick={() => setActiveTab('new')} className={`border-b-2 px-4 py-3 text-sm font-semibold ${activeTab === 'new' ? 'border-brand-600 text-brand-700' : 'border-transparent text-ink-500'}`} role="tab" aria-selected={activeTab === 'new'}>New report</button></div>
-      {activeTab === 'new' ? <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(300px,.85fr)]"><SubmissionForm form={form} onChange={onFormChange} onSubmit={onSubmit} /><section className="card h-fit"><div className="card-header"><div><p className="section-title">Before you submit</p><p className="mt-1 text-xs text-ink-500">The prototype follows the confirmed M4 requirements.</p></div><ListChecks size={19} className="text-brand-600" /></div><div className="card-body"><ul className="space-y-4 text-xs leading-5 text-ink-600"><li className="flex gap-3"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[11px] font-bold text-brand-700">1</span><span>Choose the event and record when and where the incident occurred.</span></li><li className="flex gap-3"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[11px] font-bold text-brand-700">2</span><span>Describe the incident and attach available evidence.</span></li><li className="flex gap-3"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[11px] font-bold text-brand-700">3</span><span>Review the AI-assisted severity and immediate-action assessment.</span></li><li className="flex gap-3"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[11px] font-bold text-brand-700">4</span><span>Handle the report internally or request assistance from a recommended authority.</span></li></ul><div className="mt-5 rounded-md bg-cream-50 px-3 py-3 text-xs text-ink-500"><strong className="text-ink-800">Privacy reminder:</strong> incident details and evidence are restricted to permitted users.</div></div></section></div> : <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(320px,.82fr)_minmax(0,1.18fr)]"><IncidentList incidents={incidents} selectedId={selected?.id ?? ''} onSelect={(incident) => setSelectedId(incident.id)} query={query} onQueryChange={setQuery} filter={filter} onFilterChange={setFilter} emptyLabel="No incident reports match your search." />{selected ? <IncidentDetail incident={selected} role="organizer" onRequestAssistance={onRequestAssistance} onResolve={onResolve} /> : <div className="card flex min-h-64 items-center justify-center p-8 text-center text-sm text-ink-500">Select a report to view its details.</div>}</div>}
+      <div className="mt-7 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <KpiCard icon={FileText} label="My reports" value={`${incidents.length}`} detail="All submitted reports" />
+        <KpiCard icon={ShieldAlert} label="Needs action" value={`${incidents.filter((incident) => incident.status === 'Action required').length}`} detail="Organizer response required" tone="red" />
+        <KpiCard icon={Activity} label="In progress" value={`${incidents.filter((incident) => incident.status === 'Investigating').length}`} detail="Response or investigation" tone="gold" />
+        <KpiCard icon={CheckCircle2} label="Resolved" value={`${incidents.filter((incident) => incident.status === 'Resolved').length}`} detail="Retained for history" tone="green" />
+      </div>
+      <div className="mt-7 flex gap-1 border-b border-[#d9cdb8]" role="tablist">
+        <button type="button" onClick={() => setActiveTab('reports')} className={`border-b-2 px-4 py-3 text-sm font-semibold ${activeTab === 'reports' ? 'border-brand-600 text-brand-700' : 'border-transparent text-ink-500'}`} role="tab" aria-selected={activeTab === 'reports'}>My incident reports</button>
+        <button type="button" onClick={() => setActiveTab('new')} className={`border-b-2 px-4 py-3 text-sm font-semibold ${activeTab === 'new' ? 'border-brand-600 text-brand-700' : 'border-transparent text-ink-500'}`} role="tab" aria-selected={activeTab === 'new'}>New report</button>
+      </div>
+      {activeTab === 'new' ? (
+        <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(300px,.85fr)]">
+          <SubmissionForm form={form} onChange={onFormChange} onSubmit={onSubmit} />
+          <section className="card h-fit">
+            <div className="card-header"><div><p className="section-title">Before you submit</p><p className="mt-1 text-xs text-ink-500">The prototype follows the confirmed M4 requirements.</p></div><ListChecks size={19} className="text-brand-600" /></div>
+            <div className="card-body">
+              <ul className="space-y-4 text-xs leading-5 text-ink-600">
+                <li className="flex gap-3"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[11px] font-bold text-brand-700">1</span><span>Choose the event and record when and where the incident occurred.</span></li>
+                <li className="flex gap-3"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[11px] font-bold text-brand-700">2</span><span>Describe the incident and attach available evidence.</span></li>
+                <li className="flex gap-3"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[11px] font-bold text-brand-700">3</span><span>Review the AI-assisted severity and immediate-action assessment.</span></li>
+                <li className="flex gap-3"><span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-50 text-[11px] font-bold text-brand-700">4</span><span>Handle the report internally or request assistance from a recommended authority.</span></li>
+              </ul>
+              <div className="mt-5 rounded-md bg-cream-50 px-3 py-3 text-xs text-ink-500"><strong className="text-ink-800">Privacy reminder:</strong> incident details and evidence are restricted to permitted users.</div>
+            </div>
+          </section>
+        </div>
+      ) : (
+        <>
+          <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(320px,.82fr)_minmax(0,1.18fr)]">
+            <IncidentList incidents={incidents} selectedId={selected?.id ?? ''} onSelect={(incident) => setSelectedId(incident.id)} query={query} onQueryChange={setQuery} filter={filter} onFilterChange={setFilter} emptyLabel="No incident reports match your search." />
+            {selected ? <IncidentDetail incident={selected} role="organizer" onRequestAssistance={handleRequestAssistance} onResolve={onResolve} /> : <div className="card flex min-h-64 items-center justify-center p-8 text-center text-sm text-ink-500">Select a report to view its details.</div>}
+          </div>
+          {showDirectory && <div className="mt-5"><AuthorityDirectory onSelect={(name) => onRequestAssistance(name)} /></div>}
+        </>
+      )}
     </>
   );
 }
@@ -503,7 +547,6 @@ function AuthorityView({ incidents, selectedId, setSelectedId, onRequestAssistan
       {notice && <div className="mt-5 flex items-center gap-2 rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-status-approved"><CheckCircle2 size={16} />{notice}</div>}
       <div className="mt-7 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><KpiCard icon={Flag} label="Referred" value={`${referred.length}`} detail="Assigned to this authority" /><KpiCard icon={ShieldAlert} label="Immediate action" value={`${referred.filter((incident) => incident.immediateAction).length}`} detail="Review response priority" tone="red" /><KpiCard icon={Activity} label="Investigating" value={`${referred.filter((incident) => incident.status === 'Investigating').length}`} detail="Open investigation" tone="gold" /><KpiCard icon={CheckCircle2} label="Resolved" value={`${referred.filter((incident) => incident.status === 'Resolved').length}`} detail="Outcome available" tone="green" /></div>
       <div className="mt-7 grid gap-5 lg:grid-cols-[minmax(320px,.82fr)_minmax(0,1.18fr)]"><IncidentList incidents={referred} selectedId={selected?.id ?? ''} onSelect={(incident) => setSelectedId(incident.id)} query={query} onQueryChange={setQuery} filter={filter} onFilterChange={setFilter} emptyLabel="No referred incidents match your search." />{selected ? <IncidentDetail incident={selected} role="authority" onRequestAssistance={onRequestAssistance} onResolve={onResolve} /> : <div className="card flex min-h-64 items-center justify-center p-8 text-center text-sm text-ink-500">Select an incident to review.</div>}</div>
-      <div className="mt-5"><AuthorityDirectory onSelect={() => undefined} /></div>
     </>
   );
 }
@@ -554,7 +597,7 @@ export default function IncidentReportingPrototype() {
     setNotice(`${newIncident.id} was submitted in the prototype. The report is now in Submitted status.`);
   };
 
-  const requestAssistance = () => setNotice('Prototype action: authority directory opened. Select a recommended authority to create the referral.');
+  const requestAssistance = (authority?: string) => setNotice(authority ? `Prototype action: ${authority} selected for the external-assistance referral.` : 'Prototype action: authority directory opened. Select a recommended authority to create the referral.');
   const resolveIncident = () => {
     setIncidents((current) => current.map((incident) => incident.id === selectedId ? { ...incident, status: 'Resolved', history: incident.history.map((entry, index) => index === incident.history.length - 1 ? { ...entry, label: 'Resolution recorded', detail: 'Prototype resolution recorded by the current user.', at: 'Just now', state: 'done' } : entry) } : incident));
     setNotice('Prototype action: investigation/response marked complete and the incident is now Resolved.');
