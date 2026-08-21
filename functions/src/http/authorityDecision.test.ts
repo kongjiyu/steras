@@ -3,6 +3,7 @@ import { HttpsError } from 'firebase-functions/v2/https';
 import {
   ASSESSMENT_SCHEMA_VERSION,
   AssessmentRecord,
+  AuthorityScoreReview,
   EventVersion,
   HARD_RULE_VERSION,
   PROVISIONAL_FORMULA_VERSION,
@@ -12,10 +13,12 @@ import {
   RESOURCE_SCHEMA_VERSION,
   RESOURCE_SOURCE_REGISTRY_VERSION,
   ResourceRecommendation,
+  SCORE_REVIEW_SCHEMA_VERSION,
 } from '@shared/types';
 import { ACTIVE_CATEGORY_SCHEMA } from '../config/categorySchema';
 import { computeResources } from '../engines/resourceCalculator';
-import { assertOfficialAssessmentReady } from './authorityDecision';
+import { aggregateDecisionStatus, assertOfficialAssessmentReady, validateDecisionRequest } from './authorityDecision';
+import { buildAuthorityReviewState, buildOfficialAssessmentResult } from '../engines/authorityFinalisation';
 
 describe('assertOfficialAssessmentReady', () => {
   it.each(['processing', 'manual_review_required', 'provisional_ready', 'authority_review', 'failed'] as const)(
@@ -38,6 +41,8 @@ describe('assertOfficialAssessmentReady', () => {
       officialAssessment(),
       officialResources(),
       eventVersion(),
+      [officialResources()],
+      [scoreReview()],
     )).not.toThrow();
     expect(() => assertOfficialAssessmentReady(
       eventPointer(undefined),
@@ -46,6 +51,21 @@ describe('assertOfficialAssessmentReady', () => {
       officialResources(),
       eventVersion(),
     )).toThrow(HttpsError);
+  });
+
+  it('accepts an official assessment ID that is distinct from the immutable version ID', () => {
+    const assessmentId = 'assessment-v1-r2';
+    const assessment = officialAssessment(assessmentId);
+    const resources = officialResources(assessmentId);
+    expect(() => assertOfficialAssessmentReady(
+      eventPointer(resources.resourceId, assessmentId),
+      'v1',
+      assessment,
+      resources,
+      eventVersion(),
+      [resources],
+      [scoreReview(assessmentId)],
+    )).not.toThrow();
   });
 
   it('rejects incomplete official-looking records and provisional resources', () => {
@@ -85,13 +105,13 @@ describe('assertOfficialAssessmentReady', () => {
     )).toThrow(HttpsError);
   });
 
-  it('rejects blocked compliance and resources not bound to the event or deterministic hash', () => {
+  it('keeps blocked compliance reviewable while rejecting resources not bound to the event or deterministic hash', () => {
     const assessment = officialAssessment();
     const resources = officialResources();
     expect(() => assertOfficialAssessmentReady(
       eventPointer(resources.resourceId), 'v1', { ...assessment, complianceStatus: 'blocked' } as AssessmentRecord,
-      resources, eventVersion(),
-    )).toThrow(HttpsError);
+      resources, eventVersion(), [resources], [scoreReview()],
+    )).not.toThrow();
     expect(() => assertOfficialAssessmentReady(
       eventPointer(resources.resourceId), 'v1', assessment,
       { ...resources, eventId: 'other-event' }, eventVersion(),
@@ -154,9 +174,38 @@ describe('assertOfficialAssessmentReady', () => {
       eventPointer(resources.resourceId), 'v1', officialAssessment(), resources, eventVersion(), [resources, newer],
     )).toThrow(HttpsError);
   });
+
+  it('rejects official scores that are not exactly reproducible from stored review provenance', () => {
+    const assessment = officialAssessment();
+    const resources = officialResources();
+    if (assessment.status !== 'official_ready') throw new Error('Expected official assessment.');
+    const tampered = structuredClone(assessment);
+    tampered.officialResult.categories[0].authorityLikelihood = 4;
+    expect(() => assertOfficialAssessmentReady(
+      eventPointer(resources.resourceId), 'v1', tampered, resources, eventVersion(), [resources], [scoreReview()],
+    )).toThrow(HttpsError);
+    const alteredReview = { ...scoreReview(), rationale: 'A different rationale changes the signed review input.' };
+    expect(() => assertOfficialAssessmentReady(
+      eventPointer(resources.resourceId), 'v1', assessment, resources, eventVersion(), [resources], [alteredReview],
+    )).toThrow(HttpsError);
+  });
 });
 
-function officialAssessment(): AssessmentRecord {
+describe('officer decision boundary', () => {
+  it('requires material confirmation for approval and suggestions for adverse recommendations', () => {
+    expect(() => validateDecisionRequest({ eventId: 'event-1', decision: 'Approved', rationale: 'Reviewed all required materials.' })).toThrow(HttpsError);
+    expect(validateDecisionRequest({ eventId: 'event-1', decision: 'Approved', rationale: 'Reviewed all required materials.', materialsReviewed: true })).toMatchObject({ materialsReviewed: true });
+    expect(() => validateDecisionRequest({ eventId: 'event-1', decision: 'Rejected', rationale: 'Evidence is not sufficient.' })).toThrow(HttpsError);
+    expect(validateDecisionRequest({ eventId: 'event-1', decision: 'Rejected', rationale: 'Evidence is not sufficient.', suggestion: 'Provide verified evidence and submit the application again.' })).toMatchObject({ decision: 'Rejected' });
+  });
+
+  it('never turns officer recommendations into a final application status', () => {
+    expect(aggregateDecisionStatus(['PDRM', 'BOMBA'], new Map([['PDRM', 'Approved'], ['BOMBA', 'Approved']]))).toBe('UnderReview');
+    expect(aggregateDecisionStatus(['PDRM'], new Map([['PDRM', 'Rejected']]))).toBe('UnderReview');
+  });
+});
+
+function officialAssessment(assessmentId = 'v1'): AssessmentRecord {
   const categories = ACTIVE_CATEGORY_SCHEMA.categories.map((category) => ({
     categoryId: category.id, categoryName: category.name,
     proposedLikelihood: 5, proposedSeverity: 5, validatedLikelihood: 5, validatedSeverity: 5,
@@ -170,10 +219,10 @@ function officialAssessment(): AssessmentRecord {
     formulaVersion: PROVISIONAL_FORMULA_VERSION, categorySchemaVersion: ACTIVE_CATEGORY_SCHEMA.version,
     hardRuleVersion: HARD_RULE_VERSION, calculatedAt: 1,
   };
-  return {
-    status: 'official_ready',
+  const provisional = {
+    status: 'authority_review',
     schemaVersion: ASSESSMENT_SCHEMA_VERSION,
-    assessmentId: 'v1',
+    assessmentId,
     eventId: 'event-1',
     versionId: 'v1',
     complianceStatus: 'pass',
@@ -190,8 +239,42 @@ function officialAssessment(): AssessmentRecord {
     },
     evidence: [{ key: 'crowd', description: 'Test attendance evidence', sourceTimestamp: 1, source: 'test', status: 'available', quality: 'verified' }],
     provisionalResult: result,
-    officialResult: { ...result, finalizedAt: 2, finalizedBy: 'authority-1' },
+    inputHash: 'assessment-input-1',
+    warnings: [],
+    sourceTimestamps: {},
+    contextStatuses: {},
+    assessmentReadiness: 'complete',
+    complianceChecks: [],
+    dataConfidenceScore: 100,
+    dataConfidenceLevel: 'high',
+    authorityReviewRequired: true,
+  } as const;
+  const review = scoreReview(assessmentId);
+  const authorityReviewState = buildAuthorityReviewState(['PDRM'], [review], 2);
+  return {
+    ...provisional,
+    status: 'official_ready',
+    authorityReviewRequired: false,
+    authorityReviewState,
+    officialResult: buildOfficialAssessmentResult({
+      assessment: provisional as never,
+      eventDetails: eventVersion().eventDetails,
+      requiredAuthorities: ['PDRM'],
+      reviews: [review],
+      finalizedAt: 2,
+      finalizedBy: 'system',
+    }),
   } as unknown as AssessmentRecord;
+}
+
+function scoreReview(assessmentId = 'v1'): AuthorityScoreReview {
+  return {
+    reviewId: 'review-pdrm-1', schemaVersion: SCORE_REVIEW_SCHEMA_VERSION, eventId: 'event-1', versionId: 'v1', assessmentId,
+    proposalId: 'proposal-1', provisionalCalculatedAt: 1, assessmentInputHash: 'assessment-input-1',
+    categorySchemaVersion: ACTIVE_CATEGORY_SCHEMA.version, authorityType: 'PDRM', reviewerId: 'authority-1',
+    categories: ACTIVE_CATEGORY_SCHEMA.categories.map((category) => ({ categoryId: category.id, likelihood: 5, severity: 5, decision: 'confirmed' as const })),
+    rationale: 'All category evidence and advisory materials were reviewed.', idempotencyKey: 'review-key-0001', createdAt: 2,
+  };
 }
 
 function benignContextSnapshot() {
@@ -209,11 +292,11 @@ function benignContextSnapshot() {
   };
 }
 
-function officialResources(): ResourceRecommendation {
-  const assessment = officialAssessment();
+function officialResources(assessmentId = 'v1'): ResourceRecommendation {
+  const assessment = officialAssessment(assessmentId);
   if (assessment.status !== 'official_ready') throw new Error('Expected official assessment.');
   const calculation = computeResources({
-    eventId: 'event-1', versionId: 'v1', assessmentId: 'v1',
+    eventId: 'event-1', versionId: 'v1', assessmentId,
     eventDetails: eventVersion().eventDetails, assessmentResult: assessment.officialResult,
   });
   if (!calculation.ok) throw new Error(calculation.message);
@@ -221,16 +304,16 @@ function officialResources(): ResourceRecommendation {
     ...calculation.items[resource], confidence: 'authority_validated' as const, authorityReviewRequired: false,
   }])) as ResourceRecommendation['items'];
   return {
-    resourceId: `official-v1-${calculation.resourceInputHash}`, eventId: 'event-1', versionId: 'v1', assessmentId: 'v1',
+    resourceId: `official-v1-${calculation.resourceInputHash}`, eventId: 'event-1', versionId: 'v1', assessmentId,
     schemaVersion: RESOURCE_SCHEMA_VERSION, stage: 'official', revision: 1, supersedesResourceId: null,
-    assessmentReference: { stage: 'official', assessmentId: 'v1', proposalId: 'proposal-1', finalizedAt: 2, finalizedBy: 'authority-1' },
+    assessmentReference: { stage: 'official', assessmentId, proposalId: 'proposal-1', finalizedAt: 2, finalizedBy: 'system' },
     resourceInputHash: calculation.resourceInputHash, formulaVersion: RESOURCE_FORMULA_VERSION, configVersion: RESOURCE_CONFIG_VERSION, sourceRegistryVersion: RESOURCE_SOURCE_REGISTRY_VERSION,
     items, confidenceLevel: 'authority_validated', authorityReviewRequired: false, computedAt: 2,
   } as unknown as ResourceRecommendation;
 }
 
-function eventPointer(currentResourceId: string | undefined) {
-  return { eventId: 'event-1', currentAssessmentId: 'v1', currentResourceId };
+function eventPointer(currentResourceId: string | undefined, currentAssessmentId = 'v1'): Pick<import('@shared/types').EventRecord, 'eventId' | 'currentAssessmentId' | 'currentResourceId' | 'requiredAuthorities'> {
+  return { eventId: 'event-1', currentAssessmentId, currentResourceId, requiredAuthorities: ['PDRM'] };
 }
 
 function eventVersion(): EventVersion {

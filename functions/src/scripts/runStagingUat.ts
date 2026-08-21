@@ -138,7 +138,29 @@ async function runAssessment(context: ScenarioContext): Promise<ScenarioResult> 
   const { event, assessment } = await submitAndAssess(context, 'v1');
   if (!event.requiredAuthorities.includes('PDRM')) throw new Error(`PDRM was not assigned to ${context.eventId}.`);
   await assertProvisionalDecisionBlocked(context, 'PDRM');
-  return verifyScenario(context.eventId, 'assessment', 'Pending', 1, false, assessment);
+  if (!('provisionalResult' in assessment) || assessment.aiProposal.status !== 'success') throw new Error('A successful provisional assessment is required.');
+  const categories = assessment.aiProposal.categories.map((category) => ({
+    categoryId: category.categoryId,
+    likelihood: category.likelihood,
+    severity: category.severity,
+    decision: 'confirmed' as const,
+  }));
+  for (const authorityType of event.requiredAuthorities) {
+    const reviewer = requiredAuthority(context.authorities, authorityType);
+    await callFunction('submitAuthorityScoreReview', await idTokenFor(reviewer.profile.email), {
+      eventId: context.eventId,
+      categories,
+      rationale: `${authorityType} staging reviewer confirmed all category scores after reviewing the supplied evidence.`,
+      idempotencyKey: `uat_${context.eventId}_${authorityType}_v1`,
+    });
+  }
+  const official = await assessmentFor(context.eventId, 'v1');
+  if (official.status !== 'official_ready') throw new Error(`Expected official_ready after all authority reviews, received ${official.status}.`);
+  const currentEvent = await eventFor(context.eventId);
+  if (!currentEvent.currentResourceId) throw new Error('Official finalisation did not publish a current resource revision.');
+  const resource = await db.doc(`${COLLECTIONS.EVENTS}/${context.eventId}/${COLLECTIONS.RESOURCES}/${currentEvent.currentResourceId}`).get();
+  if (resource.data()?.stage !== 'official') throw new Error('The current resource revision is not official.');
+  return verifyScenario(context.eventId, 'assessment', 'Pending', 1, false, official);
 }
 
 async function runWithdrawal(context: ScenarioContext): Promise<ScenarioResult> {
@@ -176,6 +198,7 @@ async function assertProvisionalDecisionBlocked(context: ScenarioContext, author
       eventId: context.eventId,
       decision: 'Approved',
       rationale: 'PR1 UAT verifies that provisional assessments cannot be used for final approval.',
+      materialsReviewed: true,
     });
   } catch (error) {
     if (error instanceof Error && /official risk assessment/i.test(error.message)) return;
@@ -307,6 +330,8 @@ function assessmentSummary(assessment: RiskAssessment) {
     provisionalRiskLevel: assessment.provisionalResult.overallRiskLevel,
     categories: assessment.provisionalResult.categories.length,
     aiStatus: assessment.aiProposal.status,
+    status: assessment.status,
+    ...(assessment.status === 'official_ready' ? { officialScore: assessment.officialResult.overallScore, reviewCount: assessment.officialResult.reviewIds.length } : {}),
   };
 }
 

@@ -83,6 +83,8 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
       currentVersionNumber: versionNumber,
       currentAssessmentId: FieldValue.delete(),
       currentResourceId: FieldValue.delete(),
+      authorityReviewCompletedAt: FieldValue.delete(),
+      authorityReviewCompletedVersionId: FieldValue.delete(),
       editableVersionId: null,
       requiredAuthorities,
       submittedAt: now,

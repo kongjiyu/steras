@@ -9,6 +9,7 @@ import toast from 'react-hot-toast';
 import {
   AssessmentRecord,
   AuthorityDecision,
+  AuthorityScoreResolution,
   AuthorityType,
   COLLECTIONS,
   DecisionValue,
@@ -22,16 +23,22 @@ import AIAdvisory from '../../components/m2/AIAdvisory';
 import CategoryProfile from '../../components/m2/CategoryProfile';
 import ContextEvidence from '../../components/m2/ContextEvidence';
 import ResourceRecommendationView from '../../components/m2/ResourceRecommendation';
+import AuthorityScoreReviewForm from '../../components/m2/AuthorityScoreReviewForm';
+import AuthorityAssessmentWarnings from '../../components/m2/AuthorityAssessmentWarnings';
 import { assessmentRiskLevel, isCurrentAssessmentRecord, isCurrentResourceRecommendation, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
 import EmptyState from '../../components/ui/EmptyState';
 import StatusBadge from '../../components/ui/StatusBadge';
+import { useAuth } from '../../contexts/AuthContext';
+import { activeScoreResolutionId } from './authorityReviewPresentation';
 
 export default function AuthorityEventReview() {
+  const { profile } = useAuth();
   const { eventId } = useParams<{ eventId: string }>();
   const [event, setEvent] = useState<EventRecord | null>(null);
   const [assessment, setAssessment] = useState<RiskAssessment | null>(null);
   const [assessmentStatus, setAssessmentStatus] = useState<AssessmentRecord['status'] | null>(null);
   const [resources, setResources] = useState<ResourceRecommendation | null>(null);
+  const [scoreResolution, setScoreResolution] = useState<AuthorityScoreResolution | null>(null);
   const [legacyAssessment, setLegacyAssessment] = useState(false);
   const [legacyResources, setLegacyResources] = useState(false);
   const [decisions, setDecisions] = useState<AuthorityDecision[]>([]);
@@ -40,6 +47,8 @@ export default function AuthorityEventReview() {
   const [historyView, setHistoryView] = useState<'decisions' | 'versions'>('decisions');
   const [downloadingPath, setDownloadingPath] = useState<string | null>(null);
   const [rationale, setRationale] = useState('');
+  const [suggestion, setSuggestion] = useState('');
+  const [materialsReviewed, setMaterialsReviewed] = useState(false);
   const [submittingDecision, setSubmittingDecision] = useState<DecisionValue | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -65,9 +74,11 @@ export default function AuthorityEventReview() {
 
   useEffect(() => {
     const versionId = event?.currentVersionId;
+    const assessmentId = event?.currentAssessmentId;
     const resourceId = event?.currentResourceId;
-    if (!isFirebaseConfigured || !eventId || !versionId) {
+    if (!isFirebaseConfigured || !eventId || !versionId || !assessmentId) {
       setAssessment(null);
+      setAssessmentStatus(null);
       setResources(null);
       setLegacyAssessment(false);
       setLegacyResources(false);
@@ -75,7 +86,7 @@ export default function AuthorityEventReview() {
     }
     const eventReference = doc(db, COLLECTIONS.EVENTS, eventId);
     const supportingError = () => setSupportingDataError('Some review evidence could not be refreshed.');
-    const unsubscribeAssessment = onSnapshot(doc(eventReference, COLLECTIONS.ASSESSMENTS, versionId), (snapshot) => {
+    const unsubscribeAssessment = onSnapshot(doc(eventReference, COLLECTIONS.ASSESSMENTS, assessmentId), (snapshot) => {
       const record = snapshot.data() as AssessmentRecord | undefined;
       setAssessmentStatus(record?.status ?? null);
       setAssessment(isCurrentRiskAssessment(record) ? record : null);
@@ -113,7 +124,16 @@ export default function AuthorityEventReview() {
       unsubscribeDecisionHistory();
       unsubscribeVersions();
     };
-  }, [event?.currentResourceId, event?.currentVersionId, eventId]);
+  }, [event?.currentAssessmentId, event?.currentResourceId, event?.currentVersionId, eventId]);
+
+  const activeResolutionId = activeScoreResolutionId(assessment);
+  const activeAssessmentId = assessment?.assessmentId;
+  useEffect(() => {
+    if (!isFirebaseConfigured || !eventId || !activeAssessmentId || !activeResolutionId) { setScoreResolution(null); return; }
+    return onSnapshot(doc(db, COLLECTIONS.EVENTS, eventId, COLLECTIONS.ASSESSMENTS, activeAssessmentId, COLLECTIONS.SCORE_RESOLUTIONS, activeResolutionId), (snapshot) => {
+      setScoreResolution(snapshot.exists() ? snapshot.data() as AuthorityScoreResolution : null);
+    }, () => setSupportingDataError('The score resolution could not be refreshed.'));
+  }, [activeAssessmentId, activeResolutionId, eventId]);
 
   const currentDecisions = useMemo(() => new Map(
     decisions
@@ -130,7 +150,6 @@ export default function AuthorityEventReview() {
   const reviewOpen = ['Pending', 'UnderReview'].includes(event.status);
   const evidenceReady = Boolean(
     assessment?.status === 'official_ready'
-    && assessment.complianceStatus !== 'blocked'
     && resources?.stage === 'official'
     && event.currentResourceId === resources.resourceId
     && resources.versionId === event.currentVersionId,
@@ -138,13 +157,17 @@ export default function AuthorityEventReview() {
   const canDecide = reviewOpen && evidenceReady && rationale.trim().length >= 10;
 
   const submitDecision = async (decision: DecisionValue) => {
-    if (!eventId || !canDecide) return;
+    const isApproval = decision === 'Approved';
+    if (!eventId || !canDecide || (isApproval && (!materialsReviewed || assessment?.complianceStatus === 'blocked'))
+      || (!isApproval && suggestion.trim().length < 10)) return;
     setSubmittingDecision(decision);
     try {
-      const command = httpsCallable<{ eventId: string; decision: DecisionValue; rationale: string }>(functions, 'makeAuthorityDecision');
-      await command({ eventId, decision, rationale: rationale.trim() });
+      const command = httpsCallable(functions, 'makeAuthorityDecision');
+      await command({ eventId, decision, rationale: rationale.trim(), ...(isApproval ? { materialsReviewed: true } : { suggestion: suggestion.trim() }) });
       toast.success(decision === 'Approved' ? 'Approval recorded.' : decision === 'Rejected' ? 'Rejection recorded.' : 'Amendment request recorded.');
       setRationale('');
+      setSuggestion('');
+      setMaterialsReviewed(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Unable to record decision.');
     } finally {
@@ -193,11 +216,16 @@ export default function AuthorityEventReview() {
               {!assessment ? <p className="text-sm text-ink-500">{legacyAssessment ? 'Legacy assessment detected. Recompute this event version before recording a decision.' : assessmentStatus === 'failed' ? 'Assessment failed and requires a retry.' : 'Assessment is still processing.'}</p> : (
                 <div className="space-y-5">
                   <CategoryProfile assessment={assessment} />
+                  <AuthorityAssessmentWarnings warnings={assessment.warnings} />
                   <AIAdvisory advisory={assessment.aiProposal} resultRiskLevel={assessmentRiskLevel(assessment)} />
                   <div className="border-t border-[#e3dacb] pt-5">
                     <h3 className="mb-4 font-display text-sm font-semibold text-ink-800">Versioned context evidence</h3>
                     <ContextEvidence assessment={assessment} />
                   </div>
+                  {scoreResolution && <div className="rounded-md border border-gold-200 bg-gold-50 p-4 text-xs leading-5 text-ink-700"><p className="font-semibold text-ink-800">Admin score-conflict resolution</p><p className="mt-1">{scoreResolution.rationale}</p><ul className="mt-2 space-y-1">{scoreResolution.categories.map((category) => <li key={category.categoryId}><span className="font-semibold">{formatWorkflowValue(category.categoryId)} {category.likelihood}×{category.severity}:</span> {category.reason}</li>)}</ul></div>}
+                  {(assessment.status === 'provisional_ready' || assessment.status === 'authority_review') && profile?.authorityType && (
+                    <AuthorityScoreReviewForm eventId={eventId!} assessment={assessment} authorityType={profile.authorityType} />
+                  )}
                 </div>
               )}
             </div>
@@ -263,7 +291,7 @@ export default function AuthorityEventReview() {
           <section className="card">
             <div className="card-header"><h2 className="font-semibold">Review progress</h2></div>
             <div className="card-body space-y-3">
-              {event.requiredAuthorities.map((authority) => <AuthorityProgress key={authority} authority={authority} decision={currentDecisions.get(authority)} />)}
+              {event.requiredAuthorities.map((authority) => <AuthorityProgress key={authority} authority={authority} decision={currentDecisions.get(authority)} scoreReviewed={Boolean(assessment && 'authorityReviewState' in assessment && assessment.authorityReviewState?.activeReviewHeads[authority])} />)}
             </div>
           </section>
 
@@ -288,9 +316,14 @@ export default function AuthorityEventReview() {
                 <textarea className="input mt-1 resize-y" rows={4} maxLength={1000} disabled={!reviewOpen} value={rationale} onChange={(e) => setRationale(e.target.value)} placeholder="Record the evidence and reasoning behind your decision." />
               </label>
               <p className="text-right text-xs text-ink-400">{rationale.trim().length}/1000 · minimum 10</p>
-              <button className="btn-success w-full" disabled={!canDecide || submittingDecision !== null} onClick={() => submitDecision('Approved')}><Check size={16} />{submittingDecision === 'Approved' ? 'Recording...' : 'Approve'}</button>
-              <button className="btn-secondary w-full" disabled={!canDecide || submittingDecision !== null} onClick={() => submitDecision('AmendmentRequested')}><RotateCcw size={16} />{submittingDecision === 'AmendmentRequested' ? 'Recording...' : 'Request amendment'}</button>
-              <button className="btn-danger w-full" disabled={!canDecide || submittingDecision !== null} onClick={() => submitDecision('Rejected')}><X size={16} />{submittingDecision === 'Rejected' ? 'Recording...' : 'Reject'}</button>
+              <label className="flex items-start gap-2 rounded-md border border-ink-100 p-3 text-xs leading-5 text-ink-600"><input type="checkbox" className="mt-1" checked={materialsReviewed} onChange={(event) => setMaterialsReviewed(event.target.checked)} disabled={!reviewOpen} /><span>I reviewed the application, supporting evidence, official assessment and resource recommendation.</span></label>
+              <label className="block text-xs font-medium text-ink-600">Suggestion for rejection or amendment
+                <textarea className="input mt-1 resize-y" rows={3} maxLength={1000} disabled={!reviewOpen} value={suggestion} onChange={(event) => setSuggestion(event.target.value)} placeholder="Describe the corrective action the organizer should take." />
+              </label>
+              {assessment?.complianceStatus === 'blocked' && <p className="rounded-md bg-red-50 p-3 text-xs leading-5 text-status-rejected">Approval is blocked by compliance. You may record a rejection or amendment recommendation.</p>}
+              <button className="btn-success w-full" disabled={!canDecide || !materialsReviewed || assessment?.complianceStatus === 'blocked' || submittingDecision !== null} onClick={() => submitDecision('Approved')}><Check size={16} />{submittingDecision === 'Approved' ? 'Recording...' : 'Recommend approval'}</button>
+              <button className="btn-secondary w-full" disabled={!canDecide || suggestion.trim().length < 10 || submittingDecision !== null} onClick={() => submitDecision('AmendmentRequested')}><RotateCcw size={16} />{submittingDecision === 'AmendmentRequested' ? 'Recording...' : 'Recommend amendment'}</button>
+              <button className="btn-danger w-full" disabled={!canDecide || suggestion.trim().length < 10 || submittingDecision !== null} onClick={() => submitDecision('Rejected')}><X size={16} />{submittingDecision === 'Rejected' ? 'Recording...' : 'Recommend rejection'}</button>
             </div>
           </section>
         </aside>
@@ -299,9 +332,9 @@ export default function AuthorityEventReview() {
   );
 }
 
-function AuthorityProgress({ authority, decision }: { authority: AuthorityType; decision?: AuthorityDecision }) {
+function AuthorityProgress({ authority, decision, scoreReviewed }: { authority: AuthorityType; decision?: AuthorityDecision; scoreReviewed: boolean }) {
   const color = decision?.decision === 'Approved' ? 'bg-green-100 text-status-approved' : decision?.decision === 'Rejected' ? 'bg-red-100 text-status-rejected' : decision?.decision === 'AmendmentRequested' ? 'bg-orange-100 text-orange-700' : 'bg-ink-100 text-ink-500';
-  return <div className="flex items-center justify-between gap-3"><span className="text-sm font-semibold text-ink-700">{authority}</span><span className={`badge ${color}`}>{decision ? formatWorkflowValue(decision.decision) : 'Awaiting review'}</span></div>;
+  return <div className="flex items-center justify-between gap-3"><span className="text-sm font-semibold text-ink-700">{authority}</span><div className="flex flex-wrap justify-end gap-1"><span className={`badge ${scoreReviewed ? 'bg-green-100 text-status-approved' : 'bg-ink-100 text-ink-500'}`}>{scoreReviewed ? 'Scores reviewed' : 'Scores pending'}</span><span className={`badge ${color}`}>{decision ? formatWorkflowValue(decision.decision) : 'Decision pending'}</span></div></div>;
 }
 
 function formatWorkflowValue(value: string): string {

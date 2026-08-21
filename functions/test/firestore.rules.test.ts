@@ -11,14 +11,21 @@ import { submitEventForUser } from '../src/http/submitEvent';
 import { withdrawEventForUser } from '../src/http/withdrawEvent';
 import { __testOnlyMarkFailed, recomputeResourceForStoredAssessment, runRiskAndResourcePipeline } from '../src/triggers/onEventCreated';
 import { makeAuthorityDecisionForUser } from '../src/http/authorityDecision';
+import {
+  submitScoreReviewForUser,
+  resolveScoreConflictForAdmin,
+  retryOfficialFinalisationForAdmin,
+} from '../src/http/authorityScoreReview';
 import { overrideResourcesForUser } from '../src/http/overrideResources';
 import { fetchHistoricalContext, fetchVenueContext } from '../src/engines/ruleBased';
 import {
   ASSESSMENT_SCHEMA_VERSION, HARD_RULE_VERSION, PROVISIONAL_FORMULA_VERSION,
+  SCORE_REVIEW_SCHEMA_VERSION,
   RESOURCE_CONFIG_VERSION, RESOURCE_FORMULA_VERSION, RESOURCE_KEYS, RESOURCE_SCHEMA_VERSION, RESOURCE_SOURCE_REGISTRY_VERSION,
 } from '@shared/types';
 import { ACTIVE_CATEGORY_SCHEMA } from '../src/config/categorySchema';
 import { computeResources } from '../src/engines/resourceCalculator';
+import { buildAuthorityReviewState, buildOfficialAssessmentResult } from '../src/engines/authorityFinalisation';
 import {
   assessmentStateHashFor,
   abortResourceCutoverBeforeMutation,
@@ -311,11 +318,15 @@ describe('Firestore security rules', () => {
 
   it('keeps append-only score reviews restricted to assigned authorities and admins', async () => {
     await seedProfilesAndEvent();
-    await environment.withSecurityRulesDisabled((context) => setDoc(
-      doc(context.firestore(), 'events/event-1/assessments/v1/score_reviews/review-1'),
-      { reviewId: 'review-1', reviewerId: 'authority-1' },
-    ));
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'users/bomba-1'), { role: 'authority', authorityType: 'BOMBA' });
+      await updateDoc(doc(context.firestore(), 'events/event-1'), { requiredAuthorities: ['PDRM', 'BOMBA'] });
+      await setDoc(doc(context.firestore(), 'events/event-1/assessments/v1/score_reviews/review-1'), { reviewId: 'review-1', reviewerId: 'authority-1', authorityType: 'PDRM' });
+      await setDoc(doc(context.firestore(), 'events/event-1/assessments/v1/score_reviews/review-2'), { reviewId: 'review-2', reviewerId: 'bomba-1', authorityType: 'BOMBA' });
+    });
     await assertSucceeds(getDoc(doc(environment.authenticatedContext('authority-1').firestore(), 'events/event-1/assessments/v1/score_reviews/review-1')));
+    await assertFails(getDoc(doc(environment.authenticatedContext('authority-1').firestore(), 'events/event-1/assessments/v1/score_reviews/review-2')));
+    await assertSucceeds(getDoc(doc(environment.authenticatedContext('bomba-1').firestore(), 'events/event-1/assessments/v1/score_reviews/review-2')));
     await assertFails(getDoc(doc(environment.authenticatedContext('organizer-1').firestore(), 'events/event-1/assessments/v1/score_reviews/review-1')));
     await assertFails(setDoc(doc(environment.authenticatedContext('authority-1').firestore(), 'events/event-1/assessments/v1/score_reviews/review-2'), { reviewerId: 'authority-1' }));
   });
@@ -336,31 +347,216 @@ describe('Firestore security rules', () => {
     await assertFails(updateDoc(doc(attackerDb, 'users/attacker-1'), { createdAt: 2 }));
   });
 
-  it('aggregates concurrent authority approvals and publishes only unanimous same-version approval', async () => {
+  it('records append-only authority reviews and atomically publishes official assessment and resources', async () => {
+    await seedProvisionalReviewEvent(['PDRM', 'BOMBA']);
+    const first = await submitScoreReviewForUser('pdrm-1', {
+      eventId: 'review-1', categories: confirmedReviewCategories(5), rationale: 'PDRM reviewed all assessment materials and evidence.', idempotencyKey: 'pdrm_review_0001',
+    }, 10);
+    expect(first.status).toBe('authority_review');
+    const second = await submitScoreReviewForUser('bomba-1', {
+      eventId: 'review-1', categories: confirmedReviewCategories(5), rationale: 'BOMBA reviewed all assessment materials and evidence.', idempotencyKey: 'bomba_review_001',
+    }, 11);
+    expect(second.status).toBe('official_ready');
+    const adminDb = getFirestore(adminApp);
+    const event = (await adminDb.doc('events/review-1').get()).data();
+    const assessment = (await adminDb.doc('events/review-1/assessments/v1').get()).data();
+    const resources = await adminDb.collection('events/review-1/resources').get();
+    expect(assessment).toMatchObject({ status: 'official_ready', authorityReviewRequired: false });
+    expect(assessment?.officialResult.reviewIds).toHaveLength(2);
+    expect(resources.docs).toHaveLength(1);
+    expect(resources.docs[0].data()).toMatchObject({ stage: 'official', resourceId: event?.currentResourceId, authorityReviewRequired: false });
+    expect((await adminDb.collection('events/review-1/assessments/v1/score_reviews').get()).size).toBe(2);
+    const replay = await submitScoreReviewForUser('bomba-1', {
+      eventId: 'review-1', categories: confirmedReviewCategories(5), rationale: 'BOMBA reviewed all assessment materials and evidence.', idempotencyKey: 'bomba_review_001',
+    }, 12);
+    expect(replay).toMatchObject({ status: 'official_ready', idempotent: true });
+  });
+
+  it('finalizes concurrent duplicate last-review requests once without a false failure audit', async () => {
+    await seedProvisionalReviewEvent(['PDRM', 'BOMBA']);
+    await submitScoreReviewForUser('pdrm-1', {
+      eventId: 'review-1', categories: confirmedReviewCategories(5), rationale: 'PDRM reviewed all assessment materials and evidence.', idempotencyKey: 'pdrm_concurrent_01',
+    }, 12);
+    const request = {
+      eventId: 'review-1', categories: confirmedReviewCategories(5), rationale: 'BOMBA reviewed all assessment materials and evidence.', idempotencyKey: 'bomba_concurrent_1',
+    };
+    const results = await Promise.all([
+      submitScoreReviewForUser('bomba-1', request, 13),
+      submitScoreReviewForUser('bomba-1', request, 14),
+    ]);
+    expect(results.every((result) => result.status === 'official_ready')).toBe(true);
+    const adminDb = getFirestore(adminApp);
+    expect((await adminDb.collection('events/review-1/resources').get()).size).toBe(1);
+    const audits = await adminDb.collection('events/review-1/audit_logs').get();
+    expect(audits.docs.filter((item) => item.data().action === 'official_assessment_finalized')).toHaveLength(1);
+    expect(audits.docs.some((item) => item.data().action === 'official_finalization_failed')).toBe(false);
+  });
+
+  it('keeps the latest authority review head when an older idempotency key is replayed', async () => {
+    await seedProvisionalReviewEvent(['PDRM', 'BOMBA']);
+    const first = await submitScoreReviewForUser('pdrm-1', {
+      eventId: 'review-1', categories: confirmedReviewCategories(5), rationale: 'PDRM completed the first full evidence review.', idempotencyKey: 'pdrm_revision_001',
+    }, 13);
+    const overridden = confirmedReviewCategories(5);
+    overridden[0] = { categoryId: overridden[0].categoryId, likelihood: 4, severity: 4, decision: 'overridden', reason: 'Updated verified evidence supports the revised score.' };
+    const second = await submitScoreReviewForUser('pdrm-1', {
+      eventId: 'review-1', categories: overridden, rationale: 'PDRM completed the revised full evidence review.', idempotencyKey: 'pdrm_revision_002',
+    }, 14);
+    const replay = await submitScoreReviewForUser('pdrm-1', {
+      eventId: 'review-1', categories: confirmedReviewCategories(5), rationale: 'PDRM completed the first full evidence review.', idempotencyKey: 'pdrm_revision_001',
+    }, 15);
+    const adminDb = getFirestore(adminApp);
+    const assessment = (await adminDb.doc('events/review-1/assessments/v1').get()).data();
+    expect(first.reviewId).not.toBe(second.reviewId);
+    expect(replay).toMatchObject({ reviewId: first.reviewId, idempotent: true, shouldFinalize: false });
+    expect(assessment?.authorityReviewState.activeReviewHeads.PDRM.reviewId).toBe(second.reviewId);
+    expect((await adminDb.collection('events/review-1/assessments/v1/score_reviews').get()).size).toBe(2);
+  });
+
+  it('pauses conflicting reviews and finalizes only an admin resolution bound to current heads', async () => {
+    await seedProvisionalReviewEvent(['PDRM', 'BOMBA']);
+    await submitScoreReviewForUser('pdrm-1', {
+      eventId: 'review-1', categories: confirmedReviewCategories(5), rationale: 'PDRM reviewed all assessment materials and evidence.', idempotencyKey: 'pdrm_conflict_01',
+    }, 20);
+    const conflicting = confirmedReviewCategories(5);
+    conflicting[0] = { categoryId: conflicting[0].categoryId, likelihood: 4, severity: 4, decision: 'overridden', reason: 'BOMBA verified evidence supports a lower category score.' };
+    const second = await submitScoreReviewForUser('bomba-1', {
+      eventId: 'review-1', categories: conflicting, rationale: 'BOMBA reviewed all assessment materials and evidence.', idempotencyKey: 'bomba_conflict_1',
+    }, 21);
+    expect(second.status).toBe('authority_review');
+    const adminDb = getFirestore(adminApp);
+    const before = (await adminDb.doc('events/review-1/assessments/v1').get()).data();
+    expect(before?.authorityReviewState.conflicts).toHaveLength(1);
+    expect((await adminDb.collection('events/review-1/resources').get()).size).toBe(0);
+    const heads = Object.fromEntries(Object.entries(before?.authorityReviewState.activeReviewHeads ?? {}).map(([authority, head]) => [authority, (head as { reviewId: string }).reviewId]));
+    await expect(resolveScoreConflictForAdmin('pdrm-1', {
+      eventId: 'review-1', reviewHeadIds: heads, categories: [{ categoryId: before!.authorityReviewState.conflicts[0].categoryId, likelihood: 5, severity: 5, reason: 'Admin reconciled the category after reviewing both submissions.' }], rationale: 'Both authority submissions were reviewed and reconciled.',
+    }, 22)).rejects.toMatchObject({ code: 'permission-denied' });
+    const resolutionInput = {
+      eventId: 'review-1', reviewHeadIds: heads, categories: [{ categoryId: before!.authorityReviewState.conflicts[0].categoryId, likelihood: 5, severity: 5, reason: 'Admin reconciled the category after reviewing both submissions.' }], rationale: 'Both authority submissions were reviewed and reconciled.',
+    };
+    const concurrentResolutions = await Promise.all([
+      resolveScoreConflictForAdmin('admin-1', resolutionInput, 23),
+      resolveScoreConflictForAdmin('admin-1', resolutionInput, 24),
+    ]);
+    expect(concurrentResolutions.every((item) => item.status === 'official_ready')).toBe(true);
+    expect((await adminDb.doc('events/review-1/assessments/v1').get()).data()).toMatchObject({ status: 'official_ready' });
+    expect((await adminDb.collection('events/review-1/assessments/v1/score_resolutions').get()).size).toBe(1);
+    const replay = await resolveScoreConflictForAdmin('admin-1', resolutionInput, 25);
+    expect(replay).toMatchObject({ status: 'official_ready', idempotent: true, shouldFinalize: false });
+    expect((await adminDb.collection('events/review-1/assessments/v1/score_resolutions').get()).size).toBe(1);
+    const audits = await adminDb.collection('events/review-1/audit_logs').get();
+    expect(audits.docs.some((item) => item.data().action === 'official_finalization_failed')).toBe(false);
+  });
+
+  it('preserves a valid resolution when the active review is replayed after finalisation fails', async () => {
+    await seedProvisionalReviewEvent(['PDRM', 'BOMBA']);
+    const pdrmRequest = {
+      eventId: 'review-1', categories: confirmedReviewCategories(5), rationale: 'PDRM reviewed all assessment materials and evidence.', idempotencyKey: 'pdrm_resolution_01',
+    };
+    await submitScoreReviewForUser('pdrm-1', pdrmRequest, 25);
+    const conflicting = confirmedReviewCategories(5);
+    conflicting[0] = { categoryId: conflicting[0].categoryId, likelihood: 4, severity: 4, decision: 'overridden', reason: 'BOMBA verified evidence supports a lower category score.' };
+    await submitScoreReviewForUser('bomba-1', {
+      eventId: 'review-1', categories: conflicting, rationale: 'BOMBA reviewed all assessment materials and evidence.', idempotencyKey: 'bomba_resolution_1',
+    }, 26);
+    const adminDb = getFirestore(adminApp);
+    const before = (await adminDb.doc('events/review-1/assessments/v1').get()).data()!;
+    const heads = Object.fromEntries(Object.entries(before.authorityReviewState.activeReviewHeads).map(([authority, head]) => [authority, (head as { reviewId: string }).reviewId]));
+    await adminDb.doc('events/review-1/versions/v1').update({ 'eventDetails.expectedAttendance': 0 });
+    const resolutionInput = {
+      eventId: 'review-1', reviewHeadIds: heads,
+      categories: [{ categoryId: before.authorityReviewState.conflicts[0].categoryId, likelihood: 5 as const, severity: 5 as const, reason: 'Admin reconciled the category after reviewing both submissions.' }],
+      rationale: 'Both authority submissions were considered and reconciled.',
+    };
+    await expect(resolveScoreConflictForAdmin('admin-1', resolutionInput, 27)).rejects.toMatchObject({ code: 'failed-precondition' });
+    const resolutionId = (await adminDb.doc('events/review-1/assessments/v1').get()).data()?.authorityReviewState.activeResolutionId;
+    expect(resolutionId).toBeTruthy();
+    await expect(submitScoreReviewForUser('pdrm-1', pdrmRequest, 28)).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect((await adminDb.doc('events/review-1/assessments/v1').get()).data()?.authorityReviewState.activeResolutionId).toBe(resolutionId);
+    await adminDb.doc(`events/review-1/assessments/v1/score_resolutions/${resolutionId}`).update({ eventId: 'wrong-event' });
+    await expect(resolveScoreConflictForAdmin('admin-1', resolutionInput, 29)).rejects.toMatchObject({ code: 'already-exists' });
+  });
+
+  it('rejects unauthorized, stale, locked and post-official score review mutations', async () => {
+    await seedProvisionalReviewEvent(['PDRM']);
+    const request = {
+      eventId: 'review-1', categories: confirmedReviewCategories(5), rationale: 'The complete application and risk evidence were reviewed.', idempotencyKey: 'authorization_001',
+    };
+    await expect(submitScoreReviewForUser('organizer-1', request, 31)).rejects.toMatchObject({ code: 'permission-denied' });
+    await expect(submitScoreReviewForUser('bomba-1', request, 31)).rejects.toMatchObject({ code: 'permission-denied' });
+    const adminDb = getFirestore(adminApp);
+    await adminDb.doc('events/review-1').update({ currentAssessmentId: 'stale-assessment' });
+    await expect(submitScoreReviewForUser('pdrm-1', request, 31)).rejects.toMatchObject({ code: 'failed-precondition' });
+    await adminDb.doc('events/review-1').update({ currentAssessmentId: 'v1' });
+    await adminDb.doc(RESOURCE_CUTOVER_LOCK_PATH).set({ active: false, malformed: true });
+    await expect(submitScoreReviewForUser('pdrm-1', request, 31)).rejects.toMatchObject({ code: 'unavailable' });
+    await expect(retryOfficialFinalisationForAdmin('admin-1', 'review-1', 31)).rejects.toMatchObject({ code: 'unavailable' });
+    expect((await adminDb.collection('events/review-1/audit_logs').get()).docs
+      .some((item) => item.data().action === 'official_finalization_failed')).toBe(false);
+    await adminDb.doc(RESOURCE_CUTOVER_LOCK_PATH).delete();
+    await submitScoreReviewForUser('pdrm-1', request, 31);
+    await expect(submitScoreReviewForUser('pdrm-1', { ...request, idempotencyKey: 'authorization_002' }, 32))
+      .rejects.toMatchObject({ code: 'failed-precondition' });
+  });
+
+  it('retains the final review and records a failure without publishing partial official output', async () => {
+    await seedProvisionalReviewEvent(['PDRM']);
+    const adminDb = getFirestore(adminApp);
+    await adminDb.doc('events/review-1/versions/v1').update({ 'eventDetails.expectedAttendance': 0 });
+    await expect(submitScoreReviewForUser('pdrm-1', {
+      eventId: 'review-1', categories: confirmedReviewCategories(5), rationale: 'PDRM reviewed all assessment materials and evidence.', idempotencyKey: 'pdrm_failure_001',
+    }, 30)).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect((await adminDb.doc('events/review-1/assessments/v1').get()).data()).toMatchObject({ status: 'authority_review' });
+    expect((await adminDb.collection('events/review-1/assessments/v1/score_reviews').get()).size).toBe(1);
+    expect((await adminDb.collection('events/review-1/resources').get()).size).toBe(0);
+    const audits = await adminDb.collection('events/review-1/audit_logs').get();
+    expect(audits.docs.some((item) => item.data().action === 'official_finalization_failed')).toBe(true);
+    await expect(retryOfficialFinalisationForAdmin('admin-1', 'review-1', 31)).rejects.toMatchObject({ code: 'failed-precondition' });
+    const retryAudits = await adminDb.collection('events/review-1/audit_logs').get();
+    expect(retryAudits.docs.filter((item) => item.data().action === 'official_finalization_failed')).toHaveLength(2);
+  });
+
+  it('does not bind a delayed finalisation failure audit to a newer event generation', async () => {
+    await seedProvisionalReviewEvent(['PDRM', 'BOMBA']);
+    const adminDb = getFirestore(adminApp);
+    await submitScoreReviewForUser('pdrm-1', {
+      eventId: 'review-1', categories: confirmedReviewCategories(5), rationale: 'PDRM reviewed all assessment materials and evidence.', idempotencyKey: 'pdrm_delayed_failure',
+    }, 32);
+    await expect(retryOfficialFinalisationForAdmin('admin-1', 'review-1', 33, {
+      beforeFailureAudit: async () => {
+        await adminDb.doc('events/review-1').update({ currentVersionId: 'v2', currentAssessmentId: 'assessment-v2' });
+      },
+    })).rejects.toMatchObject({ code: 'failed-precondition' });
+    const audits = await adminDb.collection('events/review-1/audit_logs').get();
+    expect(audits.docs.some((item) => item.data().action === 'official_finalization_failed')).toBe(false);
+  });
+
+  it('records concurrent officer recommendations without publishing a final application decision', async () => {
     await seedReviewableEvent(['PDRM', 'BOMBA']);
     const results = await Promise.all([
-      makeAuthorityDecisionForUser('pdrm-1', { eventId: 'review-1', decision: 'Approved', rationale: 'PDRM operational requirements are satisfied.' }, 2_000),
-      makeAuthorityDecisionForUser('bomba-1', { eventId: 'review-1', decision: 'Approved', rationale: 'BOMBA fire safety requirements are satisfied.' }, 2_000),
+      makeAuthorityDecisionForUser('pdrm-1', { eventId: 'review-1', decision: 'Approved', rationale: 'PDRM operational requirements are satisfied.', materialsReviewed: true }, 2_000),
+      makeAuthorityDecisionForUser('bomba-1', { eventId: 'review-1', decision: 'Approved', rationale: 'BOMBA fire safety requirements are satisfied.', materialsReviewed: true }, 2_000),
     ]);
-    expect(results.map((result) => result.status).sort()).toEqual(['Approved', 'UnderReview']);
+    expect(results.map((result) => result.status)).toEqual(['UnderReview', 'UnderReview']);
     const adminDb = getFirestore(adminApp);
-    expect((await adminDb.doc('events/review-1').get()).data()?.status).toBe('Approved');
-    expect((await adminDb.doc('public_events/review-1').get()).data()).toMatchObject({ versionId: 'v1', approvedBy: ['PDRM', 'BOMBA'] });
+    expect((await adminDb.doc('events/review-1').get()).data()).toMatchObject({ status: 'UnderReview', authorityReviewCompletedAt: 2_000 });
+    expect((await adminDb.doc('public_events/review-1').get()).exists).toBe(false);
     expect((await adminDb.collection('events/review-1/decisions').get()).size).toBe(2);
     expect((await adminDb.collection('events/review-1/decision_history').get()).size).toBe(2);
-    const duplicate = await makeAuthorityDecisionForUser('pdrm-1', { eventId: 'review-1', decision: 'Approved', rationale: 'PDRM operational requirements are satisfied.' }, 2_001);
+    const duplicate = await makeAuthorityDecisionForUser('pdrm-1', { eventId: 'review-1', decision: 'Approved', rationale: 'PDRM operational requirements are satisfied.', materialsReviewed: true }, 2_001);
     expect(duplicate.idempotent).toBe(true);
   });
 
   it('gives a concurrent rejection precedence and keeps the event private', async () => {
     await seedReviewableEvent(['PDRM', 'BOMBA']);
     const results = await Promise.allSettled([
-      makeAuthorityDecisionForUser('pdrm-1', { eventId: 'review-1', decision: 'Approved', rationale: 'PDRM operational requirements are satisfied.' }, 3_000),
-      makeAuthorityDecisionForUser('bomba-1', { eventId: 'review-1', decision: 'Rejected', rationale: 'Emergency exits do not satisfy fire requirements.' }, 3_000),
+      makeAuthorityDecisionForUser('pdrm-1', { eventId: 'review-1', decision: 'Approved', rationale: 'PDRM operational requirements are satisfied.', materialsReviewed: true }, 3_000),
+      makeAuthorityDecisionForUser('bomba-1', { eventId: 'review-1', decision: 'Rejected', rationale: 'Emergency exits do not satisfy fire requirements.', suggestion: 'Add verified emergency exit controls before the next review.' }, 3_000),
     ]);
     const adminDb = getFirestore(adminApp);
     expect(results.some((result) => result.status === 'fulfilled')).toBe(true);
-    expect((await adminDb.doc('events/review-1').get()).data()?.status).toBe('Rejected');
+    expect((await adminDb.doc('events/review-1').get()).data()?.status).toBe('UnderReview');
     expect((await adminDb.doc('public_events/review-1').get()).exists).toBe(false);
   });
 
@@ -369,6 +565,7 @@ describe('Firestore security rules', () => {
     const request = {
       eventId: 'review-1', decision: 'Approved' as const,
       rationale: 'PDRM confirms the version one operating plan.',
+      materialsReviewed: true,
     };
     await makeAuthorityDecisionForUser('pdrm-1', request, 2_500);
     const adminDb = getFirestore(adminApp);
@@ -383,10 +580,10 @@ describe('Firestore security rules', () => {
   it('does not carry authority approvals into a resubmitted version', async () => {
     await seedReviewableEvent(['PDRM', 'BOMBA']);
     await makeAuthorityDecisionForUser('pdrm-1', {
-      eventId: 'review-1', decision: 'Approved', rationale: 'PDRM approves the version one operating plan.',
+      eventId: 'review-1', decision: 'Approved', rationale: 'PDRM approves the version one operating plan.', materialsReviewed: true,
     }, 3_100);
     await makeAuthorityDecisionForUser('bomba-1', {
-      eventId: 'review-1', decision: 'AmendmentRequested', rationale: 'Revise the version one emergency exit arrangement.',
+      eventId: 'review-1', decision: 'AmendmentRequested', rationale: 'Revise the version one emergency exit arrangement.', suggestion: 'Provide a verified revised emergency exit arrangement.',
     }, 3_101);
 
     const adminDb = getFirestore(adminApp);
@@ -396,17 +593,31 @@ describe('Firestore security rules', () => {
       endDatetime: 30_000,
       emergencyPlanSummary: 'Revised emergency exits and fire assembly points.',
     };
-    await adminDb.doc('events/review-1').update({ eventDetails: revisedDetails });
+    // PR3 officers only record recommendations. Simulate the later Admin workflow
+    // opening the amendment before the organizer submits a new immutable version.
+    await adminDb.doc('events/review-1').update({
+      status: 'AmendmentRequested',
+      editableVersionId: 'v2',
+      draftDocumentPaths: [],
+      eventDetails: revisedDetails,
+    });
     await submitEventForUser('organizer-1', 'review-1', 3_200);
-    await adminDb.doc('events/review-1').update({ currentAssessmentId: 'v2', currentResourceId: officialResourceId('v2', revisedDetails) });
+    await adminDb.doc('events/review-1').update({
+      currentAssessmentId: 'v2',
+      currentResourceId: officialResourceId('v2', revisedDetails),
+      requiredAuthorities: ['PDRM', 'BOMBA'],
+    });
     await adminDb.doc(`events/review-1/resources/${officialResourceId('v2', revisedDetails)}`).set(officialResourceFixture('v2', 3_201, revisedDetails));
-    await adminDb.doc('events/review-1/assessments/v2').set(officialAssessmentFixture('v2'));
+    await adminDb.doc('events/review-1/assessments/v2').set(officialAssessmentFixture('v2', revisedDetails));
+    await adminDb.doc('events/review-1/assessments/v2/score_reviews/v2-PDRM-review').set(scoreReviewFixture('v2', 'PDRM'));
+    await adminDb.doc('events/review-1/assessments/v2/score_reviews/v2-BOMBA-review').set(scoreReviewFixture('v2', 'BOMBA'));
 
     const result = await makeAuthorityDecisionForUser('bomba-1', {
-      eventId: 'review-1', decision: 'Approved', rationale: 'BOMBA approves the revised version two exit arrangement.',
+      eventId: 'review-1', decision: 'Approved', rationale: 'BOMBA approves the revised version two exit arrangement.', materialsReviewed: true,
     }, 3_300);
     expect(result).toMatchObject({ versionId: 'v2', status: 'UnderReview' });
     expect((await adminDb.doc('events/review-1').get()).data()?.status).toBe('UnderReview');
+    expect((await adminDb.doc('events/review-1').get()).data()?.authorityReviewCompletedVersionId).toBeUndefined();
     expect((await adminDb.doc('public_events/review-1').get()).exists).toBe(false);
     expect((await adminDb.collection('events/review-1/decisions').get()).docs.map((item) => item.id).sort()).toEqual([
       'v1_BOMBA', 'v1_PDRM', 'v2_BOMBA',
@@ -459,6 +670,70 @@ describe('Firestore security rules', () => {
     expect(second).toMatchObject({ status: 'reused', resourceId: first.resourceId });
     expect((await assessmentReference.get()).data()).toEqual(before);
     expect((await adminDb.collection('events/review-1/resources').get()).size).toBe(1);
+  });
+
+  it('preserves organizer review progress during an authority-review resource recompute', async () => {
+    await seedProvisionalReviewEvent(['PDRM', 'BOMBA']);
+    await submitScoreReviewForUser('pdrm-1', {
+      eventId: 'review-1', categories: confirmedReviewCategories(5), rationale: 'PDRM reviewed all assessment materials and evidence.', idempotencyKey: 'progress_review_01',
+    }, 4_220);
+    const result = await recomputeResourceForStoredAssessment('review-1', 4_221);
+    expect(result.status).toBe('created');
+    const adminDb = getFirestore(adminApp);
+    expect((await adminDb.doc('events/review-1/assessment_summaries/v1').get()).data()?.authorityReviewProgress)
+      .toEqual({ completed: 1, required: 2 });
+  });
+
+  it('recomputes an official resource revision after resource configuration changes without mutating assessment provenance', async () => {
+    await seedReviewableEvent(['PDRM', 'BOMBA']);
+    const adminDb = getFirestore(adminApp);
+    const eventRef = adminDb.doc('events/review-1');
+    const assessmentRef = adminDb.doc('events/review-1/assessments/v1');
+    const currentEvent = (await eventRef.get()).data()!;
+    const currentResourceRef = adminDb.doc(`events/review-1/resources/${currentEvent.currentResourceId}`);
+    const currentResource = (await currentResourceRef.get()).data()!;
+    const oldHash = 'a'.repeat(64);
+    const oldId = `official-v1-${oldHash}`;
+    const oldResource = {
+      ...currentResource,
+      resourceId: oldId,
+      resourceInputHash: oldHash,
+      configVersion: 'obsolete-resource-config',
+      revision: 1,
+      supersedesResourceId: null,
+      computedAt: 4_230,
+    };
+    const assessmentBefore = (await assessmentRef.get()).data();
+    await Promise.all([
+      currentResourceRef.delete(),
+      adminDb.doc(`events/review-1/resources/${oldId}`).set(oldResource),
+      eventRef.update({ currentResourceId: oldId }),
+    ]);
+    const recomputed = await recomputeResourceForStoredAssessment('review-1', 4_231);
+    expect(recomputed).toMatchObject({ status: 'created' });
+    const newResource = (await adminDb.doc(`events/review-1/resources/${recomputed.resourceId}`).get()).data();
+    expect(newResource).toMatchObject({ stage: 'official', revision: 2, supersedesResourceId: oldId, configVersion: RESOURCE_CONFIG_VERSION });
+    expect((await assessmentRef.get()).data()).toEqual(assessmentBefore);
+    expect((await adminDb.doc(`events/review-1/resources/${oldId}`).get()).data()).toEqual(oldResource);
+    expect((await eventRef.get()).data()?.currentResourceId).toBe(recomputed.resourceId);
+  });
+
+  it('refuses official resource recomputation when the stored result is not reproducible from review provenance', async () => {
+    await seedReviewableEvent(['PDRM', 'BOMBA']);
+    const adminDb = getFirestore(adminApp);
+    const eventRef = adminDb.doc('events/review-1');
+    const assessmentRef = adminDb.doc('events/review-1/assessments/v1');
+    const beforeEvent = (await eventRef.get()).data()!;
+    const beforeResources = await adminDb.collection('events/review-1/resources').get();
+    const tampered = (await assessmentRef.get()).data()!;
+    tampered.officialResult.officialInputHash = 'b'.repeat(64);
+    await assessmentRef.set(tampered);
+    const reviewId = Object.values(tampered.authorityReviewState.activeReviewHeads)[0].reviewId;
+    await adminDb.doc(`events/review-1/assessments/v1/score_reviews/${reviewId}`).update({ rationale: 'Tampered stored review provenance.' });
+    await expect(recomputeResourceForStoredAssessment('review-1', 4_235))
+      .resolves.toMatchObject({ status: 'failed', reason: 'official-provenance-invalid' });
+    expect((await eventRef.get()).data()?.currentResourceId).toBe(beforeEvent.currentResourceId);
+    expect((await adminDb.collection('events/review-1/resources').get()).size).toBe(beforeResources.size);
   });
 
   it('continues the immutable provisional revision chain after a failed run cleared the pointer', async () => {
@@ -1241,7 +1516,33 @@ async function seedReviewableEvent(requiredAuthorities: string[]) {
     });
     await setDoc(doc(db, `events/review-1/resources/${officialResourceId('v1')}`), officialResourceFixture('v1', 1));
     await setDoc(doc(db, 'events/review-1/assessments/v1'), officialAssessmentFixture('v1'));
+    await setDoc(doc(db, 'events/review-1/assessments/v1/score_reviews/v1-PDRM-review'), scoreReviewFixture('v1', 'PDRM'));
+    await setDoc(doc(db, 'events/review-1/assessments/v1/score_reviews/v1-BOMBA-review'), scoreReviewFixture('v1', 'BOMBA'));
   });
+}
+
+async function seedProvisionalReviewEvent(requiredAuthorities: string[]) {
+  const adminDb = getFirestore(adminApp);
+  const official = officialAssessmentFixture('v1');
+  const { officialResult: _officialResult, authorityReviewState: _authorityReviewState, ...base } = official;
+  void _officialResult;
+  void _authorityReviewState;
+  await Promise.all([
+    adminDb.doc('users/organizer-1').set({ role: 'organizer' }),
+    adminDb.doc('users/pdrm-1').set({ role: 'authority', authorityType: 'PDRM' }),
+    adminDb.doc('users/bomba-1').set({ role: 'authority', authorityType: 'BOMBA' }),
+    adminDb.doc('users/admin-1').set({ role: 'admin' }),
+    adminDb.doc('events/review-1').set({
+      eventId: 'review-1', organizerId: 'organizer-1', eventDetails: validDetails, status: 'Pending', currentVersionId: 'v1', currentVersionNumber: 1,
+      currentAssessmentId: 'v1', editableVersionId: null, draftDocumentPaths: [], requiredAuthorities, createdAt: 1, updatedAt: 1,
+    }),
+    adminDb.doc('events/review-1/versions/v1').set({ versionId: 'v1', eventId: 'review-1', versionNumber: 1, eventDetails: validDetails, documentPaths: [], submittedBy: 'organizer-1', submittedAt: 1, inputHash: 'hash' }),
+    adminDb.doc('events/review-1/assessments/v1').set({ ...base, status: 'provisional_ready', authorityReviewRequired: true }),
+  ]);
+}
+
+function confirmedReviewCategories(score: 1 | 2 | 3 | 4 | 5) {
+  return ACTIVE_CATEGORY_SCHEMA.categories.map((category) => ({ categoryId: category.id, likelihood: score, severity: score, decision: 'confirmed' as const }));
 }
 
 function restoreBackupFixture(
@@ -1305,7 +1606,7 @@ function queueToken(inputHash?: string) {
   });
 }
 
-function officialAssessmentFixture(versionId: string) {
+function officialAssessmentFixture(versionId: string, eventDetails = validDetails) {
   const categories = ACTIVE_CATEGORY_SCHEMA.categories.map((category) => ({
     categoryId: category.id, categoryName: category.name,
     proposedLikelihood: 5, proposedSeverity: 5, validatedLikelihood: 5, validatedSeverity: 5,
@@ -1319,8 +1620,8 @@ function officialAssessmentFixture(versionId: string) {
     formulaVersion: PROVISIONAL_FORMULA_VERSION, categorySchemaVersion: ACTIVE_CATEGORY_SCHEMA.version,
     hardRuleVersion: HARD_RULE_VERSION, calculatedAt: 1,
   };
-  return {
-    status: 'official_ready',
+  const provisional = {
+    status: 'authority_review',
     schemaVersion: ASSESSMENT_SCHEMA_VERSION,
     assessmentId: versionId,
     eventId: 'review-1',
@@ -1329,6 +1630,13 @@ function officialAssessmentFixture(versionId: string) {
     complianceStatus: 'pass',
     contextSnapshot: benignContextSnapshot(),
     inputHash: `assessment-${versionId}`,
+    warnings: [],
+    sourceTimestamps: {},
+    contextStatuses: {},
+    complianceChecks: [],
+    dataConfidenceScore: 100,
+    dataConfidenceLevel: 'high',
+    authorityReviewRequired: true,
     evidence: [{ key: 'crowd', description: 'Test attendance evidence', sourceTimestamp: 1, source: 'test', status: 'available', quality: 'verified' }],
     createdAt: 1,
     aiProposal: {
@@ -1341,7 +1649,33 @@ function officialAssessmentFixture(versionId: string) {
       })),
     },
     provisionalResult: result,
-    officialResult: { ...result, finalizedAt: 2, finalizedBy: 'authority-1' },
+  } as const;
+  const reviews = [scoreReviewFixture(versionId, 'PDRM'), scoreReviewFixture(versionId, 'BOMBA')];
+  const authorityReviewState = buildAuthorityReviewState(['PDRM', 'BOMBA'], reviews, 2);
+  return {
+    ...provisional,
+    status: 'official_ready',
+    authorityReviewRequired: false,
+    authorityReviewState,
+    officialResult: buildOfficialAssessmentResult({
+      assessment: provisional as never,
+      eventDetails: eventDetails as never,
+      requiredAuthorities: ['PDRM', 'BOMBA'],
+      reviews,
+      finalizedAt: 2,
+      finalizedBy: 'system',
+    }),
+  };
+}
+
+function scoreReviewFixture(versionId: string, authorityType: 'PDRM' | 'BOMBA') {
+  return {
+    reviewId: `${versionId}-${authorityType}-review`, schemaVersion: SCORE_REVIEW_SCHEMA_VERSION,
+    eventId: 'review-1', versionId, assessmentId: versionId, proposalId: `proposal-${versionId}`,
+    provisionalCalculatedAt: 1, assessmentInputHash: `assessment-${versionId}`, categorySchemaVersion: ACTIVE_CATEGORY_SCHEMA.version,
+    authorityType, reviewerId: authorityType === 'PDRM' ? 'pdrm-1' : 'bomba-1',
+    categories: ACTIVE_CATEGORY_SCHEMA.categories.map((category) => ({ categoryId: category.id, likelihood: 5 as const, severity: 5 as const, decision: 'confirmed' as const })),
+    rationale: 'All application evidence and risk materials were reviewed.', idempotencyKey: `${versionId}_${authorityType}_review`, createdAt: 2,
   };
 }
 
@@ -1368,7 +1702,7 @@ function officialResourceFixture(versionId: string, computedAt: number, eventDet
   return {
     resourceId: officialResourceId(versionId, eventDetails), eventId: 'review-1', versionId, assessmentId: versionId,
     schemaVersion: RESOURCE_SCHEMA_VERSION, stage: 'official', revision: 1, supersedesResourceId: null,
-    assessmentReference: { stage: 'official', assessmentId: versionId, proposalId: `proposal-${versionId}`, finalizedAt: 2, finalizedBy: 'authority-1' },
+    assessmentReference: { stage: 'official', assessmentId: versionId, proposalId: `proposal-${versionId}`, finalizedAt: 2, finalizedBy: 'system' },
     resourceInputHash: calculation.resourceInputHash, formulaVersion: RESOURCE_FORMULA_VERSION, configVersion: RESOURCE_CONFIG_VERSION,
     sourceRegistryVersion: RESOURCE_SOURCE_REGISTRY_VERSION, items,
     confidenceLevel: 'authority_validated', authorityReviewRequired: false, computedAt,

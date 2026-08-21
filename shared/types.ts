@@ -125,6 +125,8 @@ export interface EventRecord {
   createdAt: number;
   updatedAt: number;
   submittedAt?: number;
+  authorityReviewCompletedAt?: number;
+  authorityReviewCompletedVersionId?: string;
 }
 
 export interface EventVersion {
@@ -141,6 +143,9 @@ export interface EventVersion {
 
 export type RiskLevel = 'Low' | 'Medium' | 'High';
 export const ASSESSMENT_SCHEMA_VERSION = '2026-08-18-prd-v5';
+export const SCORE_REVIEW_SCHEMA_VERSION = '2026-08-20-authority-review-v1';
+export const SCORE_RESOLUTION_SCHEMA_VERSION = '2026-08-20-score-resolution-v1';
+export const OFFICIAL_FORMULA_VERSION = '2026-08-20-authority-official-v1';
 export type AssessmentStatus =
   | 'processing'
   | 'manual_review_required'
@@ -455,7 +460,19 @@ export interface ProvisionalAssessmentResult {
   calculatedAt: number;
 }
 
-export interface OfficialAssessmentResult extends ProvisionalAssessmentResult {
+export interface OfficialCategoryResult extends ValidatedCategoryResult {
+  authorityLikelihood: ScoreRating;
+  authoritySeverity: ScoreRating;
+  sourceReviewIds: string[];
+  resolutionId?: string;
+}
+
+export interface OfficialAssessmentResult extends Omit<ProvisionalAssessmentResult, 'categories'> {
+  categories: OfficialCategoryResult[];
+  reviewIds: string[];
+  resolutionId?: string;
+  officialInputHash: string;
+  officialFormulaVersion: typeof OFFICIAL_FORMULA_VERSION;
   finalizedAt: number;
   finalizedBy: string;
 }
@@ -472,13 +489,58 @@ export type AuthorityCategoryScoreReview =
 
 export interface AuthorityScoreReview {
   reviewId: string;
+  schemaVersion: typeof SCORE_REVIEW_SCHEMA_VERSION;
   eventId: string;
   versionId: string;
   assessmentId: string;
+  proposalId: string;
+  provisionalCalculatedAt: number;
+  assessmentInputHash: string;
+  categorySchemaVersion: string;
   authorityType: AuthorityType;
   reviewerId: string;
   categories: AuthorityCategoryScoreReview[];
+  rationale: string;
+  idempotencyKey: string;
   supersedesReviewId?: string;
+  createdAt: number;
+}
+
+export interface AuthorityReviewHead {
+  reviewId: string;
+  createdAt: number;
+}
+
+export interface AuthorityScoreConflict {
+  categoryId: string;
+  reviewIds: string[];
+}
+
+export interface AuthorityReviewState {
+  requiredAuthorities: AuthorityType[];
+  activeReviewHeads: Partial<Record<AuthorityType, AuthorityReviewHead>>;
+  conflicts: AuthorityScoreConflict[];
+  activeResolutionId?: string;
+  updatedAt: number;
+}
+
+export interface AuthorityScoreResolutionCategory {
+  categoryId: string;
+  likelihood: ScoreRating;
+  severity: ScoreRating;
+  reason: string;
+}
+
+export interface AuthorityScoreResolution {
+  resolutionId: string;
+  schemaVersion: typeof SCORE_RESOLUTION_SCHEMA_VERSION;
+  eventId: string;
+  versionId: string;
+  assessmentId: string;
+  reviewHeadIds: Partial<Record<AuthorityType, string>>;
+  categories: AuthorityScoreResolutionCategory[];
+  resolvedBy: string;
+  rationale: string;
   createdAt: number;
 }
 
@@ -506,6 +568,7 @@ export interface ProvisionalRiskAssessment extends AssessmentBase {
   warnings: ValidationWarning[];
   authorityReviewRequired: true;
   provisionalResult: ProvisionalAssessmentResult;
+  authorityReviewState?: AuthorityReviewState;
 }
 
 export interface ManualReviewRiskAssessment extends AssessmentBase {
@@ -523,6 +586,7 @@ export interface OfficialRiskAssessment extends AssessmentBase {
   authorityReviewRequired: false;
   provisionalResult: ProvisionalAssessmentResult;
   officialResult: OfficialAssessmentResult;
+  authorityReviewState: AuthorityReviewState;
 }
 
 export type RiskAssessment = ProvisionalRiskAssessment | ManualReviewRiskAssessment | OfficialRiskAssessment;
@@ -559,6 +623,7 @@ export interface OrganizerAssessmentSummary {
   assessmentReadiness?: AssessmentReadiness;
   complianceStatus?: ComplianceStatus;
   authorityReviewRequired: boolean;
+  authorityReviewProgress?: { completed: number; required: number };
   resourceQuantities?: ResourceQuantities;
   resourceRecommendation?: OrganizerResourceRecommendation;
   computedAt: number;
@@ -720,6 +785,8 @@ export interface AuthorityDecision {
   authorityType: AuthorityType;
   decision: DecisionValue;
   rationale: string;
+  suggestion?: string;
+  materialsReviewed?: boolean;
   reviewerId: string;
   decidedAt: number;
   current: boolean;
@@ -738,6 +805,12 @@ export type AuditAction =
   | 'resource_overridden'
   | 'amendment_requested'
   | 'authority_reviewed'
+  | 'authority_score_reviewed'
+  | 'authority_score_review_superseded'
+  | 'score_conflict_detected'
+  | 'score_conflict_resolved'
+  | 'official_assessment_finalized'
+  | 'official_finalization_failed'
   | 'decision_made'
   | 'public_published';
 
@@ -865,6 +938,7 @@ export const COLLECTIONS = {
   ASSESSMENTS: 'assessments',
   ASSESSMENT_SUMMARIES: 'assessment_summaries',
   SCORE_REVIEWS: 'score_reviews',
+  SCORE_RESOLUTIONS: 'score_resolutions',
   RESOURCES: 'resources',
   DECISIONS: 'decisions',
   DECISION_HISTORY: 'decision_history',

@@ -26,4 +26,5 @@ export { manualRecompute } from './http/manualRecompute';
 export { submitEvent } from './http/submitEvent';
 export { withdrawEvent } from './http/withdrawEvent';
 export { makeAuthorityDecision } from './http/authorityDecision';
+export { submitAuthorityScoreReview, resolveAuthorityScoreConflict, retryOfficialFinalisation } from './http/authorityScoreReview';
 export { overrideResources } from './http/overrideResources';

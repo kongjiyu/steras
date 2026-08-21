@@ -6,6 +6,8 @@ import {
   ASSESSMENT_SCHEMA_VERSION,
   AssessmentJob,
   AssessmentRecord,
+  AuthorityScoreResolution,
+  AuthorityScoreReview,
   CATEGORY_SCHEMA_VERSION,
   COLLECTIONS,
   EventRecord,
@@ -14,10 +16,13 @@ import {
   ManualReviewRiskAssessment,
   OrganizerAssessmentSummary,
   OrganizerResourceRecommendation,
+  OFFICIAL_FORMULA_VERSION,
+  OfficialRiskAssessment,
   PROVISIONAL_FORMULA_VERSION,
   ProvisionalRiskAssessment,
   RESOURCE_CONFIG_VERSION,
   RESOURCE_FORMULA_VERSION,
+  RESOURCE_KEYS,
   RESOURCE_SCHEMA_VERSION,
   RESOURCE_SOURCE_REGISTRY_VERSION,
   SCORING_LOGIC_VERSION,
@@ -28,6 +33,7 @@ import {
 } from '@shared/types';
 import { AI_RESPONSE_SCHEMA_VERSION, PROMPT_VERSION, analyseWithAI } from '../engines/aiPredictor';
 import { validateAndCalculateProvisional } from '../engines/assessmentValidator';
+import { buildOfficialAssessmentResult } from '../engines/authorityFinalisation';
 import {
   computeResources,
   ResourceCalculationResult,
@@ -429,6 +435,7 @@ function organizerSummary(
     : assessment.status === 'provisional_ready' || assessment.status === 'authority_review'
       ? assessment.provisionalResult
       : undefined;
+  const reviewState = 'authorityReviewState' in assessment ? assessment.authorityReviewState : undefined;
   return {
     assessmentId: assessment.assessmentId,
     eventId: assessment.eventId,
@@ -446,6 +453,12 @@ function organizerSummary(
     ...(assessment.complianceStatus ? { complianceStatus: assessment.complianceStatus } : {}),
     authorityReviewRequired: (assessment as { authorityReviewRequired?: boolean }).authorityReviewRequired
       ?? assessment.status !== 'official_ready',
+    ...(reviewState ? {
+      authorityReviewProgress: {
+        completed: Object.keys(reviewState.activeReviewHeads).length,
+        required: reviewState.requiredAuthorities.length,
+      },
+    } : {}),
     ...(resources ? {
       resourceQuantities: resourceQuantities(resources),
       resourceRecommendation: organizerResourceRecommendation(resources),
@@ -476,12 +489,13 @@ export async function recomputeResourceForStoredAssessment(
     || !isResourceEligibleAssessment(assessment, eventId, version.versionId, version.eventDetails)) {
     return { status: 'failed', reason: 'provisional-assessment-not-ready' };
   }
+  const assessmentResult = resourceAssessmentResult(assessment);
   const calculation = computeResources({
     eventId,
     versionId: version.versionId,
     assessmentId: assessment.assessmentId,
     eventDetails: version.eventDetails,
-    assessmentResult: assessment.provisionalResult,
+    assessmentResult,
   });
   await hooks.beforePersist?.();
   return persistResourceCalculation(eventReference, version, assessment, calculation, now, hooks.cutoverSessionId);
@@ -490,7 +504,7 @@ export async function recomputeResourceForStoredAssessment(
 async function persistResourceCalculation(
   eventReference: FirebaseFirestore.DocumentReference,
   version: EventVersion,
-  assessment: ProvisionalRiskAssessment,
+  assessment: ProvisionalRiskAssessment | OfficialRiskAssessment,
   calculation: ResourceCalculationResult,
   computedAt: number,
   cutoverSessionId?: string,
@@ -516,16 +530,15 @@ async function persistResourceCalculation(
           && cutoverLockSnapshot.data()!.leaseExpiresAt > leaseNow
         : !cutoverLockSnapshot.exists;
       if (!cutoverAllowed) return false;
-      if (cutoverAllowed
-        && current?.currentVersionId === version.versionId
+      if (!(current?.currentVersionId === version.versionId
         && current.currentAssessmentId === assessment.assessmentId
-        && isSameResourceAssessment(currentAssessment, assessment, version.eventDetails)) {
-        transaction.update(eventReference, { currentResourceId: firestore.FieldValue.delete(), updatedAt: computedAt });
-        transaction.set(
-          eventReference.collection(COLLECTIONS.ASSESSMENT_SUMMARIES).doc(version.versionId),
-          organizerSummary(assessment, undefined, computedAt),
-        );
-      }
+        && isSameResourceAssessment(currentAssessment, assessment, version.eventDetails))) return false;
+      if (!await officialAssessmentProvenanceMatches(transaction, eventReference, current, version, currentAssessment)) return false;
+      transaction.update(eventReference, { currentResourceId: firestore.FieldValue.delete(), updatedAt: computedAt });
+      transaction.set(
+        eventReference.collection(COLLECTIONS.ASSESSMENT_SUMMARIES).doc(version.versionId),
+        organizerSummary(assessment, undefined, computedAt),
+      );
       transaction.create(eventReference.collection(COLLECTIONS.AUDIT_LOGS).doc(failureId), {
         id: failureId,
         eventId: version.eventId,
@@ -541,7 +554,8 @@ async function persistResourceCalculation(
     if (!failurePersisted) return { status: 'failed', reason: 'resource-cutover-fencing-failed' };
     return { status: 'failed', reason: calculation.code };
   }
-  const resourceId = resourceDocumentId('provisional', version.versionId, calculation.resourceInputHash);
+  const stage = assessment.status === 'official_ready' ? 'official' : 'provisional';
+  const resourceId = resourceDocumentId(stage, version.versionId, calculation.resourceInputHash);
   return db.runTransaction(async (transaction) => {
     const assessmentReference = eventReference.collection(COLLECTIONS.ASSESSMENTS).doc(assessment.assessmentId);
     const [currentEventSnapshot, currentAssessmentSnapshot, cutoverLockSnapshot] = await Promise.all([
@@ -565,19 +579,22 @@ async function persistResourceCalculation(
         : 'resource-cutover-in-progress' };
     }
     if (!currentEvent
-      || currentEvent.status !== 'Pending'
+      || !['Pending', 'UnderReview'].includes(currentEvent.status)
       || currentEvent.currentVersionId !== version.versionId
       || currentEvent.currentAssessmentId !== assessment.assessmentId
       || !isResourceEligibleAssessment(currentAssessment, version.eventId, version.versionId, version.eventDetails)
       || !isSameResourceAssessment(currentAssessment, assessment, version.eventDetails)) {
       return { status: 'failed' as const, reason: 'event-or-assessment-changed' };
     }
+    if (!await officialAssessmentProvenanceMatches(transaction, eventReference, currentEvent, version, currentAssessment)) {
+      return { status: 'failed' as const, reason: 'official-provenance-invalid' };
+    }
     const currentCalculation = computeResources({
       eventId: version.eventId,
       versionId: version.versionId,
       assessmentId: currentAssessment.assessmentId,
       eventDetails: version.eventDetails,
-      assessmentResult: currentAssessment.provisionalResult,
+      assessmentResult: resourceAssessmentResult(currentAssessment),
     });
     if (!currentCalculation.ok || currentCalculation.resourceInputHash !== calculation.resourceInputHash) {
       return { status: 'failed' as const, reason: 'event-or-assessment-changed' };
@@ -587,7 +604,7 @@ async function persistResourceCalculation(
       transaction.get(resourceReference),
       transaction.get(eventReference.collection(COLLECTIONS.RESOURCES)
         .where('versionId', '==', version.versionId)
-        .where('stage', '==', 'provisional')),
+        .where('stage', '==', stage)),
     ]);
     const history = historicalSnapshot.docs
       .map((document) => validateResourceRecommendation(document.data()).ok
@@ -606,16 +623,16 @@ async function persistResourceCalculation(
     if (existingSnapshot.exists) {
       const existing = existingSnapshot.data() as ResourceRecommendation;
       if (existing.resourceInputHash !== calculation.resourceInputHash
-        || existing.stage !== 'provisional'
+        || existing.stage !== stage
         || existing.eventId !== version.eventId
         || existing.versionId !== version.versionId
         || existing.assessmentId !== currentAssessment.assessmentId
-        || existing.assessmentReference.stage !== 'provisional'
-        || existing.assessmentReference.proposalId !== currentAssessment.provisionalResult.proposalId
+        || existing.assessmentReference.stage !== stage
+        || existing.assessmentReference.proposalId !== resourceAssessmentResult(currentAssessment).proposalId
         || existing.formulaVersion !== calculation.formulaVersion
         || existing.configVersion !== calculation.configVersion
         || existing.sourceRegistryVersion !== calculation.sourceRegistryVersion
-        || stableStringify(existing.items) !== stableStringify(calculation.items)) {
+        || stableStringify(existing.items) !== stableStringify(resourceItemsForStage(stage, calculation.items))) {
         return { status: 'failed' as const, reason: 'resource-id-collision' };
       }
       if (!validateResourceRecommendation(existing).ok) return { status: 'failed' as const, reason: 'invalid-existing-resource' };
@@ -625,7 +642,7 @@ async function persistResourceCalculation(
       if (pointedResource && (!validateResourceRecommendation(pointedResource).ok
         || pointedResource.eventId !== version.eventId
         || pointedResource.versionId !== version.versionId
-        || pointedResource.stage !== 'provisional')) {
+        || pointedResource.stage !== stage)) {
         return { status: 'failed' as const, reason: 'invalid-current-resource' };
       }
       if (pointedResource && pointedResource.revision === existing.revision
@@ -661,7 +678,7 @@ async function persistResourceCalculation(
     if (previousCandidate && (!validateResourceRecommendation(previousCandidate).ok
       || previousCandidate.eventId !== version.eventId
       || previousCandidate.versionId !== version.versionId
-      || previousCandidate.stage !== 'provisional')) {
+      || previousCandidate.stage !== stage)) {
       return { status: 'failed' as const, reason: 'invalid-current-resource' };
     }
     const previous = previousCandidate
@@ -671,28 +688,49 @@ async function persistResourceCalculation(
       return { status: 'failed' as const, reason: 'resource-revision-overflow' };
     }
     const nextRevision = nextResourceRevision(previous);
-    const recommendation: ResourceRecommendation = {
+    const recommendationItems = resourceItemsForStage(stage, calculation.items);
+    const recommendationBase: Omit<ResourceRecommendation, 'stage' | 'assessmentReference' | 'confidenceLevel' | 'authorityReviewRequired'> = {
       resourceId,
       eventId: version.eventId,
       versionId: version.versionId,
       assessmentId: currentAssessment.assessmentId,
       schemaVersion: RESOURCE_SCHEMA_VERSION,
-      stage: 'provisional',
       revision: nextRevision.revision,
       supersedesResourceId: nextRevision.supersedesResourceId,
-      assessmentReference: {
-        stage: 'provisional', assessmentId: currentAssessment.assessmentId, proposalId: currentAssessment.provisionalResult.proposalId,
-      },
       resourceInputHash: calculation.resourceInputHash,
       formulaVersion: calculation.formulaVersion,
       configVersion: calculation.configVersion,
       sourceRegistryVersion: calculation.sourceRegistryVersion,
-      items: calculation.items,
-      confidenceLevel: 'prototype',
-      authorityReviewRequired: true,
-      notes: 'Provisional internal prototype planning ranges; authority validation and official assessment are pending.',
+      items: recommendationItems,
       computedAt,
     };
+    const recommendation: ResourceRecommendation = stage === 'official'
+      ? {
+          ...recommendationBase,
+          stage: 'official',
+          assessmentReference: {
+            stage: 'official',
+            assessmentId: currentAssessment.assessmentId,
+            proposalId: resourceAssessmentResult(currentAssessment).proposalId,
+            finalizedAt: (currentAssessment as OfficialRiskAssessment).officialResult.finalizedAt,
+            finalizedBy: (currentAssessment as OfficialRiskAssessment).officialResult.finalizedBy,
+          },
+          confidenceLevel: 'authority_validated',
+          authorityReviewRequired: false,
+          notes: 'Official deterministic planning ranges based on finalized human-reviewed risk scores.',
+        }
+      : {
+          ...recommendationBase,
+          stage: 'provisional',
+          assessmentReference: {
+            stage: 'provisional',
+            assessmentId: currentAssessment.assessmentId,
+            proposalId: resourceAssessmentResult(currentAssessment).proposalId,
+          },
+          confidenceLevel: 'prototype',
+          authorityReviewRequired: true,
+          notes: 'Provisional internal prototype planning ranges; authority validation and official assessment are pending.',
+        };
     transaction.create(resourceReference, recommendation);
     transaction.update(eventReference, { currentResourceId: resourceId, updatedAt: computedAt });
     transaction.set(
@@ -712,7 +750,7 @@ async function persistResourceCalculation(
         resourceId,
         previousResourceId: previous?.resourceId ?? null,
         assessmentId: currentAssessment.assessmentId,
-        stage: 'provisional',
+        stage,
         schemaVersion: RESOURCE_SCHEMA_VERSION,
         formulaVersion: RESOURCE_FORMULA_VERSION,
         configVersion: RESOURCE_CONFIG_VERSION,
@@ -755,14 +793,17 @@ export function isResourceEligibleAssessment(
   eventId: string,
   versionId: string,
   eventDetails: EventVersion['eventDetails'],
-): value is ProvisionalRiskAssessment {
+): value is ProvisionalRiskAssessment | OfficialRiskAssessment {
   if (!value || typeof value !== 'object') return false;
-  const assessment = value as Partial<ProvisionalRiskAssessment>;
-  if (!((assessment.status === 'provisional_ready' || assessment.status === 'authority_review')
+  const assessment = value as Partial<ProvisionalRiskAssessment | OfficialRiskAssessment>;
+  const isCalculatedStatus = assessment.status === 'provisional_ready'
+    || assessment.status === 'authority_review'
+    || assessment.status === 'official_ready';
+  if (!(isCalculatedStatus
     && assessment.schemaVersion === ASSESSMENT_SCHEMA_VERSION
     && assessment.eventId === eventId
     && assessment.versionId === versionId
-    && assessment.assessmentId === versionId
+    && typeof assessment.assessmentId === 'string' && assessment.assessmentId.length > 0
     && assessment.aiProposal?.status === 'success'
     && Array.isArray(assessment.aiProposal.categories)
     && Array.isArray(assessment.aiProposal.hazards)
@@ -771,8 +812,15 @@ export function isResourceEligibleAssessment(
     && assessment.contextSnapshot
     && Array.isArray(assessment.evidence)
     && validateProvisionalAssessmentResult(assessment.provisionalResult as ProvisionalRiskAssessment['provisionalResult']).length === 0)) return false;
-  const result = assessment.provisionalResult as ProvisionalRiskAssessment['provisionalResult'];
+  if (assessment.status === 'official_ready' && (!assessment.officialResult
+    || assessment.officialResult.officialFormulaVersion !== OFFICIAL_FORMULA_VERSION
+    || assessment.officialResult.proposalId !== assessment.aiProposal?.proposalId
+    || !/^[a-f0-9]{64}$/.test(assessment.officialResult.officialInputHash))) return false;
+  const result = assessment.status === 'official_ready'
+    ? assessment.officialResult as OfficialRiskAssessment['officialResult']
+    : assessment.provisionalResult as ProvisionalRiskAssessment['provisionalResult'];
   const proposal = assessment.aiProposal as ProvisionalRiskAssessment['aiProposal'];
+  if (validateProvisionalAssessmentResult(result).length > 0) return false;
   try {
     const eligibleEvidence = new Set(assessment.evidence
       .filter((item) => item && typeof item.status === 'string'
@@ -795,14 +843,75 @@ export function isResourceEligibleAssessment(
 
 function isSameResourceAssessment(
   current: unknown,
-  expected: ProvisionalRiskAssessment,
+  expected: ProvisionalRiskAssessment | OfficialRiskAssessment,
   eventDetails: EventVersion['eventDetails'],
-): current is ProvisionalRiskAssessment {
+): current is ProvisionalRiskAssessment | OfficialRiskAssessment {
   if (!isResourceEligibleAssessment(current, expected.eventId, expected.versionId, eventDetails)) return false;
   return current.inputHash === expected.inputHash
     && current.aiProposal.proposalId === expected.aiProposal.proposalId
-    && current.provisionalResult.proposalId === expected.provisionalResult.proposalId
-    && current.provisionalResult.calculatedAt === expected.provisionalResult.calculatedAt;
+    && resourceAssessmentResult(current).proposalId === resourceAssessmentResult(expected).proposalId
+    && resourceAssessmentResult(current).calculatedAt === resourceAssessmentResult(expected).calculatedAt
+    && current.status === expected.status;
+}
+
+function resourceAssessmentResult(assessment: ProvisionalRiskAssessment | OfficialRiskAssessment) {
+  return assessment.status === 'official_ready' ? assessment.officialResult : assessment.provisionalResult;
+}
+
+async function officialAssessmentProvenanceMatches(
+  transaction: FirebaseFirestore.Transaction,
+  eventReference: FirebaseFirestore.DocumentReference,
+  event: EventRecord,
+  version: EventVersion,
+  value: unknown,
+): Promise<boolean> {
+  if (!value || typeof value !== 'object' || (value as AssessmentRecord).status !== 'official_ready') return true;
+  const assessment = value as OfficialRiskAssessment;
+  const state = assessment.authorityReviewState;
+  if (!state
+    || stableStringify(state.requiredAuthorities) !== stableStringify(event.requiredAuthorities)
+    || state.requiredAuthorities.length === 0) return false;
+  const reviewIds = event.requiredAuthorities.map((authority) => state.activeReviewHeads[authority]?.reviewId);
+  if (reviewIds.some((reviewId) => !reviewId)) return false;
+  const reviewReferences = reviewIds.map((reviewId) =>
+    eventReference.collection(COLLECTIONS.ASSESSMENTS).doc(assessment.assessmentId)
+      .collection(COLLECTIONS.SCORE_REVIEWS).doc(reviewId!));
+  const resolutionReference = state.activeResolutionId
+    ? eventReference.collection(COLLECTIONS.ASSESSMENTS).doc(assessment.assessmentId)
+      .collection(COLLECTIONS.SCORE_RESOLUTIONS).doc(state.activeResolutionId)
+    : undefined;
+  const [reviewSnapshots, resolutionSnapshot] = await Promise.all([
+    transaction.getAll(...reviewReferences),
+    resolutionReference ? transaction.get(resolutionReference) : Promise.resolve(undefined),
+  ]);
+  if (reviewSnapshots.some((snapshot) => !snapshot.exists)
+    || (resolutionReference && !resolutionSnapshot?.exists)) return false;
+  try {
+    const expected = buildOfficialAssessmentResult({
+      assessment,
+      eventDetails: version.eventDetails,
+      requiredAuthorities: event.requiredAuthorities,
+      reviews: reviewSnapshots.map((snapshot) => snapshot.data() as AuthorityScoreReview),
+      resolution: resolutionSnapshot?.data() as AuthorityScoreResolution | undefined,
+      finalizedAt: assessment.officialResult.finalizedAt,
+      finalizedBy: assessment.officialResult.finalizedBy,
+    });
+    return stableStringify(expected) === stableStringify(assessment.officialResult);
+  } catch {
+    return false;
+  }
+}
+
+function resourceItemsForStage(
+  stage: 'provisional' | 'official',
+  items: ResourceRecommendation['items'],
+): ResourceRecommendation['items'] {
+  if (stage === 'provisional') return items;
+  return Object.fromEntries(RESOURCE_KEYS.map((key) => [key, {
+    ...items[key],
+    confidence: 'authority_validated' as const,
+    authorityReviewRequired: false,
+  }])) as ResourceRecommendation['items'];
 }
 
 function resourceQuantities(resources: ResourceRecommendation) {

@@ -15,6 +15,7 @@ import {
   ResourceRecommendationItem,
   ResourceSourceSnapshot,
   RiskLevel,
+  ScoreRating,
   hirarcRiskLevelFor,
   riskLevelFor,
 } from '@shared/types';
@@ -382,13 +383,19 @@ export function validateProvisionalAssessmentResult(
       continue;
     }
     seen.add(category.categoryId);
+    const authorityLikelihood = isScore((rawCategory as Record<string, unknown>).authorityLikelihood)
+      ? (rawCategory as Record<string, unknown>).authorityLikelihood as ScoreRating
+      : category.proposedLikelihood;
+    const authoritySeverity = isScore((rawCategory as Record<string, unknown>).authoritySeverity)
+      ? (rawCategory as Record<string, unknown>).authoritySeverity as ScoreRating
+      : category.proposedSeverity;
     const matrix = category.validatedLikelihood * category.validatedSeverity;
     const normalized = matrix * 4;
-    const hardRuleErrors = validateAppliedHardRules(category);
+    const hardRuleErrors = validateAppliedHardRules(category, authorityLikelihood, authoritySeverity);
     if (!isScore(category.proposedLikelihood) || !isScore(category.proposedSeverity)
       || !isScore(category.validatedLikelihood) || !isScore(category.validatedSeverity)
-      || category.validatedLikelihood < category.proposedLikelihood
-      || category.validatedSeverity < category.proposedSeverity
+      || category.validatedLikelihood < authorityLikelihood
+      || category.validatedSeverity < authoritySeverity
       || category.matrixScore !== matrix
       || category.normalizedScore !== normalized
       || category.weight !== weight
@@ -463,7 +470,10 @@ export function validateAssessmentResultAgainstHardRules(
     const constraint = constraints.get(category.categoryId);
     if (!constraint) { errors.push(`hard-rule-${category.categoryId}`); continue; }
     for (const axis of ['likelihood', 'severity'] as const) {
-      const proposed = axis === 'likelihood' ? category.proposedLikelihood : category.proposedSeverity;
+      const official = category as typeof category & { authorityLikelihood?: ScoreRating; authoritySeverity?: ScoreRating };
+      const proposed = axis === 'likelihood'
+        ? official.authorityLikelihood ?? category.proposedLikelihood
+        : official.authoritySeverity ?? category.proposedSeverity;
       const validated = axis === 'likelihood' ? category.validatedLikelihood : category.validatedSeverity;
       const floor = axis === 'likelihood' ? constraint.likelihoodFloor : constraint.severityFloor;
       const applied = category.appliedHardRules.filter((rule) => rule.axis === axis);
@@ -485,11 +495,15 @@ export function validateAssessmentResultAgainstHardRules(
   return errors;
 }
 
-function validateAppliedHardRules(category: ProvisionalAssessmentResult['categories'][number]): string[] {
+function validateAppliedHardRules(
+  category: ProvisionalAssessmentResult['categories'][number],
+  baselineLikelihood = category.proposedLikelihood,
+  baselineSeverity = category.proposedSeverity,
+): string[] {
   if (!Array.isArray(category.appliedHardRules)) return ['hard-rules'];
   const errors: string[] = [];
   for (const axis of ['likelihood', 'severity'] as const) {
-    const proposed = axis === 'likelihood' ? category.proposedLikelihood : category.proposedSeverity;
+    const proposed = axis === 'likelihood' ? baselineLikelihood : baselineSeverity;
     const validated = axis === 'likelihood' ? category.validatedLikelihood : category.validatedSeverity;
     const rules = category.appliedHardRules.filter((rule) => rule?.axis === axis);
     if ((validated > proposed && rules.length !== 1) || (validated === proposed && rules.length !== 0)) errors.push(axis);

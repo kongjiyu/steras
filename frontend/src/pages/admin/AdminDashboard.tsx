@@ -3,6 +3,7 @@ import { ShieldCheck, LogOut, Mail, CalendarDays, Hash } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import logoUrl from '../../assets/brand/steras-logo-horizontal.svg';
 import { Link } from 'react-router-dom';
+import ScoreConflictQueue from './ScoreConflictQueue';
 
 /**
  * STERAS — Admin Dashboard (stub)
@@ -53,7 +54,7 @@ export default function AdminDashboard() {
       </header>
 
       {/* Main */}
-      <main className="mx-auto max-w-3xl px-5 py-10 sm:px-8 sm:py-14">
+      <main className="mx-auto max-w-5xl px-5 py-10 sm:px-8 sm:py-14">
         <p className="page-eyebrow">Workspace</p>
         <h1 className="mt-2 font-display text-3xl font-bold tracking-[-0.025em] text-ink-900">Admin Dashboard</h1>
         <p className="mt-2 text-sm leading-6 text-ink-500">
@@ -99,14 +100,9 @@ export default function AdminDashboard() {
           </dl>
         </section>
 
-        {/* Placeholder for future admin tools */}
-        <section className="mt-6 rounded-lg border border-dashed border-[#cbd5b6] bg-cream-100/60 px-5 py-6 text-sm leading-6 text-ink-500 sm:px-7">
-          <p className="font-semibold text-ink-700">Coming soon</p>
-          <p className="mt-1">
-            Future admin tools (user list, role assignment, audit log search, system metrics)
-            will be added here. The current build is a minimal stub to confirm the role-based
-            routing and admin authentication are wired up correctly.
-          </p>
+        <section className="mt-6 rounded-lg border border-[#ded5c5] bg-[#fffdf8] px-5 py-6 sm:px-7">
+          <div className="mb-5"><p className="text-xs font-bold uppercase tracking-[0.06em] text-gold-600">M2 officialisation</p><h2 className="mt-1 font-display text-xl font-bold text-ink-900">Score conflicts and finalisation recovery</h2><p className="mt-1 text-sm leading-6 text-ink-500">Resolve categories with different authority scores, or retry an atomic official calculation after a resource failure. Every resolution remains append-only and bound to the current review heads.</p></div>
+          <ScoreConflictQueue />
         </section>
       </main>
     </div>
