@@ -1,7 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.onEventUpdated = exports.onEventCreated = exports.__testOnlyMarkFailed = void 0;
+exports.onEventUpdated = exports.onEventCreated = exports.__testOnlyManualLockState = exports.__testOnlyMarkFailed = void 0;
 exports.runRiskAndResourcePipeline = runRiskAndResourcePipeline;
+exports.invalidAiProposalForManualRecovery = invalidAiProposalForManualRecovery;
 exports.recomputeResourceForStoredAssessment = recomputeResourceForStoredAssessment;
 exports.resourceDocumentId = resourceDocumentId;
 exports.nextResourceRevision = nextResourceRevision;
@@ -15,6 +16,7 @@ const types_1 = require("../../../shared/types");
 const aiPredictor_1 = require("../engines/aiPredictor");
 const assessmentValidator_1 = require("../engines/assessmentValidator");
 const authorityFinalisation_1 = require("../engines/authorityFinalisation");
+const manualFinalisation_1 = require("../engines/manualFinalisation");
 const resourceCalculator_1 = require("../engines/resourceCalculator");
 const resourceContract_1 = require("../engines/resourceContract");
 const ruleBased_1 = require("../engines/ruleBased");
@@ -33,6 +35,8 @@ async function runRiskAndResourcePipeline(eventId, now = Date.now(), retryManual
     const event = { eventId, ...eventSnapshot.data() };
     if (event.status !== 'Pending' || !event.currentVersionId)
         return { status: 'skipped', eventId, reason: 'event-not-pending' };
+    if (!isSafeDocumentId(event.currentVersionId))
+        return { status: 'skipped', eventId, reason: 'invalid-current-version' };
     const versionId = event.currentVersionId;
     const versionReference = eventReference.collection(types_1.COLLECTIONS.VERSIONS).doc(versionId);
     const assessmentReference = eventReference.collection(types_1.COLLECTIONS.ASSESSMENTS).doc(versionId);
@@ -43,6 +47,10 @@ async function runRiskAndResourcePipeline(eventId, now = Date.now(), retryManual
         return { status: 'processed', eventId, versionId, reason: 'version-not-found' };
     }
     const version = versionSnapshot.data();
+    if (!isPipelineEventVersion(version, eventId, versionId)) {
+        await recordMissingVersionFailure(eventReference, assessmentReference, summaryReference, eventId, versionId, now, 'invalid-version-contract');
+        return { status: 'processed', eventId, versionId, reason: 'invalid-version-contract' };
+    }
     const inputHash = processingHash(version.inputHash);
     const claimId = (0, node_crypto_1.randomUUID)();
     const claimed = await db.runTransaction(async (transaction) => {
@@ -58,7 +66,8 @@ async function runRiskAndResourcePipeline(eventId, now = Date.now(), retryManual
         if (cutoverLockSnapshot.exists)
             return false;
         const currentEvent = currentEventSnapshot.data();
-        if (!currentEvent || currentEvent.status !== 'Pending' || currentEvent.currentVersionId !== versionId)
+        if (!currentEvent || currentEvent.status !== 'Pending' || currentEvent.currentVersionId !== versionId
+            || (currentEvent.currentAssessmentId !== undefined && currentEvent.currentAssessmentId !== versionId))
             return false;
         if (retryManual) {
             const retryUser = retryUserSnapshot?.data();
@@ -66,6 +75,7 @@ async function runRiskAndResourcePipeline(eventId, now = Date.now(), retryManual
                 || retryUser?.role !== 'authority'
                 || retryUser.authorityType !== retryAuthorization.authorityType
                 || !retryUser.authorityType
+                || !Array.isArray(currentEvent.requiredAuthorities)
                 || !currentEvent.requiredAuthorities.includes(retryUser.authorityType))
                 return 'retry-not-authorized';
         }
@@ -73,6 +83,11 @@ async function runRiskAndResourcePipeline(eventId, now = Date.now(), retryManual
         if (retryManual && existing?.status !== 'manual_review_required' && existing?.status !== 'failed') {
             return 'retry-not-retryable';
         }
+        const existingManualLock = manualLockState(existing);
+        if (existingManualLock === 'invalid')
+            return 'retry-not-retryable';
+        if (existingManualLock === 'valid')
+            return retryManual ? 'retry-not-retryable' : false;
         if (existing && ['provisional_ready', 'authority_review', 'official_ready'].includes(existing.status) && existing.inputHash === inputHash)
             return false;
         if (existing?.status === 'manual_review_required' && existing.inputHash === inputHash && !retryManual)
@@ -178,7 +193,7 @@ async function runRiskAndResourcePipeline(eventId, now = Date.now(), retryManual
             else {
                 const validation = (0, assessmentValidator_1.validateAndCalculateProvisional)(aiProposal, baseline, createdAt);
                 if (!validation.ok) {
-                    assessment = manualAssessment(common, aiProposal, [...readinessWarnings, ...validation.warnings], validation.reason);
+                    assessment = manualAssessment(common, invalidAiProposalForManualRecovery(aiProposal, validation.reason), [...readinessWarnings, ...validation.warnings], validation.reason);
                 }
                 else {
                     assessment = {
@@ -205,6 +220,18 @@ async function runRiskAndResourcePipeline(eventId, now = Date.now(), retryManual
                 transaction.get(eventReference),
                 transaction.get(db.doc(resourceCutoverLock_1.RESOURCE_CUTOVER_LOCK_PATH)),
             ]);
+            const claim = claimSnapshot.data();
+            const currentEvent = currentEventSnapshot.data();
+            if (claim?.status !== 'processing' || claim.claimId !== claimId)
+                return false;
+            if (!currentEvent || currentEvent.status !== 'Pending' || currentEvent.currentVersionId !== versionId
+                || (currentEvent.currentAssessmentId !== undefined && currentEvent.currentAssessmentId !== assessment.assessmentId))
+                return false;
+            // A manual assessment is an exclusive recovery path for this generation.
+            // Never let a late AI transaction overwrite its persisted manual lock or
+            // publish a provisional resource after Admin has claimed the assessment.
+            if (manualLockState(claim) !== 'absent')
+                return false;
             if (cutoverLockSnapshot.exists) {
                 transaction.update(db.doc(resourceCutoverLock_1.RESOURCE_CUTOVER_LOCK_PATH), {
                     queuedEvents: firebase_admin_1.firestore.FieldValue.arrayUnion((0, resourceCutoverLock_1.createResourceCutoverQueueToken)({
@@ -217,12 +244,6 @@ async function runRiskAndResourcePipeline(eventId, now = Date.now(), retryManual
                     })),
                 });
             }
-            const claim = claimSnapshot.data();
-            const currentEvent = currentEventSnapshot.data();
-            if (claim?.status !== 'processing' || claim.claimId !== claimId)
-                return false;
-            if (!currentEvent || currentEvent.status !== 'Pending' || currentEvent.currentVersionId !== versionId)
-                return false;
             transaction.set(assessmentReference, assessment);
             transaction.set(summaryReference, organizerSummary(assessment, undefined, createdAt));
             transaction.update(eventReference, {
@@ -256,17 +277,21 @@ async function runRiskAndResourcePipeline(eventId, now = Date.now(), retryManual
         throw error;
     }
 }
-async function recordMissingVersionFailure(eventReference, assessmentReference, summaryReference, eventId, versionId, now) {
+async function recordMissingVersionFailure(eventReference, assessmentReference, summaryReference, eventId, versionId, now, reason = 'version-not-found') {
     const db = (0, firebase_admin_1.firestore)();
-    const inputHash = processingHash(`missing-version:${versionId}`);
+    const inputHash = processingHash(`${reason}:${versionId}`);
     const claimId = (0, node_crypto_1.randomUUID)();
     await db.runTransaction(async (transaction) => {
-        const [currentSnapshot, cutoverLockSnapshot] = await Promise.all([
+        const [currentSnapshot, assessmentSnapshot, cutoverLockSnapshot] = await Promise.all([
             transaction.get(eventReference),
+            transaction.get(assessmentReference),
             transaction.get(db.doc(resourceCutoverLock_1.RESOURCE_CUTOVER_LOCK_PATH)),
         ]);
         const current = currentSnapshot.data();
-        if (!current || current.status !== 'Pending' || current.currentVersionId !== versionId)
+        if (!current || current.status !== 'Pending' || current.currentVersionId !== versionId
+            || (current.currentAssessmentId !== undefined && current.currentAssessmentId !== versionId))
+            return;
+        if (manualLockState(assessmentSnapshot.data()) !== 'absent')
             return;
         if (cutoverLockSnapshot.exists)
             transaction.update(db.doc(resourceCutoverLock_1.RESOURCE_CUTOVER_LOCK_PATH), {
@@ -284,7 +309,9 @@ async function recordMissingVersionFailure(eventReference, assessmentReference, 
             claimId,
             claimedAt: now,
             leaseExpiresAt: now,
-            error: `Immutable event version ${versionId} was not found.`,
+            error: reason === 'version-not-found'
+                ? `Immutable event version ${versionId} was not found.`
+                : `Immutable event version ${versionId} failed runtime contract validation.`,
             createdAt: now,
         });
         transaction.set(summaryReference, {
@@ -299,12 +326,79 @@ async function recordMissingVersionFailure(eventReference, assessmentReference, 
         transaction.set(eventReference.collection(types_1.COLLECTIONS.AUDIT_LOGS).doc(`${versionId}-risk-score-computed-v3`), {
             id: `${versionId}-risk-score-computed-v3`, eventId, versionId, action: 'risk_score_computed',
             actorId: 'system', actorRole: 'system', timestamp: now,
-            metadata: { assessmentStatus: 'failed', schemaVersion: types_1.ASSESSMENT_SCHEMA_VERSION, inputHash, reason: 'version-not-found' },
+            metadata: { assessmentStatus: 'failed', schemaVersion: types_1.ASSESSMENT_SCHEMA_VERSION, inputHash, reason },
         });
     });
 }
+function isPipelineEventVersion(value, eventId, versionId) {
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+        return false;
+    const version = value;
+    const details = version.eventDetails;
+    if (version.eventId !== eventId || version.versionId !== versionId
+        || !Number.isSafeInteger(version.versionNumber) || Number(version.versionNumber) < 1
+        || !Array.isArray(version.documentPaths) || !version.documentPaths.every((path) => typeof path === 'string')
+        || typeof version.submittedBy !== 'string' || !version.submittedBy.trim()
+        || !Number.isFinite(version.submittedAt)
+        || typeof version.inputHash !== 'string' || !/^[a-f0-9]{64}$/.test(version.inputHash)
+        || !details || typeof details !== 'object' || Array.isArray(details))
+        return false;
+    const eventDetails = details;
+    return typeof eventDetails.name === 'string' && Boolean(eventDetails.name.trim())
+        && typeof eventDetails.type === 'string' && Boolean(eventDetails.type.trim())
+        && typeof eventDetails.venueName === 'string' && Boolean(eventDetails.venueName.trim())
+        && typeof eventDetails.venueAddress === 'string' && Boolean(eventDetails.venueAddress.trim())
+        && Number.isFinite(eventDetails.venueCapacity) && Number(eventDetails.venueCapacity) >= 0
+        && Number.isFinite(eventDetails.expectedAttendance) && Number(eventDetails.expectedAttendance) >= 0
+        && ['indoor', 'outdoor', 'mixed'].includes(String(eventDetails.environment))
+        && ['covered', 'partially_covered', 'uncovered'].includes(String(eventDetails.coverage))
+        && ['seated', 'standing', 'mixed'].includes(String(eventDetails.seating))
+        && Number.isFinite(eventDetails.startDatetime) && Number.isFinite(eventDetails.endDatetime)
+        && Number(eventDetails.endDatetime) >= Number(eventDetails.startDatetime)
+        && typeof eventDetails.emergencyPlanSummary === 'string';
+}
 function manualAssessment(common, aiProposal, warnings, reason) {
     return { ...common, status: 'manual_review_required', aiProposal, warnings, authorityReviewRequired: true, manualReviewReason: reason };
+}
+function manualLockState(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+        || !Object.prototype.hasOwnProperty.call(value, 'activeManualAssessmentId'))
+        return 'absent';
+    const id = value.activeManualAssessmentId;
+    return isSafeManualAssessmentId(id) ? 'valid' : 'invalid';
+}
+function isSafeManualAssessmentId(value) {
+    return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+}
+function isSafeDocumentId(value) {
+    return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+}
+/**
+ * A syntactically valid MiniMax response can still fail deterministic validation
+ * (for example, because all of a category's evidence references are unsupported).
+ * Do not persist that response as a successful proposal: its scores are not an
+ * eligible input for manual recovery. Preserve only the attempt metadata and a
+ * bounded validation error so Admin can retry or provide an assessment without
+ * treating invalid AI output as an authoritative proposal.
+ */
+function invalidAiProposalForManualRecovery(proposal, reason) {
+    const model = typeof proposal.model === 'string' && proposal.model.trim() ? proposal.model : 'unknown';
+    const promptVersion = typeof proposal.promptVersion === 'string' && proposal.promptVersion.trim()
+        ? proposal.promptVersion
+        : aiPredictor_1.PROMPT_VERSION;
+    const responseSchemaVersion = typeof proposal.responseSchemaVersion === 'string' && proposal.responseSchemaVersion.trim()
+        ? proposal.responseSchemaVersion
+        : aiPredictor_1.AI_RESPONSE_SCHEMA_VERSION;
+    return {
+        status: 'invalid',
+        model,
+        promptVersion,
+        responseSchemaVersion,
+        retryable: true,
+        errorSummary: `MiniMax proposal failed deterministic validation: ${reason}`.slice(0, 500),
+        cacheStatus: 'not-applicable',
+        generatedAt: Number.isFinite(proposal.generatedAt) ? proposal.generatedAt : Date.now(),
+    };
 }
 function processingHash(versionInputHash) {
     return (0, node_crypto_1.createHash)('sha256').update(JSON.stringify({
@@ -329,6 +423,8 @@ async function markFailed(eventReference, reference, summaryReference, claimId, 
         const current = snapshot.data();
         if (current?.status !== 'processing' || current.claimId !== claimId)
             return;
+        if (manualLockState(current) !== 'absent')
+            return;
         const event = eventSnapshot.data();
         const failureAssessment = {
             ...current,
@@ -337,7 +433,8 @@ async function markFailed(eventReference, reference, summaryReference, claimId, 
             error: error instanceof Error ? error.message.slice(0, 500) : 'Unknown assessment failure',
             leaseExpiresAt: Date.now(),
         };
-        if (!event || event.status !== 'Pending' || event.currentVersionId !== current.versionId) {
+        if (!event || event.status !== 'Pending' || event.currentVersionId !== current.versionId
+            || (event.currentAssessmentId !== undefined && event.currentAssessmentId !== current.assessmentId)) {
             transaction.set(reference, failureAssessment);
             return;
         }
@@ -368,6 +465,7 @@ async function markFailed(eventReference, reference, summaryReference, claimId, 
 }
 /** Transaction-level race harness; not exported from the deployed Functions entrypoint. */
 exports.__testOnlyMarkFailed = markFailed;
+exports.__testOnlyManualLockState = manualLockState;
 function organizerSummary(assessment, resources, computedAt) {
     const result = assessment.status === 'official_ready'
         ? assessment.officialResult
@@ -412,6 +510,10 @@ async function recomputeResourceForStoredAssessment(eventId, now = Date.now(), h
     const event = eventSnapshot.exists ? { eventId, ...eventSnapshot.data() } : undefined;
     if (!event?.currentVersionId || !event.currentAssessmentId)
         return { status: 'failed', reason: 'missing-current-input' };
+    if (!isSafeDocumentId(event.currentVersionId) || !isSafeDocumentId(event.currentAssessmentId)
+        || (event.currentResourceId !== undefined && !isSafeDocumentId(event.currentResourceId))) {
+        return { status: 'failed', reason: 'invalid-current-pointers' };
+    }
     const [versionSnapshot, assessmentSnapshot] = await Promise.all([
         eventReference.collection(types_1.COLLECTIONS.VERSIONS).doc(event.currentVersionId).get(),
         eventReference.collection(types_1.COLLECTIONS.ASSESSMENTS).doc(event.currentAssessmentId).get(),
@@ -539,7 +641,10 @@ async function persistResourceCalculation(eventReference, version, assessment, c
             ? document.data()
             : undefined)
             .filter((resource) => Boolean(resource));
-        if (history.length !== historicalSnapshot.size) {
+        if (history.length !== historicalSnapshot.size
+            || historicalSnapshot.docs.some((document) => document.data()?.resourceId !== document.id)
+            || history.some((resource) => resource.eventId !== version.eventId
+                || resource.versionId !== version.versionId || resource.stage !== stage)) {
             return { status: 'failed', reason: 'invalid-resource-history' };
         }
         const historyTip = latestValidHistoricalResource(history);
@@ -556,7 +661,7 @@ async function persistResourceCalculation(eventReference, version, assessment, c
                 || existing.versionId !== version.versionId
                 || existing.assessmentId !== currentAssessment.assessmentId
                 || existing.assessmentReference.stage !== stage
-                || existing.assessmentReference.proposalId !== resourceAssessmentResult(currentAssessment).proposalId
+                || !resourceReferenceMatches(existing, currentAssessment)
                 || existing.formulaVersion !== calculation.formulaVersion
                 || existing.configVersion !== calculation.configVersion
                 || existing.sourceRegistryVersion !== calculation.sourceRegistryVersion
@@ -631,13 +736,7 @@ async function persistResourceCalculation(eventReference, version, assessment, c
             ? {
                 ...recommendationBase,
                 stage: 'official',
-                assessmentReference: {
-                    stage: 'official',
-                    assessmentId: currentAssessment.assessmentId,
-                    proposalId: resourceAssessmentResult(currentAssessment).proposalId,
-                    finalizedAt: currentAssessment.officialResult.finalizedAt,
-                    finalizedBy: currentAssessment.officialResult.finalizedBy,
-                },
+                assessmentReference: officialResourceReference(currentAssessment),
                 confidenceLevel: 'authority_validated',
                 authorityReviewRequired: false,
                 notes: 'Official deterministic planning ranges based on finalized human-reviewed risk scores.',
@@ -648,7 +747,7 @@ async function persistResourceCalculation(eventReference, version, assessment, c
                 assessmentReference: {
                     stage: 'provisional',
                     assessmentId: currentAssessment.assessmentId,
-                    proposalId: resourceAssessmentResult(currentAssessment).proposalId,
+                    proposalId: resourceProposalId(currentAssessment),
                 },
                 confidenceLevel: 'prototype',
                 authorityReviewRequired: true,
@@ -704,6 +803,32 @@ function latestValidHistoricalResource(values) {
 function isResourceEligibleAssessment(value, eventId, versionId, eventDetails) {
     if (!value || typeof value !== 'object')
         return false;
+    const raw = value;
+    if (raw.status === 'official_ready' && raw.sourceKind === 'admin_manual') {
+        const assessment = value;
+        try {
+            return assessment.schemaVersion === types_1.ASSESSMENT_SCHEMA_VERSION
+                && assessment.eventId === eventId && assessment.versionId === versionId
+                && assessment.authorityReviewRequired === false
+                && Number.isFinite(assessment.createdAt)
+                && ['complete', 'provisional', 'insufficient_data'].includes(assessment.assessmentReadiness)
+                && ['pass', 'review_required', 'blocked'].includes(assessment.complianceStatus)
+                && Number.isFinite(assessment.dataConfidenceScore)
+                && ['low', 'medium', 'high'].includes(assessment.dataConfidenceLevel)
+                && typeof assessment.assessmentId === 'string' && Boolean(assessment.assessmentId)
+                && isSafeManualAssessmentId(assessment.activeManualAssessmentId)
+                && assessment.officialResult?.sourceKind === 'admin_manual'
+                && assessment.officialResult.manualAssessmentId === assessment.activeManualAssessmentId
+                && (assessment.aiProposal === null
+                    ? assessment.assessmentReadiness === 'insufficient_data'
+                    : assessment.aiProposal.status !== 'success')
+                && Boolean(assessment.contextSnapshot) && Array.isArray(assessment.evidence)
+                && (0, resourceCalculator_1.validateManualOfficialAssessmentResult)(assessment.officialResult).length === 0;
+        }
+        catch {
+            return false;
+        }
+    }
     const assessment = value;
     const isCalculatedStatus = assessment.status === 'provisional_ready'
         || assessment.status === 'authority_review'
@@ -753,18 +878,53 @@ function isResourceEligibleAssessment(value, eventId, versionId, eventDetails) {
 function isSameResourceAssessment(current, expected, eventDetails) {
     if (!isResourceEligibleAssessment(current, expected.eventId, expected.versionId, eventDetails))
         return false;
-    return current.inputHash === expected.inputHash
-        && current.aiProposal.proposalId === expected.aiProposal.proposalId
-        && resourceAssessmentResult(current).proposalId === resourceAssessmentResult(expected).proposalId
+    if (isManualOfficialAssessment(current) || isManualOfficialAssessment(expected)) {
+        return isManualOfficialAssessment(current) && isManualOfficialAssessment(expected)
+            && current.inputHash === expected.inputHash
+            && current.activeManualAssessmentId === expected.activeManualAssessmentId
+            && current.officialResult.officialInputHash === expected.officialResult.officialInputHash
+            && current.status === expected.status;
+    }
+    const currentAi = current;
+    const expectedAi = expected;
+    return currentAi.inputHash === expectedAi.inputHash
+        && currentAi.aiProposal.proposalId === expectedAi.aiProposal.proposalId
+        && resourceProposalId(currentAi) === resourceProposalId(expectedAi)
         && resourceAssessmentResult(current).calculatedAt === resourceAssessmentResult(expected).calculatedAt
         && current.status === expected.status;
 }
 function resourceAssessmentResult(assessment) {
     return assessment.status === 'official_ready' ? assessment.officialResult : assessment.provisionalResult;
 }
+function resourceProposalId(assessment) {
+    if (isManualOfficialAssessment(assessment))
+        throw new Error('manual-official-has-no-proposal');
+    return assessment.status === 'official_ready'
+        ? assessment.officialResult.proposalId
+        : assessment.provisionalResult.proposalId;
+}
 async function officialAssessmentProvenanceMatches(transaction, eventReference, event, version, value) {
     if (!value || typeof value !== 'object' || value.status !== 'official_ready')
         return true;
+    if (isManualOfficialAssessment(value)) {
+        const manualReference = eventReference.collection(types_1.COLLECTIONS.ASSESSMENTS).doc(value.assessmentId)
+            .collection(types_1.COLLECTIONS.MANUAL_ASSESSMENTS).doc(value.activeManualAssessmentId);
+        const manualSnapshot = await transaction.get(manualReference);
+        const manual = manualSnapshot.data();
+        if (!manual || manual.manualAssessmentId !== value.activeManualAssessmentId)
+            return false;
+        try {
+            const expected = (0, manualFinalisation_1.buildManualOfficialAssessmentResult)({
+                assessment: value,
+                manualAssessment: manual, eventDetails: version.eventDetails, eventVersionInputHash: version.inputHash,
+                finalizedAt: value.officialResult.finalizedAt, finalizedBy: value.officialResult.finalizedBy,
+            });
+            return (0, resourceCalculator_1.stableStringify)(expected) === (0, resourceCalculator_1.stableStringify)(value.officialResult);
+        }
+        catch {
+            return false;
+        }
+    }
     const assessment = value;
     const state = assessment.authorityReviewState;
     if (!state
@@ -784,8 +944,16 @@ async function officialAssessmentProvenanceMatches(transaction, eventReference, 
         transaction.getAll(...reviewReferences),
         resolutionReference ? transaction.get(resolutionReference) : Promise.resolve(undefined),
     ]);
-    if (reviewSnapshots.some((snapshot) => !snapshot.exists)
-        || (resolutionReference && !resolutionSnapshot?.exists))
+    if (reviewSnapshots.some((snapshot) => {
+        const review = snapshot.data();
+        return !snapshot.exists || !review || typeof review !== 'object' || Array.isArray(review) || review.reviewId !== snapshot.id;
+    })
+        || (resolutionReference && (!resolutionSnapshot
+            || !resolutionSnapshot.exists
+            || !resolutionSnapshot.data()
+            || typeof resolutionSnapshot.data() !== 'object'
+            || Array.isArray(resolutionSnapshot.data())
+            || resolutionSnapshot.data()?.resolutionId !== resolutionSnapshot.id)))
         return false;
     try {
         const expected = (0, authorityFinalisation_1.buildOfficialAssessmentResult)({
@@ -802,6 +970,42 @@ async function officialAssessmentProvenanceMatches(transaction, eventReference, 
     catch {
         return false;
     }
+}
+function isManualOfficialAssessment(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+        return false;
+    const record = value;
+    const activeManualAssessmentId = record.activeManualAssessmentId;
+    const result = record.officialResult;
+    return record.status === 'official_ready'
+        && record.sourceKind === 'admin_manual'
+        && record.authorityReviewRequired === false
+        && isSafeManualAssessmentId(activeManualAssessmentId)
+        && typeof result === 'object' && result !== null && !Array.isArray(result)
+        && result.sourceKind === 'admin_manual'
+        && result.manualAssessmentId === activeManualAssessmentId
+        && (0, resourceCalculator_1.validateManualOfficialAssessmentResult)(result).length === 0;
+}
+function officialResourceReference(assessment) {
+    return isManualOfficialAssessment(assessment)
+        ? { stage: 'official', assessmentId: assessment.assessmentId, sourceKind: 'admin_manual', manualAssessmentId: assessment.activeManualAssessmentId, finalizedAt: assessment.officialResult.finalizedAt, finalizedBy: assessment.officialResult.finalizedBy }
+        : { stage: 'official', assessmentId: assessment.assessmentId, proposalId: assessment.officialResult.proposalId, finalizedAt: assessment.officialResult.finalizedAt, finalizedBy: assessment.officialResult.finalizedBy };
+}
+function resourceReferenceMatches(resource, assessment) {
+    const reference = resource.assessmentReference;
+    if (isManualOfficialAssessment(assessment))
+        return reference.stage === 'official' && reference.sourceKind === 'admin_manual'
+            && reference.manualAssessmentId === assessment.activeManualAssessmentId
+            && reference.finalizedAt === assessment.officialResult.finalizedAt
+            && reference.finalizedBy === assessment.officialResult.finalizedBy;
+    if (assessment.status === 'official_ready') {
+        return reference.stage === 'official' && 'proposalId' in reference
+            && reference.proposalId === resourceProposalId(assessment)
+            && reference.finalizedAt === assessment.officialResult.finalizedAt
+            && reference.finalizedBy === assessment.officialResult.finalizedBy;
+    }
+    return reference.stage === 'provisional'
+        && reference.proposalId === resourceProposalId(assessment);
 }
 function resourceItemsForStage(stage, items) {
     if (stage === 'provisional')

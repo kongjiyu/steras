@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { applicationDefault, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { getFirestore } from 'firebase-admin/firestore';
+import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
 import {
   AuthorityType,
@@ -13,7 +13,7 @@ import {
   UserProfile,
 } from '@shared/types';
 
-type ScenarioName = 'assessment' | 'withdrawal';
+type ScenarioName = 'assessment' | 'manual' | 'withdrawal';
 
 interface ProvisionedUser {
   profile: UserProfile;
@@ -23,6 +23,7 @@ interface ScenarioContext {
   eventId: string;
   organizer: ProvisionedUser;
   authorities: Map<AuthorityType, ProvisionedUser>;
+  admin: ProvisionedUser;
   eventDetails: EventDetails;
 }
 
@@ -39,17 +40,17 @@ const projectId = process.env.FIREBASE_PROJECT_ID ?? 'linkos-496505';
 const apiKey = process.env.VITE_FIREBASE_API_KEY;
 const password = process.env.UAT_PASSWORD;
 const region = process.env.VITE_FIREBASE_FUNCTIONS_REGION ?? 'asia-southeast1';
-const requestedScenarios = (process.env.UAT_SCENARIOS ?? 'assessment,withdrawal')
+const requestedScenarios = (process.env.UAT_SCENARIOS ?? 'assessment,manual,withdrawal')
   .split(',')
   .map((value) => value.trim())
   .filter(Boolean) as ScenarioName[];
-const allowedScenarios = new Set<ScenarioName>(['assessment', 'withdrawal']);
+const allowedScenarios = new Set<ScenarioName>(['assessment', 'manual', 'withdrawal']);
 
 if (!apiKey || !password || password.length < 12) {
   throw new Error('Set VITE_FIREBASE_API_KEY and UAT_PASSWORD (minimum 12 characters).');
 }
 if (requestedScenarios.length === 0 || requestedScenarios.some((scenario) => !allowedScenarios.has(scenario))) {
-  throw new Error('UAT_SCENARIOS must contain assessment or withdrawal.');
+  throw new Error('UAT_SCENARIOS must contain assessment, manual, or withdrawal.');
 }
 
 const app = initializeApp({
@@ -64,6 +65,7 @@ const authorityTypes: AuthorityType[] = ['PDRM', 'BOMBA', 'KKM'];
 
 async function run() {
   const organizer = await provisionUser('uat-organizer@steras.test', 'STERAS UAT Organizer', 'organizer');
+  const admin = await provisionUser('uat-admin@steras.test', 'STERAS UAT Admin', 'admin');
   const authorities = new Map<AuthorityType, ProvisionedUser>();
   for (const authorityType of authorityTypes) {
     authorities.set(authorityType, await provisionUser(
@@ -76,15 +78,16 @@ async function run() {
 
   const results: ScenarioResult[] = [];
   for (const [index, scenario] of requestedScenarios.entries()) {
-    const context = await createScenario(scenario, index, organizer, authorities);
+    const context = await createScenario(scenario, index, organizer, authorities, admin);
     if (scenario === 'assessment') results.push(await runAssessment(context));
+    if (scenario === 'manual') results.push(await runManualAssessment(context));
     if (scenario === 'withdrawal') results.push(await runWithdrawal(context));
   }
 
   console.info(JSON.stringify({
     projectId,
     scenarios: results,
-    accounts: [organizer.profile.email, ...authorityTypes.map((type) => authorities.get(type)?.profile.email)],
+    accounts: [organizer.profile.email, admin.profile.email, ...authorityTypes.map((type) => authorities.get(type)?.profile.email)],
   }, null, 2));
 }
 
@@ -93,6 +96,7 @@ async function createScenario(
   index: number,
   organizer: ProvisionedUser,
   authorities: Map<AuthorityType, ProvisionedUser>,
+  admin: ProvisionedUser,
 ): Promise<ScenarioContext> {
   const runId = `${Date.now()}-${randomUUID().slice(0, 8)}`;
   const eventId = `uat-${scenario}-${runId}`;
@@ -131,7 +135,7 @@ async function createScenario(
     updatedAt: now,
   };
   await db.collection(COLLECTIONS.EVENTS).doc(eventId).set(draft);
-  return { eventId, organizer, authorities, eventDetails };
+  return { eventId, organizer, authorities, admin, eventDetails };
 }
 
 async function runAssessment(context: ScenarioContext): Promise<ScenarioResult> {
@@ -173,16 +177,49 @@ async function runWithdrawal(context: ScenarioContext): Promise<ScenarioResult> 
   return verifyScenario(context.eventId, 'withdrawal', 'Withdrawn', 1, false);
 }
 
-async function submitAndAssess(context: ScenarioContext, expectedVersionId: string) {
+async function runManualAssessment(context: ScenarioContext): Promise<ScenarioResult> {
+  const { assessment } = await submitAndAssess(context, 'v1', true);
+  if (assessment.status !== 'manual_review_required') {
+    const { provisionalResult: _result, authorityReviewState: _state, officialResult: _official, ...base } = assessment as RiskAssessment & Record<string, unknown>;
+    void _result; void _state; void _official;
+    await db.doc(`${COLLECTIONS.EVENTS}/${context.eventId}/${COLLECTIONS.ASSESSMENTS}/v1`).set({
+      ...base, status: 'manual_review_required', authorityReviewRequired: true,
+      aiProposal: { status: 'timeout', model: 'MiniMax-M3', promptVersion: 'uat', responseSchemaVersion: 'uat', retryable: true, errorSummary: 'UAT injected timeout verifies Admin recovery without fabricated scores.', cacheStatus: 'not-applicable', generatedAt: Date.now() },
+      manualReviewReason: 'UAT injected AI timeout.',
+    });
+    await db.doc(`${COLLECTIONS.EVENTS}/${context.eventId}`).update({ currentResourceId: FieldValue.delete() });
+  }
+  const evidenceKey = assessment.evidence.find((item) => item.quality !== 'missing'
+    && typeof item.status === 'string'
+    && !['unavailable', 'unmatched', 'missing'].includes(item.status.trim().toLowerCase()))?.key;
+  if (!evidenceKey) throw new Error('Manual UAT requires at least one eligible evidence reference.');
+  await callFunction('submitAdminManualAssessment', await idTokenFor(context.admin.profile.email), {
+    eventId: context.eventId,
+    idempotencyKey: `uat_manual_${context.eventId}`,
+    hazards: [{ hazardId: 'uat-manual-hazard-1', hazardName: 'Manually reviewed event hazard', categoryId: 'crowd', evidenceReferences: [evidenceKey], rationale: 'Admin reviewed the immutable application and identified this credible event hazard.' }],
+    categories: ['crowd', 'venue_fire', 'weather_environment', 'public_health', 'food_water_sanitation', 'medical_capacity', 'security_cbrn', 'transport_accessibility'].map((categoryId) => ({ categoryId, likelihood: 2, severity: 2, evidenceReferences: [evidenceKey], rationale: `Admin reviewed the current evidence for ${categoryId}.`, missingInformation: '' })),
+    rationale: 'Admin completed the full manual assessment after the injected AI failure.',
+  });
+  const official = await assessmentFor(context.eventId, 'v1');
+  if (official.status !== 'official_ready' || !('sourceKind' in official) || official.sourceKind !== 'admin_manual') throw new Error('Manual UAT did not publish admin_manual official output.');
+  const event = await eventFor(context.eventId);
+  const resource = event.currentResourceId ? await db.doc(`${COLLECTIONS.EVENTS}/${context.eventId}/${COLLECTIONS.RESOURCES}/${event.currentResourceId}`).get() : undefined;
+  if (resource?.data()?.assessmentReference?.sourceKind !== 'admin_manual') throw new Error('Manual UAT resource provenance is not proposal-free.');
+  return verifyScenario(context.eventId, 'manual', 'Pending', 1, false, official);
+}
+
+
+async function submitAndAssess(context: ScenarioContext, expectedVersionId: string, allowManual = false) {
   const token = await idTokenFor(context.organizer.profile.email);
   const submission = await callFunction<{ eventId: string }, { versionId: string }>('submitEvent', token, { eventId: context.eventId });
   if (submission.versionId !== expectedVersionId) throw new Error(`Expected ${expectedVersionId}, received ${submission.versionId}.`);
-  const event = await waitForAssessment(context.eventId, submission.versionId);
+  const event = await waitForAssessment(context.eventId, submission.versionId, allowManual);
   const assessment = await assessmentFor(context.eventId, submission.versionId);
   if (!('provisionalResult' in assessment)
     || assessment.provisionalResult.overallScore < 0 || assessment.provisionalResult.overallScore > 100
     || assessment.provisionalResult.categories.length === 0
     || assessment.aiProposal.status !== 'success') {
+    if (allowManual && assessment.status === 'manual_review_required') return { event, assessment };
     throw new Error(`Category assessment contract failed for ${context.eventId}/${submission.versionId}.`);
   }
   if (event.requiredAuthorities.join(',') !== authorityTypes.join(',')) {
@@ -284,11 +321,12 @@ async function callFunction<TRequest = unknown, TResponse = Record<string, unkno
   return result;
 }
 
-async function waitForAssessment(eventId: string, versionId: string): Promise<EventRecord> {
+async function waitForAssessment(eventId: string, versionId: string, allowManual = false): Promise<EventRecord> {
   const deadline = Date.now() + 120_000;
   const eventReference = db.collection(COLLECTIONS.EVENTS).doc(eventId);
   while (Date.now() < deadline) {
     const event = (await eventReference.get()).data() as EventRecord | undefined;
+    if (event?.currentAssessmentId === versionId && allowManual && await assessmentIsManualReview(eventId, versionId)) return event;
     if (event?.currentAssessmentId === versionId && event.currentResourceId) {
       const resource = await eventReference.collection(COLLECTIONS.RESOURCES).doc(event.currentResourceId).get();
       if (resource.exists
@@ -311,10 +349,15 @@ async function eventFor(eventId: string): Promise<EventRecord> {
 
 async function assessmentFor(eventId: string, versionId: string): Promise<RiskAssessment> {
   const snapshot = await db.doc(`${COLLECTIONS.EVENTS}/${eventId}/${COLLECTIONS.ASSESSMENTS}/${versionId}`).get();
-  if (!snapshot.exists || !['provisional_ready', 'authority_review', 'official_ready'].includes(snapshot.data()?.status)) {
+  if (!snapshot.exists || !['manual_review_required', 'provisional_ready', 'authority_review', 'official_ready'].includes(snapshot.data()?.status)) {
     throw new Error(`Assessment ${eventId}/${versionId} has no validated result.`);
   }
   return snapshot.data() as RiskAssessment;
+}
+
+async function assessmentIsManualReview(eventId: string, versionId: string): Promise<boolean> {
+  const snapshot = await db.doc(`${COLLECTIONS.EVENTS}/${eventId}/${COLLECTIONS.ASSESSMENTS}/${versionId}`).get();
+  return snapshot.data()?.status === 'manual_review_required';
 }
 
 function requiredAuthority(authorities: Map<AuthorityType, ProvisionedUser>, authorityType: AuthorityType) {
@@ -324,14 +367,28 @@ function requiredAuthority(authorities: Map<AuthorityType, ProvisionedUser>, aut
 }
 
 function assessmentSummary(assessment: RiskAssessment) {
-  if (!('provisionalResult' in assessment)) throw new Error('Assessment requires manual review and has no provisional result.');
+  if (assessment.status === 'official_ready' && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual') {
+    return {
+      provisionalScore: assessment.officialResult.overallScore,
+      provisionalRiskLevel: assessment.officialResult.overallRiskLevel,
+      categories: assessment.officialResult.categories.length,
+      aiStatus: 'admin_manual',
+      status: assessment.status,
+      officialScore: assessment.officialResult.overallScore,
+      reviewCount: 0,
+    };
+  }
+  if (!('provisionalResult' in assessment)) throw new Error('Assessment requires manual review and has no calculated result.');
   return {
     provisionalScore: assessment.provisionalResult.overallScore,
     provisionalRiskLevel: assessment.provisionalResult.overallRiskLevel,
     categories: assessment.provisionalResult.categories.length,
     aiStatus: assessment.aiProposal.status,
     status: assessment.status,
-    ...(assessment.status === 'official_ready' ? { officialScore: assessment.officialResult.overallScore, reviewCount: assessment.officialResult.reviewIds.length } : {}),
+    ...(assessment.status === 'official_ready' ? {
+      officialScore: assessment.officialResult.overallScore,
+      reviewCount: 'reviewIds' in assessment.officialResult ? assessment.officialResult.reviewIds.length : 0,
+    } : {}),
   };
 }
 

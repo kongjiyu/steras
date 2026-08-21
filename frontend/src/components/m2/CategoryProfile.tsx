@@ -73,14 +73,15 @@ export default function CategoryProfile({ assessment, density = 'detailed', show
               </div>
             </div>
             {!compact && <p className="mt-3 text-xs leading-5 text-ink-600">{category.rationale}</p>}
+            {showInternalDetails && !compact && 'missingInformation' in category && typeof category.missingInformation === 'string' && category.missingInformation && (
+              <p className="mt-2 text-xs leading-5 text-gold-700">Missing information: {category.missingInformation}</p>
+            )}
             <p className="mt-2 text-[11px] text-ink-500">
               {showInternalDetails
-                ? `Proposed ${category.proposedLikelihood}×${category.proposedSeverity} · validated ${category.validatedLikelihood}×${category.validatedSeverity} · ${category.riskLevel}`
-                : `${category.riskLevel} provisional category level`}
+                ? `${'manualLikelihood' in category ? 'Admin input' : 'Proposed'} ${'manualLikelihood' in category ? category.manualLikelihood : category.proposedLikelihood}×${'manualSeverity' in category ? category.manualSeverity : category.proposedSeverity} · validated ${category.validatedLikelihood}×${category.validatedSeverity} · ${category.riskLevel}`
+                : `${category.riskLevel} ${assessment.status === 'official_ready' ? 'official' : 'provisional'} category level`}
             </p>
-            {showInternalDetails && !compact && category.appliedHardRules.length > 0 && (
-              <p className="mt-2 text-[11px] leading-5 text-gold-700">{category.appliedHardRules.length} hard-rule adjustment(s)</p>
-            )}
+            {showInternalDetails && !compact && category.appliedHardRules.length > 0 && <ul className="mt-2 space-y-1 text-[11px] leading-5 text-gold-700">{category.appliedHardRules.map((rule) => <li key={rule.ruleId}><strong>{rule.axis} uplift {rule.proposedValue}→{rule.constrainedValue}:</strong> {rule.rationale} ({rule.guidelineReferences.join(', ')})</li>)}</ul>}
           </li>
         ))}
       </ol>

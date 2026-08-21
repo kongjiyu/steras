@@ -277,7 +277,8 @@ function assertStoredReviews(
   if (requiredAuthorities.length === 0 || reviews.length !== requiredAuthorities.length) throw new Error('incomplete-authority-reviews');
   const byAuthority = new Map<AuthorityType, AuthorityScoreReview>();
   for (const review of reviews) {
-    if (byAuthority.has(review.authorityType)
+    if (!isRecord(review)
+      || byAuthority.has(review.authorityType)
       || !requiredAuthorities.includes(review.authorityType)
       || review.schemaVersion !== SCORE_REVIEW_SCHEMA_VERSION
       || review.eventId !== assessment.eventId

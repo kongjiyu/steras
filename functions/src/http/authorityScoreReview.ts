@@ -14,6 +14,8 @@ import {
   OrganizerAssessmentSummary,
   OrganizerResourceRecommendation,
   OfficialRiskAssessment,
+  ProvisionalRiskAssessment,
+  AdminManualOfficialRiskAssessment,
   RESOURCE_CONFIG_VERSION,
   RESOURCE_FORMULA_VERSION,
   RESOURCE_KEYS,
@@ -34,8 +36,16 @@ import {
   validateResolutionInput,
   validateScoreReviewInput,
 } from '../engines/authorityFinalisation';
-import { computeResources, stableStringify } from '../engines/resourceCalculator';
+import {
+  computeResources,
+  stableStringify,
+  validateAssessmentResultAgainstHardRules,
+  validateAssessmentResultAgainstProposal,
+  validateManualOfficialAssessmentResult,
+  validateProvisionalAssessmentResult,
+} from '../engines/resourceCalculator';
 import { validateResourceRecommendation, validateResourceRevisionChain } from '../engines/resourceContract';
+import { computeCategoryBasedAssessment } from '../engines/ruleBased';
 import { resourceDocumentId } from '../triggers/onEventCreated';
 
 interface SubmitReviewRequest extends ScoreReviewInput { eventId?: string }
@@ -66,7 +76,7 @@ export async function retryOfficialFinalisationForAdmin(
 ) {
   const identity = await readFinalizationIdentity(eventId);
   try {
-    return await finalizeStoredReviewState(uid, eventId, true, now);
+    return await finalizeStoredReviewState(uid, eventId, true, now, identity);
   } catch (error) {
     await hooks.beforeFailureAudit?.();
     if (identity && shouldAuditFinalizationFailure(error)) {
@@ -77,7 +87,8 @@ export async function retryOfficialFinalisationForAdmin(
 }
 
 export async function submitScoreReviewForUser(uid: string, data: SubmitReviewRequest, now = Date.now()) {
-  const eventId = requiredId(data?.eventId, 'eventId');
+  const payload: Partial<SubmitReviewRequest> = isRecord(data) ? data as Partial<SubmitReviewRequest> : {};
+  const eventId = requiredId(payload.eventId, 'eventId');
   const db = firestore();
   const eventRef = db.collection(COLLECTIONS.EVENTS).doc(eventId);
   const userRef = db.collection(COLLECTIONS.USERS).doc(uid);
@@ -101,25 +112,34 @@ export async function submitScoreReviewForUser(uid: string, data: SubmitReviewRe
     if (!assessment || !(assessment.status === 'provisional_ready' || assessment.status === 'authority_review' || assessment.status === 'official_ready')) {
       throw new HttpsError('failed-precondition', 'A current provisional assessment is required.');
     }
-    if (assessment.schemaVersion !== ASSESSMENT_SCHEMA_VERSION || assessment.assessmentId !== assessmentId
-      || assessment.eventId !== eventId || assessment.versionId !== versionId || assessment.aiProposal.status !== 'success') {
+    if (isManualOfficialAssessment(assessment)) throw new HttpsError('failed-precondition', 'Admin manual official assessments do not accept authority score reviews.');
+    if (!isCurrentAssessmentIdentity(assessment, eventId, assessmentId, version, versionId)) {
       throw new HttpsError('failed-precondition', 'The assessment contract is invalid or stale.');
     }
-    const input: ScoreReviewInput = { categories: data.categories, rationale: data.rationale, idempotencyKey: data.idempotencyKey };
+    if (assessment.authorityReviewState
+      && stableStringify(assessment.authorityReviewState.requiredAuthorities) !== stableStringify(event.requiredAuthorities)) {
+      throw new HttpsError('failed-precondition', 'The authority review assignment does not match the current event.');
+    }
+    const input: ScoreReviewInput = {
+      categories: Array.isArray(payload.categories) ? payload.categories : [],
+      rationale: typeof payload.rationale === 'string' ? payload.rationale : '',
+      idempotencyKey: typeof payload.idempotencyKey === 'string' ? payload.idempotencyKey : '',
+    };
     const errors = validateScoreReviewInput(input, assessment.aiProposal);
     if (errors.length) throw new HttpsError('invalid-argument', `Invalid score review: ${errors.join(', ')}.`);
-    const reviewId = scoreReviewId(versionId, profile.authorityType, uid, data.idempotencyKey);
+    const reviewId = scoreReviewId(versionId, profile.authorityType, uid, input.idempotencyKey);
     const reviewRef = assessmentRef.collection(COLLECTIONS.SCORE_REVIEWS).doc(reviewId);
     const currentHeads = assessment.authorityReviewState?.activeReviewHeads ?? {};
-    const headRefs = event.requiredAuthorities.flatMap((authority) => {
-      const id = currentHeads[authority]?.reviewId;
-      return id ? [assessmentRef.collection(COLLECTIONS.SCORE_REVIEWS).doc(id)] : [];
-    });
+    const headAuthorities = event.requiredAuthorities.filter((authority) => Boolean(currentHeads[authority]?.reviewId));
+    const headRefs = headAuthorities.map((authority) => assessmentRef.collection(COLLECTIONS.SCORE_REVIEWS).doc(currentHeads[authority]!.reviewId));
     const [existingReviewSnap, ...remaining] = await Promise.all([
       transaction.get(reviewRef),
       ...(headRefs.length ? [transaction.getAll(...headRefs)] : [Promise.resolve([])]),
     ]);
     const headSnapshots = remaining[0] as FirebaseFirestore.DocumentSnapshot[];
+    if (headSnapshots.some((snapshot, index) => !isReviewSnapshot(snapshot, headAuthorities[index]))) {
+      throw new HttpsError('failed-precondition', 'The active authority review head is missing.');
+    }
     const proposedReview: AuthorityScoreReview = {
       reviewId,
       schemaVersion: SCORE_REVIEW_SCHEMA_VERSION,
@@ -132,9 +152,9 @@ export async function submitScoreReviewForUser(uid: string, data: SubmitReviewRe
       categorySchemaVersion: assessment.provisionalResult.categorySchemaVersion,
       authorityType: profile.authorityType,
       reviewerId: uid,
-      categories: normalizedCategories(data.categories),
-      rationale: data.rationale.trim(),
-      idempotencyKey: data.idempotencyKey,
+      categories: normalizedCategories(input.categories),
+      rationale: input.rationale.trim(),
+      idempotencyKey: input.idempotencyKey,
       ...(currentHeads[profile.authorityType]?.reviewId ? { supersedesReviewId: currentHeads[profile.authorityType]!.reviewId } : {}),
       createdAt: now,
     };
@@ -146,6 +166,7 @@ export async function submitScoreReviewForUser(uid: string, data: SubmitReviewRe
       if (!storedReview || !assessment.officialResult.reviewIds.includes(storedReview.reviewId)) {
         throw new HttpsError('failed-precondition', 'The official assessment is locked.');
       }
+      await readAndValidateOfficialOutputInTransaction(transaction, eventRef, event, version, assessment);
       return { eventId, reviewId, status: 'official_ready' as const, officialResourceId: event.currentResourceId, idempotent: true };
     }
     if (storedReview && currentHeads[profile.authorityType]?.reviewId !== storedReview.reviewId) {
@@ -202,8 +223,12 @@ export async function submitScoreReviewForUser(uid: string, data: SubmitReviewRe
     return { eventId, reviewId, status: 'authority_review' as const, conflicts: state.conflicts, shouldFinalize: false, idempotent: existingReviewSnap.exists };
   });
   if (!('shouldFinalize' in persisted) || !persisted.shouldFinalize) return persisted;
+  if (!persisted.versionId || !persisted.assessmentId) throw new HttpsError('failed-precondition', 'The finalized review identity is incomplete.');
   try {
-    const finalized = await finalizeStoredReviewState(uid, eventId, false, now);
+    const finalized = await finalizeStoredReviewState(uid, eventId, false, now, {
+      versionId: persisted.versionId,
+      assessmentId: persisted.assessmentId,
+    });
     return { ...persisted, status: 'official_ready' as const, officialResourceId: finalized.officialResourceId };
   } catch (error) {
     if (persisted.versionId && persisted.assessmentId) {
@@ -224,7 +249,10 @@ export async function resolveScoreConflictForAdmin(uid: string, data: ResolveCon
     assertNoCutover(lockSnap);
     if ((userSnap.data() as UserProfile | undefined)?.role !== 'admin') throw new HttpsError('permission-denied', 'Only an administrator may resolve score conflicts.');
     const event = eventSnap.data() as EventRecord | undefined;
-    if (!event?.currentVersionId || !event.currentAssessmentId || !['Pending', 'UnderReview'].includes(event.status)) {
+    if (!event?.currentVersionId || !event.currentAssessmentId
+      || !isSafeDocumentId(event.currentVersionId) || !isSafeDocumentId(event.currentAssessmentId)
+      || (event.currentResourceId !== undefined && !isSafeDocumentId(event.currentResourceId))
+      || !['Pending', 'UnderReview'].includes(event.status)) {
       throw new HttpsError('failed-precondition', 'The event is not open for score resolution.');
     }
     if (!validRequiredAuthorities(event.requiredAuthorities)) throw new HttpsError('failed-precondition', 'The assigned authority list is invalid.');
@@ -233,8 +261,15 @@ export async function resolveScoreConflictForAdmin(uid: string, data: ResolveCon
     const [assessmentSnap, versionSnap] = await Promise.all([transaction.get(assessmentRef), transaction.get(versionRef)]);
     const assessment = assessmentSnap.data() as AssessmentRecord | undefined;
     const version = versionSnap.data() as EventVersion | undefined;
+    if (isManualOfficialAssessment(assessment)) {
+      throw new HttpsError('failed-precondition', 'Admin manual official assessments do not accept score-conflict resolutions.');
+    }
     if (!assessment || !version || !isCurrentAssessmentIdentity(assessment, eventId, event.currentAssessmentId, version, event.currentVersionId)) {
       throw new HttpsError('failed-precondition', 'The current assessment contract is invalid or stale.');
+    }
+    if (assessment.authorityReviewState
+      && stableStringify(assessment.authorityReviewState.requiredAuthorities) !== stableStringify(event.requiredAuthorities)) {
+      throw new HttpsError('failed-precondition', 'The authority review assignment does not match the current event.');
     }
     const resolutionId = scoreResolutionId(event.currentVersionId, uid, data);
     const resolutionRef = assessmentRef.collection(COLLECTIONS.SCORE_RESOLUTIONS).doc(resolutionId);
@@ -244,6 +279,7 @@ export async function resolveScoreConflictForAdmin(uid: string, data: ResolveCon
         || !sameResolutionRequest(stored, uid, data, { resolutionId, eventId, versionId: event.currentVersionId, assessmentId: event.currentAssessmentId })) {
         throw new HttpsError('failed-precondition', 'The official assessment is locked.');
       }
+      await readAndValidateOfficialOutputInTransaction(transaction, eventRef, event, version, assessment);
       return {
         eventId,
         resolutionId,
@@ -263,6 +299,9 @@ export async function resolveScoreConflictForAdmin(uid: string, data: ResolveCon
     const [reviewSnaps, existingResolutionSnap] = await Promise.all([
       transaction.getAll(...headRefs), transaction.get(resolutionRef),
     ]);
+    if (reviewSnaps.some((snapshot, index) => !isReviewSnapshot(snapshot, event.requiredAuthorities[index]))) {
+      throw new HttpsError('failed-precondition', 'The active authority reviews are missing.');
+    }
     const reviews = reviewSnaps.map((snapshot) => snapshot.data() as AuthorityScoreReview);
     if (reviews.length !== event.requiredAuthorities.length) throw new HttpsError('failed-precondition', 'The active authority reviews are incomplete.');
     const proposedResolution: AuthorityScoreResolution = {
@@ -303,8 +342,12 @@ export async function resolveScoreConflictForAdmin(uid: string, data: ResolveCon
     };
   });
   if (!persisted.shouldFinalize) return persisted;
+  if (!persisted.versionId || !persisted.assessmentId) throw new HttpsError('failed-precondition', 'The resolved review identity is incomplete.');
   try {
-    const finalized = await finalizeStoredReviewState(uid, eventId, true, now);
+    const finalized = await finalizeStoredReviewState(uid, eventId, true, now, {
+      versionId: persisted.versionId,
+      assessmentId: persisted.assessmentId,
+    });
     return { ...persisted, status: 'official_ready' as const, officialResourceId: finalized.officialResourceId };
   } catch (error) {
     if (persisted.versionId && persisted.assessmentId) {
@@ -314,7 +357,78 @@ export async function resolveScoreConflictForAdmin(uid: string, data: ResolveCon
   }
 }
 
-export async function finalizeStoredReviewState(uid: string, eventId: string, requireAdmin = true, now = Date.now()) {
+async function readAndValidateOfficialOutputInTransaction(
+  transaction: FirebaseFirestore.Transaction,
+  eventRef: FirebaseFirestore.DocumentReference,
+  event: EventRecord,
+  version: EventVersion,
+  assessment: OfficialRiskAssessment,
+): Promise<ResourceRecommendation> {
+  const state = assessment.authorityReviewState;
+  if (!state || !event.currentResourceId
+    || !Array.isArray(state.requiredAuthorities)
+    || !isRecord(state.activeReviewHeads)
+    || !Array.isArray(state.conflicts)
+    || stableStringify(state.requiredAuthorities) !== stableStringify(event.requiredAuthorities)) {
+    throw new HttpsError('failed-precondition', 'The finalized official resource or review provenance is missing.');
+  }
+  const headIds = event.requiredAuthorities.map((authority) => state.activeReviewHeads[authority]?.reviewId);
+  if (headIds.some((reviewId) => !reviewId)) {
+    throw new HttpsError('failed-precondition', 'The finalized official review provenance is incomplete.');
+  }
+  const assessmentRef = eventRef.collection(COLLECTIONS.ASSESSMENTS).doc(assessment.assessmentId);
+  const reviewRefs = headIds.map((reviewId) => assessmentRef.collection(COLLECTIONS.SCORE_REVIEWS).doc(reviewId!));
+  const resolutionRef = state.activeResolutionId
+    ? assessmentRef.collection(COLLECTIONS.SCORE_RESOLUTIONS).doc(state.activeResolutionId)
+    : undefined;
+  const historyQuery = eventRef.collection(COLLECTIONS.RESOURCES).where('versionId', '==', version.versionId);
+  const summaryRef = eventRef.collection(COLLECTIONS.ASSESSMENT_SUMMARIES).doc(version.versionId);
+  const resourceSnapshot = await transaction.get(eventRef.collection(COLLECTIONS.RESOURCES).doc(event.currentResourceId));
+  const reviewSnapshots = await transaction.getAll(...reviewRefs);
+  const resolutionSnapshot = resolutionRef ? await transaction.get(resolutionRef) : undefined;
+  const historySnapshot = await transaction.get(historyQuery);
+  const summarySnapshot = await transaction.get(summaryRef);
+  if (reviewSnapshots.some((snapshot, index) => !isReviewSnapshot(snapshot, event.requiredAuthorities[index]))
+    || (resolutionRef && (!resolutionSnapshot || !isResolutionSnapshot(resolutionSnapshot)))) {
+    throw new HttpsError('failed-precondition', 'The finalized review provenance is missing or malformed.');
+  }
+  const resource = resourceSnapshot.data() as ResourceRecommendation | undefined;
+  if (!isIdempotentOfficialOutput(
+    event,
+    version,
+    assessment,
+    resource,
+    reviewSnapshots.map((snapshot) => snapshot.data() as AuthorityScoreReview),
+    resolutionSnapshot?.data() as AuthorityScoreResolution | undefined,
+  )) {
+    throw new HttpsError('failed-precondition', 'The finalized official output is invalid or stale.');
+  }
+  const history = historySnapshot.docs.map((snapshot) => snapshot.data() as ResourceRecommendation);
+  if (historySnapshot.docs.some((snapshot, index) => snapshot.id !== history[index]?.resourceId)
+    || history.some((candidate) => !validateResourceRecommendation(candidate).ok
+      || candidate.eventId !== event.eventId || candidate.versionId !== version.versionId)
+    || validateResourceRevisionChain(history, resource.resourceId).length > 0) {
+    throw new HttpsError('failed-precondition', 'The finalized official resource history is invalid or stale.');
+  }
+  const expectedSummary = organizerSummary(assessment, resource, assessment.officialResult.finalizedAt);
+  if (!summarySnapshot.exists || stableStringify(summarySnapshot.data()) !== stableStringify(expectedSummary)) {
+    transaction.set(summaryRef, expectedSummary);
+  }
+  return resource;
+}
+
+interface ReviewFinalisationIdentity {
+  versionId: string;
+  assessmentId: string;
+}
+
+export async function finalizeStoredReviewState(
+  uid: string,
+  eventId: string,
+  requireAdmin = true,
+  now = Date.now(),
+  expectedIdentity?: ReviewFinalisationIdentity,
+) {
   const db = firestore();
   const eventRef = db.collection(COLLECTIONS.EVENTS).doc(eventId);
   return db.runTransaction(async (transaction) => {
@@ -325,8 +439,14 @@ export async function finalizeStoredReviewState(uid: string, eventId: string, re
     if (requireAdmin && profile?.role !== 'admin') throw new HttpsError('permission-denied', 'Only an administrator may retry finalisation.');
     assertNoCutover(lockSnap);
     const event = eventSnap.data() as EventRecord | undefined;
-    if (!event?.currentVersionId || !event.currentAssessmentId || !['Pending', 'UnderReview'].includes(event.status)) {
+    if (!event?.currentVersionId || !event.currentAssessmentId
+      || !isSafeDocumentId(event.currentVersionId) || !isSafeDocumentId(event.currentAssessmentId)
+      || (event.currentResourceId !== undefined && !isSafeDocumentId(event.currentResourceId))
+      || !['Pending', 'UnderReview'].includes(event.status)) {
       throw new HttpsError('failed-precondition', 'The current event assessment is not open for finalisation.');
+    }
+    if (expectedIdentity && (event.currentVersionId !== expectedIdentity.versionId || event.currentAssessmentId !== expectedIdentity.assessmentId)) {
+      throw new HttpsError('aborted', 'The application version changed before authority finalisation completed.');
     }
     if (!validRequiredAuthorities(event.requiredAuthorities)) throw new HttpsError('failed-precondition', 'The assigned authority list is invalid.');
     const assessmentRef = eventRef.collection(COLLECTIONS.ASSESSMENTS).doc(event.currentAssessmentId);
@@ -335,35 +455,18 @@ export async function finalizeStoredReviewState(uid: string, eventId: string, re
     ]);
     const assessment = assessmentSnap.data() as AssessmentRecord | undefined;
     const version = versionSnap.data() as EventVersion | undefined;
+    if (isManualOfficialAssessment(assessment)) {
+      throw new HttpsError('failed-precondition', 'Admin manual official assessments use the manual finalisation retry.');
+    }
     if (!assessment || !version || !isCurrentAssessmentIdentity(assessment, eventId, event.currentAssessmentId, version, event.currentVersionId)) {
       throw new HttpsError('failed-precondition', 'No finalisable authority review is available.');
     }
+    if (assessment.authorityReviewState
+      && stableStringify(assessment.authorityReviewState.requiredAuthorities) !== stableStringify(event.requiredAuthorities)) {
+      throw new HttpsError('failed-precondition', 'The authority review assignment does not match the current event.');
+    }
     if (assessment.status === 'official_ready') {
-      const officialState = assessment.authorityReviewState;
-      const officialHeadIds = event.requiredAuthorities.map((authority) => officialState.activeReviewHeads[authority]?.reviewId);
-      if (!event.currentResourceId || officialHeadIds.some((reviewId) => !reviewId)) {
-        throw new HttpsError('failed-precondition', 'The finalized official resource or review provenance is missing.');
-      }
-      const officialReviewRefs = officialHeadIds.map((reviewId) => assessmentRef.collection(COLLECTIONS.SCORE_REVIEWS).doc(reviewId!));
-      const officialResolutionRef = officialState.activeResolutionId
-        ? assessmentRef.collection(COLLECTIONS.SCORE_RESOLUTIONS).doc(officialState.activeResolutionId)
-        : undefined;
-      const [resourceSnap, officialReviewSnaps, officialResolutionSnap] = await Promise.all([
-        transaction.get(eventRef.collection(COLLECTIONS.RESOURCES).doc(event.currentResourceId)),
-        transaction.getAll(...officialReviewRefs),
-        officialResolutionRef ? transaction.get(officialResolutionRef) : Promise.resolve(undefined),
-      ]);
-      const resource = resourceSnap.data() as ResourceRecommendation | undefined;
-      if (!isIdempotentOfficialOutput(
-        event,
-        version,
-        assessment,
-        resource,
-        officialReviewSnaps.map((snapshot) => snapshot.data() as AuthorityScoreReview),
-        officialResolutionSnap?.data() as AuthorityScoreResolution | undefined,
-      )) {
-        throw new HttpsError('failed-precondition', 'The finalized official output is invalid or stale.');
-      }
+      const resource = await readAndValidateOfficialOutputInTransaction(transaction, eventRef, event, version, assessment);
       return { eventId, status: 'official_ready' as const, officialResourceId: resource.resourceId, idempotent: true };
     }
     if (assessment.status !== 'authority_review' || !assessment.authorityReviewState) {
@@ -379,6 +482,16 @@ export async function finalizeStoredReviewState(uid: string, eventId: string, re
     const [reviewSnaps, resolutionSnap, historySnap] = await Promise.all([
       transaction.getAll(...headRefs), resolutionRef ? transaction.get(resolutionRef) : Promise.resolve(undefined), transaction.get(historyQuery),
     ]);
+    if (reviewSnaps.some((snapshot, index) => !isReviewSnapshot(snapshot, event.requiredAuthorities[index]))
+      || (resolutionRef && (!resolutionSnap || !isResolutionSnapshot(resolutionSnap)))) {
+      throw new HttpsError('failed-precondition', 'The active authority review provenance is incomplete.');
+    }
+  if (historySnap.docs.some((snapshot) => {
+      const resource = snapshot.data() as Partial<ResourceRecommendation> | undefined;
+      return !resource || snapshot.id !== resource.resourceId
+        || resource.eventId !== event.eventId || resource.versionId !== version.versionId
+        || resource.stage !== 'official';
+    })) throw new HttpsError('failed-precondition', 'Official resource history has an invalid document identity.');
     const reviews = reviewSnaps.map((snapshot) => snapshot.data() as AuthorityScoreReview);
     const resolution = resolutionSnap?.data() as AuthorityScoreResolution | undefined;
     const finalized = finalizeInTransaction(transaction, eventRef, event, version, assessment, assessment.authorityReviewState, reviews, historySnap.docs.map((snapshot) => snapshot.data() as ResourceRecommendation), resolution, now, resolution ? resolution.resolvedBy : 'system');
@@ -521,11 +634,16 @@ function isIdempotentOfficialOutput(
       && resource.eventId === event.eventId
       && resource.versionId === version.versionId
       && resource.assessmentId === assessment.assessmentId
+      && resource.assessmentReference.assessmentId === assessment.assessmentId
       && resource.stage === 'official'
       && resource.formulaVersion === RESOURCE_FORMULA_VERSION
       && resource.configVersion === RESOURCE_CONFIG_VERSION
       && resource.sourceRegistryVersion === RESOURCE_SOURCE_REGISTRY_VERSION
       && resource.resourceInputHash === calculation.resourceInputHash
+      && resource.assessmentReference.stage === 'official'
+      && resource.assessmentReference.sourceKind !== 'admin_manual'
+      && 'proposalId' in resource.assessmentReference
+      && resource.assessmentReference.proposalId === assessment.officialResult.proposalId
       && resource.assessmentReference.finalizedAt === assessment.officialResult.finalizedAt
       && resource.assessmentReference.finalizedBy === assessment.officialResult.finalizedBy
       && stableStringify(resource.items) === stableStringify(expectedItems);
@@ -535,7 +653,10 @@ function isIdempotentOfficialOutput(
 }
 
 function assertReviewableEvent(event: EventRecord | undefined, authority: AuthorityType) {
-  if (!event?.currentVersionId || !event.currentAssessmentId || !['Pending', 'UnderReview'].includes(event.status)) throw new HttpsError('failed-precondition', 'The event is not open for authority review.');
+  if (!event?.currentVersionId || !event.currentAssessmentId
+    || !isSafeDocumentId(event.currentVersionId) || !isSafeDocumentId(event.currentAssessmentId)
+    || (event.currentResourceId !== undefined && !isSafeDocumentId(event.currentResourceId))
+    || !['Pending', 'UnderReview'].includes(event.status)) throw new HttpsError('failed-precondition', 'The event is not open for authority review.');
   if (!validRequiredAuthorities(event.requiredAuthorities)) throw new HttpsError('failed-precondition', 'The assigned authority list is invalid.');
   if (!event.requiredAuthorities.includes(authority)) throw new HttpsError('permission-denied', 'This authority is not assigned to the event.');
   return { versionId: event.currentVersionId, assessmentId: event.currentAssessmentId };
@@ -588,6 +709,9 @@ function sameResolutionRequest(
   input: ResolutionInput,
   identity: Pick<AuthorityScoreResolution, 'resolutionId' | 'eventId' | 'versionId' | 'assessmentId'>,
 ): boolean {
+  if (!isRecord(stored) || !isRecord(input) || !Array.isArray(stored.categories) || !Array.isArray(input.categories)
+    || !stored.categories.every((category) => isRecord(category) && typeof category.reason === 'string')
+    || !input.categories.every((category) => isRecord(category) && typeof category.reason === 'string')) return false;
   return stored.schemaVersion === SCORE_RESOLUTION_SCHEMA_VERSION
     && stored.resolutionId === identity.resolutionId
     && stored.eventId === identity.eventId
@@ -604,20 +728,90 @@ function sameResolutionRequest(
 }
 
 function isCurrentAssessmentIdentity(
-  assessment: AssessmentRecord,
+  assessment: AssessmentRecord | undefined,
   eventId: string,
   assessmentId: string,
   version: EventVersion,
   versionId: string,
-): boolean {
-  if (!('schemaVersion' in assessment) || !('aiProposal' in assessment)) return false;
-  return assessment.schemaVersion === ASSESSMENT_SCHEMA_VERSION
+): assessment is ProvisionalRiskAssessment | OfficialRiskAssessment {
+  if (!assessment || typeof assessment !== 'object'
+    || !('schemaVersion' in assessment) || !('aiProposal' in assessment) || !('provisionalResult' in assessment)) return false;
+  if (assessment.status !== 'provisional_ready' && assessment.status !== 'authority_review' && assessment.status !== 'official_ready') return false;
+  if (assessment.aiProposal?.status !== 'success') return false;
+  if (!assessment.provisionalResult || typeof assessment.provisionalResult !== 'object') return false;
+  if (!(assessment.schemaVersion === ASSESSMENT_SCHEMA_VERSION
     && assessment.eventId === eventId
     && assessment.assessmentId === assessmentId
     && assessment.versionId === versionId
     && version.eventId === eventId
     && version.versionId === versionId
-    && assessment.aiProposal?.status === 'success';
+    && assessment.provisionalResult.proposalId === assessment.aiProposal.proposalId)) return false;
+  if (!Array.isArray(assessment.aiProposal.categories)
+    || !Array.isArray(assessment.aiProposal.hazards)
+    || !assessment.aiProposal.categories.every((category) => category && typeof category === 'object')
+    || !assessment.aiProposal.hazards.every((hazard) => hazard && typeof hazard === 'object')
+    || !Array.isArray(assessment.evidence)) return false;
+  if (validateProvisionalAssessmentResult(assessment.provisionalResult).length > 0
+    || validateAssessmentResultAgainstProposal(assessment.provisionalResult, assessment.aiProposal).length > 0) return false;
+  if (assessment.status !== 'provisional_ready'
+    && (!isRecord(assessment.authorityReviewState)
+      || !Array.isArray(assessment.authorityReviewState.requiredAuthorities)
+      || !isRecord(assessment.authorityReviewState.activeReviewHeads)
+      || !Array.isArray(assessment.authorityReviewState.conflicts)
+      || !Object.values(assessment.authorityReviewState.activeReviewHeads).every((head) =>
+        isRecord(head) && typeof head.reviewId === 'string' && Boolean(head.reviewId)))) return false;
+  if (assessment.authorityReviewState && isRecord(assessment.authorityReviewState.activeReviewHeads)) {
+    const activeHeadIds = Object.values(assessment.authorityReviewState.activeReviewHeads)
+      .filter(isRecord)
+      .map((head) => head.reviewId)
+      .filter((reviewId): reviewId is string => typeof reviewId === 'string');
+    if (new Set(activeHeadIds).size !== activeHeadIds.length) return false;
+  }
+  const eligibleEvidence = new Set(assessment.evidence
+    .filter((item) => item && item.quality !== 'missing'
+      && typeof item.status === 'string'
+      && !['unavailable', 'unmatched', 'missing'].includes(item.status.trim().toLowerCase()))
+    .map((item) => item.key));
+  if (assessment.provisionalResult.categories.some((category) => category.evidenceReferences.some((reference) => !eligibleEvidence.has(reference)))
+    || assessment.provisionalResult.validatedHazards.some((hazard) => hazard.evidenceReferences.some((reference) => !eligibleEvidence.has(reference)))) return false;
+  try {
+    const baseline = computeCategoryBasedAssessment(
+      { eventId, eventDetails: version.eventDetails } as EventRecord,
+      assessment.contextSnapshot,
+      assessment.createdAt,
+    );
+    if (validateAssessmentResultAgainstHardRules(assessment.provisionalResult, baseline).length > 0) return false;
+  } catch {
+    return false;
+  }
+  if (assessment.status === 'official_ready') {
+    return Boolean(assessment.authorityReviewState
+      && assessment.officialResult
+      && assessment.officialResult.proposalId === assessment.aiProposal.proposalId
+      && Array.isArray(assessment.officialResult.reviewIds)
+      && Number.isFinite(assessment.officialResult.finalizedAt)
+      && typeof assessment.officialResult.finalizedBy === 'string'
+      && assessment.officialResult.finalizedBy.length > 0);
+  }
+  return true;
+}
+
+function isManualOfficialAssessment(value: AssessmentRecord | undefined): value is AdminManualOfficialRiskAssessment {
+  return Boolean(value && value.status === 'official_ready' && 'sourceKind' in value && value.sourceKind === 'admin_manual'
+    && value.authorityReviewRequired === false
+    && Number.isFinite(value.createdAt)
+    && isSafeManualAssessmentId(value.activeManualAssessmentId)
+    && value.officialResult?.sourceKind === 'admin_manual'
+    && value.officialResult.manualAssessmentId === value.activeManualAssessmentId
+    && validateManualOfficialAssessmentResult(value.officialResult).length === 0);
+}
+
+function isSafeManualAssessmentId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+}
+
+function isSafeDocumentId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 }
 
 function writeReviewAudit(transaction: FirebaseFirestore.Transaction, eventRef: FirebaseFirestore.DocumentReference, review: AuthorityScoreReview, superseded: boolean) {
@@ -661,7 +855,11 @@ async function recordFinalizationFailure(
     const event = eventSnapshot.data() as EventRecord | undefined;
     if (lockSnapshot.exists
       || event?.currentVersionId !== expectedVersionId
-      || event.currentAssessmentId !== expectedAssessmentId) return;
+      || event.currentAssessmentId !== expectedAssessmentId
+      || !event
+      || !['Pending', 'UnderReview'].includes(event.status)) return;
+    const assessment = (await transaction.get(eventRef.collection(COLLECTIONS.ASSESSMENTS).doc(expectedAssessmentId))).data() as AssessmentRecord | undefined;
+    if (assessment?.status === 'official_ready') return;
     transaction.create(
       eventRef.collection(COLLECTIONS.AUDIT_LOGS).doc(id),
       auditRecord(id, eventId, expectedVersionId, 'official_finalization_failed', 'system', 'system', timestamp, {
@@ -682,6 +880,17 @@ function requiredId(value: unknown, name: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isReviewSnapshot(snapshot: FirebaseFirestore.DocumentSnapshot, authority?: AuthorityType): boolean {
+  const value = snapshot.data();
+  return snapshot.exists && isRecord(value) && value.reviewId === snapshot.id
+    && (authority === undefined || value.authorityType === authority);
+}
+
+function isResolutionSnapshot(snapshot: FirebaseFirestore.DocumentSnapshot): boolean {
+  const value = snapshot.data();
+  return snapshot.exists && isRecord(value) && value.resolutionId === snapshot.id;
 }
 
 function shouldAuditFinalizationFailure(error: unknown): boolean {

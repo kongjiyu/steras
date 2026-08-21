@@ -3,6 +3,8 @@ import { firestore } from 'firebase-admin';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import {
   ASSESSMENT_SCHEMA_VERSION,
+  AdminManualAssessment,
+  AdminManualOfficialRiskAssessment,
   AssessmentRecord,
   AuthorityScoreResolution,
   AuthorityScoreReview,
@@ -12,6 +14,7 @@ import {
   DecisionValue,
   EventRecord,
   EventVersion,
+  ManualReviewRiskAssessment,
   RESOURCE_CONFIG_VERSION,
   RESOURCE_FORMULA_VERSION,
   RESOURCE_SOURCE_REGISTRY_VERSION,
@@ -25,6 +28,7 @@ import {
   matchesDeterministicResourceItems,
   validateAssessmentResultAgainstHardRules,
   validateAssessmentResultAgainstProposal,
+  validateManualOfficialAssessmentResult,
   validateProvisionalAssessmentResult,
 } from '../engines/resourceCalculator';
 import { stableStringify } from '../engines/resourceCalculator';
@@ -32,6 +36,7 @@ import { buildOfficialAssessmentResult } from '../engines/authorityFinalisation'
 import { validateResourceRecommendation, validateResourceRevisionChain } from '../engines/resourceContract';
 import { computeCategoryBasedAssessment } from '../engines/ruleBased';
 import { evaluateCategoryHardRules } from '../engines/hardRuleEvaluator';
+import { buildManualOfficialAssessmentResult } from '../engines/manualFinalisation';
 
 interface AuthorityDecisionRequest {
   eventId?: string;
@@ -74,8 +79,11 @@ export async function makeAuthorityDecisionForUser(
     const event = { eventId, ...eventSnapshot.data() } as EventRecord;
     const versionId = event.currentVersionId;
     const assessmentId = event.currentAssessmentId;
-    if (!versionId || !assessmentId) throw new HttpsError('failed-precondition', 'The application has no current submitted assessment.');
-    if (!event.requiredAuthorities.includes(profile.authorityType)) {
+    if (!isSafeDocumentId(versionId) || !isSafeDocumentId(assessmentId)
+      || (event.currentResourceId !== undefined && !isSafeDocumentId(event.currentResourceId))) {
+      throw new HttpsError('failed-precondition', 'The application current-generation pointers are invalid.');
+    }
+    if (!validRequiredAuthorities(event.requiredAuthorities) || !event.requiredAuthorities.includes(profile.authorityType)) {
       throw new HttpsError('permission-denied', 'Your authority is not assigned to this application.');
     }
 
@@ -96,12 +104,33 @@ export async function makeAuthorityDecisionForUser(
     const current = currentSnapshot.data() as AuthorityDecision | undefined;
     const version = versionSnapshot.data() as EventVersion | undefined;
     const assessmentValue = assessmentSnapshot.data() as AssessmentRecord | undefined;
-    const reviewIds = assessmentValue?.status === 'official_ready' ? assessmentValue.officialResult.reviewIds : [];
+    const manualOfficial = isManualOfficialAssessment(assessmentValue);
+    if (assessmentValue?.status === 'official_ready' && 'sourceKind' in assessmentValue && assessmentValue.sourceKind === 'admin_manual' && !manualOfficial) {
+      throw new HttpsError('failed-precondition', 'The manual official assessment contract is invalid.');
+    }
+    const reviewIds = assessmentValue?.status === 'official_ready' && !manualOfficial
+      && isRecord(assessmentValue.officialResult) && Array.isArray(assessmentValue.officialResult.reviewIds)
+      ? assessmentValue.officialResult.reviewIds : [];
     const reviewReferences = reviewIds.map((reviewId) => assessmentReference.collection(COLLECTIONS.SCORE_REVIEWS).doc(reviewId));
     const reviewSnapshots = reviewReferences.length ? await transaction.getAll(...reviewReferences) : [];
-    const resolutionSnapshot = assessmentValue?.status === 'official_ready' && assessmentValue.officialResult.resolutionId
+    const resolutionSnapshot = assessmentValue?.status === 'official_ready' && !manualOfficial
+      && isRecord(assessmentValue.officialResult) && assessmentValue.officialResult.resolutionId
       ? await transaction.get(assessmentReference.collection(COLLECTIONS.SCORE_RESOLUTIONS).doc(assessmentValue.officialResult.resolutionId))
       : undefined;
+    const manualSnapshot = manualOfficial
+      ? await transaction.get(assessmentReference.collection(COLLECTIONS.MANUAL_ASSESSMENTS).doc(assessmentValue.activeManualAssessmentId))
+      : undefined;
+    if (resourceHistorySnapshot.docs.some((document) => {
+      const resource = document.data();
+      return resource?.resourceId !== document.id || resource.eventId !== eventId || resource.versionId !== versionId;
+    })) {
+      throw new HttpsError('failed-precondition', 'The official resource revision history is invalid.');
+    }
+    if (reviewSnapshots.some((snapshot) => snapshot.data()?.reviewId !== snapshot.id)
+      || (resolutionSnapshot && resolutionSnapshot.data()?.resolutionId !== resolutionSnapshot.id)
+      || (manualSnapshot && manualSnapshot.data()?.manualAssessmentId !== manualSnapshot.id)) {
+      throw new HttpsError('failed-precondition', 'The official provenance document identities are invalid.');
+    }
     assertOfficialAssessmentReady(
       event,
       versionId,
@@ -111,6 +140,7 @@ export async function makeAuthorityDecisionForUser(
       resourceHistorySnapshot.docs.map((document) => document.data() as ResourceRecommendation),
       reviewSnapshots.map((snapshot) => snapshot.data() as AuthorityScoreReview),
       resolutionSnapshot?.data() as AuthorityScoreResolution | undefined,
+      manualSnapshot?.data() as AdminManualAssessment | undefined,
     );
     const currentAssessment = assessmentSnapshot.data() as AssessmentRecord | undefined;
     if (decision === 'Approved' && currentAssessment && 'complianceStatus' in currentAssessment && currentAssessment.complianceStatus === 'blocked') {
@@ -189,7 +219,15 @@ export function assertOfficialAssessmentReady(
   resourceHistory: ResourceRecommendation[] = resources ? [resources] : [],
   reviews: AuthorityScoreReview[] = [],
   resolution?: AuthorityScoreResolution,
+  manualAssessment?: AdminManualAssessment,
 ): void {
+  if (!validRequiredAuthorities(event.requiredAuthorities)) {
+    throw new HttpsError('failed-precondition', 'The assigned authority list is invalid.');
+  }
+  if (!isSafeDocumentId(event.currentAssessmentId) || !isSafeDocumentId(versionId)
+    || (event.currentResourceId !== undefined && !isSafeDocumentId(event.currentResourceId))) {
+    throw new HttpsError('failed-precondition', 'The application current-generation pointers are invalid.');
+  }
   const validAssessment = isValidOfficialAssessment(
     assessment,
     event.eventId,
@@ -199,6 +237,7 @@ export function assertOfficialAssessmentReady(
     version,
     reviews,
     resolution,
+    manualAssessment,
   );
   const validHardRuleFloors = assessment?.status === 'official_ready' && version
     ? assessmentSatisfiesCurrentHardRules(assessment, event.eventId, version)
@@ -227,7 +266,9 @@ export function assertOfficialAssessmentReady(
   const reference = resources?.assessmentReference;
   const boundToAssessment = Boolean(reference?.stage === 'official'
     && reference.assessmentId === assessment?.assessmentId
-    && reference.proposalId === proposal?.proposalId
+    && (reference.sourceKind === 'admin_manual'
+      ? isManualOfficialAssessment(assessment) && reference.manualAssessmentId === assessment.activeManualAssessmentId
+      : reference.proposalId === proposal?.proposalId)
     && reference.finalizedAt === official?.finalizedAt
     && reference.finalizedBy === official?.finalizedBy);
   if (!event.currentAssessmentId
@@ -239,6 +280,7 @@ export function assertOfficialAssessmentReady(
     || !validAssessment
     || !validHardRuleFloors
     || !validResources
+    || resourceHistory.some((resource) => resource.eventId !== event.eventId || resource.versionId !== versionId)
     || validateResourceRevisionChain(resourceHistory, resources?.resourceId ?? '').length > 0
     || !boundToAssessment) {
     throw new HttpsError('failed-precondition', 'An official risk assessment and resources are required before a final decision.');
@@ -252,6 +294,10 @@ function assessmentSatisfiesCurrentHardRules(
 ): boolean {
   try {
     if (!assessment.contextSnapshot) return false;
+    if (isManualOfficialAssessment(assessment)) {
+      return assessment.officialResult.categories.every((category) => category.validatedLikelihood >= category.manualLikelihood
+        && category.validatedSeverity >= category.manualSeverity);
+    }
     const baseline = computeCategoryBasedAssessment(
       { eventId, eventDetails: version.eventDetails } as EventRecord,
       assessment.contextSnapshot,
@@ -283,8 +329,45 @@ function isValidOfficialAssessment(
   version: EventVersion | undefined,
   reviews: AuthorityScoreReview[],
   resolution?: AuthorityScoreResolution,
+  manualAssessment?: AdminManualAssessment,
 ): boolean {
-  if (!assessment || assessment.status !== 'official_ready' || !version) return false;
+  if (!assessment || assessment.status !== 'official_ready' || assessment.authorityReviewRequired !== false || !version) return false;
+  if (isManualOfficialAssessment(assessment)) {
+    if (!manualAssessment || assessment.schemaVersion !== ASSESSMENT_SCHEMA_VERSION
+      || assessment.assessmentId !== assessmentId || assessment.eventId !== eventId || assessment.versionId !== versionId
+      || !(assessment.aiProposal === null
+        ? assessment.assessmentReadiness === 'insufficient_data'
+        : isRecord(assessment.aiProposal) && String(assessment.aiProposal.status) !== 'success')
+      || assessment.activeManualAssessmentId !== manualAssessment.manualAssessmentId) return false;
+    try {
+      const expected = buildManualOfficialAssessmentResult({
+        assessment: assessment as unknown as ManualReviewRiskAssessment,
+        manualAssessment, eventDetails: version.eventDetails, eventVersionInputHash: version.inputHash,
+        finalizedAt: assessment.officialResult.finalizedAt, finalizedBy: assessment.officialResult.finalizedBy,
+      });
+      return stableStringify(expected) === stableStringify(assessment.officialResult);
+    } catch { return false; }
+  }
+  if (!isRecord(assessment.aiProposal)
+    || assessment.aiProposal.status !== 'success'
+    || !isRecord(assessment.provisionalResult)
+    || !isRecord(assessment.officialResult)
+    || !isRecord(assessment.authorityReviewState)
+    || !Array.isArray(assessment.aiProposal.categories)
+    || !Array.isArray(assessment.aiProposal.hazards)
+    || !assessment.aiProposal.categories.every((category) => isRecord(category))
+    || !assessment.aiProposal.hazards.every((hazard) => isRecord(hazard))
+    || !Array.isArray(assessment.provisionalResult.categories)
+    || !Array.isArray(assessment.provisionalResult.validatedHazards)
+    || !Array.isArray(assessment.officialResult.categories)
+    || !Array.isArray(assessment.authorityReviewState.requiredAuthorities)
+    || !isRecord(assessment.authorityReviewState.activeReviewHeads)
+    || !Array.isArray(assessment.authorityReviewState.conflicts)) return false;
+  const activeHeadIds = Object.values(assessment.authorityReviewState.activeReviewHeads)
+    .map((head) => isRecord(head) ? head.reviewId : undefined);
+  if (activeHeadIds.length !== assessment.authorityReviewState.requiredAuthorities.length
+    || activeHeadIds.some((reviewId) => typeof reviewId !== 'string' || !reviewId)
+    || new Set(activeHeadIds).size !== activeHeadIds.length) return false;
   if (assessment.schemaVersion !== ASSESSMENT_SCHEMA_VERSION
     || assessment.assessmentId !== assessmentId
     || assessment.eventId !== eventId
@@ -319,6 +402,28 @@ function isValidOfficialAssessment(
   }
 }
 
+function isManualOfficialAssessment(value: AssessmentRecord | undefined): value is AdminManualOfficialRiskAssessment {
+  return Boolean(value && value.status === 'official_ready' && 'sourceKind' in value && value.sourceKind === 'admin_manual'
+    && value.authorityReviewRequired === false
+    && ['complete', 'provisional', 'insufficient_data'].includes(value.assessmentReadiness)
+    && ['pass', 'review_required', 'blocked'].includes(value.complianceStatus)
+    && Number.isFinite(value.dataConfidenceScore)
+    && Number.isFinite(value.createdAt)
+    && ['low', 'medium', 'high'].includes(value.dataConfidenceLevel)
+    && isSafeManualAssessmentId(value.activeManualAssessmentId)
+    && value.officialResult?.sourceKind === 'admin_manual'
+    && value.officialResult.manualAssessmentId === value.activeManualAssessmentId
+    && validateManualOfficialAssessmentResult(value.officialResult).length === 0);
+}
+
+function isSafeManualAssessmentId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+}
+
+function isSafeDocumentId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+}
+
 function isValidOfficialResources(
   resources: ResourceRecommendation | undefined,
   eventId: string,
@@ -327,7 +432,7 @@ function isValidOfficialResources(
   expectedHash: string | undefined,
   expectedItems: ResourceRecommendation['items'] | undefined,
 ): boolean {
-  return Boolean(resources
+  return Boolean(isRecord(resources)
     && expectedHash
     && resources.eventId === eventId
     && resources.versionId === versionId
@@ -337,6 +442,7 @@ function isValidOfficialResources(
     && resources.configVersion === RESOURCE_CONFIG_VERSION
     && resources.sourceRegistryVersion === RESOURCE_SOURCE_REGISTRY_VERSION
     && resources.resourceInputHash === expectedHash
+    && resources.resourceId === `official-${versionId}-${expectedHash}`
     && expectedItems
     && matchesDeterministicResourceItems(resources.items, expectedItems)
     && validateResourceRecommendation(resources).ok);
@@ -358,6 +464,7 @@ export function validateDecisionRequest(request: unknown): {
   const decision = value.decision;
   const rationale = typeof value.rationale === 'string' ? value.rationale.trim() : '';
   if (!eventId) throw new HttpsError('invalid-argument', 'eventId is required.');
+  if (!isSafeDocumentId(eventId)) throw new HttpsError('invalid-argument', 'eventId must be a valid document id.');
   if (!isDecision(decision)) throw new HttpsError('invalid-argument', 'A valid decision is required.');
   if (rationale.length < 10 || rationale.length > 1_000) {
     throw new HttpsError('invalid-argument', 'Rationale must be between 10 and 1,000 characters.');
@@ -392,4 +499,10 @@ function currentDecisionId(versionId: string, authorityType: AuthorityType): str
 
 function isDecision(value: unknown): value is DecisionValue {
   return value === 'Approved' || value === 'Rejected' || value === 'AmendmentRequested';
+}
+
+function validRequiredAuthorities(value: unknown): value is AuthorityType[] {
+  const allowed = new Set<AuthorityType>(['PDRM', 'BOMBA', 'KKM', 'DBKL', 'MOTAC']);
+  return Array.isArray(value) && value.length > 0 && new Set(value).size === value.length
+    && value.every((authority) => allowed.has(authority));
 }

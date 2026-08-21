@@ -4,13 +4,13 @@ import { doc, getDoc } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 import {
   AuthorityCategoryScoreReview,
-  AuthorityScoreReview,
   AuthorityType,
   COLLECTIONS,
   ProvisionalRiskAssessment,
   ScoreRating,
 } from '@shared/types';
 import { db, functions } from '../../config/firebase';
+import { isAuthorityScoreReview } from './m2Contract';
 
 interface Props {
   eventId: string;
@@ -58,10 +58,15 @@ export default function AuthorityScoreReviewForm({ eventId, assessment, authorit
     const hydrationGeneration = editGeneration.current;
     void getDoc(doc(db, COLLECTIONS.EVENTS, eventId, COLLECTIONS.ASSESSMENTS, assessment.assessmentId, COLLECTIONS.SCORE_REVIEWS, ownHeadId))
       .then((snapshot) => {
-        const review = snapshot.data() as AuthorityScoreReview | undefined;
+        const review = snapshot.data();
         if (!active || dirty.current || editGeneration.current !== hydrationGeneration
-          || !review || review.authorityType !== authorityType
-          || !Array.isArray(review.categories) || review.categories.length !== categoryCount) return;
+          || !isAuthorityScoreReview(review, ownHeadId, {
+            eventId,
+            versionId: assessment.versionId,
+            assessmentId: assessment.assessmentId,
+          })
+          || review.authorityType !== authorityType
+          || review.categories.length !== categoryCount) return;
         setDrafts(review.categories.map((category) => ({
           categoryId: category.categoryId,
           decision: category.decision,
@@ -73,7 +78,7 @@ export default function AuthorityScoreReviewForm({ eventId, assessment, authorit
       })
       .catch(() => toast.error('Your current score review could not be loaded.'));
     return () => { active = false; };
-  }, [assessment.assessmentId, authorityType, categoryCount, eventId, ownHeadId]);
+  }, [assessment.assessmentId, assessment.versionId, authorityType, categoryCount, eventId, ownHeadId]);
 
   const update = (categoryId: string, change: Partial<Draft>) => {
     editGeneration.current += 1;

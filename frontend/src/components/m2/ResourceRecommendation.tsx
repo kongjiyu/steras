@@ -10,6 +10,8 @@ export default function ResourceRecommendation({
   recommendation,
   showRationales = true,
 }: ResourceRecommendationProps) {
+  const manualOfficial = recommendation.stage === 'official'
+    && recommendation.assessmentReference.sourceKind === 'admin_manual';
   return (
     <div className="space-y-5" data-testid="resource-recommendation">
       <div className="grid grid-cols-2 gap-x-5 border-y border-[#e3dacb] sm:grid-cols-4">
@@ -29,7 +31,7 @@ export default function ResourceRecommendation({
         <span>Config <strong className="text-ink-700">{recommendation.configVersion}</strong></span>
         <span>Revision <strong className="text-ink-700">{recommendation.revision}</strong></span>
         <span className={recommendation.confidenceLevel === 'authority_validated' ? 'text-status-approved' : 'text-gold-600'}>
-          <strong>{recommendation.confidenceLevel === 'authority_validated' ? 'Authority validated' : 'Prototype guidance'}</strong>
+          <strong>{recommendation.confidenceLevel === 'authority_validated' ? manualOfficial ? 'Admin manual official' : 'Authority validated' : 'Prototype guidance'}</strong>
         </span>
       </div>
 

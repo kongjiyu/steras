@@ -93,9 +93,10 @@ describe('assertOfficialAssessmentReady', () => {
   it('rejects resources with mismatched finalization metadata or incomplete provenance', () => {
     const mismatched = officialResources();
     if (mismatched.stage !== 'official') throw new Error('Expected official resource fixture.');
+    const aiReference = mismatched.assessmentReference as Extract<ResourceRecommendation['assessmentReference'], { stage: 'official'; proposalId: string }>;
     expect(() => assertOfficialAssessmentReady(
       eventPointer(mismatched.resourceId), 'v1', officialAssessment(),
-      { ...mismatched, assessmentReference: { ...mismatched.assessmentReference, proposalId: 'other-proposal' } },
+      { ...mismatched, assessmentReference: { ...aiReference, proposalId: 'other-proposal' } },
       eventVersion(),
     )).toThrow(HttpsError);
     expect(() => assertOfficialAssessmentReady(
@@ -199,13 +200,17 @@ describe('officer decision boundary', () => {
     expect(validateDecisionRequest({ eventId: 'event-1', decision: 'Rejected', rationale: 'Evidence is not sufficient.', suggestion: 'Provide verified evidence and submit the application again.' })).toMatchObject({ decision: 'Rejected' });
   });
 
+  it('rejects event IDs that could escape the event document path', () => {
+    expect(() => validateDecisionRequest({ eventId: 'events/nested', decision: 'Rejected', rationale: 'Evidence is not sufficient.', suggestion: 'Provide verified evidence and submit the application again.' })).toThrow(HttpsError);
+  });
+
   it('never turns officer recommendations into a final application status', () => {
     expect(aggregateDecisionStatus(['PDRM', 'BOMBA'], new Map([['PDRM', 'Approved'], ['BOMBA', 'Approved']]))).toBe('UnderReview');
     expect(aggregateDecisionStatus(['PDRM'], new Map([['PDRM', 'Rejected']]))).toBe('UnderReview');
   });
 });
 
-function officialAssessment(assessmentId = 'v1'): AssessmentRecord {
+function officialAssessment(assessmentId = 'v1'): import('@shared/types').OfficialRiskAssessment {
   const categories = ACTIVE_CATEGORY_SCHEMA.categories.map((category) => ({
     categoryId: category.id, categoryName: category.name,
     proposedLikelihood: 5, proposedSeverity: 5, validatedLikelihood: 5, validatedSeverity: 5,
@@ -264,7 +269,7 @@ function officialAssessment(assessmentId = 'v1'): AssessmentRecord {
       finalizedAt: 2,
       finalizedBy: 'system',
     }),
-  } as unknown as AssessmentRecord;
+  } as unknown as import('@shared/types').OfficialRiskAssessment;
 }
 
 function scoreReview(assessmentId = 'v1'): AuthorityScoreReview {

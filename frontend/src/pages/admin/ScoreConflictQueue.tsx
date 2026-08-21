@@ -8,16 +8,12 @@ import {
   COLLECTIONS,
   EventRecord,
   ProvisionalRiskAssessment,
-  SCORE_REVIEW_SCHEMA_VERSION,
   ScoreRating,
 } from '@shared/types';
 import { db, functions, isFirebaseConfigured } from '../../config/firebase';
-import { isAuthorityReviewState, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
+import { isAuthorityReviewState, isAuthorityScoreReview, isCurrentEventRecord, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
 
-const CATEGORY_IDS = new Set([
-  'crowd', 'venue_fire', 'weather_environment', 'public_health',
-  'food_water_sanitation', 'medical_capacity', 'security_cbrn', 'transport_accessibility',
-]);
+export { isAuthorityScoreReview };
 
 interface ConflictCase {
   event: EventRecord;
@@ -38,7 +34,9 @@ export default function ScoreConflictQueue() {
       const generation = ++loadGeneration.current;
       try {
         const loaded = await Promise.all(snapshot.docs.map(async (eventDoc) => {
-          const event = { eventId: eventDoc.id, ...eventDoc.data() } as EventRecord;
+          const rawEvent = { eventId: eventDoc.id, ...eventDoc.data() };
+          if (!isCurrentEventRecord(rawEvent, eventDoc.id)) return null;
+          const event = rawEvent as EventRecord;
           if (!event.currentAssessmentId) return null;
           const assessmentRef = doc(db, COLLECTIONS.EVENTS, event.eventId, COLLECTIONS.ASSESSMENTS, event.currentAssessmentId);
           const assessmentSnap = await getDoc(assessmentRef);
@@ -48,7 +46,12 @@ export default function ScoreConflictQueue() {
           const assessment = assessmentValue as ProvisionalRiskAssessment & { authorityReviewState: NonNullable<ProvisionalRiskAssessment['authorityReviewState']> };
           const reviewsSnap = await getDocs(collection(assessmentRef, COLLECTIONS.SCORE_REVIEWS));
           const activeIds = new Set(Object.values(assessment.authorityReviewState.activeReviewHeads).map((head) => head?.reviewId));
-          const reviews = reviewsSnap.docs.map((item) => item.data()).filter(isAuthorityScoreReview).filter((review) => activeIds.has(review.reviewId));
+          const reviews = reviewsSnap.docs
+            .filter((item) => isAuthorityScoreReview(item.data(), item.id, {
+              eventId: event.eventId, versionId: event.currentVersionId, assessmentId: assessment.assessmentId,
+            }))
+            .map((item) => item.data() as AuthorityScoreReview)
+            .filter((review) => activeIds.has(review.reviewId));
           if (reviews.length !== activeIds.size) throw new Error('An active score review is missing or malformed.');
           const requiresRetry = assessment.authorityReviewState.conflicts.length === 0
             || Boolean(assessment.authorityReviewState.activeResolutionId);
@@ -154,25 +157,4 @@ function ScoreSelect({ label: text, value, onChange }: { label: string; value: S
 
 function label(value: string) {
   return value.replaceAll('_', ' ').replace(/^./, (character) => character.toUpperCase());
-}
-
-export function isAuthorityScoreReview(value: unknown): value is AuthorityScoreReview {
-  if (!value || typeof value !== 'object') return false;
-  const review = value as Partial<AuthorityScoreReview>;
-  if (review.schemaVersion !== SCORE_REVIEW_SCHEMA_VERSION
-    || typeof review.reviewId !== 'string' || !review.reviewId
-    || typeof review.rationale !== 'string' || review.rationale.trim().length < 10
-    || !Array.isArray(review.categories) || review.categories.length !== CATEGORY_IDS.size) return false;
-  const seen = new Set<string>();
-  return review.categories.every((category) => {
-    if (!category || typeof category !== 'object') return false;
-    if (!CATEGORY_IDS.has(category.categoryId) || seen.has(category.categoryId)
-      || !Number.isInteger(category.likelihood) || category.likelihood < 1 || category.likelihood > 5
-      || !Number.isInteger(category.severity) || category.severity < 1 || category.severity > 5) return false;
-    seen.add(category.categoryId);
-    return category.decision === 'confirmed'
-      || (category.decision === 'overridden'
-        && typeof category.reason === 'string'
-        && category.reason.trim().length >= 10);
-  });
 }

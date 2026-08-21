@@ -141,6 +141,12 @@ service cloud.firestore {
                       || (isSignedIn() && isAssignedAuthority(eventId));
           allow write: if false;
         }
+
+        match /manual_assessments/{manualAssessmentId} {
+          allow read: if isAdmin()
+                      || (isSignedIn() && isAssignedAuthority(eventId));
+          allow write: if false;
+        }
       }
 
       match /assessment_summaries/{assessmentId} {
