@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { AssessmentContextSnapshot, EventRecord, hirarcRiskLevelFor, riskLevelFor } from '@shared/types';
-import { buildContextEvidenceProvenance, computeCategoryBasedAssessment } from './ruleBased';
+import {
+  buildContextEvidenceProvenance,
+  buildMatchedVenueContextSnapshot,
+  computeCategoryBasedAssessment,
+} from './ruleBased';
 
 const event: EventRecord = {
   eventId: 'event-1',
@@ -74,6 +78,28 @@ const context: AssessmentContextSnapshot = {
 };
 
 describe('computeCategoryBasedAssessment', () => {
+  it('omits absent optional venue registry fields from Firestore snapshots', () => {
+    const snapshot = buildMatchedVenueContextSnapshot({
+      venueId: 'venue-minimal',
+      active: true,
+      name: 'Minimal Venue',
+      address: 'Putrajaya',
+      capacity: 3_000,
+      location: { lat: 2.9006, lng: 101.6805 },
+      incidentCount: 0,
+    }, 3_000, 3_000, 123);
+
+    expect(snapshot).toEqual({
+      matched: true,
+      venueId: 'venue-minimal',
+      submittedCapacity: 3_000,
+      registeredCapacity: 3_000,
+      capacityDifference: 0,
+      fetchedAt: 123,
+    });
+    expect(Object.values(snapshot)).not.toContain(undefined);
+  });
+
   it('produces a deterministic HIRARC result with eight all-hazards domains', () => {
     const first = computeCategoryBasedAssessment(event, context, 123);
     const second = computeCategoryBasedAssessment(event, context, 123);
