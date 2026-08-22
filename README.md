@@ -176,6 +176,7 @@ Primary implementation:
 | `/register` | Public | Organizer registration |
 | `/login` | Public | Organizer or authority sign-in |
 | `/dashboard-preview` | Public mock preview | Design-review preview using mock data; `?view=risk` and `?view=resources` show M2 monitoring views; none are real authority workspaces |
+| `/incident-preview` | Public mock preview | M4 incident-reporting prototype with organizer and authority views; synthetic data only |
 | `/organizer` | Organizer | Organizer dashboard |
 | `/organizer/events/new` | Organizer | New event application |
 | `/organizer/events` | Organizer | Organizer application list |
