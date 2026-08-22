@@ -85,7 +85,6 @@ export interface EventRiskProfile {
   evacuationPlanTested?: boolean;
   authorityCoordinationConfirmed?: boolean;
   nearestHospitalTravelMinutes?: number;
-  verifiedControlIds?: string[];
 }
 
 export interface EventDetails {
@@ -142,7 +141,11 @@ export interface EventVersion {
 }
 
 export type RiskLevel = 'Low' | 'Medium' | 'High';
-export const ASSESSMENT_SCHEMA_VERSION = '2026-08-18-prd-v5';
+export const ASSESSMENT_SCHEMA_VERSION = '2026-08-21-prd-v5-hardening-v1';
+export const CONTEXT_EVIDENCE_SCHEMA_VERSION = '2026-08-21-context-evidence-v1';
+export const EVIDENCE_SUFFICIENCY_VERSION = '2026-08-21-eight-category-v1';
+export const VENUE_BINDING_VERSION = '2026-08-21-canonical-venue-v1';
+export const WEATHER_POLICY_VERSION = '2026-08-21-no-placeholder-v1';
 export const SCORE_REVIEW_SCHEMA_VERSION = '2026-08-20-authority-review-v1';
 export const SCORE_RESOLUTION_SCHEMA_VERSION = '2026-08-20-score-resolution-v1';
 export const OFFICIAL_FORMULA_VERSION = '2026-08-20-authority-official-v1';
@@ -184,14 +187,23 @@ export interface WeatherContext {
 
 export type ContextFreshness = 'fresh' | 'stale' | 'fallback' | 'not_assessable_yet' | 'unavailable';
 
-export interface WeatherSnapshot {
-  data: WeatherContext;
+interface WeatherSnapshotBase {
   source: 'met-malaysia' | 'openweather' | 'cache' | 'fallback';
   freshness: ContextFreshness;
   fetchedAt: number;
   expiresAt: number;
   forecastFor: number;
 }
+
+export type WeatherSnapshot = WeatherSnapshotBase & ({
+  data: WeatherContext;
+  measurementStatus: 'available';
+  unavailableReason?: never;
+} | {
+  data: null;
+  measurementStatus: 'unavailable';
+  unavailableReason: 'outside_forecast_horizon' | 'provider_unavailable';
+});
 
 export interface IncidentSnapshot {
   incidents: Incident[];
@@ -222,6 +234,7 @@ export interface CalendarContextSnapshot {
   holidayDistanceDays?: -1 | 0 | 1;
   sourceVersion: string;
   sourceTimestamp: number;
+  coverageStatus: 'verified' | 'unsupported_year';
 }
 
 export interface VenueContextSnapshot {
@@ -256,6 +269,12 @@ export interface HistoricalIncidentContextSnapshot {
   comparableEvents?: ComparableHistoricalEvent[];
   lookbackStart?: number;
   syntheticEvidence?: boolean;
+  syntheticStatus: 'none' | 'partial' | 'all';
+  incidentEvidence?: Array<{
+    incidentId: string;
+    synthetic: boolean;
+    datasetVersion?: string;
+  }>;
   fetchedAt: number;
 }
 
@@ -272,8 +291,23 @@ export interface ScoreEvidence {
   sourceTimestamp: number;
   source: string;
   status: string;
-  quality?: EvidenceQuality;
-  confidenceScore?: number;
+  quality: EvidenceQuality;
+  confidenceScore: number;
+  eligibility: 'eligible' | 'ineligible' | 'missing';
+  syntheticStatus: 'none' | 'partial' | 'all';
+}
+
+export interface ContextEvidenceProvenance {
+  evidenceId: string;
+  evidenceKey: EvidenceKey;
+  sourceKind: 'external_api' | 'official_registry' | 'official_dataset' | 'submitted_document' | 'submitted_declaration' | 'derived';
+  sourceLocator: string;
+  retrievedAt: number;
+  sourceVersion: string;
+  eligibility: 'eligible' | 'ineligible' | 'missing';
+  eligibilityReason?: string;
+  synthetic: boolean;
+  visibility: 'authority_only' | 'organizer_safe';
 }
 
 export type CategorySchemaStatus = 'prototype' | 'authorityValidated';
@@ -629,6 +663,7 @@ interface AssessmentBase {
   schemaVersion: typeof ASSESSMENT_SCHEMA_VERSION;
   contextSnapshot: AssessmentContextSnapshot;
   evidence: ScoreEvidence[];
+  contextEvidence: ContextEvidenceProvenance[];
   sourceTimestamps: Record<string, number>;
   contextStatuses: Record<string, string>;
   assessmentReadiness: AssessmentReadiness;
@@ -734,7 +769,7 @@ export interface ResourceQuantities {
   fireOfficers: number;
 }
 
-export const RESOURCE_SCHEMA_VERSION = '2026-08-19-prd-v5';
+export const RESOURCE_SCHEMA_VERSION = '2026-08-21-prd-v5-hardening-v1';
 export const RESOURCE_FORMULA_VERSION = '2026-08-19-deterministic-v4';
 export const RESOURCE_CONFIG_VERSION = '2026-08-19-prototype-v1';
 export const RESOURCE_SOURCE_REGISTRY_VERSION = '2026-08-19-v1';
@@ -860,6 +895,7 @@ interface ResourceRecommendationBase {
   items: Record<ResourceKey, ResourceRecommendationItem>;
   confidenceLevel: ResourceConfidence;
   authorityReviewRequired: boolean;
+  validationScope: 'provisional_risk_input' | 'official_risk_input_only';
   notes?: string;
   computedAt: number;
 }
@@ -933,6 +969,7 @@ export interface AuditLog {
 
 export interface Venue {
   venueId: string;
+  active: boolean;
   name: string;
   address: string;
   capacity: number;

@@ -223,7 +223,7 @@ function isSafeManualAssessmentId(value: unknown): value is string {
 
 export function eligibleEvidenceKeys(evidence: unknown): Set<string> {
   if (!Array.isArray(evidence)) return new Set();
-  return new Set((evidence as ScoreEvidence[]).filter((item) => item && item.quality !== 'missing'
+  return new Set((evidence as ScoreEvidence[]).filter((item) => item && item.eligibility === 'eligible' && item.quality !== 'missing'
     && typeof item.status === 'string'
     && !['unavailable', 'unmatched', 'missing'].includes(item.status.trim().toLowerCase()))
     .map((item) => item.key));

@@ -229,6 +229,9 @@ export function isCurrentRiskAssessment(value: unknown): value is RiskAssessment
   if (!isAssessmentContext(record.contextSnapshot)
     || !Array.isArray(record.evidence)
     || !record.evidence.every(isAssessmentEvidence)
+    || !Array.isArray(record.contextEvidence) || record.contextEvidence.length === 0
+    || !record.contextEvidence.every(isContextEvidence)
+    || new Set(record.contextEvidence.map((item) => item.evidenceId)).size !== record.contextEvidence.length
     || !Array.isArray(record.warnings)
     || !record.warnings.every(isAssessmentWarning)) return false;
   if (record.status !== 'official_ready' && record.authorityReviewRequired !== true) return false;
@@ -479,6 +482,7 @@ export function isCurrentResourceRecommendation(value: unknown): value is Resour
     || typeof value.sourceRegistryVersion !== 'string' || !value.sourceRegistryVersion
     || !['prototype', 'low', 'medium', 'authority_validated'].includes(String(value.confidenceLevel))
     || typeof value.authorityReviewRequired !== 'boolean'
+    || value.validationScope !== (value.stage === 'official' ? 'official_risk_input_only' : 'provisional_risk_input')
     || typeof value.computedAt !== 'number' || !Number.isFinite(value.computedAt)
     || !isRecord(value.assessmentReference)
     || value.assessmentReference.stage !== value.stage
@@ -574,9 +578,17 @@ function isAssessmentContext(value: unknown): boolean {
   const calendar = value.calendar;
   const venue = value.venue;
   const history = value.incidentHistory;
-  return isRecord(weather) && isRecord(weather.data)
-    && typeof weather.data.forecast === 'string'
-    && Number.isFinite(weather.data.precipitationProbability)
+  const weatherDataValid = isRecord(weather) && (isRecord(weather.data)
+    ? weather.measurementStatus === 'available'
+      && typeof weather.data.forecast === 'string' && Boolean(weather.data.forecast.trim())
+      && finiteRange(weather.data.temperature, -100, 70)
+      && finiteRange(weather.data.humidity, 0, 100)
+      && finiteRange(weather.data.windSpeed, 0, Number.MAX_SAFE_INTEGER)
+      && finiteRange(weather.data.precipitationProbability, 0, 100)
+      && typeof weather.data.severeAlert === 'boolean'
+    : weather.data === null && weather.measurementStatus === 'unavailable'
+      && ['outside_forecast_horizon', 'provider_unavailable'].includes(String(weather.unavailableReason)));
+  return weatherDataValid
     && Number.isFinite(weather.fetchedAt)
     && isRecord(calendar)
     && typeof calendar.localDate === 'string'
@@ -584,6 +596,7 @@ function isAssessmentContext(value: unknown): boolean {
     && typeof calendar.isWeekend === 'boolean'
     && typeof calendar.isHolidayOrAdjacent === 'boolean'
     && Number.isFinite(calendar.sourceTimestamp)
+    && ['verified', 'unsupported_year'].includes(String(calendar.coverageStatus))
     && isRecord(venue)
     && typeof venue.matched === 'boolean'
     && Number.isFinite(venue.submittedCapacity)
@@ -593,7 +606,12 @@ function isAssessmentContext(value: unknown): boolean {
     && Number.isFinite(history.total)
     && isRecord(history.bySeverity)
     && Number.isFinite(history.bySeverity.high)
+    && ['none', 'partial', 'all'].includes(String(history.syntheticStatus))
     && Number.isFinite(history.fetchedAt);
+}
+
+function finiteRange(value: unknown, minimum: number, maximum: number): boolean {
+  return typeof value === 'number' && Number.isFinite(value) && value >= minimum && value <= maximum;
 }
 
 function isAssessmentEvidence(value: unknown): boolean {
@@ -602,7 +620,22 @@ function isAssessmentEvidence(value: unknown): boolean {
     && typeof value.description === 'string'
     && typeof value.source === 'string'
     && typeof value.status === 'string'
+    && ['eligible', 'ineligible', 'missing'].includes(String(value.eligibility))
+    && ['none', 'partial', 'all'].includes(String(value.syntheticStatus))
     && Number.isFinite(value.sourceTimestamp);
+}
+
+function isContextEvidence(value: unknown): boolean {
+  return isRecord(value)
+    && typeof value.evidenceId === 'string' && Boolean(value.evidenceId)
+    && typeof value.evidenceKey === 'string'
+    && ['external_api', 'official_registry', 'official_dataset', 'submitted_document', 'submitted_declaration', 'derived'].includes(String(value.sourceKind))
+    && typeof value.sourceLocator === 'string' && Boolean(value.sourceLocator)
+    && Number.isFinite(value.retrievedAt)
+    && typeof value.sourceVersion === 'string' && Boolean(value.sourceVersion)
+    && ['eligible', 'ineligible', 'missing'].includes(String(value.eligibility))
+    && typeof value.synthetic === 'boolean'
+    && ['authority_only', 'organizer_safe'].includes(String(value.visibility));
 }
 
 function isAssessmentWarning(value: unknown): boolean {

@@ -191,6 +191,7 @@ describe('computeResources', () => {
       resourceInputHash: calculation.resourceInputHash, formulaVersion: calculation.formulaVersion,
       configVersion: calculation.configVersion, sourceRegistryVersion: calculation.sourceRegistryVersion,
       items: calculation.items, confidenceLevel: 'prototype', authorityReviewRequired: true, computedAt: 1,
+      validationScope: 'provisional_risk_input',
     };
     expect(validateResourceRecommendation(recommendation)).toEqual({ ok: true, errors: [] });
     expect(validateResourceRecommendation({ ...recommendation, police: 1 }).ok).toBe(false);
@@ -278,6 +279,13 @@ describe('computeResources', () => {
       categories: [null] as unknown as ProvisionalAssessmentResult['categories'],
       validatedHazards: [null] as unknown as ProvisionalAssessmentResult['validatedHazards'],
     })).not.toThrow();
+
+    const duplicateHazards = assessmentResult('Low');
+    duplicateHazards.validatedHazards = [
+      { hazardId: ' Crowd.Entry ', hazardName: 'Crowd entry', categoryId: 'crowd', evidenceReferences: ['crowd'], rationale: 'Observed crowd entry pressure.' },
+      { hazardId: 'crowd.entry', hazardName: 'Crowd entry duplicate', categoryId: 'crowd', evidenceReferences: ['crowd'], rationale: 'Duplicate normalized identifier.' },
+    ];
+    expect(computeResources(calculationInput(duplicateHazards))).toMatchObject({ ok: false, code: 'invalid_input' });
   });
 });
 

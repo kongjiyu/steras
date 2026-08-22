@@ -286,6 +286,7 @@ function benignContextSnapshot() {
   return {
     weather: {
       data: { forecast: 'Clear', temperature: 25, humidity: 50, windSpeed: 1, precipitationProbability: 0, severeAlert: false },
+      measurementStatus: 'available',
       source: 'openweather', freshness: 'fresh', fetchedAt: 1, expiresAt: 2, forecastFor: 1,
     },
     calendar: {
@@ -293,7 +294,7 @@ function benignContextSnapshot() {
       holidayDistanceDays: 10, sourceVersion: 'test', sourceTimestamp: 1,
     },
     venue: { matched: true, venueId: 'venue-1', submittedCapacity: 1_000, registeredCapacity: 1_000, capacityDifference: 0, fetchedAt: 1 },
-    incidentHistory: { matched: true, venueId: 'venue-1', incidentIds: [], total: 0, bySeverity: { low: 0, medium: 0, high: 0 }, fetchedAt: 1 },
+    incidentHistory: { matched: true, venueId: 'venue-1', incidentIds: [], total: 0, bySeverity: { low: 0, medium: 0, high: 0 }, syntheticStatus: 'none', fetchedAt: 1 },
   };
 }
 
@@ -313,7 +314,7 @@ function officialResources(assessmentId = 'v1'): ResourceRecommendation {
     schemaVersion: RESOURCE_SCHEMA_VERSION, stage: 'official', revision: 1, supersedesResourceId: null,
     assessmentReference: { stage: 'official', assessmentId, proposalId: 'proposal-1', finalizedAt: 2, finalizedBy: 'system' },
     resourceInputHash: calculation.resourceInputHash, formulaVersion: RESOURCE_FORMULA_VERSION, configVersion: RESOURCE_CONFIG_VERSION, sourceRegistryVersion: RESOURCE_SOURCE_REGISTRY_VERSION,
-    items, confidenceLevel: 'authority_validated', authorityReviewRequired: false, computedAt: 2,
+    items, confidenceLevel: 'authority_validated', authorityReviewRequired: false, validationScope: 'official_risk_input_only', computedAt: 2,
   } as unknown as ResourceRecommendation;
 }
 

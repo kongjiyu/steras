@@ -103,6 +103,7 @@ const mkRecommendation = (o: ResourceOverrides): ResourceRecommendation => {
     items,
     confidenceLevel: stage === 'official' ? 'authority_validated' : 'prototype',
     authorityReviewRequired: stage !== 'official',
+    validationScope: stage === 'official' ? 'official_risk_input_only' : 'provisional_risk_input',
     notes: 'Indicative academic prototype guidance; not an operational deployment authorisation.',
     computedAt: o.computedAt,
   } as ResourceRecommendation;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getHolidayContext, isWeekendDate } from './holidays';
+import { getCalendarContext, getHolidayContext, isWeekendDate } from './holidays';
 
 describe('Malaysian holiday context', () => {
   it.each([
@@ -18,5 +18,12 @@ describe('Malaysian holiday context', () => {
   it('rejects non-finite timestamps with a clear error', () => {
     expect(() => getHolidayContext(Number.NaN)).toThrow('Holiday timestamp must be finite.');
     expect(() => isWeekendDate(Number.POSITIVE_INFINITY)).toThrow('Holiday timestamp must be finite.');
+  });
+
+  it('marks years outside the versioned 2026 dataset as unsupported', () => {
+    expect(getCalendarContext(Date.parse('2027-08-31T12:00:00+08:00'))).toMatchObject({
+      coverageStatus: 'unsupported_year',
+      isHolidayOrAdjacent: false,
+    });
   });
 });

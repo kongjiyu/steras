@@ -7,7 +7,7 @@ const app = initializeApp({
   projectId: process.env.FIREBASE_PROJECT_ID ?? process.env.GCLOUD_PROJECT ?? 'linkos-496505',
 });
 
-export const VENUES: Omit<Venue, 'venueId'>[] = [
+export const VENUES: Omit<Venue, 'venueId' | 'active'>[] = [
   { name: 'Axiata Arena', address: 'Bukit Jalil, Kuala Lumpur', capacity: 16_000, location: { lat: 3.057, lng: 101.691 }, riskNotes: 'Indoor arena, multiple exits' },
   { name: 'Dataran Merdeka', address: 'Kuala Lumpur City Centre', capacity: 50_000, location: { lat: 3.148, lng: 101.694 }, riskNotes: 'Open field with limited shade' },
   { name: 'KLCC Park', address: 'KLCC, Kuala Lumpur', capacity: 30_000, location: { lat: 3.157, lng: 101.711 }, riskNotes: 'Urban park near major roads' },
@@ -64,7 +64,7 @@ export async function seedVenues(): Promise<void> {
   for (const [venueIndex, value] of VENUES.entries()) {
     const venueId = stableVenueId(value.name);
     const incidents = generateIncidents(venueId, value.name, venueIndex);
-    const venue: Venue = { ...value, venueId, incidentCount: incidents.length };
+    const venue: Venue = { ...value, venueId, active: true, incidentCount: incidents.length };
     await db.collection(COLLECTIONS.VENUES).doc(venueId).set(venue);
     for (const [index, incident] of incidents.entries()) {
       await db.collection(COLLECTIONS.INCIDENTS).doc(`${venueId}-${String(index + 1).padStart(2, '0')}`).set(incident);

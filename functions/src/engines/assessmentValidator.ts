@@ -16,6 +16,7 @@ import {
 } from '@shared/types';
 import { ACTIVE_CATEGORY_SCHEMA } from '../config/categorySchema';
 import { CategoryHardRuleConstraint, evaluateCategoryHardRules } from './hardRuleEvaluator';
+import { hasCanonicalDuplicateHazardIds, isCanonicalEvidenceReferenceList } from './proposalContract';
 
 export type ProvisionalValidationResult =
   | { ok: true; warnings: ValidationWarning[]; result: ProvisionalAssessmentResult }
@@ -27,6 +28,18 @@ export function validateAndCalculateProvisional(
   now = Date.now(),
 ): ProvisionalValidationResult {
   const warnings: ValidationWarning[] = [];
+  const proposalCategoryIds = proposal.categories.map((category) => category.categoryId);
+  if (proposalCategoryIds.length !== ACTIVE_CATEGORY_SCHEMA.categories.length
+    || new Set(proposalCategoryIds).size !== proposalCategoryIds.length
+    || proposalCategoryIds.some((categoryId) => !ACTIVE_CATEGORY_SCHEMA.categories.some((definition) => definition.id === categoryId))) {
+    return invalid(warnings, 'MiniMax categories must contain every configured category exactly once.');
+  }
+  if (hasCanonicalDuplicateHazardIds(proposal.hazards.map((hazard) => hazard.hazardId))) {
+    return invalid(warnings, 'MiniMax hazards contain duplicate normalized hazard IDs.');
+  }
+  if ([...proposal.categories, ...proposal.hazards].some((item) => !isCanonicalEvidenceReferenceList(item.evidenceReferences))) {
+    return invalid(warnings, 'MiniMax proposal contains duplicate evidence references.');
+  }
   const eligibleEvidence = new Set(baseline.evidence.filter(isEligibleEvidence).map((item) => item.key));
   const hardRules = new Map(evaluateCategoryHardRules(baseline).map((rule) => [rule.categoryId, rule]));
   const categories: ValidatedCategoryResult[] = [];
@@ -117,6 +130,7 @@ export function validateAndCalculateProvisional(
 }
 
 function isEligibleEvidence(item: DeterministicCategoryResult['evidence'][number]): boolean {
+  if (item.eligibility !== 'eligible') return false;
   if (item.quality === 'missing') return false;
   return !new Set(['unavailable', 'unmatched', 'missing']).has(item.status.trim().toLowerCase());
 }

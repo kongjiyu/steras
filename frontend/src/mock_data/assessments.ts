@@ -34,10 +34,10 @@ function ratings(level: RiskLevel): [1 | 2 | 3 | 4 | 5, 1 | 2 | 3 | 4 | 5] {
 
 function context(eventId: string): AssessmentContextSnapshot {
   return {
-    weather: { data: { forecast: 'Demo forecast', temperature: 30, humidity: 70, windSpeed: 4, precipitationProbability: 25, severeAlert: false }, source: 'fallback', freshness: 'fallback', fetchedAt: hoursAgo(2), expiresAt: hoursAgo(1), forecastFor: hoursAgo(-24) },
-    calendar: { localDate: '2026-08-18', dayOfWeek: 'Tuesday', isWeekend: false, isHolidayOrAdjacent: false, sourceVersion: 'demo-calendar-v1', sourceTimestamp: hoursAgo(2) },
+    weather: { data: { forecast: 'Demo forecast', temperature: 30, humidity: 70, windSpeed: 4, precipitationProbability: 25, severeAlert: false }, measurementStatus: 'available', source: 'fallback', freshness: 'fallback', fetchedAt: hoursAgo(2), expiresAt: hoursAgo(1), forecastFor: hoursAgo(-24) },
+    calendar: { localDate: '2026-08-18', dayOfWeek: 'Tuesday', isWeekend: false, isHolidayOrAdjacent: false, sourceVersion: 'demo-calendar-v1', sourceTimestamp: hoursAgo(2), coverageStatus: 'verified' },
     venue: { matched: true, venueId: `${eventId}-venue`, submittedCapacity: 10_000, registeredCapacity: 10_000, fetchedAt: hoursAgo(2) },
-    incidentHistory: { matched: true, incidentIds: [], total: 0, bySeverity: { low: 0, medium: 0, high: 0 }, syntheticEvidence: true, fetchedAt: hoursAgo(2) },
+    incidentHistory: { matched: true, incidentIds: [], total: 0, bySeverity: { low: 0, medium: 0, high: 0 }, syntheticEvidence: true, syntheticStatus: 'all', fetchedAt: hoursAgo(2) },
   };
 }
 
@@ -45,7 +45,8 @@ function makeAssessment(eventId: string, versionId: string, attendance: number, 
   const level = levelFor(attendance);
   const [likelihood, severity] = ratings(level);
   const assessmentContext = context(eventId);
-  const evidence = categories.map((category) => ({ key: category.evidence, description: `${category.name} demo evidence`, sourceTimestamp: hoursAgo(2), source: 'synthetic demo fixture', status: 'synthetic', quality: 'declared' as const, confidenceScore: 60 }));
+  const evidence = categories.map((category) => ({ key: category.evidence, description: `${category.name} demo evidence`, sourceTimestamp: hoursAgo(2), source: 'synthetic demo fixture', status: 'synthetic', quality: 'declared' as const, confidenceScore: 60, eligibility: 'eligible' as const, syntheticStatus: 'all' as const }));
+  const contextEvidence = categories.map((category) => ({ evidenceId: `demo-${category.evidence}`, evidenceKey: category.evidence, sourceKind: 'derived' as const, sourceLocator: 'synthetic-demo-fixture', retrievedAt: hoursAgo(2), sourceVersion: 'demo-v1', eligibility: 'eligible' as const, synthetic: true, visibility: 'authority_only' as const }));
   const common = {
     assessmentId: versionId,
     eventId,
@@ -53,6 +54,7 @@ function makeAssessment(eventId: string, versionId: string, attendance: number, 
     schemaVersion: ASSESSMENT_SCHEMA_VERSION as typeof ASSESSMENT_SCHEMA_VERSION,
     contextSnapshot: assessmentContext,
     evidence,
+    contextEvidence,
     sourceTimestamps: { weather: hoursAgo(2), holiday: hoursAgo(2), venue: hoursAgo(2), incidents: hoursAgo(2) },
     contextStatuses: { weather: 'fallback', venue: 'matched', incidents: 'synthetic' },
     assessmentReadiness: index === 1 ? 'insufficient_data' as const : 'complete' as const,

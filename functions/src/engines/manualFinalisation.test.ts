@@ -139,12 +139,13 @@ function manualReview(): ManualReviewRiskAssessment {
     assessmentId: 'a1', eventId: 'event-1', versionId: 'v1', schemaVersion: ASSESSMENT_SCHEMA_VERSION,
     status: 'manual_review_required', aiProposal: { status: 'timeout', model: 'MiniMax-M3', promptVersion: 'p1', responseSchemaVersion: 's1', retryable: true, errorSummary: 'Timed out', cacheStatus: 'not-applicable', generatedAt: 5 },
     contextSnapshot: {
-      weather: { data: { forecast: 'Clear', temperature: 25, humidity: 50, windSpeed: 1, precipitationProbability: 0, severeAlert: false }, source: 'openweather', freshness: 'fresh', fetchedAt: 1, expiresAt: 2, forecastFor: 1 },
-      calendar: { localDate: '2026-08-21', dayOfWeek: 'Friday', isWeekend: false, isHolidayOrAdjacent: false, sourceVersion: 'test', sourceTimestamp: 1 },
+      weather: { data: { forecast: 'Clear', temperature: 25, humidity: 50, windSpeed: 1, precipitationProbability: 0, severeAlert: false }, measurementStatus: 'available', source: 'openweather', freshness: 'fresh', fetchedAt: 1, expiresAt: 2, forecastFor: 1 },
+      calendar: { localDate: '2026-08-21', dayOfWeek: 'Friday', isWeekend: false, isHolidayOrAdjacent: false, sourceVersion: 'test', sourceTimestamp: 1, coverageStatus: 'verified' },
       venue: { matched: true, submittedCapacity: 1000, registeredCapacity: 1000, fetchedAt: 1 },
-      incidentHistory: { matched: true, incidentIds: [], total: 0, bySeverity: { low: 0, medium: 0, high: 0 }, fetchedAt: 1 },
+      incidentHistory: { matched: true, incidentIds: [], total: 0, bySeverity: { low: 0, medium: 0, high: 0 }, syntheticStatus: 'none', fetchedAt: 1 },
     },
-    evidence: [{ key: 'crowd', description: 'Expected attendance and venue capacity', sourceTimestamp: 1, source: 'event-version', status: 'available', quality: 'verified' }],
+    evidence: [{ key: 'crowd', description: 'Expected attendance and venue capacity', sourceTimestamp: 1, source: 'event-version', status: 'available', quality: 'verified', confidenceScore: 100, eligibility: 'eligible', syntheticStatus: 'none' }],
+    contextEvidence: [{ evidenceId: 'document-evidence', evidenceKey: 'compliance', sourceKind: 'submitted_document', sourceLocator: 'event_documents/event-1/v1/evidence.pdf', retrievedAt: 1, sourceVersion: 'storage-generation:1', eligibility: 'eligible', synthetic: false, visibility: 'authority_only' }],
     sourceTimestamps: {}, contextStatuses: {}, assessmentReadiness: 'provisional', complianceStatus: 'review_required', complianceChecks: [], dataConfidenceScore: 50, dataConfidenceLevel: 'medium',
     inputHash: 'assessment-hash', createdAt: 5, warnings: [], authorityReviewRequired: true, manualReviewReason: 'AI timeout',
   };

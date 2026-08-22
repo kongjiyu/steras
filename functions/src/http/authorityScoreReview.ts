@@ -543,6 +543,7 @@ function finalizeInTransaction(
     items,
     confidenceLevel: 'authority_validated',
     authorityReviewRequired: false,
+    validationScope: 'official_risk_input_only',
     notes: 'Official deterministic planning ranges based on finalized human-reviewed risk scores.',
     computedAt: now,
   };
@@ -578,7 +579,7 @@ function organizerSummary(assessment: OfficialRiskAssessment, resource: Resource
     revision: resource.revision,
     stage: resource.stage,
     items: Object.fromEntries(RESOURCE_KEYS.map((key) => [key, { baseline: resource.items[key].baseline, planningRange: { ...resource.items[key].planningRange } }])) as OrganizerResourceRecommendation['items'],
-    disclaimer: 'Official authority-validated planning ranges for the finalized assessment.',
+    disclaimer: 'Planning ranges derived from an official risk assessment; resource ratios remain internal prototype inputs.',
   };
   return {
     assessmentId: assessment.assessmentId, eventId: assessment.eventId, versionId: assessment.versionId,
@@ -750,7 +751,9 @@ function isCurrentAssessmentIdentity(
     || !Array.isArray(assessment.aiProposal.hazards)
     || !assessment.aiProposal.categories.every((category) => category && typeof category === 'object')
     || !assessment.aiProposal.hazards.every((hazard) => hazard && typeof hazard === 'object')
-    || !Array.isArray(assessment.evidence)) return false;
+    || !Array.isArray(assessment.evidence)
+    || !Array.isArray(assessment.contextEvidence) || assessment.contextEvidence.length === 0
+    || new Set(assessment.contextEvidence.map((item) => item?.evidenceId)).size !== assessment.contextEvidence.length) return false;
   if (validateProvisionalAssessmentResult(assessment.provisionalResult).length > 0
     || validateAssessmentResultAgainstProposal(assessment.provisionalResult, assessment.aiProposal).length > 0) return false;
   if (assessment.status !== 'provisional_ready'
@@ -768,7 +771,7 @@ function isCurrentAssessmentIdentity(
     if (new Set(activeHeadIds).size !== activeHeadIds.length) return false;
   }
   const eligibleEvidence = new Set(assessment.evidence
-    .filter((item) => item && item.quality !== 'missing'
+    .filter((item) => item && item.eligibility === 'eligible' && item.quality !== 'missing'
       && typeof item.status === 'string'
       && !['unavailable', 'unmatched', 'missing'].includes(item.status.trim().toLowerCase()))
     .map((item) => item.key));

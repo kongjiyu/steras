@@ -16,25 +16,17 @@ const categorySchema_1 = require("../config/categorySchema");
 const hardRuleEvaluator_1 = require("./hardRuleEvaluator");
 const minimax_1 = require("../config/minimax");
 const standardsRegistry_1 = require("../config/standardsRegistry");
+const proposalContract_1 = require("./proposalContract");
 var minimax_2 = require("../config/minimax");
 Object.defineProperty(exports, "DEFAULT_MINIMAX_BASE_URL", { enumerable: true, get: function () { return minimax_2.DEFAULT_MINIMAX_BASE_URL; } });
 Object.defineProperty(exports, "DEFAULT_MINIMAX_MODEL", { enumerable: true, get: function () { return minimax_2.DEFAULT_MINIMAX_MODEL; } });
 exports.PROMPT_VERSION = 'v5.0.0-prd-numeric-proposal';
-exports.AI_RESPONSE_SCHEMA_VERSION = '2026-08-18-m2-proposal-v3';
+exports.AI_RESPONSE_SCHEMA_VERSION = '2026-08-21-m2-proposal-v4';
 exports.AI_TIMEOUT_MS = 30_000;
 const MAX_RESPONSE_CHARS = 24_000;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1_000;
 const MAX_CACHE_ENTRIES = 200;
-const EVIDENCE_KEYS = new Set([
-    'weather', 'crowd', 'venue', 'history', 'holiday', 'public_health',
-    'sanitation', 'medical', 'security', 'transport', 'compliance',
-]);
 const CONFIDENCE_LEVELS = new Set(['low', 'medium', 'high']);
-const ALLOWED_CONTROL_IDS = new Set([
-    'crowd-management-plan', 'evacuation-plan-tested', 'verified-emergency-access',
-    'valid-fire-certificate', 'severe-weather-plan', 'free-drinking-water',
-    'authority-coordination', 'medical-plan', 'traffic-management-plan',
-]);
 const RESPONSE_KEYS = new Set(['hazards', 'categories']);
 const HAZARD_KEYS = new Set(['hazardId', 'hazardName', 'categoryId', 'evidenceReferences', 'rationale']);
 const CATEGORY_KEYS = new Set([
@@ -182,19 +174,12 @@ function buildAllowedInput(event, context, baseline) {
                 evacuationPlanTested: details.riskProfile.evacuationPlanTested,
                 authorityCoordinationConfirmed: details.riskProfile.authorityCoordinationConfirmed,
                 nearestHospitalTravelMinutes: details.riskProfile.nearestHospitalTravelMinutes,
-                verifiedControlIds: details.riskProfile.verifiedControlIds?.filter((controlId) => ALLOWED_CONTROL_IDS.has(controlId)),
             } : {},
         },
         context: {
             weather: {
-                data: {
-                    forecast: context.weather.data.forecast,
-                    temperature: context.weather.data.temperature,
-                    humidity: context.weather.data.humidity,
-                    windSpeed: context.weather.data.windSpeed,
-                    precipitationProbability: context.weather.data.precipitationProbability,
-                    severeAlert: context.weather.data.severeAlert,
-                },
+                measurementStatus: context.weather.data ? 'available' : 'unavailable',
+                ...(context.weather.data ? { data: context.weather.data } : { unavailableReason: context.weather.unavailableReason ?? 'provider_unavailable' }),
                 source: context.weather.source,
                 freshness: context.weather.freshness,
                 forecastFor: context.weather.forecastFor,
@@ -203,8 +188,14 @@ function buildAllowedInput(event, context, baseline) {
                 localDate: context.calendar.localDate,
                 dayOfWeek: context.calendar.dayOfWeek,
                 isWeekend: context.calendar.isWeekend,
-                isHolidayOrAdjacent: context.calendar.isHolidayOrAdjacent,
-                holidayDistanceDays: context.calendar.holidayDistanceDays,
+                coverageStatus: context.calendar.coverageStatus,
+                ...(context.calendar.coverageStatus === 'verified'
+                    ? {
+                        isHolidayOrAdjacent: context.calendar.isHolidayOrAdjacent,
+                        holidayDistanceDays: context.calendar.holidayDistanceDays,
+                        holidayName: context.calendar.holidayName,
+                    }
+                    : { unavailableReason: 'holiday_dataset_year_unsupported' }),
             },
             venue: {
                 matched: context.venue.matched,
@@ -228,6 +219,7 @@ function buildAllowedInput(event, context, baseline) {
                 hospitalTransferRatePerThousand: context.incidentHistory.hospitalTransferRatePerThousand,
                 incidentRatePerThousandAttendeeHours: context.incidentHistory.incidentRatePerThousandAttendeeHours,
                 syntheticEvidence: context.incidentHistory.syntheticEvidence,
+                syntheticStatus: context.incidentHistory.syntheticStatus ?? 'none',
             },
         },
         evidence: baseline.evidence.map((item) => ({
@@ -276,7 +268,7 @@ Rules:
 - categories must contain exactly these IDs once each: ${categoryIds.join(', ')}
 - likelihood and severity must be integers from 1 to 5
 - confidence must be low, medium, or high
-- evidence references may only use: ${[...EVIDENCE_KEYS].join(', ')}
+- evidence references may only use: ${[...proposalContract_1.CANONICAL_EVIDENCE_KEYS].join(', ')}
 - concerns and missingInformation are arrays of short strings; use [] when none
 - hazards may be empty, but every hazard must belong to an allowed category
 - do not add fields, Markdown, resource quantities, approval decisions, or personal data.`;
@@ -285,6 +277,7 @@ function readHazards(value, allowedCategoryIds) {
     if (!Array.isArray(value) || value.length > 40)
         throw new AIProposalError('invalid', 'hazards must be an array of at most 40 items.');
     const allowed = new Set(allowedCategoryIds);
+    const seenHazardIds = new Set();
     return value.map((item, index) => {
         if (!isRecord(item))
             throw new AIProposalError('invalid', `hazards[${index}] must be an object.`);
@@ -292,8 +285,13 @@ function readHazards(value, allowedCategoryIds) {
         const categoryId = readText(item.categoryId, `hazards[${index}].categoryId`, 100);
         if (!allowed.has(categoryId))
             throw new AIProposalError('invalid', `hazards[${index}] has an unknown categoryId.`);
+        const hazardId = readText(item.hazardId, `hazards[${index}].hazardId`, 100);
+        const normalizedHazardId = (0, proposalContract_1.canonicalHazardId)(hazardId);
+        if (seenHazardIds.has(normalizedHazardId))
+            throw new AIProposalError('invalid', `hazards contains a duplicate hazardId: ${hazardId}.`);
+        seenHazardIds.add(normalizedHazardId);
         return {
-            hazardId: readText(item.hazardId, `hazards[${index}].hazardId`, 100),
+            hazardId,
             hazardName: readText(item.hazardName, `hazards[${index}].hazardName`, 200),
             categoryId: categoryId,
             evidenceReferences: readEvidenceKeys(item.evidenceReferences, `hazards[${index}].evidenceReferences`),
@@ -341,8 +339,10 @@ function readConfidence(value, field) {
     return value;
 }
 function readEvidenceKeys(value, field) {
-    const keys = readStringArray(value, field, EVIDENCE_KEYS.size, 100);
-    if (!keys.every((key) => EVIDENCE_KEYS.has(key))) {
+    const keys = readStringArray(value, field, proposalContract_1.CANONICAL_EVIDENCE_KEYS.size, 100);
+    if (!(0, proposalContract_1.isCanonicalEvidenceReferenceList)(keys)) {
+        if (new Set(keys).size !== keys.length)
+            throw new AIProposalError('invalid', `${field} contains duplicate evidence keys.`);
         throw new AIProposalError('invalid', `${field} contains an unknown evidence key.`);
     }
     return keys;

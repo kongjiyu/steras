@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EventDetails } from '@shared/types';
-import { requiredAuthoritiesFor, validateEventDetails } from './submitEvent';
+import { isValidEvidenceMetadata, requiredAuthoritiesFor, validateCanonicalVenueRecord, validateEventDetails, validateEvidencePaths } from './submitEvent';
 
 const validDetails: EventDetails = {
   name: 'KL Cultural Festival',
@@ -19,7 +19,31 @@ const validDetails: EventDetails = {
   organizerName: 'Organizer',
   organizerEmail: 'organizer@example.com',
   organizerPhone: '+60123456789',
+  riskProfile: completeRiskProfile(),
 };
+
+function completeRiskProfile() {
+  return {
+    internationalAttendees: false,
+    alcoholServed: false,
+    foodServed: false,
+    freeDrinkingWater: true,
+    ticketedEntry: true,
+    overnightAccommodation: false,
+    pyrotechnics: false,
+    temporaryStructures: false,
+    rivalryOrTensionExpected: false,
+    crowdManagementPlan: true,
+    trafficManagementPlan: true,
+    severeWeatherPlan: true,
+    medicalPlan: true,
+    evacuationPlanTested: true,
+    authorityCoordinationConfirmed: true,
+    vulnerableAttendeesPercent: 10,
+    standingAttendeesPercent: 20,
+    nearestHospitalTravelMinutes: 15,
+  };
+}
 
 describe('validateEventDetails', () => {
   it('accepts a complete future event', () => {
@@ -48,6 +72,46 @@ describe('validateEventDetails', () => {
       'Start datetime must be in the future.',
       'End datetime must be after the start datetime.',
     ]));
+  });
+
+  it('requires every all-hazards declaration and rejects organizer-verified controls', () => {
+    const incomplete = { ...validDetails, riskProfile: { ...validDetails.riskProfile } };
+    delete (incomplete.riskProfile as Record<string, unknown>).pyrotechnics;
+    expect(validateEventDetails(incomplete, 1_000).join(' ')).toMatch(/pyrotechnics must be answered/i);
+    expect(validateEventDetails({
+      ...validDetails,
+      riskProfile: { ...validDetails.riskProfile, verifiedControlIds: ['medical-plan'] },
+    }, 1_000).join(' ')).toMatch(/unsupported fields: verifiedControlIds/i);
+  });
+
+  it('rejects non-finite and out-of-range risk-profile values', () => {
+    expect(validateEventDetails({ ...validDetails, riskProfile: { ...validDetails.riskProfile, vulnerableAttendeesPercent: Number.NaN } }, 1_000).join(' ')).toMatch(/Vulnerable attendees percent/);
+    expect(validateEventDetails({ ...validDetails, riskProfile: { ...validDetails.riskProfile, standingAttendeesPercent: 101 } }, 1_000).join(' ')).toMatch(/Standing attendees percent/);
+  });
+});
+
+describe('submission evidence and registry venue integrity', () => {
+  it('enforces 1-20 unique version-owned evidence paths', () => {
+    expect(validateEvidencePaths('event-1', 'v1', [])).not.toEqual([]);
+    expect(validateEvidencePaths('event-1', 'v1', ['event_documents/other/v1/a.pdf'])).not.toEqual([]);
+    expect(validateEvidencePaths('event-1', 'v1', Array.from({ length: 21 }, (_, index) => `event_documents/event-1/v1/${index}.pdf`))).not.toEqual([]);
+    expect(validateEvidencePaths('event-1', 'v1', ['event_documents/event-1/v1/a.pdf'])).toEqual([]);
+  });
+
+  it('enforces allowed MIME types and the 10 MB boundary', () => {
+    expect(isValidEvidenceMetadata({ contentType: 'application/pdf', size: String(10 * 1024 * 1024), generation: '1' })).toBe(true);
+    expect(isValidEvidenceMetadata({ contentType: 'text/plain', size: '100', generation: '1' })).toBe(false);
+    expect(isValidEvidenceMetadata({ contentType: 'image/png', size: String(10 * 1024 * 1024 + 1), generation: '1' })).toBe(false);
+    expect(isValidEvidenceMetadata({ contentType: 'image/png', size: '0', generation: '1' })).toBe(false);
+    expect(isValidEvidenceMetadata({ contentType: 'image/png', size: '100' })).toBe(false);
+  });
+
+  it('requires exact identity binding to an active canonical venue', () => {
+    const venue = { active: true, name: validDetails.venueName, address: validDetails.venueAddress, capacity: 2_000, location: validDetails.venueLocation };
+    expect(validateCanonicalVenueRecord(validDetails, venue)).toEqual([]);
+    expect(validateCanonicalVenueRecord(validDetails, { ...venue, active: false })).not.toEqual([]);
+    expect(validateCanonicalVenueRecord(validDetails, { ...venue, capacity: 2_001 })).not.toEqual([]);
+    expect(validateCanonicalVenueRecord(validDetails, { ...venue, location: { lat: 0, lng: 0 } })).not.toEqual([]);
   });
 });
 

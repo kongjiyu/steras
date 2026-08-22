@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { AssessmentContextSnapshot, EventRecord, hirarcRiskLevelFor, riskLevelFor } from '@shared/types';
-import { computeCategoryBasedAssessment } from './ruleBased';
+import { buildContextEvidenceProvenance, computeCategoryBasedAssessment } from './ruleBased';
 
 const event: EventRecord = {
   eventId: 'event-1',
   organizerId: 'organizer-1',
   status: 'Pending',
   currentVersionNumber: 1,
-  draftDocumentPaths: [],
+  draftDocumentPaths: ['event_documents/event-1/v1/evidence.pdf'],
   requiredAuthorities: ['PDRM'],
   createdAt: 1,
   updatedAt: 1,
@@ -29,12 +29,14 @@ const event: EventRecord = {
     organizerName: 'Private Organizer',
     organizerEmail: 'private@example.com',
     organizerPhone: '+60000000000',
+    riskProfile: completeRiskProfile(),
   },
 };
 
 const context: AssessmentContextSnapshot = {
   weather: {
     data: { forecast: 'Thunderstorm', temperature: 31, humidity: 85, windSpeed: 4, precipitationProbability: 80, severeAlert: true },
+    measurementStatus: 'available',
     source: 'openweather',
     freshness: 'fresh',
     fetchedAt: 100,
@@ -50,6 +52,7 @@ const context: AssessmentContextSnapshot = {
     holidayDistanceDays: 0,
     sourceVersion: 'test-holidays',
     sourceTimestamp: 300,
+    coverageStatus: 'verified',
   },
   venue: {
     matched: true,
@@ -65,6 +68,7 @@ const context: AssessmentContextSnapshot = {
     incidentIds: [],
     total: 0,
     bySeverity: { low: 0, medium: 0, high: 0 },
+    syntheticStatus: 'none',
     fetchedAt: 200,
   },
 };
@@ -111,20 +115,13 @@ describe('computeCategoryBasedAssessment', () => {
     expect(result.officialRiskLevel).toBe(hirarcRiskLevelFor(dominant.residualMatrixScore));
   });
 
-  it('does not credit declared-only controls, but credits verified controls', () => {
+  it('does not credit organizer-declared controls as verified controls', () => {
     const declared = computeCategoryBasedAssessment(withDetails({
       riskProfile: { severeWeatherPlan: true },
     }), context, 1);
-    const verified = computeCategoryBasedAssessment(withDetails({
-      riskProfile: {
-        severeWeatherPlan: true,
-        verifiedControlIds: ['severe-weather-plan'],
-      },
-    }), context, 1);
     const declaredHazard = declared.hazards!.find((hazard) => hazard.hazardId === 'weather.severe')!;
-    const verifiedHazard = verified.hazards!.find((hazard) => hazard.hazardId === 'weather.severe')!;
     expect(declaredHazard.residualSeverity).toBe(declaredHazard.inherentSeverity);
-    expect(verifiedHazard.residualSeverity).toBe(declaredHazard.inherentSeverity - 1);
+    expect(declaredHazard.controls.find((control) => control.controlId === 'severe-weather-plan')?.status).toBe('declared');
   });
 
   it('separates readiness and compliance from the risk score', () => {
@@ -151,10 +148,79 @@ describe('computeCategoryBasedAssessment', () => {
     expect(result.assessmentReadiness).toBe('insufficient_data');
     expect(result.dataConfidenceLevel).toBe('low');
   });
+
+  it('uses a conservative weather floor without reading placeholder measurements outside the forecast horizon', () => {
+    const result = computeCategoryBasedAssessment(event, {
+      ...context,
+      weather: {
+        data: null, measurementStatus: 'unavailable', unavailableReason: 'outside_forecast_horizon',
+        source: 'fallback', freshness: 'not_assessable_yet', fetchedAt: 1, expiresAt: 1,
+        forecastFor: event.eventDetails.startDatetime,
+      },
+    }, 1);
+    expect(result.assessmentReadiness).toBe('provisional');
+    expect(result.hazards?.find((hazard) => hazard.hazardId === 'weather.severe')?.inherentLikelihood).toBeGreaterThanOrEqual(3);
+    expect(result.evidence.find((item) => item.key === 'weather')).toMatchObject({ eligibility: 'eligible', quality: 'declared' });
+  });
+
+  it('records immutable declarations and each category-facing profile source in context provenance', () => {
+    const provenance = buildContextEvidenceProvenance(event, context, 500);
+    expect(provenance).toEqual(expect.arrayContaining([
+      expect.objectContaining({ evidenceId: 'context.event.crowd', evidenceKey: 'crowd', sourceKind: 'submitted_declaration', eligibility: 'eligible' }),
+      expect.objectContaining({ evidenceId: 'context.event.risk-profile.public_health', evidenceKey: 'public_health', eligibility: 'eligible' }),
+      expect.objectContaining({ evidenceId: 'context.event.risk-profile.sanitation', evidenceKey: 'sanitation', eligibility: 'eligible' }),
+      expect.objectContaining({ evidenceId: 'context.event.risk-profile.medical', evidenceKey: 'medical', eligibility: 'eligible' }),
+      expect.objectContaining({ evidenceId: 'context.event.risk-profile.security', evidenceKey: 'security', eligibility: 'eligible' }),
+      expect.objectContaining({ evidenceId: 'context.event.risk-profile.transport', evidenceKey: 'transport', eligibility: 'eligible' }),
+    ]));
+    expect(new Set(provenance.map((item) => item.evidenceId)).size).toBe(provenance.length);
+  });
+
+  it('records the verified Storage generation and does not promote missing objects', () => {
+    const provenance = buildContextEvidenceProvenance(event, context, 500, [
+      { path: event.draftDocumentPaths[0], status: 'missing', retrievedAt: 450, sourceVersion: 'missing', reason: 'storage_object_missing' },
+    ]);
+    expect(provenance.find((item) => item.sourceKind === 'submitted_document')).toMatchObject({
+      eligibility: 'missing',
+      eligibilityReason: 'storage_object_missing',
+      retrievedAt: 450,
+      sourceVersion: 'missing',
+    });
+  });
 });
 
 function withDetails(details: Partial<EventRecord['eventDetails']>): EventRecord {
-  return { ...event, eventDetails: { ...event.eventDetails, ...details } };
+  return {
+    ...event,
+    eventDetails: {
+      ...event.eventDetails,
+      ...details,
+      riskProfile: { ...event.eventDetails.riskProfile, ...details.riskProfile },
+    },
+  };
+}
+
+function completeRiskProfile() {
+  return {
+    internationalAttendees: false,
+    alcoholServed: false,
+    foodServed: false,
+    freeDrinkingWater: true,
+    ticketedEntry: true,
+    overnightAccommodation: false,
+    pyrotechnics: false,
+    temporaryStructures: false,
+    rivalryOrTensionExpected: false,
+    crowdManagementPlan: true,
+    trafficManagementPlan: true,
+    severeWeatherPlan: true,
+    medicalPlan: true,
+    evacuationPlanTested: true,
+    authorityCoordinationConfirmed: true,
+    vulnerableAttendeesPercent: 10,
+    standingAttendeesPercent: 20,
+    nearestHospitalTravelMinutes: 15,
+  };
 }
 
 describe('riskLevelFor', () => {

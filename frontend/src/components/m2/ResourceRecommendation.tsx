@@ -31,14 +31,14 @@ export default function ResourceRecommendation({
         <span>Config <strong className="text-ink-700">{recommendation.configVersion}</strong></span>
         <span>Revision <strong className="text-ink-700">{recommendation.revision}</strong></span>
         <span className={recommendation.confidenceLevel === 'authority_validated' ? 'text-status-approved' : 'text-gold-600'}>
-          <strong>{recommendation.confidenceLevel === 'authority_validated' ? manualOfficial ? 'Admin manual official' : 'Authority validated' : 'Prototype guidance'}</strong>
+          <strong>{recommendation.confidenceLevel === 'authority_validated' ? manualOfficial ? 'Admin manual risk input' : 'Official risk input only' : 'Prototype guidance'}</strong>
         </span>
       </div>
 
       {recommendation.notes && <p className="border-l-2 border-brand-200 pl-3 text-xs leading-5 text-ink-600">{recommendation.notes}</p>}
 
       <p className="border-l-4 border-gold-300 bg-gold-50 p-3 text-xs leading-5 text-ink-700">
-        These are internal prototype planning ranges, not statutory or authority-issued minimums. Assigned authorities must validate the resources in their remit.
+        These are internal prototype planning ranges, not statutory or authority-issued minimums. Finalising the risk score does not validate these resource ratios; they require a separate future resource-review workflow.
       </p>
 
       {showRationales && (
@@ -51,11 +51,13 @@ export default function ResourceRecommendation({
                 <div key={key} className="grid gap-2 py-3 text-xs sm:grid-cols-[9rem_minmax(0,1fr)]">
                   <div>
                     <p className="font-semibold text-ink-800">{label}</p>
-                    <p className="mt-0.5 text-ink-500">Review: {item.reviewingAuthority}</p>
+                    <p className="mt-0.5 text-ink-500">Mapped authority: {item.reviewingAuthority}</p>
                   </div>
                   <div className="text-ink-600">
                     {item.assumptions.map((assumption) => <p key={assumption.assumptionId}>{assumption.statement}</p>)}
-                    <p className="mt-1 text-ink-500">Confidence: {item.confidence} · {item.authorityReviewRequired ? 'authority review required' : 'review complete'}</p>
+                    <p className="mt-1 text-ink-500">
+                      Risk input: {item.authorityReviewRequired ? 'provisional' : 'finalized'} · resource ratio: prototype unverified
+                    </p>
                     <ul className="mt-2 space-y-1 text-ink-500">
                       {item.inputReferences.map((input) => <li key={input.inputId}>Input {input.path}: <strong className="text-ink-700">{String(input.value)}</strong></li>)}
                     </ul>

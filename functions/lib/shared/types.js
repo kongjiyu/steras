@@ -1,7 +1,7 @@
 "use strict";
 /** Shared runtime-free contracts used by the React app and Cloud Functions. */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CATEGORY_SCHEMA_STATUS = exports.PROVISIONAL_FORMULA_VERSION = exports.HARD_RULE_VERSION = exports.SCORING_LOGIC_VERSION = exports.CATEGORY_SCHEMA_VERSION = exports.COLLECTIONS = exports.RESOURCE_KEYS = exports.RESOURCE_SOURCE_REGISTRY_VERSION = exports.RESOURCE_CONFIG_VERSION = exports.RESOURCE_FORMULA_VERSION = exports.RESOURCE_SCHEMA_VERSION = exports.MANUAL_OFFICIAL_FORMULA_VERSION = exports.MANUAL_ASSESSMENT_SCHEMA_VERSION = exports.OFFICIAL_FORMULA_VERSION = exports.SCORE_RESOLUTION_SCHEMA_VERSION = exports.SCORE_REVIEW_SCHEMA_VERSION = exports.ASSESSMENT_SCHEMA_VERSION = exports.EVENT_STATUSES = exports.EVENT_TYPES = void 0;
+exports.CATEGORY_SCHEMA_STATUS = exports.PROVISIONAL_FORMULA_VERSION = exports.HARD_RULE_VERSION = exports.SCORING_LOGIC_VERSION = exports.CATEGORY_SCHEMA_VERSION = exports.COLLECTIONS = exports.RESOURCE_KEYS = exports.RESOURCE_SOURCE_REGISTRY_VERSION = exports.RESOURCE_CONFIG_VERSION = exports.RESOURCE_FORMULA_VERSION = exports.RESOURCE_SCHEMA_VERSION = exports.MANUAL_OFFICIAL_FORMULA_VERSION = exports.MANUAL_ASSESSMENT_SCHEMA_VERSION = exports.OFFICIAL_FORMULA_VERSION = exports.SCORE_RESOLUTION_SCHEMA_VERSION = exports.SCORE_REVIEW_SCHEMA_VERSION = exports.WEATHER_POLICY_VERSION = exports.VENUE_BINDING_VERSION = exports.EVIDENCE_SUFFICIENCY_VERSION = exports.CONTEXT_EVIDENCE_SCHEMA_VERSION = exports.ASSESSMENT_SCHEMA_VERSION = exports.EVENT_STATUSES = exports.EVENT_TYPES = void 0;
 exports.riskLevelFor = riskLevelFor;
 exports.hirarcRiskLevelFor = hirarcRiskLevelFor;
 exports.EVENT_TYPES = [
@@ -24,13 +24,17 @@ exports.EVENT_STATUSES = [
     { value: 'Rejected', label: 'Rejected', color: 'red' },
     { value: 'Withdrawn', label: 'Withdrawn', color: 'gray' },
 ];
-exports.ASSESSMENT_SCHEMA_VERSION = '2026-08-18-prd-v5';
+exports.ASSESSMENT_SCHEMA_VERSION = '2026-08-21-prd-v5-hardening-v1';
+exports.CONTEXT_EVIDENCE_SCHEMA_VERSION = '2026-08-21-context-evidence-v1';
+exports.EVIDENCE_SUFFICIENCY_VERSION = '2026-08-21-eight-category-v1';
+exports.VENUE_BINDING_VERSION = '2026-08-21-canonical-venue-v1';
+exports.WEATHER_POLICY_VERSION = '2026-08-21-no-placeholder-v1';
 exports.SCORE_REVIEW_SCHEMA_VERSION = '2026-08-20-authority-review-v1';
 exports.SCORE_RESOLUTION_SCHEMA_VERSION = '2026-08-20-score-resolution-v1';
 exports.OFFICIAL_FORMULA_VERSION = '2026-08-20-authority-official-v1';
 exports.MANUAL_ASSESSMENT_SCHEMA_VERSION = '2026-08-21-admin-manual-v1';
 exports.MANUAL_OFFICIAL_FORMULA_VERSION = '2026-08-21-admin-manual-official-v1';
-exports.RESOURCE_SCHEMA_VERSION = '2026-08-19-prd-v5';
+exports.RESOURCE_SCHEMA_VERSION = '2026-08-21-prd-v5-hardening-v1';
 exports.RESOURCE_FORMULA_VERSION = '2026-08-19-deterministic-v4';
 exports.RESOURCE_CONFIG_VERSION = '2026-08-19-prototype-v1';
 exports.RESOURCE_SOURCE_REGISTRY_VERSION = '2026-08-19-v1';

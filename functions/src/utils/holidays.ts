@@ -34,6 +34,9 @@ export interface HolidayContext {
 export function getHolidayContext(epochMs: number): HolidayContext {
   validateTimestamp(epochMs);
   const localDate = malaysiaDate(epochMs);
+  if (!localDate.startsWith('2026-')) {
+    return { isHolidayOrAdjacent: false, localDate, sourceVersion: HOLIDAY_DATA_VERSION, sourceTimestamp: HOLIDAY_DATA_UPDATED_AT };
+  }
   for (const distance of [0, -1, 1] as const) {
     const candidate = shiftIsoDate(localDate, distance);
     const holidayName = HOLIDAYS.get(candidate);
@@ -63,6 +66,7 @@ export function isWeekendDate(epochMs: number): boolean {
 
 export function getCalendarContext(epochMs: number): CalendarContextSnapshot {
   const holiday = getHolidayContext(epochMs);
+  const supported = holiday.localDate.startsWith('2026-');
   const dayOfWeek = new Intl.DateTimeFormat('en-MY', { timeZone: 'Asia/Kuala_Lumpur', weekday: 'long' }).format(epochMs);
   return {
     localDate: holiday.localDate,
@@ -73,6 +77,7 @@ export function getCalendarContext(epochMs: number): CalendarContextSnapshot {
     ...(holiday.distanceDays !== undefined ? { holidayDistanceDays: holiday.distanceDays } : {}),
     sourceVersion: holiday.sourceVersion,
     sourceTimestamp: holiday.sourceTimestamp,
+    coverageStatus: supported ? 'verified' : 'unsupported_year',
   };
 }
 

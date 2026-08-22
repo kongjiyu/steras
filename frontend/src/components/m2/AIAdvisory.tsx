@@ -5,9 +5,10 @@ interface AIAdvisoryProps {
   advisory: AIProposalAttempt | null;
   resultRiskLevel?: RiskLevel;
   showCategories?: boolean;
+  official?: boolean;
 }
 
-export default function AIAdvisory({ advisory, resultRiskLevel, showCategories = true }: AIAdvisoryProps) {
+export default function AIAdvisory({ advisory, resultRiskLevel, showCategories = true, official = false }: AIAdvisoryProps) {
   const available = advisory?.status === 'success';
   return (
     <div className="border-l-4 border-gold-300 bg-gold-50 p-4 sm:p-5" data-testid="ai-advisory">
@@ -26,7 +27,7 @@ export default function AIAdvisory({ advisory, resultRiskLevel, showCategories =
       {available && resultRiskLevel && (
         <div className="mt-4 flex flex-wrap items-center gap-3 border-y border-gold-200 py-3 text-xs text-ink-600">
           <RiskMeter level={resultRiskLevel} size="compact" />
-          <span>Validated provisional result: <strong>{resultRiskLevel}</strong>. Authority confirmation is still required.</span>
+          <span>{official ? 'Official AI-assisted result' : 'Validated provisional result'}: <strong>{resultRiskLevel}</strong>{official ? '.' : '. Authority confirmation is still required.'}</span>
         </div>
       )}
       {available && showCategories && (
@@ -39,6 +40,8 @@ export default function AIAdvisory({ advisory, resultRiskLevel, showCategories =
               </div>
               <p className="mt-2 text-xs leading-5 text-ink-600">{category.rationale}</p>
               <p className="mt-1 text-[11px] text-ink-500">Confidence: {category.confidence}</p>
+              {category.concerns.length > 0 && <p className="mt-2 text-[11px] leading-5 text-gold-700">Concerns: {category.concerns.join('; ')}</p>}
+              {category.missingInformation.length > 0 && <p className="mt-1 text-[11px] leading-5 text-gold-700">Missing information: {category.missingInformation.join('; ')}</p>}
             </div>
           ))}
         </div>

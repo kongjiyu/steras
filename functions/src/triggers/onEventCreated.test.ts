@@ -89,6 +89,6 @@ function recommendation(_label: string, revision: number, computedAt: number): R
     stage: 'provisional', revision, supersedesResourceId: revision === 1 ? null : `provisional-v1-${'a'.repeat(64)}`,
     assessmentReference: { stage: 'provisional', assessmentId: 'v1', proposalId: 'proposal-1' },
     resourceInputHash, formulaVersion: 'formula', configVersion: 'config', sourceRegistryVersion: 'sources',
-    items, confidenceLevel: 'prototype', authorityReviewRequired: true, computedAt,
+    items, confidenceLevel: 'prototype', authorityReviewRequired: true, validationScope: 'provisional_risk_input', computedAt,
   };
 }

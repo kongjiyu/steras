@@ -19,6 +19,7 @@ import { initializeApp } from 'firebase-admin/app';
 initializeApp();
 
 export { onEventCreated, onEventUpdated } from './triggers/onEventCreated';
+export { refreshAssessmentContext } from './triggers/refreshAssessmentContext';
 export { recomputeRiskAndResources } from './triggers/computeRisk';
 
 // HTTP-callable functions (e.g. for manual authority re-trigger, seed runs)

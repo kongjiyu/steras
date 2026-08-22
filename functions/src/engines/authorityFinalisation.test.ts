@@ -101,10 +101,10 @@ describe('authority score review contract', () => {
 function fixture(): ProvisionalRiskAssessment {
   const currentEvent = event();
   const context = {
-    weather: { data: { forecast: 'Clear', temperature: 25, humidity: 50, windSpeed: 1, precipitationProbability: 0, severeAlert: false }, source: 'openweather' as const, freshness: 'fresh' as const, fetchedAt: 1, expiresAt: 100, forecastFor: 10 },
-    calendar: { localDate: '2026-08-21', dayOfWeek: 'Friday', isWeekend: false, isHolidayOrAdjacent: false, sourceVersion: 'test', sourceTimestamp: 1 },
+    weather: { data: { forecast: 'Clear', temperature: 25, humidity: 50, windSpeed: 1, precipitationProbability: 0, severeAlert: false }, measurementStatus: 'available' as const, source: 'openweather' as const, freshness: 'fresh' as const, fetchedAt: 1, expiresAt: 100, forecastFor: 10 },
+    calendar: { localDate: '2026-08-21', dayOfWeek: 'Friday', isWeekend: false, isHolidayOrAdjacent: false, sourceVersion: 'test', sourceTimestamp: 1, coverageStatus: 'verified' as const },
     venue: { matched: true, venueId: 'venue-1', submittedCapacity: 2_000, registeredCapacity: 2_000, verifiedSafeCapacity: 2_000, capacityDifference: 0, fireCertificateStatus: 'valid' as const, emergencyAccessVerified: true, fetchedAt: 1 },
-    incidentHistory: { matched: true, venueId: 'venue-1', incidentIds: [], total: 0, bySeverity: { low: 0, medium: 0, high: 0 }, fetchedAt: 1 },
+    incidentHistory: { matched: true, venueId: 'venue-1', incidentIds: [], total: 0, bySeverity: { low: 0, medium: 0, high: 0 }, syntheticStatus: 'none' as const, fetchedAt: 1 },
   };
   const baseline = computeCategoryBasedAssessment(currentEvent, context, 1);
   const proposal: AISuccessfulProposal = {
@@ -116,7 +116,7 @@ function fixture(): ProvisionalRiskAssessment {
   if (!validation.ok) throw new Error(validation.reason);
   return {
     status: 'provisional_ready', assessmentId: 'v1', eventId: 'event-1', versionId: 'v1', schemaVersion: ASSESSMENT_SCHEMA_VERSION,
-    contextSnapshot: context, evidence: baseline.evidence, sourceTimestamps: {}, contextStatuses: {}, assessmentReadiness: baseline.assessmentReadiness!,
+    contextSnapshot: context, evidence: baseline.evidence, contextEvidence: [{ evidenceId: 'document-evidence', evidenceKey: 'compliance', sourceKind: 'submitted_document', sourceLocator: 'event_documents/event-1/v1/evidence.pdf', retrievedAt: 1, sourceVersion: 'storage-generation:1', eligibility: 'eligible', synthetic: false, visibility: 'authority_only' }], sourceTimestamps: {}, contextStatuses: {}, assessmentReadiness: baseline.assessmentReadiness!,
     complianceStatus: baseline.complianceStatus!, complianceChecks: baseline.complianceChecks!, dataConfidenceScore: baseline.dataConfidenceScore!,
     dataConfidenceLevel: baseline.dataConfidenceLevel!, inputHash: 'assessment-input-1', createdAt: 1, aiProposal: proposal,
     warnings: validation.warnings, authorityReviewRequired: true, provisionalResult: validation.result,

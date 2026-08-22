@@ -14,13 +14,15 @@
  *   - overrideResources     — validates and audits resource adjustments
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.overrideResources = exports.retryManualOfficialFinalisation = exports.submitAdminManualAssessment = exports.retryOfficialFinalisation = exports.resolveAuthorityScoreConflict = exports.submitAuthorityScoreReview = exports.makeAuthorityDecision = exports.withdrawEvent = exports.submitEvent = exports.manualRecompute = exports.recomputeRiskAndResources = exports.onEventUpdated = exports.onEventCreated = void 0;
+exports.overrideResources = exports.retryManualOfficialFinalisation = exports.submitAdminManualAssessment = exports.retryOfficialFinalisation = exports.resolveAuthorityScoreConflict = exports.submitAuthorityScoreReview = exports.makeAuthorityDecision = exports.withdrawEvent = exports.submitEvent = exports.manualRecompute = exports.recomputeRiskAndResources = exports.refreshAssessmentContext = exports.onEventUpdated = exports.onEventCreated = void 0;
 const app_1 = require("firebase-admin/app");
 // Initialize firebase-admin before any function code runs.
 (0, app_1.initializeApp)();
 var onEventCreated_1 = require("./triggers/onEventCreated");
 Object.defineProperty(exports, "onEventCreated", { enumerable: true, get: function () { return onEventCreated_1.onEventCreated; } });
 Object.defineProperty(exports, "onEventUpdated", { enumerable: true, get: function () { return onEventCreated_1.onEventUpdated; } });
+var refreshAssessmentContext_1 = require("./triggers/refreshAssessmentContext");
+Object.defineProperty(exports, "refreshAssessmentContext", { enumerable: true, get: function () { return refreshAssessmentContext_1.refreshAssessmentContext; } });
 var computeRisk_1 = require("./triggers/computeRisk");
 Object.defineProperty(exports, "recomputeRiskAndResources", { enumerable: true, get: function () { return computeRisk_1.recomputeRiskAndResources; } });
 // HTTP-callable functions (e.g. for manual authority re-trigger, seed runs)

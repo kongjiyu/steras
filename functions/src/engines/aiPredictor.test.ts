@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AssessmentContextSnapshot, DeterministicCategoryResult, EventRecord } from '@shared/types';
 import { ACTIVE_CATEGORY_SCHEMA } from '../config/categorySchema';
+import { validateAndCalculateProvisional } from './assessmentValidator';
+import { computeResources } from './resourceCalculator';
 import {
   AIProposalError,
   AI_TIMEOUT_MS,
@@ -23,16 +25,16 @@ const event = {
 } satisfies EventRecord;
 
 const context: AssessmentContextSnapshot = {
-  weather: { data: { forecast: 'Thunderstorm', temperature: 31, humidity: 85, windSpeed: 4, precipitationProbability: 80, severeAlert: true }, source: 'openweather', freshness: 'fresh', fetchedAt: 1, expiresAt: 2, forecastFor: 10_000 },
-  calendar: { localDate: '2026-07-21', dayOfWeek: 'Tuesday', isWeekend: false, isHolidayOrAdjacent: false, sourceVersion: 'test', sourceTimestamp: 1 },
+  weather: { data: { forecast: 'Thunderstorm', temperature: 31, humidity: 85, windSpeed: 4, precipitationProbability: 80, severeAlert: true }, measurementStatus: 'available', source: 'openweather', freshness: 'fresh', fetchedAt: 1, expiresAt: 2, forecastFor: 10_000 },
+  calendar: { localDate: '2026-07-21', dayOfWeek: 'Tuesday', isWeekend: false, isHolidayOrAdjacent: false, sourceVersion: 'test', sourceTimestamp: 1, coverageStatus: 'verified' },
   venue: { matched: true, venueId: 'venue-1', submittedCapacity: 10_000, registeredCapacity: 10_000, capacityDifference: 0, fetchedAt: 1 },
-  incidentHistory: { matched: true, venueId: 'venue-1', incidentIds: [], total: 0, bySeverity: { low: 0, medium: 0, high: 0 }, fetchedAt: 1 },
+  incidentHistory: { matched: true, venueId: 'venue-1', incidentIds: [], total: 0, bySeverity: { low: 0, medium: 0, high: 0 }, syntheticStatus: 'none', fetchedAt: 1 },
 };
 
 const categoryIds = ACTIVE_CATEGORY_SCHEMA.categories.map((category) => category.id);
 const baseline = {
   categoryAssignments: [], officialScore: 20, officialRiskLevel: 'Low', evidence: [
-    { key: 'weather', description: 'Thunderstorm', sourceTimestamp: 1, source: 'openweather', status: 'fresh' },
+    { key: 'weather', description: 'Thunderstorm', sourceTimestamp: 1, source: 'openweather', status: 'fresh', quality: 'verified' as const, confidenceScore: 100, eligibility: 'eligible' as const, syntheticStatus: 'none' as const },
   ], categorySchemaVersion: 'test', scoringLogicVersion: 'test', categorySchemaStatus: 'prototype', computedAt: 1,
 } satisfies DeterministicCategoryResult;
 const validPayload = {
@@ -65,6 +67,32 @@ describe('parseAIProposal', () => {
     expect(() => parseAIProposal(JSON.stringify({ ...validPayload, officialScore: 99 }), categoryIds)).toThrow(/unsupported fields/);
     const invalid = structuredClone(validPayload); invalid.categories[0].evidenceReferences = ['organizer_reputation'];
     expect(() => parseAIProposal(JSON.stringify(invalid), categoryIds)).toThrow(/evidence key/);
+  });
+
+  it('rejects normalized duplicate hazard IDs and duplicate evidence references', () => {
+    const duplicateHazards = structuredClone(validPayload);
+    duplicateHazards.hazards.push({ ...duplicateHazards.hazards[0], hazardId: ' WEATHER.STORM ' });
+    expect(() => parseAIProposal(JSON.stringify(duplicateHazards), categoryIds)).toThrow(/duplicate hazardId/);
+    const duplicateReferences = structuredClone(validPayload);
+    duplicateReferences.categories[0].evidenceReferences = ['weather', 'weather'];
+    expect(() => parseAIProposal(JSON.stringify(duplicateReferences), categoryIds)).toThrow(/duplicate evidence/);
+  });
+
+  it('guarantees a parser-accepted proposal can enter validation and resource calculation', () => {
+    const parsed = parseAIProposal(validResponse, categoryIds);
+    const validation = validateAndCalculateProvisional({
+      status: 'success', proposalId: 'proposal-property', model: 'test', promptVersion: 'test',
+      responseSchemaVersion: 'test', ...parsed, cacheStatus: 'miss', generatedAt: 1,
+    }, baseline, 1);
+    expect(validation.ok).toBe(true);
+    if (!validation.ok) return;
+    expect(computeResources({
+      eventId: event.eventId,
+      versionId: 'v1',
+      assessmentId: 'assessment-1',
+      eventDetails: event.eventDetails,
+      assessmentResult: validation.result,
+    })).toMatchObject({ ok: true });
   });
 });
 
@@ -107,7 +135,7 @@ describe('predictWithAI', () => {
     expect(parsed).not.toHaveProperty('officialResult');
     expect(parsed.context.venue).not.toHaveProperty('riskNotes');
     expect(parsed.context.incidentHistory).not.toHaveProperty('comparableEvents');
-    expect(parsed.evidence[0]).toEqual({ key: 'weather', status: 'fresh', sourceTimestamp: 1 });
+    expect(parsed.evidence[0]).toEqual({ key: 'weather', status: 'fresh', quality: 'verified', confidenceScore: 100, sourceTimestamp: 1 });
   });
 
   it('caches successful proposals by model, prompt, and input', async () => {
