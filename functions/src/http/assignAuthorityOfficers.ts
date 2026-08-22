@@ -164,6 +164,12 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
     // Firestore requires all reads to complete before any writes.
     const evSnap = await tx.get(eventRef);
     const ev = evSnap.data() as EventRecord;
+    if (ev.initialReview?.decision !== 'Approved') {
+      throw new HttpsError('failed-precondition', 'Complete and approve the admin initial review before assigning officers.');
+    }
+    if (ev.status !== 'UnderReview') {
+      throw new HttpsError('failed-precondition', 'Only applications released for authority review can be assigned.');
+    }
     if (ev.reviewStage === 'authority') {
       throw new HttpsError('failed-precondition', 'Officers are already assigned for this event version. Unassign first to re-assign.');
     }
@@ -257,6 +263,10 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
 
     tx.update(eventRef, {
       reviewStage: 'authority',
+      assignedOfficerUids: officerEntries.map(([, officerUid]) => officerUid),
+      assignedOfficerByAuthority: Object.fromEntries(
+        officerEntries.map(([auth, officerUid]) => [auth, officerUid]),
+      ),
       updatedAt: now,
     });
 

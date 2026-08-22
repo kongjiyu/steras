@@ -95,11 +95,12 @@ export async function verifyStage1DocForUser(
 
   return db.runTransaction(async (tx) => {
     // Reads first (Firestore requires all reads before all writes).
-    const [userSnap, eventSnap, controlSnap, docSnap] = await Promise.all([
+    const [userSnap, eventSnap, controlSnap, docSnap, assignmentsSnap] = await Promise.all([
       tx.get(userRef),
       tx.get(eventRef),
       tx.get(eventRef.collection(COLLECTIONS.EVENT_CONTROLS).doc(controlId)),
       tx.get(eventRef.collection(COLLECTIONS.EVENT_CONTROLS).doc(controlId).collection(COLLECTIONS.STAGE1_DOCS).doc(docId)),
+      tx.get(eventRef.collection(COLLECTIONS.ASSIGNMENTS)),
     ]);
 
     const profile = userSnap.data() as UserProfile | undefined;
@@ -108,8 +109,14 @@ export async function verifyStage1DocForUser(
     }
     if (!eventSnap.exists) throw new HttpsError('not-found', 'Event application was not found.');
     const event = eventSnap.data() as EventRecord;
-    if (!event.requiredAuthorities.includes(profile.authorityType)) {
-      throw new HttpsError('permission-denied', 'Your authority is not assigned to this application.');
+    const assignment = assignmentsSnap.docs
+      .map((snapshot) => snapshot.data() as { versionId?: string; authorityType?: string; officerUid?: string; status?: string })
+      .find((candidate) => candidate.versionId === event.currentVersionId
+        && candidate.authorityType === profile.authorityType
+        && candidate.officerUid === uid
+        && (candidate.status === 'pending' || candidate.status === 'in_progress'));
+    if (!assignment) {
+      throw new HttpsError('permission-denied', 'You are not the named officer assigned to this application.');
     }
     if (!controlSnap.exists) {
       throw new HttpsError('not-found', `Control ${controlId} was not found for this event.`);

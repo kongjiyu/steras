@@ -53,6 +53,7 @@ const STATUS_LABELS: Record<EventRecord['status'], string> = {
   Approved: 'Approved',
   Rejected: 'Rejected',
   Withdrawn: 'Withdrawn',
+  'Manual Review Required': 'Manual review required',
 };
 
 const STATUS_TONE: Record<EventRecord['status'], StatCard['tone']> = {
@@ -63,6 +64,7 @@ const STATUS_TONE: Record<EventRecord['status'], StatCard['tone']> = {
   Approved: 'good',
   Rejected: 'bad',
   Withdrawn: 'default',
+  'Manual Review Required': 'warn',
 };
 
 function initialsFor(name?: string) {
@@ -105,7 +107,7 @@ export default function AdminDashboard() {
           getDocs(query(collection(db, COLLECTIONS.USERS), where('role', '==', 'authority'))),
         ]);
         if (cancelled) return;
-        setEvents(eventsSnap.docs.map((d) => ({ eventId: d.id, ...(d.data() as EventRecord) })));
+         setEvents(eventsSnap.docs.map((d) => ({ ...(d.data() as EventRecord), eventId: d.id })));
         setUsers(usersSnap.docs.map((d) => d.data() as UserProfile));
         setOfficerCount(officersSnap.size);
         setLoading(false);

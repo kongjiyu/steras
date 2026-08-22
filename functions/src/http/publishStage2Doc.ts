@@ -28,6 +28,7 @@ import {
   COLLECTIONS,
   EventControl,
   EventRecord,
+  PublicEventControl,
   Stage2Doc,
   UserProfile,
 } from '@shared/types';
@@ -74,14 +75,20 @@ export async function publishStage2DocForUser(
   const controlRef = eventRef.collection(COLLECTIONS.EVENT_CONTROLS).doc(controlId);
   const docId = `${controlId}-s2`;
   const docRef = controlRef.collection(COLLECTIONS.STAGE2_DOCS).doc(docId);
+  const publicControlId = `${controlId}-stage2`;
+  const publicRef = db.collection(COLLECTIONS.PUBLIC_EVENT_CONTROLS)
+    .doc(eventId)
+    .collection(COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS)
+    .doc(publicControlId);
   const userRef = db.collection(COLLECTIONS.USERS).doc(uid);
 
   const result = await db.runTransaction(async (tx) => {
-    const [userSnap, eventSnap, controlSnap, docSnap] = await Promise.all([
+    const [userSnap, eventSnap, controlSnap, docSnap, publicSnap] = await Promise.all([
       tx.get(userRef),
       tx.get(eventRef),
       tx.get(controlRef),
       tx.get(docRef),
+      tx.get(publicRef),
     ]);
 
     if (!userSnap.exists) throw new HttpsError('permission-denied', 'User profile not found.');
@@ -106,6 +113,20 @@ export async function publishStage2DocForUser(
     const stage2 = docSnap.data() as Stage2Doc;
     if (stage2.published === true) {
       // Idempotent: already published, return the existing publishedAt.
+      if (!publicSnap.exists) {
+        tx.set(publicRef, buildPublicEventControl({
+          publicControlId,
+          eventId,
+          versionId,
+          controlId,
+          docId,
+          control,
+          stage2,
+          publishedAt: stage2.publishedAt ?? now,
+          publishedBy: stage2.publishedBy ?? uid,
+          sanitizedAt: stage2.publishedAt ?? now,
+        }));
+      }
       return {
         alreadyPublished: true as const,
         publishedAt: stage2.publishedAt ?? now,
@@ -129,6 +150,23 @@ export async function publishStage2DocForUser(
       rejectionAt: firestore.FieldValue.delete(),
       rejectedBy: firestore.FieldValue.delete(),
     });
+
+    // Public viewers read this sanitised projection, never the private
+    // organiser/officer document. The image is explicitly selected by the
+    // admin at this boundary; no organiser identity or private metadata is
+    // copied into the public record.
+    tx.set(publicRef, buildPublicEventControl({
+      publicControlId,
+      eventId,
+      versionId,
+      controlId,
+      docId,
+      control,
+      stage2,
+      publishedAt: now,
+      publishedBy: uid,
+      sanitizedAt: now,
+    }));
 
     // Audit log.
     const auditId = `${versionId}_${controlId}_stage2_published_${uid}_${now}`;
@@ -183,4 +221,36 @@ export async function publishStage2DocForUser(
   }
 
   return { published: true, publishedAt: result.publishedAt };
+}
+
+export function buildPublicEventControl(args: {
+  publicControlId: string;
+  eventId: string;
+  versionId: string;
+  controlId: string;
+  docId: string;
+  control: EventControl;
+  stage2: Stage2Doc;
+  publishedAt: number;
+  publishedBy: string;
+  sanitizedAt: number;
+}): PublicEventControl {
+  return {
+    publicControlId: args.publicControlId,
+    eventId: args.eventId,
+    versionId: args.versionId,
+    controlId: args.controlId,
+    docId: args.docId,
+    authority: args.control.authority,
+    controlName: args.control.controlName,
+    stage2Label: args.control.stage2Requirement?.label ?? 'Visual evidence',
+    imageUrl: args.stage2.imageUrl,
+    publicConfirmCount: args.stage2.publicConfirmCount ?? 0,
+    ...(args.stage2.m4TicketId ? { reported: true } : { reported: false }),
+    publishedAt: args.publishedAt,
+    sanitized: true,
+    sanitizedAt: args.sanitizedAt,
+    // Do not expose the admin's auth UID in a public document.
+    sanitizedBy: 'system',
+  };
 }

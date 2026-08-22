@@ -21,6 +21,8 @@ initializeApp();
 export { onEventCreated, onEventUpdated } from './triggers/onEventCreated';
 export { refreshAssessmentContext } from './triggers/refreshAssessmentContext';
 export { recomputeRiskAndResources } from './triggers/computeRisk';
+export { onM4ReportOutcome } from './triggers/onM4ReportOutcome';
+export { onEventStatusChanged } from './triggers/onEventStatusChanged';
 
 // HTTP-callable functions (e.g. for manual authority re-trigger, seed runs)
 export { manualRecompute } from './http/manualRecompute';
@@ -29,11 +31,12 @@ export { withdrawEvent } from './http/withdrawEvent';
 export { makeAuthorityDecision } from './http/authorityDecision';
 export { submitAuthorityScoreReview, resolveAuthorityScoreConflict, retryOfficialFinalisation } from './http/authorityScoreReview';
 export { submitAdminManualAssessment, retryManualOfficialFinalisation } from './http/adminManualAssessment';
+export { makeInitialReviewDecision } from './http/initialReview';
 export { overrideResources } from './http/overrideResources';
+export { reviewAssessmentScores } from './http/reviewAssessmentScores';
 export { verifyStage1Doc } from './http/verifyStage1Doc';
 export { markNotificationRead, listMyNotifications } from './http/notifications';
-// M3 round N+1 — stub. Replaced by M2's `proposeEventControlList` when
-// M2 lands it (per integration contract Q5).
+// M3 control-list proposal: MiniMax-backed with a deterministic fallback.
 export { proposeEventControlList } from './http/proposeEventControlList';
 // M3 Workstream 1 — officer assignment + multi-stage review.
 export { assignAuthorityOfficers } from './http/assignAuthorityOfficers';

@@ -72,6 +72,10 @@ async function unpublishStage2DocForUser(uid, data, now = Date.now()) {
     const controlRef = eventRef.collection(types_1.COLLECTIONS.EVENT_CONTROLS).doc(controlId);
     const docId = `${controlId}-s2`;
     const docRef = controlRef.collection(types_1.COLLECTIONS.STAGE2_DOCS).doc(docId);
+    const publicRef = db.collection(types_1.COLLECTIONS.PUBLIC_EVENT_CONTROLS)
+        .doc(eventId)
+        .collection(types_1.COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS)
+        .doc(`${controlId}-stage2`);
     const userRef = db.collection(types_1.COLLECTIONS.USERS).doc(uid);
     const result = await db.runTransaction(async (tx) => {
         const [userSnap, eventSnap, controlSnap, docSnap] = await Promise.all([
@@ -130,6 +134,9 @@ async function unpublishStage2DocForUser(uid, data, now = Date.now()) {
         update.publishedAt = firebase_admin_1.firestore.FieldValue.delete();
         update.publishedBy = firebase_admin_1.firestore.FieldValue.delete();
         tx.update(docRef, update);
+        // Remove the sanitised public projection at the same atomic boundary so
+        // an unpublished or rejected image can never remain publicly visible.
+        tx.delete(publicRef);
         // Audit log.
         const auditAction = 'stage2_doc_rejected';
         const auditId = `${versionId}_${controlId}_${auditAction}_${uid}_${now}`;

@@ -252,7 +252,7 @@ steras/
 - Node.js 20 or newer. Cloud Functions deploy with Node.js 22.
 - npm.
 - Firebase CLI authenticated with access to a Firebase project.
-- Java for the local Firebase Emulator Suite.
+- Java 21 or newer for the local Firebase Emulator Suite and Firebase Rules tests.
 - Google Cloud CLI application-default credentials for admin seed scripts.
 
 Install and authenticate the CLIs if needed:
@@ -494,6 +494,15 @@ Run commands from the repository root unless stated otherwise.
 | `npm run seed:staging` | Seed stable venues and incidents using Admin credentials |
 | `npm run uat:staging` | Run the deployed staging golden-path scenario |
 | `npm run uat:fallback` | Verify deployed deterministic fallback behavior |
+| `npm run test:e2e:m3:smoke` | Run the staging-safe M3 Playwright smoke suite (requires explicit E2E env) |
+| `npm run test:e2e:m3:full` | Run the full M3 Playwright suite against the selected staging target |
+| `npm run test:e2e:m3:workstream1` | Run the officer-workstream Playwright suite against staging |
+| `npm --workspace functions run migrate:m3 -- --dry-run` | Inspect the M3 compatibility migration without writes |
+| `npm run migrate:m3:dry-run` | Dry-run the exact seven-event legacy manifest; no writes |
+| `npm run migrate:m3:verify` | Verify the exact legacy manifest is idempotent and excluded data is unchanged |
+| `npm --workspace functions run migrate:m3 -- --apply --manifest m3-legacy-migration-manifest.json` | Apply only the reviewed manifest; linkos requires both production confirmation guards |
+| `npm --workspace functions run migrate:m3 -- --rollback <snapshot.json>` | Restore the exact documents captured by a completed migration snapshot |
+| `npm run verify:deployment -- path/to/functions-list.json` | Verify required M3 functions are deployed |
 | `npm run deploy` | Build and deploy all Firebase services |
 | `npm run deploy:functions` | Build and deploy Functions only |
 | `npm run deploy:hosting` | Build and deploy Hosting only |
@@ -523,6 +532,14 @@ UAT_PASSWORD='use-a-strong-temporary-password' npm run uat:staging
 ```
 
 Do not use production user credentials with UAT scripts.
+
+For the complete M3 release sequence, use the manually triggered
+`.github/workflows/release-staging.yml` workflow. It requires a separate
+staging project, GitHub Workload Identity credentials, staging Firebase web
+configuration, a temporary UAT password, and `MINIMAX_API_KEY` in the staging
+project's Secret Manager. The Playwright suites intentionally refuse the
+currently configured `linkos-496505` project so a reset cannot mutate the
+legacy deployment.
 
 ## Build and deploy
 

@@ -46,14 +46,14 @@ export default function Analytics() {
   const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
-    if (!isFirebaseConfigured || !profile?.authorityType) {
+    if (!isFirebaseConfigured || !profile?.uid || !profile.authorityType) {
       setLoading(false);
       return;
     }
     let request = 0;
     const eventsQuery = query(
       collection(db, COLLECTIONS.EVENTS),
-      where('requiredAuthorities', 'array-contains', profile.authorityType),
+      where('assignedOfficerUids', 'array-contains', profile.uid),
     );
     return onSnapshot(eventsQuery, async (snapshot) => {
       const currentRequest = ++request;
@@ -90,7 +90,7 @@ export default function Analytics() {
       setError('Analytics data could not be loaded.');
       setLoading(false);
     });
-  }, [profile?.authorityType, retryKey]);
+  }, [profile?.uid, profile?.authorityType, retryKey]);
 
   const filtered = useMemo(() => filterAnalyticsRecords(records, from, to), [records, from, to]);
   const monthly = useMemo(() => buildMonthlyAnalytics(filtered), [filtered]);

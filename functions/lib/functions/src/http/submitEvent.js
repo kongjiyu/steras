@@ -64,8 +64,8 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
             throw new https_1.HttpsError('aborted', 'The draft changed during submission. Review it and retry.');
         if (event.organizerId !== uid)
             throw new https_1.HttpsError('permission-denied', 'You do not own this event.');
-        if (!['Draft', 'AmendmentRequested'].includes(event.status)) {
-            throw new https_1.HttpsError('failed-precondition', 'Only drafts or amendment requests can be submitted.');
+        if (!['Draft', 'AmendmentRequested', 'Rejected'].includes(event.status)) {
+            throw new https_1.HttpsError('failed-precondition', 'Only drafts, rejected applications, or amendment requests can be submitted.');
         }
         if (event.eventDetails.venueId && (!venueSnapshot?.exists
             || validateCanonicalVenueRecord(event.eventDetails, venueSnapshot.data()).length > 0)) {
@@ -111,6 +111,12 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
             authorityReviewCompletedVersionId: firestore_1.FieldValue.delete(),
             editableVersionId: null,
             requiredAuthorities,
+            assignedOfficerUids: [],
+            assignedOfficerByAuthority: {},
+            reviewStage: 'initial',
+            initialReview: firestore_1.FieldValue.delete(),
+            manualAssessment: firestore_1.FieldValue.delete(),
+            verifiedControlIds: [],
             submittedAt: now,
             updatedAt: now,
         });

@@ -33,7 +33,7 @@ export interface Stage2RequirementRowProps {
   /** The current Stage 2 doc from Firestore. Null if not yet uploaded. */
   doc: Stage2Doc | null;
   disabled?: boolean;
-  onSubmitted?: (result: { docId: string; status: 'published' }) => void;
+  onSubmitted?: (result: { docId: string; status: 'pending' }) => void;
   onError?: (message: string) => void;
 }
 
@@ -168,7 +168,7 @@ export default function Stage2RequirementRow(props: Stage2RequirementRowProps) {
             disabled={isBusy}
             data-testid={`stage2-file-input-${authority}`}
           />
-          {!published && (
+          {!published && !reported && !imageUrl && (
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
@@ -219,6 +219,18 @@ export default function Stage2RequirementRow(props: Stage2RequirementRowProps) {
             >
               <Replace size={14} />
               Replace
+            </button>
+          )}
+          {pending && !reported && !imageUrl && (
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isBusy}
+              className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-ink-300 bg-white px-3 py-1.5 text-xs font-medium text-ink-700 hover:bg-ink-50 disabled:opacity-50"
+              data-testid={`stage2-replace-${authority}`}
+            >
+              <Upload size={14} />
+              Upload
             </button>
           )}
         </div>

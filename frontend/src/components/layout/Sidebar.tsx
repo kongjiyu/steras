@@ -12,8 +12,6 @@ import {
   ShieldAlert,
   ShieldCheck,
   ListChecks,
-  MessageSquare,
-  Briefcase,
   type LucideIcon,
 } from 'lucide-react';
 import logoUrl from '../../assets/brand/steras-logo-horizontal-inverse.svg';

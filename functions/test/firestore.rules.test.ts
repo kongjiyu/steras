@@ -117,7 +117,7 @@ async function seedProfilesAndEvent() {
     const db = context.firestore();
     await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer' });
     await setDoc(doc(db, 'users/authority-1'), { role: 'authority', authorityType: 'PDRM' });
-    await setDoc(doc(db, 'events/event-1'), { organizerId: 'organizer-1', status: 'Pending', requiredAuthorities: ['PDRM'] });
+    await setDoc(doc(db, 'events/event-1'), { organizerId: 'organizer-1', status: 'Pending', requiredAuthorities: ['PDRM'], assignedOfficerUids: ['authority-1'] });
     await setDoc(doc(db, 'events/event-1/assessments/v1'), { officialScore: 50 });
     await setDoc(doc(db, 'events/event-1/assessment_summaries/v1'), {
       assessmentId: 'v1', eventId: 'event-1', versionId: 'v1', status: 'provisional_ready',
@@ -646,6 +646,52 @@ describe('Firestore security rules', () => {
       .resolves.toMatchObject({ decision: 'Rejected' });
   });
 
+  it('keeps private Stage 2 data named-officer scoped and exposes only the public projection', async () => {
+    await seedProfilesAndEvent();
+    await environment.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, 'events/event-1/event_controls/control-1'), {
+        controlId: 'control-1', eventId: 'event-1', versionId: 'v1', authority: 'PDRM',
+        controlName: 'PDRM control', stageRequirement: 'stage1_and_stage2',
+        stage1Requirements: [], stage2Requirement: { kind: 'image', label: 'Venue photo' },
+        controlItemVersion: 1, label: 'pending', createdAt: 1, updatedAt: 1,
+      });
+      await setDoc(doc(db, 'events/event-1/event_controls/control-1/stage2_docs/control-1-s2'), {
+        docId: 'control-1-s2', imageUrl: 'data:image/png;base64,AA==', uploadedAt: 1,
+        uploadedBy: 'organizer-1', publicConfirmCount: 0, published: false,
+      });
+      await setDoc(doc(db, 'public_event_controls/event-1/items/control-1-stage2'), {
+        publicControlId: 'control-1-stage2', eventId: 'event-1', versionId: 'v1',
+        controlId: 'control-1', docId: 'control-1-s2', authority: 'PDRM',
+        controlName: 'PDRM control', stage2Label: 'Venue photo', imageUrl: 'https://example.test/photo.png',
+        publicConfirmCount: 0, publishedAt: 1, sanitized: true, sanitizedAt: 1, sanitizedBy: 'system',
+      });
+    });
+    await assertSucceeds(getDoc(doc(environment.authenticatedContext('authority-1').firestore(), 'events/event-1/event_controls/control-1/stage2_docs/control-1-s2')));
+    await assertFails(getDoc(doc(environment.authenticatedContext('authority-2').firestore(), 'events/event-1/event_controls/control-1/stage2_docs/control-1-s2')));
+    await assertSucceeds(getDoc(doc(environment.authenticatedContext('organizer-1').firestore(), 'events/event-1/event_controls/control-1/stage2_docs/control-1-s2')));
+    await assertSucceeds(getDoc(doc(environment.unauthenticatedContext().firestore(), 'public_event_controls/event-1/items/control-1-stage2')));
+    await assertFails(setDoc(doc(environment.unauthenticatedContext().firestore(), 'public_event_controls/event-1/items/attacker'), { sanitized: true }));
+  });
+
+  it('rejects direct public report creation and scopes confirmation markers to their owner', async () => {
+    await seedProfilesAndEvent();
+    await environment.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, 'events/event-1/event_controls/control-1/stage2_confirms/public-1'), { userId: 'public-1', confirmedAt: 1 });
+      await setDoc(doc(db, 'public_reports/ticket-1'), {
+        ticketId: 'ticket-1', eventId: 'event-1', controlId: 'control-1', docId: 'control-1-s2',
+        reporterUid: 'public-1', category: 'inaccurate', description: 'Report', createdAt: 1, updatedAt: 1,
+      });
+    });
+    await assertSucceeds(getDoc(doc(environment.authenticatedContext('public-1').firestore(), 'events/event-1/event_controls/control-1/stage2_confirms/public-1')));
+    await assertFails(getDoc(doc(environment.authenticatedContext('authority-1').firestore(), 'events/event-1/event_controls/control-1/stage2_confirms/public-1')));
+    await assertFails(setDoc(doc(environment.authenticatedContext('public-1').firestore(), 'public_reports/ticket-2'), {
+      ticketId: 'ticket-2', eventId: 'event-1', controlId: 'control-1', docId: 'control-1-s2',
+      reporterUid: 'public-1', category: 'inaccurate', description: 'Direct write', createdAt: 1, updatedAt: 1,
+    }));
+  });
+
   it('prevents authorities from reading organizer profiles or provisioning roles', async () => {
     await seedProfilesAndEvent();
     const authorityDb = environment.authenticatedContext('authority-1').firestore();
@@ -955,16 +1001,22 @@ describe('Firestore security rules', () => {
     ]);
   });
 
-  it('rejects resource overrides without mutating the immutable baseline', async () => {
+  it('allows an assigned authority to override resources with an audit record', async () => {
     await seedReviewableEvent(['PDRM', 'BOMBA']);
-    const quantities = { police: 12, medicalTeams: 3, ambulances: 2, toilets: 60, wasteBins: 20, security: 25, fireOfficers: 4 };
     const adminDb = getFirestore(adminApp);
+    await adminDb.doc('events/review-1').update({
+      assignedOfficerUids: ['pdrm-1', 'bomba-1'],
+      initialReview: { decision: 'Approved', reason: 'Initial review complete.', reviewerUid: 'admin-1', reviewedAt: 1 },
+    });
+    await adminDb.doc('events/review-1/assignments/v1_PDRM').set({
+      assignmentId: 'v1_PDRM', eventId: 'review-1', versionId: 'v1', authorityType: 'PDRM', officerUid: 'pdrm-1', assignedBy: 'admin-1', assignedAt: 1, status: 'pending',
+    });
+    const quantities = { police: 12, medicalTeams: 3, ambulances: 2, toilets: 60, wasteBins: 20, security: 25, fireOfficers: 4 };
     const baselineReference = adminDb.doc(`events/review-1/resources/${officialResourceId('v1')}`);
     const before = (await baselineReference.get()).data();
-    await expect(overrideResourcesForUser('pdrm-1', { eventId: 'review-1', quantities, rationale: 'Increased staffing for controlled entry and traffic management.' }))
-      .rejects.toMatchObject({ code: 'failed-precondition' });
-    expect((await baselineReference.get()).data()).toEqual(before);
-    expect((await adminDb.collection('events/review-1/resource_overrides').get()).size).toBe(0);
+    await overrideResourcesForUser('pdrm-1', { eventId: 'review-1', quantities, rationale: 'Increased staffing for controlled entry and traffic management.' }, 4_000);
+    expect((await baselineReference.get()).data()).toMatchObject({ ...quantities, confidenceLevel: 'authorityValidated', overriddenBy: 'pdrm-1' });
+    expect((await adminDb.collection('events/review-1/resource_overrides').get()).size).toBe(1);
   });
 
   it('unpublishes a stale resource projection when resource-only recomputation fails', async () => {

@@ -58,7 +58,7 @@ export default function MyEvents() {
       />
 
       <div className="mb-6 flex gap-2 overflow-x-auto border-b border-[#ded5c5] pb-3" aria-label="Filter applications by status">
-        {(['all', 'Draft', 'Pending', 'UnderReview', 'AmendmentRequested', 'Approved', 'Rejected', 'Withdrawn'] as const).map((f) => (
+        {(['all', 'Draft', 'Pending', 'UnderReview', 'AmendmentRequested', 'Approved', 'Rejected', 'Withdrawn', 'Manual Review Required'] as const).map((f) => (
           <button
             key={f}
             onClick={() => setFilter(f)}
@@ -109,8 +109,8 @@ export default function MyEvents() {
                   </td>
                   <td className="px-4 py-3"><StatusBadge status={e.status} /></td>
                   <td className="px-4 py-3 text-right">
-                    <Link to={['Draft', 'AmendmentRequested'].includes(e.status) ? `/organizer/events/${e.eventId}/edit` : `/organizer/events/${e.eventId}`} className="text-brand-600 hover:text-brand-700 text-sm font-medium">
-                      {['Draft', 'AmendmentRequested'].includes(e.status) ? 'Edit' : 'View'}
+                    <Link to={['Draft', 'AmendmentRequested', 'Rejected'].includes(e.status) ? `/organizer/events/${e.eventId}/edit` : `/organizer/events/${e.eventId}`} className="text-brand-600 hover:text-brand-700 text-sm font-medium">
+                      {['Draft', 'AmendmentRequested', 'Rejected'].includes(e.status) ? 'Edit' : 'View'}
                     </Link>
                   </td>
                 </tr>
@@ -121,7 +121,7 @@ export default function MyEvents() {
 
           <ul className="space-y-3 md:hidden">
             {filtered.map((e) => {
-              const editable = ['Draft', 'AmendmentRequested'].includes(e.status);
+              const editable = ['Draft', 'AmendmentRequested', 'Rejected'].includes(e.status);
               return <li key={e.eventId}><Link to={editable ? `/organizer/events/${e.eventId}/edit` : `/organizer/events/${e.eventId}`} className="block rounded-lg border border-[#ded5c5] bg-[#fffdf8] p-4 active:bg-cream-100">
                 <div className="flex items-start justify-between gap-3"><h2 className="font-display text-base font-bold leading-snug text-ink-800">{e.eventDetails.name || 'Untitled event'}</h2><StatusBadge status={e.status} /></div>
                 <div className="mt-3 space-y-1 text-sm text-ink-500"><p className="flex items-center gap-2"><MapPin size={14} />{e.eventDetails.venueName || 'Venue not set'}</p><p className="tabular-nums">{e.eventDetails.startDatetime ? format(new Date(e.eventDetails.startDatetime), 'PP') : 'Not scheduled'}</p></div>

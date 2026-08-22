@@ -63,6 +63,13 @@ async function makeAuthorityDecisionForUser(uid, request, now = Date.now()) {
         if (!eventSnapshot.exists)
             throw new https_1.HttpsError('not-found', 'Event application was not found.');
         const event = { eventId, ...eventSnapshot.data() };
+        // The named-officer workflow is the only supported approval path once
+        // an event has been assigned. Keeping the legacy callable closed here
+        // prevents a stale client (or direct callable invocation) from bypassing
+        // officer proposals and the admin's second-review decision.
+        if ((event.assignedOfficerUids?.length ?? 0) > 0 || event.reviewStage === 'authority' || event.reviewStage === 'second') {
+            throw new https_1.HttpsError('failed-precondition', 'This application uses named officer proposals. Record the proposal from the authority review workspace.');
+        }
         const versionId = event.currentVersionId;
         const assessmentId = event.currentAssessmentId;
         if (!isSafeDocumentId(versionId) || !isSafeDocumentId(assessmentId)

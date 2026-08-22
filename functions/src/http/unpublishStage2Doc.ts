@@ -94,6 +94,10 @@ export async function unpublishStage2DocForUser(
   const controlRef = eventRef.collection(COLLECTIONS.EVENT_CONTROLS).doc(controlId);
   const docId = `${controlId}-s2`;
   const docRef = controlRef.collection(COLLECTIONS.STAGE2_DOCS).doc(docId);
+  const publicRef = db.collection(COLLECTIONS.PUBLIC_EVENT_CONTROLS)
+    .doc(eventId)
+    .collection(COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS)
+    .doc(`${controlId}-stage2`);
   const userRef = db.collection(COLLECTIONS.USERS).doc(uid);
 
   const result = await db.runTransaction(async (tx) => {
@@ -153,6 +157,9 @@ export async function unpublishStage2DocForUser(
     update.publishedBy = firestore.FieldValue.delete();
 
     tx.update(docRef, update);
+    // Remove the sanitised public projection at the same atomic boundary so
+    // an unpublished or rejected image can never remain publicly visible.
+    tx.delete(publicRef);
 
     // Audit log.
     const auditAction = 'stage2_doc_rejected';

@@ -5,7 +5,7 @@ import ReviewQueue from './ReviewQueue';
 
 const { listener, authValue } = vi.hoisted(() => ({
   listener: { mode: 'success' as 'success' | 'error' },
-  authValue: { profile: { authorityType: 'PDRM' } },
+  authValue: { profile: { uid: 'officer-1', authorityType: 'PDRM' } },
 }));
 
 vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => authValue }));
@@ -15,7 +15,7 @@ vi.mock('firebase/firestore', () => ({
   onSnapshot: vi.fn((_query, onNext: (value: unknown) => void, onError: () => void) => {
     if (listener.mode === 'error') onError();
     else onNext({ docs: [{ id: 'event-1', data: () => ({
-      organizerId: 'organizer-1', status: 'Pending', currentVersionNumber: 1, draftDocumentPaths: [], requiredAuthorities: ['PDRM'], createdAt: 1, updatedAt: 1,
+      organizerId: 'organizer-1', status: 'Pending', currentVersionNumber: 1, draftDocumentPaths: [], requiredAuthorities: ['PDRM'], assignedOfficerUids: ['officer-1'], createdAt: 1, updatedAt: 1,
       eventDetails: { name: 'Safety Forum', type: 'conference', venueName: 'PICC', expectedAttendance: 500, startDatetime: Date.UTC(2026, 7, 20) },
     }) }] });
     return vi.fn();

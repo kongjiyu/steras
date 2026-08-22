@@ -78,11 +78,12 @@ async function verifyStage1DocForUser(uid, data, now = Date.now()) {
     const userRef = db.collection(types_1.COLLECTIONS.USERS).doc(uid);
     return db.runTransaction(async (tx) => {
         // Reads first (Firestore requires all reads before all writes).
-        const [userSnap, eventSnap, controlSnap, docSnap] = await Promise.all([
+        const [userSnap, eventSnap, controlSnap, docSnap, assignmentsSnap] = await Promise.all([
             tx.get(userRef),
             tx.get(eventRef),
             tx.get(eventRef.collection(types_1.COLLECTIONS.EVENT_CONTROLS).doc(controlId)),
             tx.get(eventRef.collection(types_1.COLLECTIONS.EVENT_CONTROLS).doc(controlId).collection(types_1.COLLECTIONS.STAGE1_DOCS).doc(docId)),
+            tx.get(eventRef.collection(types_1.COLLECTIONS.ASSIGNMENTS)),
         ]);
         const profile = userSnap.data();
         if (!profile || profile.role !== 'authority' || !profile.authorityType) {
@@ -91,8 +92,14 @@ async function verifyStage1DocForUser(uid, data, now = Date.now()) {
         if (!eventSnap.exists)
             throw new https_1.HttpsError('not-found', 'Event application was not found.');
         const event = eventSnap.data();
-        if (!event.requiredAuthorities.includes(profile.authorityType)) {
-            throw new https_1.HttpsError('permission-denied', 'Your authority is not assigned to this application.');
+        const assignment = assignmentsSnap.docs
+            .map((snapshot) => snapshot.data())
+            .find((candidate) => candidate.versionId === event.currentVersionId
+            && candidate.authorityType === profile.authorityType
+            && candidate.officerUid === uid
+            && (candidate.status === 'pending' || candidate.status === 'in_progress'));
+        if (!assignment) {
+            throw new https_1.HttpsError('permission-denied', 'You are not the named officer assigned to this application.');
         }
         if (!controlSnap.exists) {
             throw new https_1.HttpsError('not-found', `Control ${controlId} was not found for this event.`);

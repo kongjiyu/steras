@@ -57,7 +57,10 @@ export default defineConfig({
   timeout: 60_000,
   expect: { timeout: 10_000 },
   use: {
-    baseURL: process.env.STERAS_BASE_URL ?? 'https://linkos-496505.web.app',
+    // The M3 suite mutates Firestore through globalSetup. Requiring an
+    // explicit target prevents an accidental run against the production/demo
+    // hosting site from a developer shell.
+    baseURL: process.env.STERAS_BASE_URL,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     actionTimeout: 10_000,
@@ -79,9 +82,9 @@ export default defineConfig({
       name: 'm3-full',
       // smoke + control-verification-ui + generate-control-list +
       // organizer-stage1-upload + Workstream 4 (organizer Stage 2 +
-      // public confirm/report). Excludes officer-assignment (its 5-6
-      // sequential Firebase Auth logins flake when run immediately
-      // after the other 12 specs).
+      // public confirm/report) + Workstream 5 (admin publish gate).
+      // Excludes officer-assignment (its 5-6 sequential Firebase Auth
+      // logins flake when run immediately after the other 12 specs).
       testMatch: [
         'pdrm-decision.spec.ts',
         'm3-negative-gates.spec.ts',
@@ -92,6 +95,7 @@ export default defineConfig({
         'organizer-stage1-upload.spec.ts',
         'stage2-organizer-upload.spec.ts',
         'stage2-public-confirm-report.spec.ts',
+        'stage2-admin-publish.spec.ts',
       ],
       use: { ...devices['Desktop Chrome'], channel: undefined },
     },

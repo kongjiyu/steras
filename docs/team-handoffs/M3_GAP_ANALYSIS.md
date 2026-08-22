@@ -1,7 +1,32 @@
 # M3 — Gap Analysis vs. FR v4 + Use Case Diagram
 
-**Date:** 2026-08-19 (updated post Workstream 3)
+**Date:** 2026-08-21 (deployment-readiness update)
 **For:** M3 teammate (Chia Yu Xin)
+
+> **Implementation update — 2026-08-21:** The baseline matrix below predates the
+> current implementation round. The following gaps are now wired end-to-end:
+> initial/manual review (UC-01..05), attachable officer feedback (UC-40),
+> explicit hazard-score/resource review records (UC-17 / FR-M3-14), admin
+> publish plus sanitised public Stage 2 projections (UC-14..15), public
+> confirm/report (UC-35..38), M4 outcome application (UC-30..32), and
+> withdrawal cleanup (FR-M3-01). A MiniMax-backed, schema-validated control-list
+> proposer with an explicit deterministic fallback is now implemented in M3;
+> the fallback is selected only when the secret/provider is unavailable or the
+> response fails validation. Firestore/Storage rules are tightened to named
+> officer/public-report scopes, and `migrate:m3` backfills legacy denormalised
+> fields and public projections before release.
+
+> **Deployment-readiness update — 2026-08-21:** Local source and tests now
+> include the full M3 release path, but the currently deployed
+> `linkos-496505.web.app` bundle/functions are older than this branch. A live
+> Playwright smoke run against that site produced 5/14 passes and exposed the
+> old callable/UI contract; it was intentionally not used for mutation after
+> this safety round. The repository now provides a staging-only release
+> workflow (`.github/workflows/release-staging.yml`), an explicit deployment
+> function verifier, a dry-run/apply migration, and environment guards that
+> refuse production resets. A real staging Firebase project, CI workload
+> identity secrets, seeded UAT accounts, Java 21 for rules tests, and a
+> configured MiniMax secret are still required before a deployed UAT can pass.
 **Sources cross-referenced:**
 - `STERAS_PRD_v5.0.md` §5.3 (M3, 31 FRs)
 - `STERAS_M3_FR_v4.md` (31 FRs, locked 2026-08-15, authoritative)
@@ -10,11 +35,43 @@
 - `Collaborative - Use Case Diagram.svg` (2026-08-15, "Anny Use case diagram Finalize")
 - Current code on `anny_cont` branch (latest: `3799d64`)
 
-This analysis maps **every one of the 40 UCs** to a status: ✅ implemented, ⚠️ partially implemented, ❌ not implemented. Then groups the gaps by workstream and gives my recommended order to attack them.
+The matrix below is retained as a historical baseline from before the current
+implementation round. The authoritative current gap is the deployment and
+cross-module gate recorded first in this document.
+
+## Current status — authoritative
+
+| Area | Current state | Gap / release action |
+|---|---|---|
+| M3 FR/UC source implementation | **40/40 UCs implemented in this branch** | No remaining M3 feature is intentionally deferred in source. The M2 manual-review signal and M4 report outcome write remain external contracts that must be exercised in staging. |
+| M3 callable surface | **18 required M3 functions exported** | Deploy Functions to staging, run `scripts/verifyM3Deployment.mjs`, then promote only after smoke/full Playwright pass. |
+| MiniMax control-list proposal | **Schema-validated MiniMax + explicit deterministic fallback** | Set the staging Secret Manager value and run with `STERAS_REQUIRE_MINIMAX=true`; a fallback-only run is not a production promotion gate. |
+| Legacy data shape | **Migration script implemented** | Run `migrate:m3 --dry-run`, review anomalies, then `--apply` in staging; production apply requires `M3_MIGRATION_ALLOW_PRODUCTION=true`. |
+| Firestore/Storage access boundaries | **Rules tightened to named officers, owners, reporters, and public projections** | Execute emulator rules tests on Java 21; inspect any legacy event without `assignedOfficerUids` before relying on officer reads/uploads. |
+| Current deployed site (`linkos-496505`) | **Stale relative to this branch** | The observed live bundle/functions predate the current M3 callable/UI contract. Do not reset or use it for UAT; deploy to a separate staging project instead. |
+| Deployed UAT | **Not yet completed for this branch** | Requires staging project ID, CI Workload Identity secrets, seeded UAT accounts/password, Firebase web config, Java 21 runner, and real MiniMax secret. |
+
+### Remaining gaps before Module 3 is fully verified in a deployed environment
+
+1. Provision and seed an isolated Firebase staging project; configure the
+   `staging` GitHub environment and the variables documented in
+   `frontend/.env.e2e.example`.
+2. Deploy Functions first, verify all required IDs, run the migration dry-run
+   and apply, then deploy Firestore/Storage rules and Hosting.
+3. Run M3 smoke, full, and officer-workstream Playwright suites against that
+   staging URL. The previous live run against the legacy site was 5/14 passes
+   and is evidence of deployment drift, not a valid current-branch result.
+4. Confirm M2 emits the agreed `Manual Review Required` state when its AI path
+   is unavailable and confirm M4 updates `public_reports/{ticketId}` with
+   `outcome`, `outcomeSetBy`, and `outcomeSetAt`; these are integration checks,
+   not missing M3 code.
+5. Run the complete release gate (`npm run check`, `npm run test:rules`, and
+   the staging Playwright suites) on Java 21/Node 22, then retain migration and
+   Playwright artifacts for promotion approval.
 
 ---
 
-## 1. TL;DR
+## Appendix A — historical baseline (pre-deployment-readiness round)
 
 | Status | Count | % of 40 UCs |
 |---|---:|---:|

@@ -5,12 +5,17 @@
  * verifies the new "Stage-1 control verification" card lists each
  * Stage 1 document, and the per-doc form can be filled in.
  */
-import { test, expect } from './fixtures';
+import { test, expect, EVENTS } from './fixtures';
+import { restoreControlVerificationFixture } from './admin-reset';
 
 test.describe('@M3 control verification UI', () => {
+  test.beforeAll(async () => {
+    await restoreControlVerificationFixture();
+  });
+
   test('PDRM sees the per-doc verification form on evt-control-verification', async ({ page, loginAs }) => {
     await loginAs('pdrm');
-    await page.goto(`/authority/events/evt-control-verification`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`/authority/events/${EVENTS.controlVerification}`, { waitUntil: 'domcontentloaded' });
     const heading = page.getByRole('heading', { name: /stage-1 control verification/i });
     await expect(heading).toBeVisible({ timeout: 15_000 });
     // At least one Verify/Reject button (per stage1 doc) should be visible
@@ -24,8 +29,8 @@ test.describe('@M3 control verification UI', () => {
     // Sign in first so the api helper has auth context.
     await loginAs('bomba');
     // Clear any prior verifications on the BOMBA control so we can re-verify.
-    const evtId = 'evt-control-verification';
-    const ctrlId = `${evtId}-ctrl-bomba`;
+    const evtId = EVENTS.controlVerification;
+    const ctrlId = `${evtId}-ctrl-bomba-v1`;
     const docs = await api.getCollection<{ docId: string; status: string }>(`events/${evtId}/event_controls/${ctrlId}/stage1_docs`);
     for (const d of docs) {
       if (d.status === 'verified' || d.status === 'rejected') {

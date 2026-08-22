@@ -1,0 +1,97 @@
+name: M3 staging release
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_full_e2e:
+        description: Run the full M3 and officer-workstream Playwright suites
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: steras-m3-staging
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: staging
+    env:
+      FIREBASE_PROJECT_ID: ${{ secrets.STERAS_STAGING_PROJECT_ID }}
+      STERAS_STAGING_PROJECT_ID: ${{ secrets.STERAS_STAGING_PROJECT_ID }}
+      STERAS_BASE_URL: ${{ secrets.STERAS_STAGING_BASE_URL }}
+      STERAS_E2E_PROJECT_ID: ${{ secrets.STERAS_STAGING_PROJECT_ID }}
+      STERAS_E2E_ALLOW_RESET: 'true'
+      STERAS_REQUIRE_MINIMAX: 'true'
+      STERAS_E2E_PASSWORD: ${{ secrets.STERAS_E2E_PASSWORD }}
+      VITE_FIREBASE_API_KEY: ${{ secrets.STERAS_STAGING_FIREBASE_API_KEY }}
+      VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.STERAS_STAGING_FIREBASE_AUTH_DOMAIN }}
+      VITE_FIREBASE_PROJECT_ID: ${{ secrets.STERAS_STAGING_PROJECT_ID }}
+      VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.STERAS_STAGING_STORAGE_BUCKET }}
+      VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.STERAS_STAGING_MESSAGING_SENDER_ID }}
+      VITE_FIREBASE_APP_ID: ${{ secrets.STERAS_STAGING_APP_ID }}
+      VITE_FIREBASE_FUNCTIONS_REGION: asia-southeast1
+      VITE_USE_FIREBASE_EMULATOR: 'false'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_RELEASE_SERVICE_ACCOUNT }}
+
+      - run: npm ci
+      - run: npm run check
+      - run: npm run test:rules
+
+      # Deploy additive Functions first so the old hosting bundle remains
+      # compatible while the migration and rule changes are applied.
+      - run: npx firebase deploy --project "$STERAS_STAGING_PROJECT_ID" --only functions
+      - run: npx firebase functions:list --project "$STERAS_STAGING_PROJECT_ID" --json > "$RUNNER_TEMP/functions-list.json"
+      - run: npm run verify:deployment -- "$RUNNER_TEMP/functions-list.json"
+
+      - name: M3 migration dry run
+        run: npm --workspace functions run migrate:m3 -- --dry-run
+
+      - name: Apply M3 migration
+        run: npm --workspace functions run migrate:m3 -- --apply
+
+      - run: npx firebase deploy --project "$STERAS_STAGING_PROJECT_ID" --only firestore:rules,firestore:indexes,storage
+      - run: npm run build:frontend
+      - run: npx firebase deploy --project "$STERAS_STAGING_PROJECT_ID" --only hosting
+
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e:m3:smoke
+
+      - name: Run full M3 suites
+        if: ${{ inputs.run_full_e2e }}
+        run: |
+          npm run test:e2e:m3:full
+          npm run test:e2e:m3:workstream1
+
+      - name: Upload Playwright reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m3-playwright-reports
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: ignore

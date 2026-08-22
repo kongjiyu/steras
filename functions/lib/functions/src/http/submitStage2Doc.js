@@ -98,6 +98,10 @@ async function submitStage2DocForUser(uid, data, now = Date.now()) {
     const controlRef = eventRef.collection(types_1.COLLECTIONS.EVENT_CONTROLS).doc(controlId);
     const docId = `${controlId}-s2`;
     const docRef = controlRef.collection(types_1.COLLECTIONS.STAGE2_DOCS).doc(docId);
+    const publicRef = db.collection(types_1.COLLECTIONS.PUBLIC_EVENT_CONTROLS)
+        .doc(eventId)
+        .collection(types_1.COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS)
+        .doc(`${controlId}-stage2`);
     const userRef = db.collection(types_1.COLLECTIONS.USERS).doc(uid);
     const result = await db.runTransaction(async (tx) => {
         // Reads.
@@ -159,6 +163,10 @@ async function submitStage2DocForUser(uid, data, now = Date.now()) {
             newDoc.reportedAt = existingDoc.reportedAt;
         // Writes.
         tx.set(docRef, newDoc, { merge: true });
+        // A replacement is private until the admin reviews it again. Remove the
+        // previous sanitised copy atomically so the old image cannot linger in
+        // public view while the new upload is pending.
+        tx.delete(publicRef);
         // Audit log.
         const auditId = `${versionId}_${controlId}_stage2_submitted_${now}`;
         const auditRef = eventRef.collection(types_1.COLLECTIONS.AUDIT_LOGS).doc(auditId);

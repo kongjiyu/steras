@@ -61,6 +61,7 @@ exports.COLLECTIONS = {
     DECISIONS: 'decisions',
     DECISION_HISTORY: 'decision_history',
     RESOURCE_OVERRIDES: 'resource_overrides',
+    ASSESSMENT_REVIEWS: 'assessment_reviews',
     AUDIT_LOGS: 'audit_logs',
     VENUES: 'venues',
     INCIDENTS: 'incidents',
@@ -80,6 +81,7 @@ exports.COLLECTIONS = {
     STAGE2_CONFIRMS: 'stage2_confirms',
     STAGE2_REPORTS: 'stage2_reports',
     PUBLIC_EVENT_CONTROLS: 'public_event_controls',
+    PUBLIC_EVENT_CONTROL_ITEMS: 'items',
     PUBLIC_REPORTS: 'public_reports',
 };
 exports.CATEGORY_SCHEMA_VERSION = '2026-07-24-all-hazards-v2';

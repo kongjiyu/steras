@@ -33,6 +33,7 @@ const STATUS_BADGE: Record<EventStatus, string> = {
   Approved: 'admin-badge admin-badge--good',
   Rejected: 'admin-badge admin-badge--bad',
   Withdrawn: 'admin-badge admin-badge--default',
+  'Manual Review Required': 'admin-badge admin-badge--warn',
 };
 
 function initialsFor(name?: string) {
@@ -66,7 +67,7 @@ export default function AdminApplicationQueue() {
       try {
         const snap = await getDocs(query(collection(db, COLLECTIONS.EVENTS), orderBy('updatedAt', 'desc')));
         if (cancelled) return;
-        setEvents(snap.docs.map((d) => ({ eventId: d.id, ...(d.data() as EventRecord) })));
+        setEvents(snap.docs.map((d) => ({ ...(d.data() as EventRecord), eventId: d.id })));
         setLoading(false);
       } catch (err) {
         if (cancelled) return;

@@ -123,14 +123,44 @@ export interface EventRecord {
   editableVersionId?: string | null;
   draftDocumentPaths: string[];
   requiredAuthorities: AuthorityType[];
+  /** M3 named-officer authorization. Populated atomically with assignments. */
+  assignedOfficerUids?: string[];
+  /** Current named officer per required authority for the active version. */
+  assignedOfficerByAuthority?: Partial<Record<AuthorityType, string>>;
   /** Control IDs that have been VERIFIED (not just declared) by an authority. */
   verifiedControlIds?: string[];
   /** M3 round N+1 (Workstream 1) — which review stage the event is in.
-   *  - 'initial':   admin has not yet approved for officer review (default)
+   *  - 'initial':   admin initial gate is complete; assignment is next
    *  - 'authority': officers are reviewing (admin clicked "Assign")
    *  - 'second':    all officers have decided; admin must confirm aggregate
-   *  Absent or 'initial' = legacy flow (no assignment required). */
-  reviewStage?: 'initial' | 'authority' | 'second';
+   *  Absent = legacy flow (no assignment required). */
+  reviewStage?: 'initial' | 'authority' | 'second' | 'manual' | 'closed' | null;
+  /** Admin's initial-gate decision, including rejection feedback. */
+  initialReview?: {
+    decision: 'Approved' | 'Rejected';
+    reason: string;
+    suggestion?: string;
+    reviewerUid: string;
+    reviewedAt: number;
+    manualAssessmentRecorded?: boolean;
+    officerFeedback?: Array<{
+      authorityType: AuthorityType;
+      officerUid: string;
+      decision: DecisionValue;
+      reason: string;
+      suggestion?: string;
+      decidedAt?: number;
+    }>;
+  };
+  /** Human assessment captured when AI-assisted assessment is unavailable. */
+  manualAssessment?: {
+    score: number;
+    riskLevel: RiskLevel;
+    inputs: Record<string, string | number | boolean>;
+    rationale: string;
+    completedBy: string;
+    completedAt: number;
+  };
   /** M3 round N+1 (Workstream 2) — true after the admin has generated AND
    *  committed the per-authority event control list. The organizer can
    *  then see the Stage 1 + Stage 2 requirements in
@@ -942,6 +972,27 @@ export type ResourceRecommendation = ResourceRecommendationBase & (
       assessmentReference: Extract<ResourceAssessmentReference, { stage: 'official' }>;
     }
 );
+/** Authority-owned confirmation/override of deterministic hazard scores.
+ * The official M2 assessment remains immutable; this record is the M3 human
+ * review artifact that can be consumed by a later M2 recomputation. */
+export interface AuthorityAssessmentReview {
+  reviewId: string;
+  eventId: string;
+  versionId: string;
+  authorityType: AuthorityType;
+  reviewerUid: string;
+  rationale: string;
+  reviewedAt: number;
+  resourceConfirmed: boolean;
+  overrides: Array<{
+    hazardId: string;
+    hazardName: string;
+    originalResidualLikelihood: number;
+    originalResidualSeverity: number;
+    revisedResidualLikelihood: number;
+    revisedResidualSeverity: number;
+  }>;
+}
 
 export type DecisionValue = 'Approved' | 'Rejected' | 'AmendmentRequested';
 
@@ -997,7 +1048,12 @@ export type AuditAction =
   | 'stage2_reported'
   // M3 round N+1 (Workstream 5) — admin publish gate
   | 'stage2_doc_published'
-  | 'stage2_doc_rejected';
+  | 'stage2_doc_rejected'
+  | 'control_resubmit_required'
+  | 'control_restored'
+  | 'assessment_reviewed'
+  | 'withdrawn_cleanup'
+  | 'deployment_migration';
 
 export type NotificationType =
   | 'decision_made'
@@ -1017,7 +1073,9 @@ export type NotificationType =
   | 'stage2_reported'
   // M3 round N+1 (Workstream 5) — admin publish gate
   | 'stage2_doc_published'
-  | 'stage2_doc_rejected';
+  | 'stage2_doc_rejected'
+  | 'control_resubmit_required'
+  | 'control_restored';
 
 export interface Notification {
   notificationId: string;
@@ -1181,6 +1239,7 @@ export const COLLECTIONS = {
   DECISIONS: 'decisions',
   DECISION_HISTORY: 'decision_history',
   RESOURCE_OVERRIDES: 'resource_overrides',
+  ASSESSMENT_REVIEWS: 'assessment_reviews',
   AUDIT_LOGS: 'audit_logs',
   VENUES: 'venues',
   INCIDENTS: 'incidents',
@@ -1200,6 +1259,7 @@ export const COLLECTIONS = {
   STAGE2_CONFIRMS: 'stage2_confirms',
   STAGE2_REPORTS: 'stage2_reports',
   PUBLIC_EVENT_CONTROLS: 'public_event_controls',
+  PUBLIC_EVENT_CONTROL_ITEMS: 'items',
   PUBLIC_REPORTS: 'public_reports',
 } as const;
 
@@ -1293,6 +1353,27 @@ export interface Stage2Doc {
   rejectedBy?: string;
 }
 
+/** Sanitised, server-written public projection of a published Stage 2 image.
+ * It contains no organiser identity, private evidence paths, review rationale,
+ * or M4 investigation details. */
+export interface PublicEventControl {
+  publicControlId: string;
+  eventId: string;
+  versionId: string;
+  controlId: string;
+  docId: string;
+  authority: AuthorityType;
+  controlName: string;
+  stage2Label: string;
+  imageUrl: string;
+  publicConfirmCount: number;
+  reported?: boolean;
+  publishedAt: number;
+  sanitized: true;
+  sanitizedAt: number;
+  sanitizedBy: string;
+}
+
 /** Full Event Control canonical shape — replaces the flat `event_controls`
  *  doc with a sub-collection layout (FR-M3-22..29, Q1 refactor). */
 export interface EventControl {
@@ -1313,6 +1394,8 @@ export interface EventControl {
   usePreviousSourceEventId?: string;
   /** Aggregate across the control's Stage 1 docs. */
   label: 'approved' | 'pending' | 'reported_under_review' | 'resubmit_required';
+  /** Set by the withdrawal cleanup trigger; retained for audit/read models. */
+  activityClosed?: boolean;
   labelAddedAt?: number;
   labelRemovedAt?: number;
   createdAt: number;

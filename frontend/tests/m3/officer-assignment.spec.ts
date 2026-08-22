@@ -14,16 +14,11 @@
  * AmendmentRequested) so we can run a fresh flow without disturbing the
  * other test events.
  */
-import { test, expect } from './fixtures';
-import { resetMarathon } from './admin-reset';
+import { test, expect, EVENTS } from './fixtures';
+import { dedicatedOfficerUids, resetMarathon } from './admin-reset';
 
-const MARATHON = 'evt-004-kl-marathon';
-const OFFICERS = {
-  pdrm: 'mmcccuLb5kQOKGdf2eECQOiAS7h2',
-  bomba: 'sKCMYylLOpY1dabTFcRwrxb0y0c2',
-  kkm: 'qjLsLI8ZSJNX5t6HlsrRTQYG9Bl2',
-  dbkl: 'efL2zcnyExZqvciYoq5V0oZZMPn1',
-} as const;
+const MARATHON = EVENTS.marathon;
+let OFFICERS: Awaited<ReturnType<typeof dedicatedOfficerUids>>;
 
 test.describe('@M3 Workstream 1: officer assignment + second review', () => {
   // The full flow does 5 sequential Firebase Auth logins (admin + 4
@@ -35,6 +30,7 @@ test.describe('@M3 Workstream 1: officer assignment + second review', () => {
     // Reset evt-004 + officers + notifications via Admin SDK (client
     // auth can't write to events/ — admin ops are server-only).
     await resetMarathon();
+    OFFICERS = await dedicatedOfficerUids();
   });
 
   test('full flow: assign -> 4 officers propose -> admin confirms aggregate', async ({ api, loginAs }) => {
@@ -67,10 +63,11 @@ test.describe('@M3 Workstream 1: officer assignment + second review', () => {
     );
     expect(commitResult.assigned).toBe(4);
 
-    // Verify each officer's workloadCount incremented to 1.
-    for (const uid of Object.values(OFFICERS)) {
+    // Only officers for the event's four required authorities increment;
+    // the dedicated MOTAC account remains an unassigned candidate.
+    for (const [authority, uid] of Object.entries(OFFICERS)) {
       const o = await api.getDoc<{ workloadCount: number }>(`officers/${uid}`);
-      expect(o?.workloadCount).toBe(1);
+      expect(o?.workloadCount).toBe(authority === 'motac' ? 0 : 1);
     }
     // Verify event.reviewStage='authority'.
     const evAfter = await api.getDoc<{ reviewStage: string }>(`events/${MARATHON}`);

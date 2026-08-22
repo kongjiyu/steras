@@ -186,9 +186,21 @@ export const unassignAuthorityOfficers = onCall<UnassignAuthorityOfficersRequest
       return wasTargeted ? { ...a, status: 'revoked' as const } : a;
     });
     const allRevoked = allAssignmentsAfter.every((a) => a.status === 'revoked');
+    const activeAssignments = allAssignmentsAfter.filter((a) => a.status !== 'revoked');
+    const assignedOfficerByAuthority = Object.fromEntries(
+      activeAssignments.map((a) => [a.authorityType, a.officerUid]),
+    );
     if (allRevoked) {
       tx.update(eventRef, {
         reviewStage: null,
+        assignedOfficerUids: [],
+        assignedOfficerByAuthority: {},
+        updatedAt: now,
+      });
+    } else {
+      tx.update(eventRef, {
+        assignedOfficerUids: activeAssignments.map((a) => a.officerUid),
+        assignedOfficerByAuthority,
         updatedAt: now,
       });
     }

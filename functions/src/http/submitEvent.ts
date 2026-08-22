@@ -66,8 +66,8 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
     const event = { eventId, ...eventSnapshot.data() } as EventRecord;
     if (submissionFingerprint(event) !== preflightFingerprint) throw new HttpsError('aborted', 'The draft changed during submission. Review it and retry.');
     if (event.organizerId !== uid) throw new HttpsError('permission-denied', 'You do not own this event.');
-    if (!['Draft', 'AmendmentRequested'].includes(event.status)) {
-      throw new HttpsError('failed-precondition', 'Only drafts or amendment requests can be submitted.');
+    if (!['Draft', 'AmendmentRequested', 'Rejected'].includes(event.status)) {
+      throw new HttpsError('failed-precondition', 'Only drafts, rejected applications, or amendment requests can be submitted.');
     }
     if (event.eventDetails.venueId && (!venueSnapshot?.exists
       || validateCanonicalVenueRecord(event.eventDetails, venueSnapshot.data()).length > 0)) {
@@ -114,6 +114,12 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
       authorityReviewCompletedVersionId: FieldValue.delete(),
       editableVersionId: null,
       requiredAuthorities,
+      assignedOfficerUids: [],
+      assignedOfficerByAuthority: {},
+      reviewStage: 'initial',
+      initialReview: FieldValue.delete(),
+      manualAssessment: FieldValue.delete(),
+      verifiedControlIds: [],
       submittedAt: now,
       updatedAt: now,
     });

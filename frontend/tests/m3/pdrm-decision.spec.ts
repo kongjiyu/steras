@@ -2,7 +2,8 @@
  * PDRM decision flow — Module 3 (Authority Approval)
  *
  * Walks the happy path: PDRM officer signs in, opens an assigned event,
- * records an Approve decision, and verifies the aggregate status updates.
+ * records an approval proposal, and verifies the event remains pending final
+ * admin review.
  *
  * Tagged @M3 so the full M3 suite can be run with:
  *   npx playwright test --grep "@M3"
@@ -34,7 +35,7 @@ test.describe('@M3 PDRM decision flow', () => {
     await page.goto(`/authority/events/${EVENTS.foodFair}`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: /your decision/i })).toBeVisible();
 
-    // Fill the rationale and submit Approve.
+    // Fill the rationale and submit an approval proposal.
     const rationale = 'PDRM E2E test — crowd ingress plan accepted, traffic management plan acceptable.';
     // Scope to the "Your decision" section (Stage-1 section also has textareas/buttons).
     const decisionSection = page.locator('section', { has: page.getByRole('heading', { name: /your decision/i }) });
@@ -46,27 +47,28 @@ test.describe('@M3 PDRM decision flow', () => {
     // FR-M3-16: tick the "I have reviewed" checkbox before Approve.
     await decisionSection.getByTestId('confirmed-review-checkbox').check();
 
-    const approveBtn = decisionSection.getByRole('button', { name: /^approve$/i });
+    const approveBtn = decisionSection.getByRole('button', { name: /propose approval/i });
     await approveBtn.scrollIntoViewIfNeeded();
     await expect(approveBtn).toBeEnabled({ timeout: 10_000 });
     await approveBtn.click();
 
-    // Wait for the decision to land in Firestore
+    // Wait for the officer proposal to land in the current-version assignment.
     await expect.poll(async () => {
-      const d = await api.getDoc(`events/${EVENTS.foodFair}/decisions/v1_PDRM`);
+      const d = await api.getDoc(`events/${EVENTS.foodFair}/assignments/v1_PDRM`);
       return d?.decision === 'Approved' ? true : null;
     }, { timeout: 15_000, intervals: [500, 1_000, 1_500] }).toBe(true);
 
-    // Assert: Firestore reflects the decision + status moved to UnderReview
-    // (only PDRM has approved; other required authorities still pending).
-    const decision = await api.getDoc(`events/${EVENTS.foodFair}/decisions/v1_PDRM`);
-    expect(decision).toBeTruthy();
-    expect(decision!.decision).toBe('Approved');
-    expect(decision!.reviewerId).toBe(pdrmUid);
-    expect(decision!.current).toBe(true);
-    expect(decision!.rationale).toBe(rationale);
+    // Assert: the proposal is completed, while status remains UnderReview
+    // until the admin records the final second-review outcome.
+    const assignment = await api.getDoc(`events/${EVENTS.foodFair}/assignments/v1_PDRM`);
+    expect(assignment).toBeTruthy();
+    expect(assignment!.decision).toBe('Approved');
+    expect(assignment!.officerUid).toBe(pdrmUid);
+    expect(assignment!.status).toBe('completed');
+    expect(assignment!.reason).toBe(rationale);
 
     const eventAfter = await api.getDoc(`events/${EVENTS.foodFair}`);
     expect(eventAfter!.status).toBe('UnderReview');
+    expect(eventAfter!.reviewStage).toBe('authority');
   });
 });

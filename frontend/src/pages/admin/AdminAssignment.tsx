@@ -13,7 +13,7 @@
  */
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { collection, doc, onSnapshot } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { format } from 'date-fns';
 import { ChevronLeft, RotateCcw, Shield, ShieldCheck, UserCheck, Users } from 'lucide-react';
@@ -22,6 +22,7 @@ import {
   Assignment,
   AuthorityType,
   COLLECTIONS,
+  DecisionValue,
   EventRecord,
 } from '@shared/types';
 import { db, functions, isFirebaseConfigured } from '../../config/firebase';
@@ -52,6 +53,7 @@ export default function AdminAssignment() {
   const [unassigning, setUnassigning] = useState<AuthorityType | null>(null);
   const [unassigningAll, setUnassigningAll] = useState(false);
   const [adminNote, setAdminNote] = useState('');
+  const [finalDecision, setFinalDecision] = useState<DecisionValue | ''>('');
 
   // Live event doc.
   useEffect(() => {
@@ -64,8 +66,8 @@ export default function AdminAssignment() {
   // Live assignments sub-collection.
   useEffect(() => {
     if (!isFirebaseConfigured || !eventId) return;
-    return onSnapshot(doc(db, COLLECTIONS.EVENTS, eventId).collection(COLLECTIONS.ASSIGNMENTS), (snapshot) => {
-      setAssignments(snapshot.docs.map((d) => ({ assignmentId: d.id, ...(d.data() as Assignment) })));
+    return onSnapshot(collection(db, COLLECTIONS.EVENTS, eventId, COLLECTIONS.ASSIGNMENTS), (snapshot) => {
+      setAssignments(snapshot.docs.map((d) => ({ ...(d.data() as Assignment), assignmentId: d.id })));
     });
   }, [eventId]);
 
@@ -91,7 +93,18 @@ export default function AdminAssignment() {
         toast.error(err instanceof Error ? err.message : 'Unable to load the officer checklist.');
       })
       .finally(() => setLoadingChecklist(false));
-  }, [eventId, event?.currentVersionId]);
+  }, [eventId, event]);
+
+  // Derive review state before the early loading returns so this hook is
+  // called in the same order on every render.
+  const required = event?.requiredAuthorities ?? [];
+  const currentAssignments = assignments.filter((assignment) => assignment.versionId === event?.currentVersionId);
+  const assignmentsByAuthority = new Map<AuthorityType, Assignment>();
+  for (const a of currentAssignments) assignmentsByAuthority.set(a.authorityType, a);
+  const aggregateDecision = computeAggregate(Array.from(assignmentsByAuthority.values()), required);
+  useEffect(() => {
+    if (aggregateDecision && !finalDecision) setFinalDecision(aggregateDecision);
+  }, [aggregateDecision, finalDecision]);
 
   if (!isFirebaseConfigured) {
     return <div className="p-8 text-ink-500">Firebase is not configured.</div>;
@@ -100,15 +113,10 @@ export default function AdminAssignment() {
   if (!event) return <div className="p-8 text-ink-500">Loading application...</div>;
 
   const details = event.eventDetails;
-  const required = event.requiredAuthorities;
-  const assignmentsByAuthority = new Map<AuthorityType, Assignment>();
-  for (const a of assignments) assignmentsByAuthority.set(a.authorityType, a);
   const isAuthorityReview = event.reviewStage === 'authority';
   const isSecondReview = event.reviewStage === 'second';
   const allComplete = isSecondReview
-    || (assignments.length > 0 && assignments.every((a) => a.status === 'completed' || a.status === 'revoked'));
-  const aggregateDecision = computeAggregate(Array.from(assignmentsByAuthority.values()), required);
-
+    || (currentAssignments.length > 0 && currentAssignments.every((a) => a.status === 'completed' || a.status === 'revoked'));
   const commit = async () => {
     if (!eventId) return;
     setCommitting(true);
@@ -127,15 +135,15 @@ export default function AdminAssignment() {
   };
 
   const confirmSecondReview = async () => {
-    if (!eventId || !aggregateDecision) return;
+    if (!eventId || !finalDecision) return;
     setConfirming(true);
     try {
-      const command = httpsCallable<{ eventId: string; confirmedDecision: typeof aggregateDecision; adminNote?: string }, { status: typeof aggregateDecision }>(
+      const command = httpsCallable<{ eventId: string; finalDecision: DecisionValue; adminNote?: string }, { status: DecisionValue; aggregate?: EventRecord['status'] }>(
         functions,
         'makeSecondReviewDecision',
       );
-      await command({ eventId, confirmedDecision: aggregateDecision, adminNote: adminNote.trim() || undefined });
-      toast.success(`Second review confirmed: ${aggregateDecision}.`);
+      await command({ eventId, finalDecision, adminNote: adminNote.trim() || undefined });
+      toast.success(`Final decision recorded: ${finalDecision}.`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Unable to confirm second review.');
     } finally {
@@ -175,7 +183,7 @@ export default function AdminAssignment() {
   // proposal — once a proposal is in, the data is significant and the
   // admin must go through the second review to close out the work.
   const canUnassign = isAuthorityReview
-    && !assignments.some((a) => a.status === 'completed');
+    && !currentAssignments.some((a) => a.status === 'completed');
 
   return (
     <div className="p-5 sm:p-8">
@@ -301,20 +309,29 @@ export default function AdminAssignment() {
               <div className="card-header">
                 <div>
                   <h2 className="font-semibold">Second review</h2>
-                  <p className="mt-0.5 text-xs text-ink-500">All officers have recorded their decisions. Confirm the aggregate below.</p>
+                  <p className="mt-0.5 text-xs text-ink-500">All officers have recorded proposals. The admin records the final application outcome.</p>
                 </div>
                 <ShieldCheck size={18} className="text-status-approved" />
               </div>
               <div className="card-body space-y-3">
                 <p className="rounded-md bg-cream-50 p-3 text-sm text-ink-700">
-                  Aggregate: <span className="font-semibold">{aggregateDecision}</span>
+                  Officer aggregate recommendation: <span className="font-semibold">{aggregateDecision}</span>
                 </p>
+                <label className="block text-xs font-medium text-ink-600">
+                  Admin final decision
+                  <select className="input mt-1" value={finalDecision} onChange={(e) => setFinalDecision(e.target.value as DecisionValue)}>
+                    <option value="">Select final decision</option>
+                    <option value="Approved">Approved</option>
+                    <option value="AmendmentRequested">Amendment requested</option>
+                    <option value="Rejected">Rejected</option>
+                  </select>
+                </label>
                 <label className="block text-xs font-medium text-ink-600">
                   Admin note (optional, for audit)
                   <textarea className="input mt-1 resize-y" rows={2} maxLength={1000} value={adminNote} onChange={(e) => setAdminNote(e.target.value)} placeholder="Any context for the audit log." />
                 </label>
-                <button type="button" className="btn-success w-full" disabled={confirming} onClick={confirmSecondReview}>
-                  {confirming ? 'Confirming...' : `Confirm aggregate (${aggregateDecision})`}
+                <button type="button" className="btn-success w-full" disabled={confirming || !finalDecision} onClick={confirmSecondReview}>
+                  {confirming ? 'Recording...' : `Record final decision${finalDecision ? ` (${finalDecision})` : ''}`}
                 </button>
               </div>
             </section>
@@ -325,7 +342,7 @@ export default function AdminAssignment() {
   );
 }
 
-function computeAggregate(assignments: Assignment[], required: AuthorityType[]): EventRecord['status'] | null {
+function computeAggregate(assignments: Assignment[], required: AuthorityType[]): DecisionValue | null {
   if (assignments.length === 0 || required.length === 0) return null;
   const byAuthority = new Map<AuthorityType, Assignment['decision']>();
   for (const a of assignments) {

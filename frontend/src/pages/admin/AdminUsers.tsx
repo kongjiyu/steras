@@ -4,7 +4,7 @@ import { db, isFirebaseConfigured } from '../../config/firebase';
 import { COLLECTIONS, UserProfile, UserRole } from '@shared/types';
 import { WorkspaceTopBar } from '../../components/layout/Sidebar';
 import { useAuth } from '../../contexts/AuthContext';
-import { Users, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { Users, ShieldCheck } from 'lucide-react';
 
 const ROLE_BADGE: Record<UserRole, string> = {
   organizer: 'admin-badge admin-badge--default',

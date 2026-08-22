@@ -20,7 +20,8 @@ exports.recordOfficerProposal = void 0;
  *     still does; this function is the new path.)
  *   - When all assignments are completed, sets
  *     `events/{eventId}.reviewStage = 'second'` and emits a notification
- *     to the admin.
+ *     to the admin. The organiser is notified only after the admin records
+ *     the final second-review outcome.
  *   - Reason and suggestion are split per FR-M3-05.
  *
  * FR-M3-15 (officer reject with reason + suggestion) and FR-M3-16
@@ -75,6 +76,24 @@ exports.recordOfficerProposal = (0, https_1.onCall)({ region: runtime_1.FUNCTION
     const versionId = event.currentVersionId;
     if (!versionId)
         throw new https_1.HttpsError('failed-precondition', 'The application has no submitted version.');
+    const assessmentSnap = await eventRef.collection(types_1.COLLECTIONS.ASSESSMENTS).doc(versionId).get();
+    if (!['Pending', 'UnderReview'].includes(event.status)) {
+        throw new https_1.HttpsError('failed-precondition', 'This application version is no longer open for officer review.');
+    }
+    if (event.initialReview?.decision !== 'Approved') {
+        throw new https_1.HttpsError('failed-precondition', 'The admin initial review has not released this application for officer review.');
+    }
+    if (event.currentAssessmentId !== versionId || event.currentResourceId !== versionId) {
+        throw new https_1.HttpsError('failed-precondition', 'Risk assessment and resources must be ready before recording a proposal.');
+    }
+    const assessment = assessmentSnap?.data();
+    if (assessment?.complianceStatus === 'blocked' && decision === 'Approved') {
+        throw new https_1.HttpsError('failed-precondition', 'This application cannot be approved while compliance checks are blocked.');
+    }
+    const readiness = assessment?.assessmentReadiness;
+    if ((readiness === 'provisional' || readiness === 'insufficient_data') && reason.length < 80) {
+        throw new https_1.HttpsError('invalid-argument', `When the assessment is ${readiness}, the proposal reason must be at least 80 characters.`);
+    }
     // Find this officer's assignment.
     const assignmentId = `${versionId}_${profile.authorityType}`;
     const assignmentRef = eventRef.collection(types_1.COLLECTIONS.ASSIGNMENTS).doc(assignmentId);
@@ -96,7 +115,9 @@ exports.recordOfficerProposal = (0, https_1.onCall)({ region: runtime_1.FUNCTION
     return db.runTransaction(async (tx) => {
         // Reads first (Firestore requires all reads before all writes).
         const allAssignmentsSnap = await tx.get(eventRef.collection(types_1.COLLECTIONS.ASSIGNMENTS));
-        const all = allAssignmentsSnap.docs.map((d) => d.data());
+        const all = allAssignmentsSnap.docs
+            .map((d) => d.data())
+            .filter((candidate) => candidate.versionId === versionId);
         // Treat the current assignment as if it's about to be completed
         // (so the last officer's proposal correctly triggers reviewStage='second').
         const allCompleted = all
@@ -140,34 +161,9 @@ exports.recordOfficerProposal = (0, https_1.onCall)({ region: runtime_1.FUNCTION
                 console.warn('[recordOfficerProposal] admin notification failed (non-fatal):', err);
             }
         }
-        // Notify the organiser (FR-M3-08) — wraps the legacy notification.
-        // FR-M3-08: rejection notifications carry reason + suggestion as
-        // separate fields so the bell UI can surface them structurally
-        // (not just mashed into the message).
-        if (event.organizerId) {
-            try {
-                const recipientUid = await (0, notifications_1.resolveAuthUid)(event.organizerId);
-                if (recipientUid) {
-                    const notifType = decision === 'Approved' ? 'application_approved'
-                        : decision === 'Rejected' ? 'application_rejected'
-                            : 'amendment_requested';
-                    await (0, notifications_1.createNotification)({
-                        recipientUid,
-                        eventId,
-                        versionId,
-                        type: notifType,
-                        title: `${profile.authorityType} recorded ${decision}`,
-                        message: `${profile.authorityType} ${decision} (officer proposal). Final decision pending second review.`,
-                        sourceActionId: `proposal_${assignmentId}`,
-                        ...(decision === 'Rejected' ? { reason, suggestion: suggestion || undefined } : {}),
-                        ...(decision === 'AmendmentRequested' && suggestion ? { reason, suggestion } : {}),
-                    });
-                }
-            }
-            catch (err) {
-                console.warn('[recordOfficerProposal] organiser notification failed (non-fatal):', err);
-            }
-        }
+        // Do not notify the organiser yet: this is an officer proposal, not a
+        // final application outcome. `makeSecondReviewDecision` sends the one
+        // authoritative result after the admin completes second review.
         return {
             eventId,
             versionId,

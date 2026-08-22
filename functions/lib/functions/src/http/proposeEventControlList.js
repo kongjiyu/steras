@@ -2,29 +2,23 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.proposeEventControlList = void 0;
 exports.proposeControlItemsForEvent = proposeControlItemsForEvent;
+exports.proposeControlItemsForEventWithMetadata = proposeControlItemsForEventWithMetadata;
 /**
- * proposeEventControlList — STUB callable (M3 round N+1, Q5).
+ * proposeEventControlList — admin-only control-list proposal callable.
  *
- * Per docs/team-handoffs/M3_INTEGRATION_CONTRACT.md §7: M2 owns the real
- * AI-backed version of this function. Until M2 ships it, M3 ships a stub
- * that returns a hardcoded 5-item list (one per authorityType) so the
- * downstream `generateEventControlList` flow can be built and tested.
- *
- * The stub:
- *   - Returns a hardcoded proposed control list for the event's
- *     `requiredAuthorities`.
- *   - When M2 ships the real version, delete this file and the export
- *     in `index.ts`; M3's caller will hit M2's callable instead.
- *   - Does NOT call MiniMax. Pure synchronous stub.
- *
- * Q5 (locked decision): M2 owns the AI call. M3's stub here is a
- * placeholder so the workflow can be exercised end-to-end.
+ * M3 uses the shared MiniMax advisory client and keeps deterministic
+ * per-authority templates as an explicit fallback for unavailable or invalid
+ * provider responses. The generate flow calls the shared helper directly so
+ * it does not make a callable-to-callable network hop.
  */
 const firebase_admin_1 = require("firebase-admin");
 const https_1 = require("firebase-functions/v2/https");
 const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
-/** Hardcoded Stage 1 requirements per authority (placeholder until M2). */
+const secrets_1 = require("../config/secrets");
+const controlListProposer_1 = require("../engines/controlListProposer");
+/** Deterministic per-authority Stage 1 requirements used only as the
+ * explicitly labelled fallback when the advisory provider is unavailable. */
 const STAGE1_TEMPLATES = {
     PDRM: [
         { docType: 'application', label: 'PDRM event notification acknowledgement', required: true },
@@ -67,16 +61,22 @@ const STAGE2_LABEL = {
     DBKL: 'Photo of DBKL-approved venue setup',
     MOTAC: 'Photo of MOTAC permit displayed at venue',
 };
-exports.proposeEventControlList = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
+exports.proposeEventControlList = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION, secrets: [secrets_1.MINIMAX_API_KEY] }, async (request) => {
+    if (!request.auth)
+        throw new https_1.HttpsError('unauthenticated', 'Sign in before requesting a control-list proposal.');
+    const profileSnap = await (0, firebase_admin_1.firestore)().collection(types_1.COLLECTIONS.USERS).doc(request.auth.uid).get();
+    const profile = profileSnap.data();
+    if (!profile || profile.role !== 'admin')
+        throw new https_1.HttpsError('permission-denied', 'Only admins can request a control-list proposal.');
     const eventId = (request.data?.eventId ?? '').trim();
     const versionId = (request.data?.versionId ?? '').trim();
     if (!eventId)
         throw new https_1.HttpsError('invalid-argument', 'eventId is required.');
     if (!versionId)
         throw new https_1.HttpsError('invalid-argument', 'versionId is required.');
-    const items = await proposeControlItemsForEvent(eventId, versionId);
-    console.log(`[proposeEventControlList:STUB] eventId=${eventId} versionId=${versionId} returning ${items.length} items`);
-    return { items };
+    const proposal = await proposeControlItemsForEventWithMetadata(eventId, versionId);
+    console.log(`[proposeEventControlList] eventId=${eventId} versionId=${versionId} source=${proposal.source} items=${proposal.items.length}`);
+    return proposal;
 });
 /**
  * Reusable core: look up the event and return the proposed control
@@ -85,21 +85,47 @@ exports.proposeEventControlList = (0, https_1.onCall)({ region: runtime_1.FUNCTI
  * require a deployed URL and auth context).
  */
 async function proposeControlItemsForEvent(eventId, versionId) {
+    const proposal = await proposeControlItemsForEventWithMetadata(eventId, versionId);
+    return proposal.items;
+}
+async function proposeControlItemsForEventWithMetadata(eventId, versionId) {
     const eventSnap = await (0, firebase_admin_1.firestore)().collection(types_1.COLLECTIONS.EVENTS).doc(eventId).get();
     if (!eventSnap.exists) {
         throw new Error(`Event ${eventId} not found.`);
     }
     const event = eventSnap.data();
+    if (event.currentVersionId && event.currentVersionId !== versionId) {
+        throw new Error(`Version ${versionId} is not the current version for event ${eventId}.`);
+    }
     const required = event.requiredAuthorities ?? [];
-    // STUB: return a hardcoded list. When M2 ships the real one, this
-    // function is replaced with a call to M2's callable.
-    const items = required.map((authority) => ({
+    const fallbackItems = required.map((authority) => ({
         controlName: CONTROL_NAMES[authority] ?? `${authority} compliance`,
         authority,
         stageRequirement: 'stage1_and_stage2',
         stage1Requirements: STAGE1_TEMPLATES[authority] ?? [],
         stage2Requirement: { kind: 'image', label: STAGE2_LABEL[authority] ?? `Photo of ${authority} at venue` },
     }));
-    return items;
+    const [assessmentSnap, resourceSnap] = await Promise.all([
+        event.currentAssessmentId
+            ? (0, firebase_admin_1.firestore)().collection(types_1.COLLECTIONS.EVENTS).doc(eventId).collection(types_1.COLLECTIONS.ASSESSMENTS).doc(event.currentAssessmentId).get()
+            : Promise.resolve(null),
+        event.currentResourceId
+            ? (0, firebase_admin_1.firestore)().collection(types_1.COLLECTIONS.EVENTS).doc(eventId).collection(types_1.COLLECTIONS.RESOURCES).doc(event.currentResourceId).get()
+            : Promise.resolve(null),
+    ]);
+    let apiKey = '';
+    try {
+        apiKey = secrets_1.MINIMAX_API_KEY.value();
+    }
+    catch {
+        // Secret values are unavailable in local/unit environments; the
+        // deterministic fallback remains the safe result in that case.
+    }
+    return (0, controlListProposer_1.proposeControlListWithMiniMax)(apiKey, {
+        event,
+        requiredAuthorities: required,
+        assessment: assessmentSnap?.exists ? assessmentSnap.data() : undefined,
+        resource: resourceSnap?.exists ? resourceSnap.data() : undefined,
+    }, fallbackItems);
 }
 //# sourceMappingURL=proposeEventControlList.js.map

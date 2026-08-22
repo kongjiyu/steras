@@ -31,14 +31,14 @@ service firebase.storage {
     }
 
     function isAssignedAuthority(eventId) {
+      let event = eventRecord(eventId);
       return isAuthority()
-             && eventRecord(eventId).requiredAuthorities.hasAny([
-               firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.authorityType
-             ]);
+             && event.keys().hasAny(['assignedOfficerUids'])
+             && event.assignedOfficerUids.hasAny([request.auth.uid]);
     }
 
     function isEditableVersion(eventId, versionId) {
-      return eventRecord(eventId).status in ['Draft', 'AmendmentRequested']
+      return eventRecord(eventId).status in ['Draft', 'Rejected', 'AmendmentRequested']
              && eventRecord(eventId).editableVersionId == versionId;
     }
 

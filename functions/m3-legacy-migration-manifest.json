@@ -1,0 +1,43 @@
+{
+  "migrationId": "m3-legacy-linkos-2026-08",
+  "projectId": "linkos-496505",
+  "eventIds": [
+    "evt-001-kl-music-festival",
+    "evt-002-pj-food-fair",
+    "evt-003-kl-mountain-run",
+    "evt-004-kl-marathon",
+    "evt-compliance-blocked",
+    "evt-control-verification",
+    "evt-provisional-readiness"
+  ],
+  "excludedEventIds": [
+    "m3-uat-01-initial-ready",
+    "m3-uat-02-compliance-blocked",
+    "m3-uat-03-provisional-review",
+    "m3-uat-04-awaiting-assignment",
+    "m3-uat-05-authority-partial",
+    "m3-uat-06-second-review",
+    "m3-uat-07-rejected",
+    "m3-uat-08-amendment",
+    "m3-uat-09-control-verification",
+    "m3-uat-10-public-stage2",
+    "uat-assessment-1787387472077-275d880b",
+    "uat-assessment-1787387867947-bfb201bb",
+    "uat-assessment-1787388281513-5d1901bd"
+  ],
+  "allowedEventFields": {
+    "evt-001-kl-music-festival": [],
+    "evt-002-pj-food-fair": [],
+    "evt-003-kl-mountain-run": [],
+    "evt-004-kl-marathon": [
+      "assignedOfficerUids",
+      "assignedOfficerByAuthority"
+    ],
+    "evt-compliance-blocked": [],
+    "evt-control-verification": [
+      "reviewStage"
+    ],
+    "evt-provisional-readiness": []
+  },
+  "allowProjectionChanges": false
+}

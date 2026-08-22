@@ -10,10 +10,10 @@
  *
  *   No mutations. The organizer upload (UC-28) is Workstream 3.
  */
-import { test, expect } from './fixtures';
+import { test, expect, EVENTS } from './fixtures';
 import { resetApprovedEvent } from './admin-reset';
 
-const APPROVED = 'evt-001-kl-music-festival';
+const APPROVED = EVENTS.musicFestival;
 
 test.describe('@M3 Workstream 2: organizer reads the control list', () => {
   test.beforeEach(async () => {
@@ -42,9 +42,12 @@ test.describe('@M3 Workstream 2: organizer reads the control list', () => {
     await api.signOut();
     await loginAs('organizer');
     await page.goto(`/organizer/events/${APPROVED}/controls`, { waitUntil: 'domcontentloaded' });
-    // One card per required authority.
+    // One card per required authority. Derive the expected count from the
+    // fixture contract instead of retaining the old five-authority fixture.
+    const approvedEvent = await api.getDoc<{ requiredAuthorities: string[] }>(`events/${APPROVED}`);
+    expect(approvedEvent?.requiredAuthorities).toBeTruthy();
     const cards = page.locator('[data-testid^="organizer-control-"]');
-    await expect(cards).toHaveCount(5);
+    await expect(cards).toHaveCount(approvedEvent!.requiredAuthorities.length);
     // The header badge is now "List published".
     await expect(page.getByText(/^List published$/i)).toBeVisible();
     // Spot-check the PDRM card. Post-Workstream 3, the per-control

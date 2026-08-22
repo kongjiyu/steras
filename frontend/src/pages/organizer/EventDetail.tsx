@@ -95,7 +95,7 @@ export default function EventDetail() {
       <PageHeader
         title={eventName}
         description={`${venueName} · ${startLabel}`}
-        action={<><StatusBadge status={event.status} />{['Draft', 'AmendmentRequested'].includes(event.status) && <Link to={`/organizer/events/${event.eventId}/edit`} className="btn-secondary">Edit application</Link>}{['Draft', 'Pending'].includes(event.status) && <button type="button" disabled={withdrawing} onClick={withdraw} className="btn-secondary">{withdrawing ? 'Withdrawing…' : 'Withdraw'}</button>}</>}
+        action={<><StatusBadge status={event.status} />{['Draft', 'AmendmentRequested', 'Rejected'].includes(event.status) && <Link to={`/organizer/events/${event.eventId}/edit`} className="btn-secondary">Edit application</Link>}{['Draft', 'Pending'].includes(event.status) && <button type="button" disabled={withdrawing} onClick={withdraw} className="btn-secondary">{withdrawing ? 'Withdrawing…' : 'Withdraw'}</button>}</>}
       />
       <div className="grid gap-5 lg:grid-cols-[minmax(0,.9fr)_minmax(0,1.1fr)]">
         <section className="card">

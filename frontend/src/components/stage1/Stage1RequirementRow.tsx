@@ -229,7 +229,7 @@ function renderActions({ status, isReceipt, filePath, disabled, onUpload, onUseP
       {label}
     </button>
   );
-  const usePrevBtn = (label: string, testid: string, key: string) => (
+  const previousButton = (label: string, testid: string, key: string) => (
     <button
       key={key}
       type="button"
@@ -261,7 +261,7 @@ function renderActions({ status, isReceipt, filePath, disabled, onUpload, onUseP
       return (
         <>
           {uploadBtn('Upload', <Upload size={14} />, 'stage1-upload', 'upload')}
-          {isReceipt && usePrevBtn('Use Previous', 'stage1-use-previous', 'use-previous')}
+          {isReceipt && previousButton('Use Previous', 'stage1-use-previous', 'use-previous')}
         </>
       );
     case 'pending_verification':
@@ -275,7 +275,7 @@ function renderActions({ status, isReceipt, filePath, disabled, onUpload, onUseP
       return (
         <>
           {uploadBtn('Resubmit', <Upload size={14} />, 'stage1-resubmit', 'resubmit')}
-          {isReceipt && usePrevBtn('Use Previous', 'stage1-use-previous', 'use-previous')}
+          {isReceipt && previousButton('Use Previous', 'stage1-use-previous', 'use-previous')}
         </>
       );
     case 'use_previous':

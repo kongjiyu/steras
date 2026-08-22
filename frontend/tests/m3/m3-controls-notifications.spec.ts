@@ -11,9 +11,13 @@
  *     notification in the notifications collection.
  */
 import { test, expect, EVENTS } from './fixtures';
-import { resetFoodFair } from './admin-reset';
+import { resetFoodFair, restoreControlVerificationFixture } from './admin-reset';
 
 test.describe('@M3 verified-control workflow', () => {
+  test.beforeAll(async () => {
+    await restoreControlVerificationFixture();
+  });
+
   test('KKM cannot verify a control on an event that does not require KKM', async ({ api, loginAs }) => {
     // evt-provisional-readiness requires [PDRM, BOMBA]. KKM is not
     // assigned — should be rejected with a permission error.
@@ -21,22 +25,22 @@ test.describe('@M3 verified-control workflow', () => {
     let callError: string | null = null;
     try {
       await api.callFunction('verifyStage1Doc', {
-        eventId: 'evt-provisional-readiness',
-        controlId: 'evt-provisional-readiness-ctrl-pdrm',
-        docId: 'evt-provisional-readiness-ctrl-pdrm-s1-application',
+        eventId: EVENTS.provisionalReview,
+        controlId: `${EVENTS.provisionalReview}-ctrl-pdrm-v1`,
+        docId: `${EVENTS.provisionalReview}-ctrl-pdrm-v1-s1-application`,
         status: 'verified',
         rationale: 'KKM should not be allowed to verify on this event.',
       });
     } catch (err) {
       callError = err instanceof Error ? err.message : String(err);
     }
-    expect(callError).toMatch(/not assigned|permission/i);
+    expect(callError).toMatch(/not (?:the named officer )?assigned|permission/i);
   });
 
   test('PDRM verifies a declared Stage-1 document', async ({ api, loginAs }) => {
     await loginAs('pdrm');
-    const eventId = 'evt-control-verification';
-    const controlId = `${eventId}-ctrl-pdrm`;
+    const eventId = EVENTS.controlVerification;
+    const controlId = `${eventId}-ctrl-pdrm-v1`;
     const docId = `${controlId}-s1-application`;
     const result = await api.callFunction<{ eventId: string; controlId: string; docId: string; status: 'verified' | 'rejected' }, { status: 'verified' | 'rejected' }>(
       'verifyStage1Doc',
@@ -71,14 +75,21 @@ test.describe('@M3 organiser notifications', () => {
     for (const [key, rationale] of rationales) {
       await api.signOut();
       await loginAs(key as 'pdrm' | 'bomba' | 'kkm' | 'dbkl');
-      await api.callFunction('makeAuthorityDecision', {
+      await api.callFunction('recordOfficerProposal', {
         eventId,
         decision: 'Approved',
-        rationale,
-        // FR-M3-16: required for Approve.
+        reason: rationale,
         confirmedReview: true,
       });
     }
+
+    await api.signOut();
+    await loginAs('admin');
+    await api.callFunction('makeSecondReviewDecision', {
+      eventId,
+      finalDecision: 'Approved',
+      adminNote: 'All assigned officers approved; admin records final approval.',
+    });
 
     await api.signOut();
     await loginAs('organizer');
@@ -101,25 +112,12 @@ test.describe('@M3 organiser notifications', () => {
     // The new flow: assign officers -> each records a proposal
     // (with reason + suggestion) -> admin confirms the aggregate.
     const eventId = EVENTS.foodFair;
-    const OFFICERS = {
-      pdrm: 'mmcccuLb5kQOKGdf2eECQOiAS7h2',
-      bomba: 'sKCMYylLOpY1dabTFcRwrxb0y0c2',
-      kkm: 'qjLsLI8ZSJNX5t6HlsrRTQYG9Bl2',
-      dbkl: 'efL2zcnyExZqvciYoq5V0oZZMPn1',
-    };
-
     await loginAs('admin');
-    await api.callFunction('assignAuthorityOfficers', {
-      eventId,
-      assignmentMap: { PDRM: OFFICERS.pdrm, BOMBA: OFFICERS.bomba, KKM: OFFICERS.kkm, DBKL: OFFICERS.dbkl },
-      dryRun: false,
-    });
-
     // Each officer records an Approved proposal with a distinctive
     // reason + suggestion. The featured officer is the first one
     // matching the aggregate (Approved), so the BOMBA reason will be
     // surfaced.
-    const proposals: Array<[keyof typeof OFFICERS, string, string]> = [
+    const proposals: Array<['pdrm' | 'bomba' | 'kkm' | 'dbkl', string, string]> = [
       ['pdrm', 'PDRM notification-split — traffic plan accepted.', 'PDRM E2E — fine.'],
       ['bomba', 'Bomba notification-split — fire safety signed off.', 'Bomba E2E — egress routes clear.'],
       ['kkm', 'KKM notification-split — medical plan approved.', 'KKM E2E — medical coverage OK.'],
@@ -137,12 +135,12 @@ test.describe('@M3 organiser notifications', () => {
       });
     }
 
-    // Admin confirms the aggregate.
+    // Admin records the final decision.
     await api.signOut();
     await loginAs('admin');
     await api.callFunction('makeSecondReviewDecision', {
       eventId,
-      confirmedDecision: 'Approved',
+      finalDecision: 'Approved',
       adminNote: 'E2E — confirming aggregate, asserting notification split.',
     });
 

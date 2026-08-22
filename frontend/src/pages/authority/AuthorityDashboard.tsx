@@ -67,7 +67,7 @@ export default function AuthorityDashboard({ previewRecords }: AuthorityDashboar
 
   useEffect(() => {
     if (previewRecords) return;
-    if (!isFirebaseConfigured || !profile?.authorityType) {
+    if (!isFirebaseConfigured || !profile?.uid || !profile.authorityType) {
       setLoading(false);
       return;
     }
@@ -75,7 +75,7 @@ export default function AuthorityDashboard({ previewRecords }: AuthorityDashboar
     let requestId = 0;
     const eventsQuery = query(
       collection(db, COLLECTIONS.EVENTS),
-      where('requiredAuthorities', 'array-contains', profile.authorityType),
+      where('assignedOfficerUids', 'array-contains', profile.uid),
       limit(100),
     );
 
@@ -112,7 +112,7 @@ export default function AuthorityDashboard({ previewRecords }: AuthorityDashboar
       setError('Your operational overview could not be loaded.');
       setLoading(false);
     });
-  }, [previewRecords, profile?.authorityType]);
+  }, [previewRecords, profile?.uid, profile?.authorityType]);
 
   const summary = useMemo(() => dashboardSummary(records), [records]);
   const queue = useMemo(() => sortReviewPriority(records).slice(0, 6), [records]);

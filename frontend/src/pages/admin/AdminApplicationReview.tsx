@@ -11,11 +11,6 @@ import {
   FileWarning,
   History,
   Loader2,
-  Mail,
-  MapPin,
-  MessageSquareWarning,
-  Phone,
-  Save,
   ShieldCheck,
   Users,
   type LucideIcon,
@@ -28,17 +23,21 @@ import {
   query,
   where,
 } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import toast from 'react-hot-toast';
-import { db, isFirebaseConfigured } from '../../config/firebase';
+import { db, functions, isFirebaseConfigured } from '../../config/firebase';
 import {
   COLLECTIONS,
   EventRecord,
   EventStatus,
   RiskAssessment,
   ResourceRecommendation,
+  ResourceQuantities,
   AuthorityDecision,
+  Assignment,
   UserProfile,
   AuthorityType,
+  RiskLevel,
 } from '@shared/types';
 import { WorkspaceTopBar } from '../../components/layout/Sidebar';
 import { useAuth } from '../../contexts/AuthContext';
@@ -51,6 +50,7 @@ const STATUS_TONE: Record<EventStatus, string> = {
   Approved: 'admin-badge admin-badge--good',
   Rejected: 'admin-badge admin-badge--bad',
   Withdrawn: 'admin-badge admin-badge--default',
+  'Manual Review Required': 'admin-badge admin-badge--warn',
 };
 
 const RISK_TONE: Record<string, string> = {
@@ -72,6 +72,39 @@ function formatDateTime(ts?: number) {
 function formatDate(ts?: number) {
   if (!ts) return '—';
   return new Date(ts).toLocaleDateString('en-MY', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+interface AdminAssessmentCategory {
+  categoryId: string;
+  categoryName: string;
+  matrixScore: number;
+  riskLevel: string;
+  rationale: string;
+}
+
+function assessmentDisplay(assessment: RiskAssessment): {
+  riskLevel: string;
+  score?: number;
+  schemaVersion?: string;
+  formulaVersion?: string;
+  categories: AdminAssessmentCategory[];
+} {
+  const result = assessment.status === 'official_ready'
+    ? assessment.officialResult
+    : 'provisionalResult' in assessment ? assessment.provisionalResult : undefined;
+  return {
+    riskLevel: result?.overallRiskLevel ?? 'Medium',
+    score: result?.overallScore,
+    schemaVersion: result?.categorySchemaVersion,
+    formulaVersion: result?.formulaVersion,
+    categories: result?.categories.map((category) => ({
+      categoryId: category.categoryId,
+      categoryName: category.categoryName,
+      matrixScore: category.matrixScore,
+      riskLevel: category.riskLevel,
+      rationale: category.rationale,
+    })) ?? [],
+  };
 }
 
 const ALL_AUTHORITIES: AuthorityType[] = ['PDRM', 'BOMBA', 'KKM', 'DBKL', 'MOTAC'];
@@ -111,6 +144,7 @@ export default function AdminApplicationReview() {
   const [assessment, setAssessment] = useState<RiskAssessment | null>(null);
   const [resource, setResource] = useState<ResourceRecommendation | null>(null);
   const [decisions, setDecisions] = useState<AuthorityDecision[]>([]);
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [officers, setOfficers] = useState<UserProfile[]>([]);
   const [audit, setAudit] = useState<Array<{ id: string; action: string; timestamp: number; actorId: string; notes?: string }>>([]);
   const [loading, setLoading] = useState(true);
@@ -125,8 +159,17 @@ export default function AdminApplicationReview() {
   });
 
   // Decision form
-  const [decisionMode, setDecisionMode] = useState<'approve' | 'reject' | 'amend' | null>(null);
+  const [decisionMode, setDecisionMode] = useState<'approve' | 'reject' | null>(null);
   const [rationale, setRationale] = useState('');
+  const [suggestion, setSuggestion] = useState('');
+  const [attachOfficerFeedback, setAttachOfficerFeedback] = useState(true);
+  const [manualScore, setManualScore] = useState('50');
+  const [manualRiskLevel, setManualRiskLevel] = useState<RiskLevel>('Medium');
+  const [manualRationale, setManualRationale] = useState('');
+  const [manualInputs, setManualInputs] = useState('{"assessmentBasis":"Admin review"}');
+  const [manualResources, setManualResources] = useState<ResourceQuantities>({
+    police: 0, medicalTeams: 0, ambulances: 0, toilets: 0, wasteBins: 0, security: 0, fireOfficers: 0,
+  });
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -144,7 +187,7 @@ export default function AdminApplicationReview() {
           setLoading(false);
           return;
         }
-        const eventData = { eventId: eventSnap.id, ...(eventSnap.data() as EventRecord) };
+        const eventData = { ...(eventSnap.data() as EventRecord), eventId: eventSnap.id };
         setEvent(eventData);
 
         // Default-check authorities based on event's required authorities
@@ -169,6 +212,10 @@ export default function AdminApplicationReview() {
         promises.push(
           getDocs(collection(eventRef, COLLECTIONS.DECISIONS))
             .then((s) => setDecisions(s.docs.map((d) => d.data() as AuthorityDecision))),
+        );
+        promises.push(
+          getDocs(collection(eventRef, COLLECTIONS.ASSIGNMENTS))
+            .then((s) => setAssignments(s.docs.map((d) => ({ ...(d.data() as Assignment), assignmentId: d.id })))),
         );
         promises.push(
           getDocs(query(collection(db, COLLECTIONS.USERS), where('role', '==', 'authority')))
@@ -199,38 +246,84 @@ export default function AdminApplicationReview() {
     return m;
   }, [officers]);
 
-  const decisionsByAuth = useMemo(() => {
-    const m: Record<string, AuthorityDecision | undefined> = {};
-    for (const d of decisions) {
-      if (d.current) m[d.authorityType] = d;
-    }
-    return m;
-  }, [decisions]);
-
-  const canReview = event && (event.status === 'Pending' || event.status === 'UnderReview' || event.status === 'AmendmentRequested');
+  const canReview = event && (event.status === 'Pending' || event.status === 'UnderReview' || event.status === 'AmendmentRequested' || event.status === 'Manual Review Required');
+  const initialReviewOpen = Boolean(canReview && !event?.initialReview && !event?.assignedOfficerUids?.length && !['authority', 'second', 'closed'].includes(event?.reviewStage ?? ''));
+  const attachableOfficerFeedback = assignments.filter((assignment) => Boolean(assignment.decision && assignment.reason && assignment.versionId === event?.currentVersionId));
   const minRationaleLen = 10;
 
   const submitDecision = async () => {
-    if (!eventId || !event || !decisionMode) return;
+    if (!eventId || !event || !decisionMode || !initialReviewOpen) return;
     if (rationale.trim().length < minRationaleLen) {
       toast.error('Please provide a rationale (at least 10 characters).');
       return;
     }
+    if (decisionMode === 'reject' && suggestion.trim().length === 0) {
+      toast.error('A suggestion is required when rejecting.');
+      return;
+    }
+    let manualAssessment: {
+      score: number;
+      riskLevel: RiskLevel;
+      inputs: Record<string, string | number | boolean>;
+      rationale: string;
+      resourceQuantities: ResourceQuantities;
+    } | undefined;
+    if (event.status === 'Manual Review Required') {
+      const score = Number(manualScore);
+      if (!Number.isFinite(score) || score < 0 || score > 100 || manualRationale.trim().length < minRationaleLen) {
+        toast.error('Enter a manual score from 0–100 and a manual assessment rationale.');
+        return;
+      }
+      try {
+        const parsed = JSON.parse(manualInputs) as unknown;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('JSON must be an object.');
+        manualAssessment = {
+          score,
+          riskLevel: manualRiskLevel,
+          inputs: parsed as Record<string, string | number | boolean>,
+          rationale: manualRationale.trim(),
+          resourceQuantities: manualResources,
+        };
+      } catch {
+        toast.error('Manual assessment inputs must be a JSON object.');
+        return;
+      }
+    }
     setSubmitting(true);
-    // Note: in a full implementation this would call a Cloud Function
-    // (per FR-M3-04, FR-M3-08, FR-M3-12). For the dashboard view we
-    // surface a clear "submitted" state and log the action.
-    await new Promise((r) => setTimeout(r, 400));
-    toast.success(
-      decisionMode === 'approve'
-        ? 'Approval recorded (pending Cloud Function wiring).'
-        : decisionMode === 'reject'
-        ? 'Rejection recorded (pending Cloud Function wiring).'
-        : 'Amendment request recorded (pending Cloud Function wiring).',
-    );
-    setRationale('');
-    setDecisionMode(null);
-    setSubmitting(false);
+    try {
+      const decision = decisionMode === 'approve' ? 'Approved' : 'Rejected';
+      const command = httpsCallable<{
+        eventId: string;
+        decision: 'Approved' | 'Rejected';
+        reason: string;
+        suggestion?: string;
+        attachOfficerFeedback?: boolean;
+        manualAssessment?: typeof manualAssessment;
+      }, { status: EventStatus; decision: 'Approved' | 'Rejected' }>(functions, 'makeInitialReviewDecision');
+      await command({
+        eventId,
+        decision,
+        reason: rationale.trim(),
+        ...(suggestion.trim() ? { suggestion: suggestion.trim() } : {}),
+        ...(decision === 'Rejected' && attachOfficerFeedback ? { attachOfficerFeedback: true } : {}),
+        ...(manualAssessment ? { manualAssessment } : {}),
+      });
+      toast.success(decision === 'Approved' ? 'Application released for authority assignment.' : 'Application rejected and feedback sent.');
+      setRationale('');
+      setSuggestion('');
+      setManualRationale('');
+      setDecisionMode(null);
+      setEvent((current) => current ? {
+        ...current,
+        status: decision === 'Approved' ? 'UnderReview' : 'Rejected',
+        reviewStage: decision === 'Approved' ? 'initial' : 'closed',
+        initialReview: { decision, reason: rationale.trim(), ...(suggestion.trim() ? { suggestion: suggestion.trim() } : {}), reviewerUid: profile?.uid ?? '', reviewedAt: Date.now(), manualAssessmentRecorded: Boolean(manualAssessment) },
+      } : current);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Unable to record the initial review.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -283,9 +376,9 @@ export default function AdminApplicationReview() {
                 </div>
                 <div className="flex flex-col items-end gap-1">
                   <span className={STATUS_TONE[event.status]}>{event.status}</span>
-                  {assessment && (assessment.officialRiskLevel ?? assessment.finalRiskLevel) && (
-                    <span className={`${RISK_TONE[assessment.officialRiskLevel ?? assessment.finalRiskLevel ?? '']} text-xs`}>
-                      {(assessment.officialRiskLevel ?? assessment.finalRiskLevel)} risk
+                  {assessment && (
+                    <span className={`${RISK_TONE[assessmentDisplay(assessment).riskLevel]} text-xs`}>
+                      {assessmentDisplay(assessment).riskLevel} risk
                     </span>
                   )}
                 </div>
@@ -329,63 +422,38 @@ export default function AdminApplicationReview() {
                   </dl>
                 </Section>
 
-                {/* Assessment — handles two schemas:
-                       A) M3-ready mock (categoryAssignments + officialRiskLevel)
-                       B) M2-engine output (subScores + finalScore / finalRiskLevel)
-                */}
+                {/* Current M2 deterministic assessment and advisory. */}
                 {assessment && (() => {
-                  const useEngineSchema = !assessment.categoryAssignments && !!assessment.subScores;
-                  const riskLevel = assessment.officialRiskLevel ?? assessment.finalRiskLevel ?? 'Unknown';
-                  const score = assessment.officialScore ?? assessment.finalScore;
-                  const versionLabel = assessment.categorySchemaVersion
-                    ? `Schema v${assessment.categorySchemaVersion} · Logic v${assessment.scoringLogicVersion}`
-                    : assessment.ruleVersion
-                    ? `Rule v${assessment.ruleVersion}`
+                  const display = assessmentDisplay(assessment);
+                  const riskLevel = display.riskLevel;
+                  const score = display.score;
+                  const versionLabel = display.schemaVersion
+                    ? `Schema v${display.schemaVersion} · Logic v${display.formulaVersion}`
                     : '';
                   return (
                     <Section title="M2 risk assessment" icon={ShieldCheck}>
                       <div className="mb-3 flex flex-wrap items-center gap-2">
-                        {riskLevel !== 'Unknown' && (
-                          <span className={`${RISK_TONE[riskLevel]} text-sm`}>
-                            {riskLevel}{score !== undefined ? ` · ${score}/100` : ''}
-                          </span>
-                        )}
+                        <span className={`${RISK_TONE[riskLevel]} text-sm`}>
+                          {riskLevel}{score !== undefined ? ` · ${score}/100` : ''}
+                        </span>
                         {versionLabel && <span className="text-xs text-ink-500">{versionLabel}</span>}
                       </div>
 
                       <div className="overflow-hidden rounded-md border border-[#e8e0cf]">
                         <table className="w-full text-sm">
                           <thead className="bg-cream-50 text-xs uppercase tracking-[0.06em] text-ink-500">
-                            {useEngineSchema ? (
-                              <tr>
-                                <th className="px-3 py-2 text-left">Sub-score</th>
-                                <th className="px-3 py-2 text-right">Score</th>
-                                <th className="px-3 py-2 text-right">Weighted</th>
-                              </tr>
-                            ) : (
-                              <tr>
-                                <th className="px-3 py-2 text-left">Category</th>
-                                <th className="px-3 py-2 text-left">Score</th>
-                                <th className="px-3 py-2 text-left">Risk</th>
-                                <th className="px-3 py-2 text-left">Rationale</th>
-                              </tr>
-                            )}
+                            <tr>
+                              <th className="px-3 py-2 text-left">Category</th>
+                              <th className="px-3 py-2 text-left">Score</th>
+                              <th className="px-3 py-2 text-left">Risk</th>
+                              <th className="px-3 py-2 text-left">Rationale</th>
+                            </tr>
                           </thead>
                           <tbody className="divide-y divide-[#e8e0cf]">
-                            {useEngineSchema
-                              ? Object.entries(assessment.subScores).map(([key, score]) => (
-                                  <tr key={key}>
-                                    <td className="px-3 py-2 font-medium text-ink-800 capitalize">{key}</td>
-                                    <td className="px-3 py-2 text-right text-ink-700">{score as number}</td>
-                                    <td className="px-3 py-2 text-right text-ink-700">
-                                      {assessment.weightedContributions?.[key]?.toFixed?.(2) ?? '—'}
-                                    </td>
-                                  </tr>
-                                ))
-                              : (assessment.categoryAssignments ?? []).map((c) => (
+                            {display.categories.map((c) => (
                                   <tr key={c.categoryId}>
                                     <td className="px-3 py-2 font-medium text-ink-800">{c.categoryName}</td>
-                                    <td className="px-3 py-2 text-ink-700">{c.score}</td>
+                                    <td className="px-3 py-2 text-ink-700">{c.matrixScore}</td>
                                     <td className="px-3 py-2">
                                       <span className={`${RISK_TONE[c.riskLevel]} text-xs`}>{c.riskLevel}</span>
                                     </td>
@@ -397,20 +465,15 @@ export default function AdminApplicationReview() {
                       </div>
 
                       {/* AI advisory (both schemas) */}
-                      {(assessment.aiAdvisory || assessment.ai) && (
+                      {assessment.aiProposal && (
                         <div className="mt-3 rounded-md border border-gold-300 bg-gold-50 p-3 text-xs text-ink-700">
                           <p className="font-semibold text-gold-600">
-                            AI advisory · {assessment.aiAdvisory?.model ?? assessment.ai?.model ?? 'model'}
+                            AI proposal · {assessment.aiProposal.model}
                             <span className="ml-2 font-normal text-ink-500">
-                              status: {assessment.aiAdvisory?.status ?? assessment.ai?.status ?? 'unknown'}
+                              status: {assessment.aiProposal.status}
                             </span>
                           </p>
-                          <p className="mt-1">
-                            {assessment.aiAdvisory?.overallExplanation
-                              ?? assessment.aiAdvisory?.explanation
-                              ?? assessment.ai?.reasoning
-                              ?? ''}
-                          </p>
+                          <p className="mt-1">The assessment retains the AI proposal as provenance; the displayed score is calculated by the deterministic M2 rules.</p>
                         </div>
                       )}
                     </Section>
@@ -424,7 +487,7 @@ export default function AdminApplicationReview() {
                       {(['police', 'security', 'medicalTeams', 'ambulances', 'toilets', 'wasteBins', 'fireOfficers'] as const).map((key) => (
                         <div key={key} className="rounded-md border border-[#e8e0cf] bg-cream-50 p-3 text-center">
                           <p className="text-xs font-semibold uppercase tracking-[0.06em] text-ink-500">{key}</p>
-                          <p className="mt-1 font-display text-xl font-bold text-ink-900">{resource[key]}</p>
+                          <p className="mt-1 font-display text-xl font-bold text-ink-900">{resource.items[key].baseline}</p>
                         </div>
                       ))}
                     </div>
@@ -516,26 +579,18 @@ export default function AdminApplicationReview() {
                       );
                     })}
                   </div>
-                  <button
-                    type="button"
-                    disabled={Object.values(assigned).every((v) => !v)}
-                    onClick={() => toast.success('Officer assignments saved (local only).')}
-                    className="btn-primary mt-3 w-full"
-                  >
-                    <Save size={14} /> Save assignments
-                  </button>
+                  <Link to={`/admin/applications/${event.eventId}/assign`} className="btn-primary mt-3 w-full">
+                    <Users size={14} /> Open assignment checklist
+                  </Link>
                 </Section>
 
                 {/* Admin decision */}
-                {canReview ? (
+                {initialReviewOpen ? (
                   <Section title="Admin decision" icon={CheckCircle2} defaultOpen={true}>
                     {!decisionMode ? (
                       <div className="space-y-2">
                         <button type="button" onClick={() => setDecisionMode('approve')} className="btn-success w-full">
                           <Check size={14} /> Approve application
-                        </button>
-                        <button type="button" onClick={() => setDecisionMode('amend')} className="btn-secondary w-full">
-                          <MessageSquareWarning size={14} /> Request amendment
                         </button>
                         <button type="button" onClick={() => setDecisionMode('reject')} className="btn-danger w-full">
                           <AlertCircle size={14} /> Reject application
@@ -550,7 +605,7 @@ export default function AdminApplicationReview() {
                         className="space-y-3"
                       >
                         <p className="text-xs uppercase tracking-[0.06em] text-ink-500">
-                          {decisionMode === 'approve' ? 'Approval rationale' : decisionMode === 'amend' ? 'Amendment request' : 'Rejection reason + suggestion'}
+                          {decisionMode === 'approve' ? 'Approval rationale' : 'Rejection reason + suggestion'}
                         </p>
                         <textarea
                           rows={4}
@@ -561,8 +616,6 @@ export default function AdminApplicationReview() {
                           placeholder={
                             decisionMode === 'approve'
                               ? 'Briefly state the basis for approval.'
-                              : decisionMode === 'amend'
-                              ? 'List the items the organiser must address before resubmission.'
                               : 'State the rejection reason and a constructive suggestion for revision.'
                           }
                         />
@@ -574,10 +627,64 @@ export default function AdminApplicationReview() {
                               : <AlertCircle size={12} className="inline text-amber-600" />}
                           </span>
                         </div>
+                        {decisionMode === 'reject' && (
+                          <div className="space-y-2">
+                            <label className="block text-xs font-semibold text-ink-600">
+                              Corrective suggestion (required)
+                              <textarea className="input mt-1 min-h-20" maxLength={1000} value={suggestion} onChange={(e) => setSuggestion(e.target.value)} placeholder="Tell the organiser what must change before resubmission." />
+                            </label>
+                            <label className={`flex items-start gap-2 rounded-md border px-3 py-2 text-xs ${attachOfficerFeedback && attachableOfficerFeedback.length > 0 ? 'border-brand-300 bg-brand-50/50' : 'border-ink-200 bg-cream-50'}`}>
+                              <input
+                                type="checkbox"
+                                className="mt-0.5 h-4 w-4 accent-brand-600"
+                                checked={attachOfficerFeedback}
+                                disabled={attachableOfficerFeedback.length === 0}
+                                onChange={(e) => setAttachOfficerFeedback(e.target.checked)}
+                              />
+                              <span>
+                                <span className="block font-semibold text-ink-700">Attach completed officer feedback</span>
+                                <span className="block text-ink-500">
+                                  {attachableOfficerFeedback.length > 0
+                                    ? `${attachableOfficerFeedback.length} current-version proposal${attachableOfficerFeedback.length === 1 ? '' : 's'} will be included in the audit record.`
+                                    : 'No completed officer proposal is available for this version.'}
+                                </span>
+                              </span>
+                            </label>
+                          </div>
+                        )}
+                        {event.status === 'Manual Review Required' && (
+                          <div className="space-y-3 rounded-md border border-gold-300 bg-gold-50 p-3">
+                            <p className="text-xs font-semibold uppercase tracking-[0.06em] text-gold-700">Manual assessment required</p>
+                            <div className="grid grid-cols-2 gap-2">
+                              <label className="text-xs font-semibold text-ink-600">Score (0–100)
+                                <input className="input mt-1" type="number" min={0} max={100} value={manualScore} onChange={(e) => setManualScore(e.target.value)} />
+                              </label>
+                              <label className="text-xs font-semibold text-ink-600">Risk level
+                                <select className="input mt-1" value={manualRiskLevel} onChange={(e) => setManualRiskLevel(e.target.value as RiskLevel)}>
+                                  <option value="Low">Low (0–39)</option><option value="Medium">Medium (40–69)</option><option value="High">High (70–100)</option>
+                                </select>
+                              </label>
+                            </div>
+                            <label className="block text-xs font-semibold text-ink-600">Assessment rationale
+                              <textarea className="input mt-1 min-h-20" maxLength={1000} value={manualRationale} onChange={(e) => setManualRationale(e.target.value)} placeholder="Record the inputs and reasoning used for the manual score." />
+                            </label>
+                            <label className="block text-xs font-semibold text-ink-600">Assessment inputs (JSON)
+                              <textarea className="input mt-1 font-mono text-xs" rows={3} value={manualInputs} onChange={(e) => setManualInputs(e.target.value)} />
+                            </label>
+                            <p className="text-[11px] text-ink-500">If no resource recommendation exists, the manual path also records zero-based resource quantities; update them before submitting.</p>
+                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                              {(Object.keys(manualResources) as Array<keyof ResourceQuantities>).map((key) => (
+                                <label key={key} className="text-[11px] font-semibold capitalize text-ink-600">{key}
+                                  <input className="input mt-1 !h-8 !px-2 text-xs" type="number" min={0} value={manualResources[key]} onChange={(e) => setManualResources((current) => ({ ...current, [key]: Math.max(0, Math.floor(Number(e.target.value) || 0)) }))} />
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                         <div className="flex gap-2">
                           <button
                             type="button"
-                            onClick={() => { setDecisionMode(null); setRationale(''); }}
+                            onClick={() => { setDecisionMode(null); setRationale(''); setSuggestion(''); }}
                             className="btn-secondary flex-1"
                           >
                             Cancel
@@ -586,20 +693,16 @@ export default function AdminApplicationReview() {
                             type="submit"
                             disabled={submitting || rationale.trim().length < minRationaleLen}
                             className={
-                              decisionMode === 'approve' ? 'btn-success flex-1' :
-                              decisionMode === 'reject' ? 'btn-danger flex-1' :
-                              'btn-primary flex-1'
+                              decisionMode === 'approve' ? 'btn-success flex-1' : 'btn-danger flex-1'
                             }
                           >
                             {submitting ? <><Loader2 size={14} className="animate-spin" /> Submitting…</> :
-                              decisionMode === 'approve' ? 'Confirm approval' :
-                              decisionMode === 'amend' ? 'Send amendment request' :
-                              'Confirm rejection'}
+                              decisionMode === 'approve' ? 'Confirm approval' : 'Confirm rejection'}
                           </button>
                         </div>
                         <p className="text-[11px] text-ink-500">
-                          <FileWarning size={11} className="inline" /> In production this dispatches the
-                          <code className="mx-1 rounded bg-cream-100 px-1">makeAuthorityDecision</code>
+                          <FileWarning size={11} className="inline" /> This dispatches the
+                          <code className="mx-1 rounded bg-cream-100 px-1">makeInitialReviewDecision</code>
                           Cloud Function with full audit provenance.
                         </p>
                       </form>

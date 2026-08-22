@@ -63,13 +63,14 @@ async function reviewAssessmentScoresForUser(uid, data, now = Date.now()) {
         throw new https_1.HttpsError('permission-denied', 'You are not the named officer assigned to this application.');
     const assessmentSnapshot = await eventRef.collection(types_1.COLLECTIONS.ASSESSMENTS).doc(versionId).get();
     const assessment = assessmentSnapshot.data();
-    if (!assessment || assessment.status !== 'ready') {
+    if (!assessment || !['provisional_ready', 'authority_review', 'official_ready'].includes(assessment.status)) {
         throw new https_1.HttpsError('failed-precondition', 'A current assessment is required before score review.');
     }
-    if (overrides.length > 0 && !assessment.hazards?.length) {
+    const hazards = extractReviewHazards(assessment);
+    if (overrides.length > 0 && hazards.length === 0) {
         throw new https_1.HttpsError('failed-precondition', 'A current all-hazards assessment is required before recording score overrides.');
     }
-    const hazardsById = new Map((assessment.hazards ?? []).map((hazard) => [hazard.hazardId, hazard]));
+    const hazardsById = new Map(hazards.map((hazard) => [hazard.hazardId, hazard]));
     const normalizedOverrides = [];
     const seen = new Set();
     for (const input of overrides) {
@@ -138,5 +139,23 @@ async function reviewAssessmentScoresForUser(uid, data, now = Date.now()) {
 }
 function isMatrixValue(value) {
     return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 5;
+}
+function extractReviewHazards(assessment) {
+    const candidate = assessment.hazards;
+    if (!Array.isArray(candidate))
+        return [];
+    return candidate.filter((value) => {
+        if (!value || typeof value !== 'object' || Array.isArray(value))
+            return false;
+        const record = value;
+        return typeof record.hazardId === 'string'
+            && typeof record.hazardName === 'string'
+            && Number.isInteger(record.residualLikelihood)
+            && Number.isInteger(record.residualSeverity)
+            && Number(record.residualLikelihood) >= 1
+            && Number(record.residualLikelihood) <= 5
+            && Number(record.residualSeverity) >= 1
+            && Number(record.residualSeverity) <= 5;
+    });
 }
 //# sourceMappingURL=reviewAssessmentScores.js.map

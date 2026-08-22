@@ -3,7 +3,8 @@
  *
  * Renders the per-authority event control list for an event. Admin can:
  *   - Click "Generate proposal" to call `generateEventControlList`
- *     (which calls the M3 stub / M2's real `proposeEventControlList`).
+ *     (which calls M3's validated MiniMax proposer with a deterministic
+ *      fallback when the provider is unavailable).
  *     The proposal populates the table.
  *   - Edit the proposal in place: rename a control, edit its Stage 1
  *     requirements, add/remove controls (limited to the event's
@@ -39,7 +40,11 @@ import StatusBadge from '../../components/ui/StatusBadge';
 interface ProposedResponse {
   items: ProposedControlItem[];
   cached: boolean;
-  source: 'cache' | 'proposeEventControlList';
+  source: 'cache' | 'minimax' | 'deterministic_fallback';
+  model?: string;
+  promptVersion?: string;
+  generatedAt?: number;
+  fallbackReason?: string;
 }
 
 interface CommittedResponse {
@@ -57,7 +62,7 @@ export default function AdminControlListEditor() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [items, setItems] = useState<ProposedControlItem[]>([]);
-  const [proposalSource, setProposalSource] = useState<'cache' | 'proposeEventControlList' | null>(null);
+  const [proposalSource, setProposalSource] = useState<'cache' | 'minimax' | 'deterministic_fallback' | null>(null);
   const [proposalCached, setProposalCached] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [committing, setCommitting] = useState(false);
@@ -109,7 +114,9 @@ export default function AdminControlListEditor() {
       toast.success(
         result.data.cached
           ? 'Loaded cached control list (no re-generation).'
-          : `Generated proposal with ${result.data.items.length} item(s).`,
+          : result.data.source === 'deterministic_fallback'
+            ? `Generated deterministic fallback with ${result.data.items.length} item(s).`
+            : `Generated MiniMax proposal with ${result.data.items.length} item(s).`,
       );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Unable to generate proposal.');
@@ -255,7 +262,11 @@ export default function AdminControlListEditor() {
 
       {proposalSource && (
         <p className="mb-3 text-xs text-ink-500">
-          Source: {proposalSource === 'cache' ? 'cached snapshot' : 'fresh proposal'}
+          Source: {proposalSource === 'cache'
+            ? 'cached snapshot'
+            : proposalSource === 'minimax'
+              ? 'MiniMax proposal'
+              : 'deterministic fallback'}
           {proposalCached && ' (cached)'}
         </p>
       )}

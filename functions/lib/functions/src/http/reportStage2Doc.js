@@ -71,13 +71,18 @@ async function reportStage2DocForUser(uid, data, now = Date.now()) {
     const docId = `${controlId}-s2`;
     const docRef = controlRef.collection(types_1.COLLECTIONS.STAGE2_DOCS).doc(docId);
     const counterRef = controlRef.collection(types_1.COLLECTIONS.STAGE2_REPORTS).doc(uid);
+    const publicRef = db.collection(types_1.COLLECTIONS.PUBLIC_EVENT_CONTROLS)
+        .doc(eventId)
+        .collection(types_1.COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS)
+        .doc(`${controlId}-stage2`);
     const { ticketId, alreadyReported, reportedAt, controlName, authorityType, versionId, eventOrganizerUid } = await db.runTransaction(async (tx) => {
         // Reads first.
-        const [docSnap, counterSnap, controlSnap, eventSnap] = await Promise.all([
+        const [docSnap, counterSnap, controlSnap, eventSnap, publicSnap] = await Promise.all([
             tx.get(docRef),
             tx.get(counterRef),
             tx.get(controlRef),
             tx.get(eventRef),
+            tx.get(publicRef),
         ]);
         if (!docSnap.exists) {
             throw new https_1.HttpsError('not-found', `Stage 2 image not found for control ${controlId}.`);
@@ -127,6 +132,8 @@ async function reportStage2DocForUser(uid, data, now = Date.now()) {
         tx.set(ticketRef, reportDoc);
         tx.set(counterRef, { uid, ticketId: newTicketId, reportedAt: now, category });
         tx.update(docRef, { m4TicketId: newTicketId, reportedAt: now });
+        if (publicSnap.exists)
+            tx.update(publicRef, { reported: true });
         // Audit log.
         const auditId = `${versionIdInner}_${controlId}_stage2_reported_${uid}_${now}`;
         const auditRef = eventRef.collection(types_1.COLLECTIONS.AUDIT_LOGS).doc(auditId);

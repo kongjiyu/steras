@@ -18,24 +18,19 @@
  *   3. Refusal after proposal: assign → 1 records → unassign →
  *      HttpsError `failed-precondition` and no changes.
  */
-import { test, expect } from './fixtures';
-import { resetMarathon } from './admin-reset';
+import { test, expect, EVENTS } from './fixtures';
+import { dedicatedOfficerUids, resetMarathon } from './admin-reset';
 
-const MARATHON = 'evt-004-kl-marathon';
-const OFFICERS = {
-  pdrm: 'mmcccuLb5kQOKGdf2eECQOiAS7h2',
-  bomba: 'sKCMYylLOpY1dabTFcRwrxb0y0c2',
-  kkm: 'qjLsLI8ZSJNX5t6HlsrRTQYG9Bl2',
-  dbkl: 'efL2zcnyExZqvciYoq5V0oZZMPn1',
-} as const;
-
-const ALL_ASSIGNED = { PDRM: OFFICERS.pdrm, BOMBA: OFFICERS.bomba, KKM: OFFICERS.kkm, DBKL: OFFICERS.dbkl };
+const MARATHON = EVENTS.marathon;
+let OFFICERS: Awaited<ReturnType<typeof dedicatedOfficerUids>>;
+const allAssigned = () => ({ PDRM: OFFICERS.pdrm, BOMBA: OFFICERS.bomba, KKM: OFFICERS.kkm, DBKL: OFFICERS.dbkl });
 
 test.describe('@M3 unassign / backup officer swap', () => {
   test.setTimeout(60_000);
 
   test.beforeEach(async () => {
     await resetMarathon();
+    OFFICERS = await dedicatedOfficerUids();
   });
 
   // Helper — read the event's actual currentVersionId (evt-004 is
@@ -50,7 +45,7 @@ test.describe('@M3 unassign / backup officer swap', () => {
     await loginAs('admin');
     await api.callFunction(
       'assignAuthorityOfficers',
-      { eventId: MARATHON, assignmentMap: ALL_ASSIGNED, dryRun: false },
+      { eventId: MARATHON, assignmentMap: allAssigned(), dryRun: false },
     );
 
     const versionId = await readVersionId(api);
@@ -78,7 +73,7 @@ test.describe('@M3 unassign / backup officer swap', () => {
     // PDRM workload back to 0; the other 3 stay at 1.
     for (const [auth, uid] of Object.entries(OFFICERS)) {
       const o = await api.getDoc<{ workloadCount: number }>(`officers/${uid}`);
-      expect(o?.workloadCount).toBe(auth === 'pdrm' ? 0 : 1);
+      expect(o?.workloadCount).toBe(auth === 'pdrm' || auth === 'motac' ? 0 : 1);
     }
 
     // Event reviewStage stays at 'authority' (still has active assignments).
@@ -99,7 +94,7 @@ test.describe('@M3 unassign / backup officer swap', () => {
     await loginAs('admin');
     await api.callFunction(
       'assignAuthorityOfficers',
-      { eventId: MARATHON, assignmentMap: ALL_ASSIGNED, dryRun: false },
+      { eventId: MARATHON, assignmentMap: allAssigned(), dryRun: false },
     );
 
     const versionId = await readVersionId(api);
@@ -140,7 +135,7 @@ test.describe('@M3 unassign / backup officer swap', () => {
     await loginAs('admin');
     await api.callFunction(
       'assignAuthorityOfficers',
-      { eventId: MARATHON, assignmentMap: ALL_ASSIGNED, dryRun: false },
+      { eventId: MARATHON, assignmentMap: allAssigned(), dryRun: false },
     );
 
     const versionId = await readVersionId(api);

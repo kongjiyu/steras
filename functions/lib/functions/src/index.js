@@ -14,7 +14,7 @@
  *   - overrideResources     — validates and audits resource adjustments
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.unpublishStage2Doc = exports.publishStage2Doc = exports.reportStage2Doc = exports.confirmStage2Doc = exports.submitStage2Doc = exports.submitStage1Doc = exports.editEventControlList = exports.generateEventControlList = exports.unassignAuthorityOfficers = exports.makeSecondReviewDecision = exports.recordOfficerProposal = exports.assignAuthorityOfficers = exports.proposeEventControlList = exports.listMyNotifications = exports.markNotificationRead = exports.verifyStage1Doc = exports.overrideResources = exports.retryManualOfficialFinalisation = exports.submitAdminManualAssessment = exports.retryOfficialFinalisation = exports.resolveAuthorityScoreConflict = exports.submitAuthorityScoreReview = exports.makeAuthorityDecision = exports.withdrawEvent = exports.submitEvent = exports.manualRecompute = exports.recomputeRiskAndResources = exports.refreshAssessmentContext = exports.onEventUpdated = exports.onEventCreated = void 0;
+exports.unpublishStage2Doc = exports.publishStage2Doc = exports.reportStage2Doc = exports.confirmStage2Doc = exports.submitStage2Doc = exports.submitStage1Doc = exports.editEventControlList = exports.generateEventControlList = exports.unassignAuthorityOfficers = exports.makeSecondReviewDecision = exports.recordOfficerProposal = exports.assignAuthorityOfficers = exports.proposeEventControlList = exports.listMyNotifications = exports.markNotificationRead = exports.verifyStage1Doc = exports.reviewAssessmentScores = exports.overrideResources = exports.makeInitialReviewDecision = exports.retryManualOfficialFinalisation = exports.submitAdminManualAssessment = exports.retryOfficialFinalisation = exports.resolveAuthorityScoreConflict = exports.submitAuthorityScoreReview = exports.makeAuthorityDecision = exports.withdrawEvent = exports.submitEvent = exports.manualRecompute = exports.onEventStatusChanged = exports.onM4ReportOutcome = exports.recomputeRiskAndResources = exports.refreshAssessmentContext = exports.onEventUpdated = exports.onEventCreated = void 0;
 const app_1 = require("firebase-admin/app");
 // Initialize firebase-admin before any function code runs.
 (0, app_1.initializeApp)();
@@ -25,6 +25,10 @@ var refreshAssessmentContext_1 = require("./triggers/refreshAssessmentContext");
 Object.defineProperty(exports, "refreshAssessmentContext", { enumerable: true, get: function () { return refreshAssessmentContext_1.refreshAssessmentContext; } });
 var computeRisk_1 = require("./triggers/computeRisk");
 Object.defineProperty(exports, "recomputeRiskAndResources", { enumerable: true, get: function () { return computeRisk_1.recomputeRiskAndResources; } });
+var onM4ReportOutcome_1 = require("./triggers/onM4ReportOutcome");
+Object.defineProperty(exports, "onM4ReportOutcome", { enumerable: true, get: function () { return onM4ReportOutcome_1.onM4ReportOutcome; } });
+var onEventStatusChanged_1 = require("./triggers/onEventStatusChanged");
+Object.defineProperty(exports, "onEventStatusChanged", { enumerable: true, get: function () { return onEventStatusChanged_1.onEventStatusChanged; } });
 // HTTP-callable functions (e.g. for manual authority re-trigger, seed runs)
 var manualRecompute_1 = require("./http/manualRecompute");
 Object.defineProperty(exports, "manualRecompute", { enumerable: true, get: function () { return manualRecompute_1.manualRecompute; } });
@@ -41,15 +45,18 @@ Object.defineProperty(exports, "retryOfficialFinalisation", { enumerable: true, 
 var adminManualAssessment_1 = require("./http/adminManualAssessment");
 Object.defineProperty(exports, "submitAdminManualAssessment", { enumerable: true, get: function () { return adminManualAssessment_1.submitAdminManualAssessment; } });
 Object.defineProperty(exports, "retryManualOfficialFinalisation", { enumerable: true, get: function () { return adminManualAssessment_1.retryManualOfficialFinalisation; } });
+var initialReview_1 = require("./http/initialReview");
+Object.defineProperty(exports, "makeInitialReviewDecision", { enumerable: true, get: function () { return initialReview_1.makeInitialReviewDecision; } });
 var overrideResources_1 = require("./http/overrideResources");
 Object.defineProperty(exports, "overrideResources", { enumerable: true, get: function () { return overrideResources_1.overrideResources; } });
+var reviewAssessmentScores_1 = require("./http/reviewAssessmentScores");
+Object.defineProperty(exports, "reviewAssessmentScores", { enumerable: true, get: function () { return reviewAssessmentScores_1.reviewAssessmentScores; } });
 var verifyStage1Doc_1 = require("./http/verifyStage1Doc");
 Object.defineProperty(exports, "verifyStage1Doc", { enumerable: true, get: function () { return verifyStage1Doc_1.verifyStage1Doc; } });
 var notifications_1 = require("./http/notifications");
 Object.defineProperty(exports, "markNotificationRead", { enumerable: true, get: function () { return notifications_1.markNotificationRead; } });
 Object.defineProperty(exports, "listMyNotifications", { enumerable: true, get: function () { return notifications_1.listMyNotifications; } });
-// M3 round N+1 — stub. Replaced by M2's `proposeEventControlList` when
-// M2 lands it (per integration contract Q5).
+// M3 control-list proposal: MiniMax-backed with a deterministic fallback.
 var proposeEventControlList_1 = require("./http/proposeEventControlList");
 Object.defineProperty(exports, "proposeEventControlList", { enumerable: true, get: function () { return proposeEventControlList_1.proposeEventControlList; } });
 // M3 Workstream 1 — officer assignment + multi-stage review.

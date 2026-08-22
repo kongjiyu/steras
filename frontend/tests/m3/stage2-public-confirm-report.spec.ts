@@ -1,5 +1,13 @@
 /**
- * M3 Workstream 4 — public confirm + report (FR-M3-27, FR-M3-28, FR-M3-29 first half, UC-35, UC-36, UC-37, UC-38).
+ * M3 Workstream 4 + Workstream 5 — public confirm + report
+ * (FR-M3-27, FR-M3-28, FR-M3-29 first half, UC-35, UC-36, UC-37, UC-38).
+ *
+ * Workstream 5 change: the `setupControlListAndUpload` helper now
+ * also calls `publishStage2Doc` (admin) after the organizer's
+ * upload. The public confirm/report flows gate on
+ * `published === true`, so they only become testable once the admin
+ * has approved the image. In production this happens via the new
+ * admin review page at `/admin/applications/{id}/stage2-review`.
  *
  *   1. Public viewer confirms. Asserts: publicConfirmCount increments
  *      from 0 to 1; the per-user counter doc exists.
@@ -12,10 +20,10 @@
  *   4. Same user re-reports. Refused with alreadyReported=true (A30
  *      rate-limit).
  */
-import { test, expect } from './fixtures';
+import { test, expect, EVENTS } from './fixtures';
 import { resetApprovedEvent, seedPublicEvent } from './admin-reset';
 
-const APPROVED = 'evt-001-kl-music-festival';
+const APPROVED = EVENTS.musicFestival;
 const PDRM = 'PDRM';
 
 const TINY_JPEG_B64 = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/2wBDAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQH/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAv/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AKpgAH//Z';
@@ -48,6 +56,15 @@ async function setupControlListAndUpload(api: { callFunction: <TReq, TRes>(name:
   await api.signOut();
   await loginAs('organizer');
   await api.callFunction('submitStage2Doc', { eventId: APPROVED, controlId: pdrmCtrlId, fileName: 'pdrm-on-site.jpg', mimeType: 'image/jpeg', fileBase64: TINY_JPEG_B64 });
+  // Workstream 5: organizer upload lands at `published: false`. The
+  // public confirm/report flows gate on `published === true`, so we
+  // need an admin publish before the test body exercises the public
+  // surface. (In production, the admin review happens via the
+  // `/admin/applications/{id}/stage2-review` page; this test calls
+  // the function directly to keep the helper synchronous.)
+  await api.signOut();
+  await loginAs('admin');
+  await api.callFunction('publishStage2Doc', { eventId: APPROVED, controlId: pdrmCtrlId });
   return pdrmCtrlId;
 }
 
@@ -75,14 +92,17 @@ test.describe('@M3 Workstream 4: public confirm + report', () => {
     expect(result.alreadyConfirmed).toBe(false);
     expect(result.publicConfirmCount).toBe(1);
 
-    // Stage 2 doc has publicConfirmCount=1.
-    const doc = await api.getDoc<{ publicConfirmCount: number }>(`events/${APPROVED}/event_controls/${pdrmCtrlId}/stage2_docs/${stage2DocId}`);
-    expect(doc?.publicConfirmCount).toBe(1);
-
     // Per-user counter doc exists.
     const counter = await api.getDoc<{ uid: string; confirmedAt: number }>(`events/${APPROVED}/event_controls/${pdrmCtrlId}/stage2_confirms/${publicUid}`);
     expect(counter?.uid).toBe(publicUid);
     expect(counter?.confirmedAt).toBeGreaterThan(0);
+
+    // The private Stage 2 source document is intentionally not public-readable;
+    // use an admin session for its internal counter assertion.
+    await api.signOut();
+    await loginAs('admin');
+    const doc = await api.getDoc<{ publicConfirmCount: number }>(`events/${APPROVED}/event_controls/${pdrmCtrlId}/stage2_docs/${stage2DocId}`);
+    expect(doc?.publicConfirmCount).toBe(1);
   });
 
   test('same public user re-confirming is a no-op (Q1 rate-limit)', async ({ api, loginAs }) => {
@@ -133,11 +153,6 @@ test.describe('@M3 Workstream 4: public confirm + report', () => {
     expect(reportDoc?.description).toBe(longDescription);
     expect(reportDoc?.outcome).toBe('under_review');
 
-    // Stage 2 doc has m4TicketId + reportedAt set.
-    const stage2 = await api.getDoc<{ m4TicketId: string; reportedAt: number }>(`events/${APPROVED}/event_controls/${pdrmCtrlId}/stage2_docs/${stage2DocId}`);
-    expect(stage2?.m4TicketId).toBe(ticketId);
-    expect(stage2?.reportedAt).toBeGreaterThan(0);
-
     // Per-user report counter exists.
     const counter = await api.getDoc<{ uid: string; ticketId: string; reportedAt: number; category: string }>(`events/${APPROVED}/event_controls/${pdrmCtrlId}/stage2_reports/${publicUid}`);
     expect(counter?.uid).toBe(publicUid);
@@ -147,6 +162,11 @@ test.describe('@M3 Workstream 4: public confirm + report', () => {
     // Audit log entry.
     await api.signOut();
     await loginAs('admin');
+    // Private Stage 2 source documents are restricted to operational roles.
+    const stage2 = await api.getDoc<{ m4TicketId: string; reportedAt: number }>(`events/${APPROVED}/event_controls/${pdrmCtrlId}/stage2_docs/${stage2DocId}`);
+    expect(stage2?.m4TicketId).toBe(ticketId);
+    expect(stage2?.reportedAt).toBeGreaterThan(0);
+
     const audits = await api.getCollection<{ action: string; actorRole: string; metadata: { controlId: string; docId: string; ticketId: string; category: string } }>(`events/${APPROVED}/audit_logs`);
     const reported = audits.filter((a) => a.action === 'stage2_reported');
     expect(reported.length).toBe(1);

@@ -16,10 +16,10 @@
  *      status is 'pending_verification' but the prior rejection
  *      reason is preserved on the doc (cleared on next verification).
  */
-import { test, expect } from './fixtures';
+import { test, expect, EVENTS } from './fixtures';
 import { resetApprovedEvent } from './admin-reset';
 
-const APPROVED = 'evt-001-kl-music-festival';
+const APPROVED = EVENTS.musicFestival;
 const PDRM = 'PDRM';
 
 // Smallest valid JPEG (1x1 white pixel) ~ 125 bytes, well under 700 KB.

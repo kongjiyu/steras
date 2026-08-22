@@ -16,12 +16,10 @@
  *      cached snapshot (no re-call to MiniMax), marked
  *      `cached: true` (A23: don't regenerate without explicit reason).
  */
-import { test, expect } from './fixtures';
+import { test, expect, EVENTS } from './fixtures';
 import { resetApprovedEvent } from './admin-reset';
 
-const APPROVED = 'evt-001-kl-music-festival';
-
-const ALL_AUTHORITIES = ['PDRM', 'BOMBA', 'KKM', 'DBKL', 'MOTAC'] as const;
+const APPROVED = EVENTS.musicFestival;
 
 test.describe('@M3 Workstream 2: generate + edit + cache event control list', () => {
   test.setTimeout(90_000);
@@ -30,19 +28,21 @@ test.describe('@M3 Workstream 2: generate + edit + cache event control list', ()
     await resetApprovedEvent();
   });
 
-  test('admin generates a proposal for an Approved event; items match the M3 stub', async ({ api, loginAs }) => {
+  test('admin generates a proposal for an Approved event; items match the validated proposal contract', async ({ api, loginAs }) => {
     await loginAs('admin');
     const result = await api.callFunction<{ eventId: string }, { items: Array<{ controlName: string; authority: string; stage1Requirements: Array<{ docType: string; label: string; required: boolean }> }>; cached: boolean; source: string }>(
       'generateEventControlList',
       { eventId: APPROVED },
     );
     expect(result.cached).toBe(false);
-    expect(result.source).toBe('proposeEventControlList');
-    // The stub returns one item per requiredAuthority. evt-001 has
-    // all 5 (PDRM, BOMBA, KKM, DBKL, MOTAC).
-    expect(result.items.length).toBe(5);
+    expect(['minimax', 'deterministic_fallback']).toContain(result.source);
+    if (process.env.STERAS_REQUIRE_MINIMAX === 'true') expect(result.source).toBe('minimax');
+    // The proposal returns one item per authority required by this event.
+    const event = await api.getDoc<{ requiredAuthorities: string[] }>(`events/${APPROVED}`);
+    expect(event?.requiredAuthorities).toBeTruthy();
+    expect(result.items.length).toBe(event!.requiredAuthorities.length);
     const auths = result.items.map((it) => it.authority);
-    expect(auths).toEqual(expect.arrayContaining([...ALL_AUTHORITIES]));
+    expect(auths).toEqual(expect.arrayContaining(event!.requiredAuthorities));
     // Spot-check the shape: each item has stage1Requirements + stage2Requirement.
     for (const item of result.items) {
       expect(item.controlName).toBeTruthy();
@@ -103,7 +103,8 @@ test.describe('@M3 Workstream 2: generate + edit + cache event control list', ()
       { eventId: APPROVED },
     );
     expect(first.cached).toBe(false);
-    expect(first.source).toBe('proposeEventControlList');
+    expect(['minimax', 'deterministic_fallback']).toContain(first.source);
+    if (process.env.STERAS_REQUIRE_MINIMAX === 'true') expect(first.source).toBe('minimax');
 
     // Commit so the snapshot is persisted.
     await api.callFunction('editEventControlList', { eventId: APPROVED, items: first.items });
@@ -123,6 +124,7 @@ test.describe('@M3 Workstream 2: generate + edit + cache event control list', ()
       { eventId: APPROVED, force: true },
     );
     expect(third.cached).toBe(false);
-    expect(third.source).toBe('proposeEventControlList');
+    expect(['minimax', 'deterministic_fallback']).toContain(third.source);
+    if (process.env.STERAS_REQUIRE_MINIMAX === 'true') expect(third.source).toBe('minimax');
   });
 });

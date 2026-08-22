@@ -69,13 +69,18 @@ export async function confirmStage2DocForUser(
   const docId = `${controlId}-s2`;
   const docRef = controlRef.collection(COLLECTIONS.STAGE2_DOCS).doc(docId);
   const counterRef = controlRef.collection(COLLECTIONS.STAGE2_CONFIRMS).doc(uid);
+  const publicRef = db.collection(COLLECTIONS.PUBLIC_EVENT_CONTROLS)
+    .doc(eventId)
+    .collection(COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS)
+    .doc(`${controlId}-stage2`);
 
   return db.runTransaction(async (tx) => {
     // Reads first.
-    const [docSnap, counterSnap, eventSnap] = await Promise.all([
+    const [docSnap, counterSnap, eventSnap, publicSnap] = await Promise.all([
       tx.get(docRef),
       tx.get(counterRef),
       tx.get(eventRef),
+      tx.get(publicRef),
     ]);
     if (!docSnap.exists) {
       throw new HttpsError('not-found', `Stage 2 image not found for control ${controlId}.`);
@@ -96,6 +101,7 @@ export async function confirmStage2DocForUser(
     const newCount = (stage2.publicConfirmCount ?? 0) + 1;
     tx.set(counterRef, { uid, confirmedAt: now });
     tx.update(docRef, { publicConfirmCount: newCount });
+    if (publicSnap.exists) tx.update(publicRef, { publicConfirmCount: newCount });
 
     // Audit log (one per unique user, not per click — Q2 confirmed).
     const auditId = `${versionId}_${controlId}_stage2_confirmed_${uid}_${now}`;

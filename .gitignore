@@ -7,6 +7,9 @@ node_modules/
 **/node_modules/
 jspm_packages/
 
+# ----- Project-local toolchains -----
+.tools/
+
 # ----- Build outputs -----
 dist/
 build/
@@ -118,6 +121,7 @@ frontend/blob-report/
 .tsbuildinfo
 *.tmp
 *.temp
+artifacts/m3-migration/
 
 # ----- OS -----
 ehthumbs.db

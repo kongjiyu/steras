@@ -18,7 +18,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { collection, doc as firestoreDoc, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, doc as firestoreDoc, onSnapshot } from 'firebase/firestore';
 import { onAuthStateChanged } from 'firebase/auth';
 import { httpsCallable } from 'firebase/functions';
 import {
@@ -34,9 +34,8 @@ import {
   ThumbsUp,
 } from 'lucide-react';
 import {
-  AuthorityType,
   COLLECTIONS,
-  EventControl,
+  PublicEventControl,
   PublicEvent,
   Stage2Doc,
 } from '@shared/types';
@@ -50,7 +49,7 @@ export default function PublicEventDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [retryKey, setRetryKey] = useState(0);
-  const [controls, setControls] = useState<EventControl[]>([]);
+  const [controls, setControls] = useState<PublicEventControl[]>([]);
   const [stage2Docs, setStage2Docs] = useState<Record<string, Stage2Doc | null>>({});
   const [currentUid, setCurrentUid] = useState<string | null>(null);
   const [toast, setToast] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
@@ -76,54 +75,33 @@ export default function PublicEventDetail() {
     });
   }, [eventId, retryKey]);
 
-  // Subscribe to the per-event event_controls sub-collection. We need
-  // this to render the per-authority cards. Rules allow any signed-in
-  // user to read event_controls (via the existing rule that includes
-  // isAssignedAuthority and isOwner); for a *public* viewer (no role
-  // match), the rule is `isAdmin() || isAssignedAuthority() ||
-  // isOwner()` — i.e. the public viewer needs read access. We add
-  // it in the Firestore rules update (allow read for any signed-in
-  // user; the data is non-sensitive metadata).
+  // Subscribe only to the server-written sanitised projection. Public
+  // viewers never read organiser evidence or private event_controls.
   useEffect(() => {
     if (!isFirebaseConfigured || !eventId) return;
-    const q = query(collection(db, COLLECTIONS.EVENTS, eventId, COLLECTIONS.EVENT_CONTROLS));
-    return onSnapshot(q, (snapshot) => {
-      const list = snapshot.docs.map((d) => ({ controlId: d.id, ...(d.data() as Partial<EventControl>) }) as EventControl);
+    return onSnapshot(collection(db, COLLECTIONS.PUBLIC_EVENT_CONTROLS, eventId, COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS), (snapshot) => {
+      const list = snapshot.docs.map((d) => ({ publicControlId: d.id, ...(d.data() as Partial<PublicEventControl>) }) as PublicEventControl);
       list.sort((a, b) => a.authority.localeCompare(b.authority));
       setControls(list);
+      const next: Record<string, Stage2Doc | null> = {};
+      for (const item of list) {
+        next[item.docId] = {
+          docId: item.docId,
+          imageUrl: item.imageUrl,
+          uploadedAt: item.publishedAt,
+          uploadedBy: item.sanitizedBy,
+          publicConfirmCount: item.publicConfirmCount ?? 0,
+          published: true,
+          publishedAt: item.publishedAt,
+          publishedBy: item.sanitizedBy,
+          ...(item.reported ? { m4TicketId: 'public-report' } : {}),
+        };
+      }
+      setStage2Docs(next);
     }, (err) => {
-      console.warn('[PublicEventDetail] event_controls subscribe failed', err);
+      console.warn('[PublicEventDetail] sanitised public controls subscribe failed', err);
     });
   }, [eventId]);
-
-  // Subscribe to the per-control stage2_docs (only the published ones
-  // are readable by a signed-in public viewer per the Firestore rules).
-  useEffect(() => {
-    if (!isFirebaseConfigured || !eventId || controls.length === 0) {
-      setStage2Docs({});
-      return;
-    }
-    const unsubs: Array<() => void> = [];
-    for (const ctrl of controls) {
-      const unsub = onSnapshot(
-        collection(db, COLLECTIONS.EVENTS, eventId, COLLECTIONS.EVENT_CONTROLS, ctrl.controlId, COLLECTIONS.STAGE2_DOCS),
-        (snapshot) => {
-          setStage2Docs((prev) => {
-            const next: Record<string, Stage2Doc | null> = { ...prev };
-            for (const d of snapshot.docs) {
-              next[d.id] = d.data() as Stage2Doc;
-            }
-            return next;
-          });
-        },
-        (err) => {
-          console.warn(`[PublicEventDetail] stage2_docs subscribe failed for ${ctrl.controlId}`, err);
-        },
-      );
-      unsubs.push(unsub);
-    }
-    return () => { for (const u of unsubs) u(); };
-  }, [eventId, controls]);
 
   function showToast(kind: 'success' | 'error', message: string) {
     setToast({ kind, message });
@@ -139,7 +117,7 @@ export default function PublicEventDetail() {
 
 interface EventContentProps {
   event: PublicEvent;
-  controls: EventControl[];
+  controls: PublicEventControl[];
   stage2Docs: Record<string, Stage2Doc | null>;
   currentUid: string | null;
   eventId: string;
@@ -160,7 +138,7 @@ function EventContent({ event, controls, stage2Docs, currentUid, eventId, toast,
     }),
     [controls, stage2Docs],
   );
-  const [reportingControl, setReportingControl] = useState<EventControl | null>(null);
+  const [reportingControl, setReportingControl] = useState<PublicEventControl | null>(null);
 
   return (
     <div className="min-h-screen bg-[#f4eddf]">
@@ -235,7 +213,6 @@ function EventContent({ event, controls, stage2Docs, currentUid, eventId, toast,
           <ReportModal
             ctrl={reportingControl}
             eventId={eventId}
-            currentUid={currentUid}
             onClose={() => setReportingControl(null)}
             onSubmitted={(msg) => { setReportingControl(null); showToast('success', msg); }}
             onError={(msg) => showToast('error', msg)}
@@ -247,7 +224,7 @@ function EventContent({ event, controls, stage2Docs, currentUid, eventId, toast,
 }
 
 interface ControlCardProps {
-  ctrl: EventControl;
+  ctrl: PublicEventControl;
   doc: Stage2Doc;
   currentUid: string | null;
   eventId: string;
@@ -333,7 +310,7 @@ function ControlCard({ ctrl, doc: stage2Doc, currentUid, eventId, onStartReport,
         </a>
       )}
       <p className="mt-2 text-xs text-[#7a8063]">
-        <ImageIcon size={12} className="mr-0.5 inline" /> {ctrl.stage2Requirement?.label ?? 'Visual evidence'}
+        <ImageIcon size={12} className="mr-0.5 inline" /> {ctrl.stage2Label || 'Visual evidence'}
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {!currentUid ? (
@@ -367,15 +344,14 @@ function ControlCard({ ctrl, doc: stage2Doc, currentUid, eventId, onStartReport,
 }
 
 interface ReportModalProps {
-  ctrl: EventControl;
+  ctrl: PublicEventControl;
   eventId: string;
-  currentUid: string;
   onClose: () => void;
   onSubmitted: (message: string) => void;
   onError: (message: string) => void;
 }
 
-function ReportModal({ ctrl, eventId, currentUid, onClose, onSubmitted, onError }: ReportModalProps) {
+function ReportModal({ ctrl, eventId, onClose, onSubmitted, onError }: ReportModalProps) {
   const [category, setCategory] = useState<'item_not_at_venue' | 'wrong_venue' | 'low_quality_image' | 'other'>('item_not_at_venue');
   const [description, setDescription] = useState('');
   const [submitting, setSubmitting] = useState(false);

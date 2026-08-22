@@ -228,10 +228,11 @@ function isReadyAssessment(value) {
     if (!value || typeof value !== 'object')
         return false;
     const assessment = value;
-    return assessment.status === 'ready'
-        && typeof assessment.officialScore === 'number'
-        && ['Low', 'Medium', 'High'].includes(assessment.officialRiskLevel ?? '')
-        && Array.isArray(assessment.categoryAssignments)
+    // The current M2 contract uses `official_ready` (the older M3 fixture used
+    // `ready`). Accept only a current, non-manual assessment here so initial
+    // review cannot release an incomplete or legacy record.
+    return assessment.status === 'official_ready'
+        && assessment.assessmentReadiness === 'complete'
         && Array.isArray(assessment.evidence);
 }
 function buildManualAssessment(event, versionId, input, uid, now) {
@@ -313,7 +314,7 @@ function buildManualResources(event, versionId, quantities, uid, now) {
         guidelineStatus: 'authorityValidated',
         rationales,
         aiConsiderations: ['No AI resource recommendation was available; quantities were recorded during manual review.'],
-        confidenceLevel: 'authorityValidated',
+        confidenceLevel: 'authority_validated',
         notes: `Manual resource recommendation recorded by ${uid}.`,
         computedAt: now,
     };

@@ -1,31 +1,30 @@
 import { test as base, type Page, expect } from '@playwright/test';
+import { M3_UAT_ACCOUNT_EMAILS, M3_UAT_EVENTS } from '../../../shared/m3UatFixtures';
 
-/**
- * Shared STERAS account credentials. All seeded via the seeder.
- * Password is the standard reset password used across UAT.
- */
+/** Credentials are supplied by the isolated staging environment/CI secrets. */
+const E2E_PASSWORD = process.env.STERAS_E2E_PASSWORD ?? '';
 export const ACCOUNTS = {
-  admin: { email: 'steras-admin@steras.test', password: 'Steras@Reset2026!' },
-  organizer: { email: 'uat-organizer@steras.test', password: 'Steras@Reset2026!' },
-  pdrm: { email: 'uat-pdrm@steras.test', password: 'Steras@Reset2026!' },
-  bomba: { email: 'uat-bomba@steras.test', password: 'Steras@Reset2026!' },
-  kkm: { email: 'uat-kkm@steras.test', password: 'Steras@Reset2026!' },
-  dbkl: { email: 'uat-dbkl@steras.test', password: 'Steras@Reset2026!' },
-  public: { email: 'kongjiyu0198@gmail.com', password: 'Steras@Reset2026!' },
+  admin: { email: process.env.STERAS_E2E_ADMIN_EMAIL ?? M3_UAT_ACCOUNT_EMAILS.admin, password: E2E_PASSWORD },
+  organizer: { email: process.env.STERAS_E2E_ORGANIZER_EMAIL ?? M3_UAT_ACCOUNT_EMAILS.organizer, password: E2E_PASSWORD },
+  pdrm: { email: process.env.STERAS_E2E_PDRM_EMAIL ?? M3_UAT_ACCOUNT_EMAILS.PDRM, password: E2E_PASSWORD },
+  bomba: { email: process.env.STERAS_E2E_BOMBA_EMAIL ?? M3_UAT_ACCOUNT_EMAILS.BOMBA, password: E2E_PASSWORD },
+  kkm: { email: process.env.STERAS_E2E_KKM_EMAIL ?? M3_UAT_ACCOUNT_EMAILS.KKM, password: E2E_PASSWORD },
+  dbkl: { email: process.env.STERAS_E2E_DBKL_EMAIL ?? M3_UAT_ACCOUNT_EMAILS.DBKL, password: E2E_PASSWORD },
+  public: { email: process.env.STERAS_E2E_PUBLIC_EMAIL ?? M3_UAT_ACCOUNT_EMAILS.public, password: E2E_PASSWORD },
 } as const;
 
 export type AccountKey = keyof typeof ACCOUNTS;
 
 /** UAT event IDs seeded by the mock seeder. */
 export const EVENTS = {
-  /** Approved | MOCK schema | required: PDRM, BOMBA, KKM, DBKL, MOTAC */
-  musicFestival: 'evt-001-kl-music-festival',
-  /** UnderReview | MOCK schema | required: PDRM, BOMBA */
-  foodFair: 'evt-002-pj-food-fair',
-  /** Pending | ENGINE schema | required: PDRM, BOMBA, KKM */
-  mountainRun: 'evt-003-kl-mountain-run',
-  /** AmendmentRequested | MOCK schema | required: PDRM, BOMBA, KKM, DBKL */
-  marathon: 'evt-004-kl-marathon',
+  musicFestival: M3_UAT_EVENTS.controlVerification,
+  foodFair: M3_UAT_EVENTS.authorityPartial,
+  mountainRun: M3_UAT_EVENTS.initialReady,
+  marathon: M3_UAT_EVENTS.awaitingAssignment,
+  complianceBlocked: M3_UAT_EVENTS.complianceBlocked,
+  provisionalReview: M3_UAT_EVENTS.provisionalReview,
+  controlVerification: M3_UAT_EVENTS.controlVerification,
+  publicStage2: M3_UAT_EVENTS.publicStage2,
 } as const;
 
 export type EventKey = keyof typeof EVENTS;
@@ -95,7 +94,7 @@ function makeApiHelper(page: Page): ApiHelper {
         await fb?.auth?.signOut();
       }),
     waitForFirebase: () =>
-      page.waitForFunction(() => !!(window as any).__sterasFirebase, { timeout: 20_000 }),
+      page.waitForFunction(() => !!(window as any).__sterasFirebase, undefined, { timeout: 20_000 }),
   };
 }
 
@@ -120,13 +119,14 @@ export const test = base.extend<Fixtures>({
   loginAs: async ({ page }, use) => {
     const fn = async (key: AccountKey) => {
       const a = ACCOUNTS[key];
+      if (!a.password) throw new Error('Set STERAS_E2E_PASSWORD for the isolated staging accounts.');
       // Sign in via the firebase SDK directly. This is much faster than
       // navigating to /login + filling the form + submitting (which can
       // take 30-60s on Firebase Hosting when the test suite has already
       // hammered the auth endpoint). A single signInWithEmailAndPassword
       // network call replaces 4-5 page interactions.
       await page.goto('/', { waitUntil: 'domcontentloaded' });
-      await page.waitForFunction(() => !!(window as any).__sterasFirebase, { timeout: 15_000 });
+      await page.waitForFunction(() => !!(window as any).__sterasFirebase, undefined, { timeout: 15_000 });
       // Sign out any previous user (in case the page is cached with a
       // different auth state).
       await page.evaluate(async () => {

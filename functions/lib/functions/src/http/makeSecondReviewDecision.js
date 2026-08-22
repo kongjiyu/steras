@@ -4,8 +4,10 @@ exports.makeSecondReviewDecision = void 0;
 /**
  * makeSecondReviewDecision — admin-only callable (M3 Workstream 1).
  *
- * The pure aggregator (locked assumption A7). The admin cannot override
- * the officers' aggregated decision; this function:
+ * Officers submit proposals and the admin records the final decision. The
+ * aggregate remains visible for audit and is a useful recommendation, but
+ * the admin may choose a different final outcome after considering the
+ * proposals and admin note. This function:
  *   1. Reads all `assignments/{versionId}_{auth}` for the current version.
  *   2. Aggregates the decisions per the prototype rules (A8):
  *        - any Rejected -> aggregate Rejected
@@ -17,8 +19,8 @@ exports.makeSecondReviewDecision = void 0;
  *   5. Decrements the assigned officers' `workloadCount` (their assignment
  *      is now done).
  *
- * The admin's "decision" param is the confirmed aggregate. The function
- * refuses to confirm a different status (A7: cannot override the aggregate).
+ * `finalDecision` is the admin's final decision. `confirmedDecision` is
+ * accepted as a backwards-compatible alias for older clients.
  */
 const firebase_admin_1 = require("firebase-admin");
 const firestore_1 = require("firebase-admin/firestore");
@@ -33,9 +35,14 @@ exports.makeSecondReviewDecision = (0, https_1.onCall)({ region: runtime_1.FUNCT
     const eventId = (request.data?.eventId ?? '').trim();
     if (!eventId)
         throw new https_1.HttpsError('invalid-argument', 'eventId is required.');
-    const confirmedDecision = request.data?.confirmedDecision;
-    if (!isDecision(confirmedDecision)) {
-        throw new https_1.HttpsError('invalid-argument', 'confirmedDecision is required.');
+    const requestedFinalDecision = request.data?.finalDecision;
+    const requestedConfirmedDecision = request.data?.confirmedDecision;
+    if (requestedFinalDecision && requestedConfirmedDecision && requestedFinalDecision !== requestedConfirmedDecision) {
+        throw new https_1.HttpsError('invalid-argument', 'finalDecision and confirmedDecision must match when both are provided.');
+    }
+    const finalDecision = requestedFinalDecision ?? requestedConfirmedDecision;
+    if (!isDecision(finalDecision)) {
+        throw new https_1.HttpsError('invalid-argument', 'finalDecision is required.');
     }
     const adminNote = (request.data?.adminNote ?? '').trim();
     if (adminNote.length > ADMIN_NOTE_MAX) {
@@ -60,10 +67,15 @@ exports.makeSecondReviewDecision = (0, https_1.onCall)({ region: runtime_1.FUNCT
     }
     // Read all assignments for this version.
     const assignmentSnaps = await eventRef.collection(types_1.COLLECTIONS.ASSIGNMENTS).get();
-    const assignments = assignmentSnaps.docs.map((d) => d.data());
+    const assignments = assignmentSnaps.docs
+        .map((d) => d.data())
+        .filter((assignment) => assignment.versionId === versionId);
     if (assignments.length === 0) {
         throw new https_1.HttpsError('failed-precondition', 'No assignments found.');
     }
+    const versionSnap = await eventRef.collection(types_1.COLLECTIONS.VERSIONS).doc(versionId).get();
+    if (!versionSnap.exists)
+        throw new https_1.HttpsError('failed-precondition', 'The immutable application version is missing.');
     const required = event.requiredAuthorities ?? [];
     for (const auth of required) {
         if (!assignments.find((a) => a.authorityType === auth && a.status === 'completed')) {
@@ -72,24 +84,25 @@ exports.makeSecondReviewDecision = (0, https_1.onCall)({ region: runtime_1.FUNCT
     }
     // Aggregate (A8).
     const aggregate = aggregateFromAssignments(assignments, required);
-    if (aggregate !== confirmedDecision) {
-        throw new https_1.HttpsError('failed-precondition', `Cannot override the aggregated decision. Aggregate is ${aggregate}; you confirmed ${confirmedDecision}.`);
-    }
     const now = Date.now();
     // Pick the most informative officer reason+suggestion for the
     // organiser notification (priority: Rejected > AmendmentRequested > Approved).
-    const reasonOfficer = pickFeaturedOfficer(assignments, aggregate);
-    const notifType = aggregate === 'Approved' ? 'application_approved'
-        : aggregate === 'Rejected' ? 'application_rejected'
+    const reasonOfficer = pickFeaturedOfficer(assignments, finalDecision);
+    const notifType = finalDecision === 'Approved' ? 'application_approved'
+        : finalDecision === 'Rejected' ? 'application_rejected'
             : 'amendment_requested';
     return db.runTransaction(async (tx) => {
         tx.update(eventRef, {
-            status: aggregate,
+            status: finalDecision,
             reviewStage: null,
+            ...(finalDecision === 'Rejected' || finalDecision === 'AmendmentRequested'
+                ? { editableVersionId: `v${event.currentVersionNumber + 1}`, draftDocumentPaths: [] }
+                : {}),
             secondReview: {
                 reviewerUid: request.auth.uid,
                 decidedAt: now,
-                confirmedDecision: aggregate,
+                confirmedDecision: finalDecision,
+                aggregateDecision: aggregate,
                 adminNote: adminNote || null,
                 featuredOfficerUid: reasonOfficer?.officerUid ?? null,
             },
@@ -106,16 +119,47 @@ exports.makeSecondReviewDecision = (0, https_1.onCall)({ region: runtime_1.FUNCT
             actorRole: 'admin',
             timestamp: now,
             previousStatus: event.status,
-            newStatus: aggregate,
+            newStatus: finalDecision,
             notes: adminNote || null,
             metadata: {
                 reviewStage: 'second',
                 aggregate,
+                finalDecision,
                 featuredOfficerUid: reasonOfficer?.officerUid ?? null,
                 featuredReason: reasonOfficer?.reason ?? null,
                 featuredSuggestion: reasonOfficer?.suggestion ?? null,
             },
         });
+        const publicRef = db.collection(types_1.COLLECTIONS.PUBLIC_EVENTS).doc(eventId);
+        if (finalDecision === 'Approved') {
+            const details = versionSnap.data().eventDetails;
+            const publicEvent = {
+                eventId,
+                versionId,
+                eventName: details.name,
+                venueName: details.venueName,
+                eventType: details.type,
+                startDatetime: details.startDatetime,
+                endDatetime: details.endDatetime,
+                approvedBy: event.requiredAuthorities,
+                publicStatus: 'approved',
+            };
+            tx.set(publicRef, publicEvent);
+            const publishAudit = eventRef.collection(types_1.COLLECTIONS.AUDIT_LOGS).doc(`${versionId}_public_published`);
+            tx.set(publishAudit, {
+                id: publishAudit.id,
+                eventId,
+                versionId,
+                action: 'public_published',
+                actorId: request.auth.uid,
+                actorRole: 'admin',
+                timestamp: now,
+                metadata: { approvedBy: event.requiredAuthorities, reviewStage: 'second' },
+            });
+        }
+        else {
+            tx.delete(publicRef);
+        }
         // Decrement workload for each assigned officer + mark assignment
         // history as 'completed' (the assignment doc is already 'completed'
         // from the officer action; this just clears workload).
@@ -128,18 +172,20 @@ exports.makeSecondReviewDecision = (0, https_1.onCall)({ region: runtime_1.FUNCT
                 });
             }
         }
-        return { aggregate, notifType, reasonOfficer };
+        return { aggregate, finalDecision, notifType, reasonOfficer };
     }).then(async (result) => {
         if (event.organizerId) {
             try {
                 const recipientUid = await (0, notifications_1.resolveAuthUid)(event.organizerId);
                 if (recipientUid) {
-                    const title = result.aggregate === 'Approved' ? 'Application approved'
-                        : result.aggregate === 'Rejected' ? 'Application rejected'
+                    const title = result.finalDecision === 'Approved' ? 'Application approved'
+                        : result.finalDecision === 'Rejected' ? 'Application rejected'
                             : 'Amendment requested';
-                    const message = result.reasonOfficer
-                        ? `${result.reasonOfficer.authorityType} ${result.reasonOfficer.reason}${result.reasonOfficer.suggestion ? '. ' + result.reasonOfficer.suggestion : ''}`
-                        : `All required authorities have ${result.aggregate} the application.`;
+                    const message = adminNote
+                        ? adminNote
+                        : result.reasonOfficer
+                            ? `${result.reasonOfficer.authorityType} ${result.reasonOfficer.reason}${result.reasonOfficer.suggestion ? '. ' + result.reasonOfficer.suggestion : ''}`
+                            : `The admin recorded ${result.finalDecision} after second review.`;
                     // FR-M3-08: surface the featured officer's reason + suggestion
                     // as separate fields so the bell UI can render them on
                     // separate lines (instead of concatenating into the message).
@@ -151,7 +197,7 @@ exports.makeSecondReviewDecision = (0, https_1.onCall)({ region: runtime_1.FUNCT
                         title,
                         message,
                         sourceActionId: `second_review_${versionId}`,
-                        ...(result.reasonOfficer?.reason ? { reason: result.reasonOfficer.reason } : {}),
+                        ...(result.reasonOfficer?.reason ? { reason: result.reasonOfficer.reason } : adminNote ? { reason: adminNote } : {}),
                         ...(result.reasonOfficer?.suggestion ? { suggestion: result.reasonOfficer.suggestion } : {}),
                     });
                 }
@@ -160,7 +206,7 @@ exports.makeSecondReviewDecision = (0, https_1.onCall)({ region: runtime_1.FUNCT
                 console.warn('[makeSecondReviewDecision] organiser notification failed (non-fatal):', err);
             }
         }
-        return { eventId, status: result.aggregate };
+        return { eventId, status: result.finalDecision, aggregate: result.aggregate };
     });
 });
 function aggregateFromAssignments(assignments, required) {
@@ -182,14 +228,14 @@ function aggregateFromAssignments(assignments, required) {
     }
     return 'UnderReview';
 }
-function pickFeaturedOfficer(assignments, aggregate) {
-    if (aggregate === 'Approved') {
+function pickFeaturedOfficer(assignments, decision) {
+    if (decision === 'Approved') {
         return assignments.find((a) => a.decision === 'Approved' && a.reason);
     }
-    if (aggregate === 'Rejected') {
+    if (decision === 'Rejected') {
         return assignments.find((a) => a.decision === 'Rejected' && a.reason);
     }
-    if (aggregate === 'AmendmentRequested') {
+    if (decision === 'AmendmentRequested') {
         return assignments.find((a) => a.decision === 'AmendmentRequested' && a.reason);
     }
     return undefined;

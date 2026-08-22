@@ -10,7 +10,6 @@
 import { test, expect, EVENTS } from './fixtures';
 import { resetFoodFair } from './admin-reset';
 
-const MIN_RATIONALE = 'Aggregate-test rationale — minimum 10 characters, acceptable for UAT.';
 const BOMBA_RATIONALE = 'Bomba approval: fire safety officer signed off on egress routes and extinguisher placement.';
 const KKM_RATIONALE = 'KKM approval: medical plan meets mass-gathering guideline for 12k attendees.';
 const DBKL_RATIONALE = 'DBKL approval: venue capacity and emergency access verified on site.';
@@ -24,11 +23,10 @@ test.describe('@M3 aggregate decision flows', () => {
     await resetFoodFair();
   });
 
-  test('rejection precedence: single Rejected → aggregate Rejected, no public_events, no further decisions', async ({ page, api, loginAs }) => {
-    // evt-002 requires PDRM, BOMBA, KKM, DBKL. PDRM rejects → aggregate is
-    // Rejected. Per FR-M3-05 precedence, Rejected wins over any Approved
-    // or AmendmentRequested. The function also blocks further decisions
-    // (the version is "no longer open for review").
+  test('rejection precedence: officer proposals aggregate to Rejected and admin records the final outcome', async ({ page, api, loginAs }) => {
+    // evt-002 requires PDRM, BOMBA, KKM, DBKL. A single rejection is the
+    // aggregate recommendation, but only the admin's second review changes
+    // the application status.
     await loginAs('pdrm');
     await page.goto(`/authority/events/${EVENTS.foodFair}`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: /your decision/i })).toBeVisible();
@@ -38,39 +36,51 @@ test.describe('@M3 aggregate decision flows', () => {
     // multiple elements under strict mode.
     const decisionSection = page.locator('section', { has: page.getByRole('heading', { name: /your decision/i }) });
     await decisionSection.getByLabel(/decision rationale/i).fill('PDRM E2E — crowd ingress plan fails. Rejecting for revision.');
-    const rejectBtn = decisionSection.getByRole('button', { name: /^reject$/i });
+    await decisionSection.getByLabel(/suggestion/i).fill('Please revise the crowd ingress and traffic management plan before resubmission.');
+    const rejectBtn = decisionSection.getByRole('button', { name: /propose rejection/i });
     await rejectBtn.scrollIntoViewIfNeeded();
     await expect(rejectBtn).toBeEnabled();
     await rejectBtn.click();
     await expect.poll(async () => {
-      const d = await api.getDoc(`events/${EVENTS.foodFair}/decisions/v1_PDRM`);
+      const d = await api.getDoc(`events/${EVENTS.foodFair}/assignments/v1_PDRM`);
       return d?.decision === 'Rejected' ? true : null;
     }, { timeout: 10_000 }).toBe(true);
 
-    // Verify aggregate is Rejected + no public_events entry
+    // Complete the remaining proposals so second review can open.
+    for (const [key, reason] of [
+      ['bomba', BOMBA_RATIONALE],
+      ['kkm', KKM_RATIONALE],
+      ['dbkl', DBKL_RATIONALE],
+    ] as const) {
+      await api.signOut();
+      await loginAs(key);
+      await api.callFunction('recordOfficerProposal', { eventId: EVENTS.foodFair, decision: 'Approved', reason, confirmedReview: true });
+    }
+    await api.signOut();
+    await loginAs('admin');
+    await api.callFunction('makeSecondReviewDecision', { eventId: EVENTS.foodFair, finalDecision: 'Rejected', adminNote: 'Admin confirms rejection after reviewing the officer proposals.' });
+
     const event = await api.getDoc(`events/${EVENTS.foodFair}`);
     expect(event!.status).toBe('Rejected');
     const publicEvent = await api.getDoc(`public_events/${EVENTS.foodFair}`);
     expect(publicEvent).toBeNull();
 
-    // BOMBA tries to Approve — function should reject (version no longer
-    // open for review) and no BOMBA decision should be recorded.
+    // A further officer proposal is rejected after the final decision.
     await api.signOut();
     await loginAs('bomba');
     let callError: string | null = null;
     try {
-      await api.callFunction('makeAuthorityDecision', {
+      await api.callFunction('recordOfficerProposal', {
         eventId: EVENTS.foodFair,
         decision: 'Approved',
-        rationale: BOMBA_RATIONALE,
-        // FR-M3-16: required when Approve (the function refuses without it).
+        reason: BOMBA_RATIONALE,
         confirmedReview: true,
       });
     } catch (err) {
       callError = err instanceof Error ? err.message : String(err);
     }
-    expect(callError).toMatch(/no longer open for review/i);
-    // Aggregate is still Rejected
+    expect(callError).toMatch(/no longer open|already|initial review/i);
+    // Final result remains Rejected.
     const eventAfter = await api.getDoc(`events/${EVENTS.foodFair}`);
     expect(eventAfter!.status).toBe('Rejected');
   });
@@ -90,14 +100,27 @@ test.describe('@M3 aggregate decision flows', () => {
     // (Stage-1 section also has buttons/textareas).
     const decisionSection = page.locator('section', { has: page.getByRole('heading', { name: /your decision/i }) });
     await decisionSection.getByLabel(/decision rationale/i).fill('PDRM E2E — requesting amendment to medical plan and traffic TMP.');
-    const amendBtn = decisionSection.getByRole('button', { name: /request amendment/i });
+    const amendBtn = decisionSection.getByRole('button', { name: /propose amendment/i });
     await amendBtn.scrollIntoViewIfNeeded();
     await expect(amendBtn).toBeEnabled();
     await amendBtn.click();
     await expect.poll(async () => {
-      const d = await api.getDoc(`events/${EVENTS.foodFair}/decisions/v1_PDRM`);
+      const d = await api.getDoc(`events/${EVENTS.foodFair}/assignments/v1_PDRM`);
       return d?.decision === 'AmendmentRequested' ? true : null;
     }, { timeout: 10_000 }).toBe(true);
+
+    for (const [key, reason] of [
+      ['bomba', BOMBA_RATIONALE],
+      ['kkm', KKM_RATIONALE],
+      ['dbkl', DBKL_RATIONALE],
+    ] as const) {
+      await api.signOut();
+      await loginAs(key);
+      await api.callFunction('recordOfficerProposal', { eventId: EVENTS.foodFair, decision: 'Approved', reason, confirmedReview: true });
+    }
+    await api.signOut();
+    await loginAs('admin');
+    await api.callFunction('makeSecondReviewDecision', { eventId: EVENTS.foodFair, finalDecision: 'AmendmentRequested', adminNote: 'Admin requests the documented amendment.' });
 
     const event = await api.getDoc(`events/${EVENTS.foodFair}`);
     expect(event!.status).toBe('AmendmentRequested');
@@ -128,17 +151,26 @@ test.describe('@M3 aggregate decision flows', () => {
       // (the button is disabled without it and the Cloud Function
       // would refuse the call server-side).
       await decisionSection.getByTestId('confirmed-review-checkbox').check();
-      const approveBtn = decisionSection.getByRole('button', { name: /^approve$/i });
+      const approveBtn = decisionSection.getByRole('button', { name: /propose approval/i });
       await approveBtn.scrollIntoViewIfNeeded();
       await expect(approveBtn).toBeEnabled();
       await approveBtn.click();
       await expect.poll(async () => {
-        const d = await api.getDoc(`events/${EVENTS.foodFair}/decisions/v1_${key.toUpperCase()}`);
+        const d = await api.getDoc(`events/${EVENTS.foodFair}/assignments/v1_${key.toUpperCase()}`);
         return d?.decision === 'Approved' ? true : null;
       }, { timeout: 10_000 }).toBe(true);
     }
 
-    // Aggregate is Approved + public_events entry created
+    await api.signOut();
+    await loginAs('admin');
+    const second = await api.callFunction<{ eventId: string; finalDecision: 'Approved' }, { status: string }>('makeSecondReviewDecision', {
+      eventId: EVENTS.foodFair,
+      finalDecision: 'Approved',
+      adminNote: 'Admin confirms the unanimous officer proposal.',
+    });
+    expect(second.status).toBe('Approved');
+
+    // Admin final approval publishes the public event.
     const event = await api.getDoc(`events/${EVENTS.foodFair}`);
     expect(event!.status).toBe('Approved');
     const publicEvent = await api.getDoc(`public_events/${EVENTS.foodFair}`);
