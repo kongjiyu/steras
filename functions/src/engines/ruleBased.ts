@@ -534,18 +534,27 @@ export async function fetchVenueContext(
     || !sameLocation(venue.location, details.venueLocation)) {
     return { matched: false, submittedCapacity, fetchedAt: now };
   }
+  return buildMatchedVenueContextSnapshot(venue, submittedCapacity, registeredCapacity, now);
+}
+
+export function buildMatchedVenueContextSnapshot(
+  venue: Venue,
+  submittedCapacity: number,
+  registeredCapacity: number,
+  now: number,
+): VenueContextSnapshot {
   return {
     matched: true,
     venueId: venue.venueId,
     submittedCapacity,
     registeredCapacity,
-    verifiedSafeCapacity: venue.verifiedSafeCapacity,
     capacityDifference: submittedCapacity - registeredCapacity,
-    jurisdiction: venue.jurisdiction,
-    fireCertificateStatus: venue.fireCertificateStatus,
-    fireCertificateExpiresAt: venue.fireCertificateExpiresAt,
-    emergencyAccessVerified: venue.emergencyAccessVerified,
-    nearestHospitalTravelMinutes: venue.nearestHospitalTravelMinutes,
+    ...(venue.verifiedSafeCapacity !== undefined ? { verifiedSafeCapacity: venue.verifiedSafeCapacity } : {}),
+    ...(venue.jurisdiction !== undefined ? { jurisdiction: venue.jurisdiction } : {}),
+    ...(venue.fireCertificateStatus !== undefined ? { fireCertificateStatus: venue.fireCertificateStatus } : {}),
+    ...(venue.fireCertificateExpiresAt !== undefined ? { fireCertificateExpiresAt: venue.fireCertificateExpiresAt } : {}),
+    ...(venue.emergencyAccessVerified !== undefined ? { emergencyAccessVerified: venue.emergencyAccessVerified } : {}),
+    ...(venue.nearestHospitalTravelMinutes !== undefined ? { nearestHospitalTravelMinutes: venue.nearestHospitalTravelMinutes } : {}),
     ...(venue.riskNotes ? { riskNotes: venue.riskNotes } : {}),
     fetchedAt: now,
   };
