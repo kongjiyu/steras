@@ -1,0 +1,118 @@
+@startuml
+title M2 — Smart Risk Assessment and Safety Resource Recommendation\nActivity Diagram
+
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 15
+skinparam ArrowColor #4B5563
+skinparam ArrowThickness 1.4
+skinparam activity {
+  BackgroundColor #EAF3FA
+  BorderColor #0B6FB8
+  FontColor #19324D
+  DiamondBackgroundColor #FFF4D6
+  DiamondBorderColor #D78B00
+  StartColor #19324D
+  EndColor #19324D
+  BarColor #E5B323
+}
+skinparam note {
+  BackgroundColor #FFF8E8
+  BorderColor #F2A93B
+  FontColor #5B4211
+}
+
+|#EAF3FA|Event Organiser / M1|
+start
+:Submit or resubmit event application;
+:Create immutable EventVersion\nand set event status to Pending;
+
+|#EEEAFB|M2 Assessment Service|
+:Receive Firestore create/update trigger\nor authorised manual recompute;
+:Load event and current version;
+
+if (Pending event and\ncurrent version exists?) then (No)
+  :Skip ineligible event\nor report missing version;
+  stop
+else (Yes)
+  :Build processing hash from input\nand active schema versions;
+endif
+
+|#E8F6F1|External Services & Data|
+:Transactionally claim assessment job\nstatus = processing, with lease and claim ID;
+
+if (Claim acquired?) then (No)
+  :Return skipped\nalready ready, active, or stale;
+  stop
+else (Yes)
+endif
+
+|#EEEAFB|M2 Assessment Service|
+fork
+|#E8F6F1|External Services & Data|
+  :Fetch OpenWeather forecast\nor explicit fallback status;
+fork again
+  :Resolve Malaysia date, weekday,\nweekend and public holiday;
+fork again
+  :Match venue, verified capacity,\nfire and access context;
+fork again
+  :Retrieve comparable verified incidents\nby stable venue ID;
+end fork
+
+|#EEEAFB|M2 Assessment Service|
+:Assemble versioned context snapshot\nwith source, timestamp and confidence;
+:Apply active eight-domain category schema;
+:Calculate HIRARC likelihood × severity\nfor every applicable hazard;
+:Apply mitigation credit only\nfor verified controls;
+:Calculate residual matrix and official risk;
+note right
+  Official risk = highest residual hazard.
+  Deterministic result is immutable.
+end note
+:Calculate readiness, compliance\nand evidence confidence separately;
+
+|#E8F6F1|External Services & Data|
+:Send allowlisted non-PII event data,\ncontext and official result to MiniMax M3;
+if (Response is available\nand schema-valid?) then (Yes)
+  :Return advisory category explanation,\nconcerns and resource considerations;
+else (No)
+  :Return unavailable / invalid fallback;
+  note right
+    AI failure cannot change the official risk
+    or deterministic resource formula.
+  end note
+endif
+
+|#EEEAFB|M2 Assessment Service|
+:Calculate deterministic resource baseline,\nplanning ranges and guideline rationale;
+:Consolidate official assessment,\nAI advisory status and resources;
+
+|#E8F6F1|External Services & Data|
+:Begin final transaction and verify\nclaim ID, event status and version;
+if (Claim and version\nstill current?) then (No)
+  :Discard stale result safely;
+  stop
+else (Yes)
+  :Store versioned assessment\nand resource recommendation;
+  :Update current assessment/resource IDs;
+  :Write risk and resource audit entries;
+endif
+
+|#EEEAFB|M2 Assessment Service|
+:Mark M2 output ready;
+:Publish organiser-safe view to M1,\nfull review data to M3,\nand read-only fields to M5;
+note right
+  Handoff only: M3 owns the human decision.
+  M3 may override resources with rationale,
+  but cannot alter the official M2 result.
+end note
+stop
+
+legend bottom
+  |= Colour |= Responsibility |
+  |<#EAF3FA> | Event Organiser / M1 |
+  |<#EEEAFB> | M2 Assessment Service |
+  |<#E8F6F1> | External context, AI and persistence |
+endlegend
+@enduml

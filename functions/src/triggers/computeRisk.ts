@@ -3,4 +3,8 @@
  * `manualRecompute` and any other code paths that need to re-run.
  */
 
-export { runRiskAndResourcePipeline as recomputeRiskAndResources } from './onEventCreated';
+import { RetryAuthorization, runRiskAndResourcePipeline } from './onEventCreated';
+
+export function recomputeRiskAndResources(eventId: string, authorization: RetryAuthorization) {
+  return runRiskAndResourcePipeline(eventId, Date.now(), true, authorization);
+}

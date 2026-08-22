@@ -1,65 +1,51 @@
-import { AIAdvisoryAnalysis, RiskLevel } from '@shared/types';
+import { AIProposalAttempt, RiskLevel } from '@shared/types';
 import RiskMeter from '../ui/RiskMeter';
 
 interface AIAdvisoryProps {
-  advisory: AIAdvisoryAnalysis;
-  officialRiskLevel: RiskLevel;
+  advisory: AIProposalAttempt | null;
+  resultRiskLevel?: RiskLevel;
   showCategories?: boolean;
+  official?: boolean;
 }
-export default function AIAdvisory({ advisory, officialRiskLevel, showCategories = true }: AIAdvisoryProps) {
-  const available = advisory.status === 'success';
 
+export default function AIAdvisory({ advisory, resultRiskLevel, showCategories = true, official = false }: AIAdvisoryProps) {
+  const available = advisory?.status === 'success';
   return (
     <div className="border-l-4 border-gold-300 bg-gold-50 p-4 sm:p-5" data-testid="ai-advisory">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.09em] text-gold-600">Advisory only · MiniMax M3</p>
-          <h3 className="mt-1 font-display text-base font-semibold text-ink-800">AI evidence interpretation</h3>
+          <p className="text-[11px] font-bold uppercase tracking-[0.09em] text-gold-600">AI proposal · MiniMax M3</p>
+          <h3 className="mt-1 font-display text-base font-semibold text-ink-800">Hazard and category score proposal</h3>
         </div>
-        <span className={`badge ${available ? 'badge-green' : 'badge-amber'}`}>{advisory.status}</span>
+        <span className={`badge ${available ? 'badge-green' : 'badge-amber'}`}>{advisory?.status ?? 'not attempted'}</span>
       </div>
-
-      <p className="mt-3 text-sm leading-6 text-ink-700">
-        {advisory.overallExplanation || 'AI advisory analysis is unavailable. The official deterministic result remains valid.'}
-      </p>
-
-      <div className="mt-4 flex flex-wrap items-center gap-3 border-y border-gold-200 py-3 text-xs text-ink-600">
-        {advisory.overallBand && <RiskMeter level={advisory.overallBand} size="compact" />}
-        <span>Official result remains <strong>{officialRiskLevel}</strong>; this advisory cannot change it.</span>
-      </div>
-
-      {showCategories && advisory.categories.length > 0 && (
+      {!available && (
+        <p className="mt-3 text-sm leading-6 text-ink-700">
+          {advisory?.errorSummary ?? 'AI assessment was not attempted because required evidence was insufficient.'}
+        </p>
+      )}
+      {available && resultRiskLevel && (
+        <div className="mt-4 flex flex-wrap items-center gap-3 border-y border-gold-200 py-3 text-xs text-ink-600">
+          <RiskMeter level={resultRiskLevel} size="compact" />
+          <span>{official ? 'Official AI-assisted result' : 'Validated provisional result'}: <strong>{resultRiskLevel}</strong>{official ? '.' : '. Authority confirmation is still required.'}</span>
+        </div>
+      )}
+      {available && showCategories && (
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           {advisory.categories.map((category) => (
             <div key={category.categoryId} className="border-t border-gold-200 pt-3">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-xs font-semibold text-ink-800">{category.categoryId}</p>
-                <RiskMeter level={category.advisoryBand} size="compact" />
+                <p className="text-xs font-semibold text-ink-800">{category.categoryId.replaceAll('_', ' ')}</p>
+                <span className="text-xs font-bold text-brand-700">L{category.likelihood} × S{category.severity}</span>
               </div>
-              <p className="mt-2 text-xs leading-5 text-ink-600">{category.explanation}</p>
+              <p className="mt-2 text-xs leading-5 text-ink-600">{category.rationale}</p>
+              <p className="mt-1 text-[11px] text-ink-500">Confidence: {category.confidence}</p>
+              {category.concerns.length > 0 && <p className="mt-2 text-[11px] leading-5 text-gold-700">Concerns: {category.concerns.join('; ')}</p>}
+              {category.missingInformation.length > 0 && <p className="mt-1 text-[11px] leading-5 text-gold-700">Missing information: {category.missingInformation.join('; ')}</p>}
             </div>
           ))}
         </div>
       )}
-
-      {(advisory.keyConcerns.length > 0 || advisory.resourceConsiderations.length > 0) && (
-        <div className="mt-4 grid gap-4 text-xs sm:grid-cols-2">
-          <AdvisoryList title="Key concerns" items={advisory.keyConcerns} />
-          <AdvisoryList title="Resource considerations" items={advisory.resourceConsiderations} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function AdvisoryList({ title, items }: { title: string; items: string[] }) {
-  if (items.length === 0) return null;
-  return (
-    <div>
-      <p className="font-semibold text-ink-700">{title}</p>
-      <ul className="mt-2 space-y-1.5 text-ink-600">
-        {items.map((item) => <li key={item} className="flex gap-2"><span aria-hidden="true">—</span><span>{item}</span></li>)}
-      </ul>
     </div>
   );
 }

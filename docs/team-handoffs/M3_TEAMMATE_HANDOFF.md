@@ -64,12 +64,12 @@
 
 - **M1:** Event/version records、evidence paths、organizer ownership 和 required authorities。
 - **M2:** Official residual hazards、readiness、compliance、confidence、AI advisory 和 resource ranges。
-- **M4:** Incident/complaint investigation queues 和 escalation links。
+- **M4:** Incident triage、assignment、investigation queues 和 escalation links。
 
 ## 你需要提供给其他 Module | Outputs
 
 - **M1:** Aggregate status、decision rationale、revision/rejection details、notifications 和 publication state。
-- **M4:** Authority identity/scope 和 escalation decision links。
+- **M4:** Authority identity/scope、assignment 和 escalation decision links。
 - **M5:** Decision outcomes、review stages、timestamps、authority type、overrides 和 publication state。
 
 ## 不属于你的工作 | Out of Scope

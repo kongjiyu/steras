@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { EventRecord, RiskAssessment, RiskLevel } from '@shared/types';
 import { DashboardRecord, dashboardSummary, riskDistribution, sortReviewPriority } from './dashboardData';
+import { mockAssessments } from '../../mock_data/assessments';
 
 function record(id: string, status: EventRecord['status'], risk?: RiskLevel, updatedAt = 1): DashboardRecord {
   const event: EventRecord = {
@@ -30,7 +31,11 @@ function record(id: string, status: EventRecord['status'], risk?: RiskLevel, upd
       organizerPhone: '+601',
     },
   };
-  const assessment = risk ? { officialRiskLevel: risk } as RiskAssessment : undefined;
+  const template = mockAssessments.find((item) => item.status === 'provisional_ready');
+  const assessment = risk && template && 'provisionalResult' in template ? {
+    ...structuredClone(template),
+    provisionalResult: { ...structuredClone(template.provisionalResult), overallRiskLevel: risk, highestCategoryRiskLevel: risk, weightedRiskLevel: risk },
+  } as RiskAssessment : undefined;
   return { event, assessment };
 }
 

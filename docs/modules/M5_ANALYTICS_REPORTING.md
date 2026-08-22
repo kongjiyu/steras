@@ -2,13 +2,13 @@
 
 **Owner:** Module 5 teammate
 
-**PRD requirements:** FR-28 to FR-33
+**PRD requirements:** FR-M5-01 to FR-M5-20
 
 ## Goal
 
-Provide privacy-safe, auditable operational analytics across submissions, official risk, resources, decisions, reviews, incidents, complaints, and re-applications.
+Provide privacy-safe, auditable operational analytics across submissions, official risk, resources, decisions, reviews, incident handling, and re-applications.
 
-M5 observes source records. It never changes an assessment, resource recommendation, incident, complaint, or authority decision.
+M5 observes source records. It never changes an assessment, resource recommendation, incident, or authority decision.
 
 ## Current Progress
 
@@ -48,7 +48,7 @@ The initial dashboard must provide:
 - resource recommendation and authority override trends;
 - approval/rejection/revision outcomes and turnaround time;
 - re-application rate;
-- verified incident counts/severity and complaint trends when M4 exists;
+- incident action-required rate, verified-incident rate, severity/status distribution, and resolution trends when M4 exists;
 - AI vs Deterministic Category Agreement Rate;
 - AI vs Final Category Agreement Rate only when M3 stores a distinct final human category.
 
@@ -67,7 +67,7 @@ Agreement metrics are monitoring signals only. They never modify official M2 out
 ## Privacy and Access Assumptions
 
 - Every query is filtered to the signed-in authority scope unless a future explicit cross-agency analytics role is added.
-- CSV/PDF exports exclude organiser name, email, phone, evidence paths/content, incident descriptions, complaint text, and private notes.
+- CSV/PDF exports exclude organiser name, email, phone, evidence paths/content, incident descriptions, and private investigation notes.
 - Spreadsheet exports neutralise formula-leading values.
 - Public users cannot access analytics records or exports.
 - Synthetic fixtures are labelled academic test data.
@@ -80,7 +80,7 @@ Agreement metrics are monitoring signals only. They never modify official M2 out
 | M1 | Event type, venue, dates, versions, status, submission/update timestamps, and authority scope |
 | M2 | Official residual matrix/band, dominant hazard domain, readiness, compliance, evidence confidence, synthetic-history flag, AI status, resource ranges, and formula/guideline versions |
 | M3 | Decisions, review stages, timestamps, authority type, overrides, and publication state |
-| M4 | Privacy-safe incident/complaint status, severity/category, and resolution timestamps |
+| M4 | Privacy-safe incident status, action-required flag, severity/category, verification, and resolution timestamps |
 
 ## Outputs To Other Modules
 
@@ -92,7 +92,7 @@ M5 provides read-only metrics and exports. Other modules may link to filtered re
 - Report assessment coverage and missing-data rates separately from risk distribution; low-confidence or insufficient assessments are not “low risk”.
 
 - Replace client-side full collection reads with bounded queries or server-generated snapshots as data grows.
-- Add resource, override, incident, complaint, re-application, and review-stage charts.
+- Add resource, override, incident-triage, incident-resolution, re-application, and review-stage charts.
 - Add schema/version filters and metric-definition metadata.
 - Add AI agreement coverage for success, fallback, missing, and schema-version cases.
 - Add export tests for privacy and spreadsheet-injection safety.

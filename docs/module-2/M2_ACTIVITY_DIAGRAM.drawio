@@ -1,0 +1,184 @@
+<mxfile host="app.diagrams.net" modified="2026-08-13T08:30:00.000Z" agent="Codex" version="24.7.17" type="device" compressed="false">
+  <diagram id="m2-simplified" name="Smart Risk Assessment Activity Diagram">
+    <mxGraphModel dx="1800" dy="2280" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="2280" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <mxCell id="title" value="Smart Risk Assessment and Safety Resource Recommendation Module" style="text;html=1;align=center;verticalAlign=middle;fontFamily=Times New Roman;fontSize=20;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="0" y="10" width="1800" height="40" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="lane-organiser" value="Event Organiser" style="swimlane;html=1;horizontal=1;startSize=34;fillColor=#F7E8F5;swimlaneFillColor=#F7E8F5;strokeColor=#3F3F46;fontFamily=Times New Roman;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="20" y="60" width="250" height="2180" as="geometry"/>
+        </mxCell>
+        <mxCell id="lane-m2" value="Smart Risk Assessment and Safety Resource Recommendation Module" style="swimlane;html=1;horizontal=1;startSize=34;fillColor=#E7F1FB;swimlaneFillColor=#E7F1FB;strokeColor=#3F3F46;fontFamily=Times New Roman;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="270" y="60" width="700" height="2180" as="geometry"/>
+        </mxCell>
+        <mxCell id="lane-ai" value="MiniMax M3 — External AI Service" style="swimlane;html=1;horizontal=1;startSize=34;fillColor=#E9F8F5;swimlaneFillColor=#E9F8F5;strokeColor=#3F3F46;fontFamily=Times New Roman;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="970" y="60" width="300" height="2180" as="geometry"/>
+        </mxCell>
+        <mxCell id="lane-m3" value="Authority Approval and Notification Module" style="swimlane;html=1;horizontal=1;startSize=34;fillColor=#FDECEC;swimlaneFillColor=#FDECEC;strokeColor=#3F3F46;fontFamily=Times New Roman;fontSize=15;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1270" y="60" width="510" height="2180" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="start" value="" style="ellipse;html=1;aspect=fixed;fillColor=#000000;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="135" y="105" width="20" height="20" as="geometry"/>
+        </mxCell>
+        <mxCell id="submit" value="Submit or resubmit&lt;br&gt;event application" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="65" y="145" width="160" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="retrieve" value="Retrieve application and contextual evidence&lt;br&gt;(weather, public-holiday, venue, calendar, historical-event outcome,&lt;br&gt;and closed and verified relevant incident information from the Incident Reporting Module)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="440" y="130" width="370" height="86" as="geometry"/>
+        </mxCell>
+        <mxCell id="provenance" value="Record evidence source and provenance" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="500" y="235" width="250" height="48" as="geometry"/>
+        </mxCell>
+        <mxCell id="readiness" value="Validate required information and sufficient evidence;&lt;br&gt;determine assessment readiness, compliance,&lt;br&gt;and evidence confidence" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="480" y="300" width="290" height="72" as="geometry"/>
+        </mxCell>
+        <mxCell id="proceed" value="Can assessment proceed?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#20BFA9;fontFamily=Times New Roman;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="520" y="390" width="210" height="74" as="geometry"/>
+        </mxCell>
+        <mxCell id="warnings" value="Record warnings and mark&lt;br&gt;review required" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="310" y="490" width="220" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="readiness-handoff" value="Create review-required handoff to the&lt;br&gt;Authority Approval and Notification Module" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="305" y="570" width="230" height="48" as="geometry"/>
+        </mxCell>
+        <mxCell id="end-readiness" value="" style="ellipse;html=1;aspect=fixed;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="410" y="642" width="22" height="22" as="geometry"/>
+        </mxCell>
+        <mxCell id="end-readiness-inner" value="" style="ellipse;html=1;aspect=fixed;fillColor=#000000;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="416" y="648" width="10" height="10" as="geometry"/>
+        </mxCell>
+        <mxCell id="package" value="Prepare validated assessment package&lt;br&gt;with rubric, hard rules, and guidance" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="700" y="490" width="245" height="66" as="geometry"/>
+        </mxCell>
+        <mxCell id="hazards" value="Identify hazards and propose&lt;br&gt;likelihood and severity scores" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="995" y="585" width="250" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="ai-return" value="Return evidence, rationale, confidence,&lt;br&gt;concerns, and missing information" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="985" y="665" width="270" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="validate" value="Validate the MiniMax response" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="500" y="675" width="250" height="48" as="geometry"/>
+        </mxCell>
+        <mxCell id="usable" value="AI response usable?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#20BFA9;fontFamily=Times New Roman;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="530" y="750" width="190" height="72" as="geometry"/>
+        </mxCell>
+        <mxCell id="unavailable" value="Record unavailable or retryable status" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="690" y="850" width="240" height="48" as="geometry"/>
+        </mxCell>
+        <mxCell id="manual" value="Receive Manual Review Required handoff" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="1340" y="850" width="270" height="48" as="geometry"/>
+        </mxCell>
+        <mxCell id="ai-note" value="MiniMax is advisory only.&lt;br&gt;Missing scores are never fabricated." style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;fillColor=#FFF8D9;strokeColor=#D8B84B;fontColor=#40351A;fontFamily=Times New Roman;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="1630" y="835" width="130" height="78" as="geometry"/>
+        </mxCell>
+        <mxCell id="end-manual" value="" style="ellipse;html=1;aspect=fixed;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="1465" y="925" width="22" height="22" as="geometry"/>
+        </mxCell>
+        <mxCell id="end-manual-inner" value="" style="ellipse;html=1;aspect=fixed;fillColor=#000000;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="1471" y="931" width="10" height="10" as="geometry"/>
+        </mxCell>
+        <mxCell id="scoring-config" value="Load active formula, category weights,&lt;br&gt;thresholds, guideline checks, and versions" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="300" y="840" width="265" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="hard-rules" value="Apply hard-rule constraints and retain&lt;br&gt;original AI-proposed values" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="300" y="920" width="265" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="provisional-category" value="Calculate provisional risk value&lt;br&gt;for each applicable category" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="300" y="1000" width="265" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="provisional-overall" value="Apply category weights and calculate&lt;br&gt;provisional overall score" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="300" y="1080" width="265" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="provisional-level" value="Map provisional score to&lt;br&gt;Low / Medium / High risk level" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="300" y="1160" width="265" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="score-warnings" value="Record score differences, warnings,&lt;br&gt;and authority-review indicators" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="300" y="1240" width="265" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="store" value="Store provisional assessment&lt;br&gt;and audit record" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="300" y="1320" width="265" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="review" value="Authority assessment review is performed by&lt;br&gt;the Authority Approval and Notification Module" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="1320" y="1410" width="320" height="66" as="geometry"/>
+        </mxCell>
+        <mxCell id="m3-return" value="Return reviewed scores and decision audit details to the&lt;br&gt;Smart Risk Assessment and Safety Resource Recommendation Module" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="1355" y="1495" width="250" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="confirmed" value="Receive authority-confirmed or&lt;br&gt;overridden category scores" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="490" y="1510" width="270" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="official-category" value="Recalculate official risk for each category&lt;br&gt;using the active formula and guideline checks" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="490" y="1590" width="270" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="official-overall" value="Apply active weights and thresholds and&lt;br&gt;calculate the official overall score" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="490" y="1670" width="270" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="official-level" value="Map official score to&lt;br&gt;Low / Medium / High risk level" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="490" y="1750" width="270" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="resources" value="Generate safety-resource baselines and planning ranges&lt;br&gt;using the official risk result, event characteristics,&lt;br&gt;configured assumptions, and relevant guidelines" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="475" y="1825" width="300" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="resource-store" value="Store resource baselines, planning ranges, assumptions,&lt;br&gt;guideline sources, authority sources, and provenance" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="480" y="1910" width="290" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="official-audit" value="Append each authority confirmation or override, override reason,&lt;br&gt;confirming user, and official result without overwriting&lt;br&gt;the original values" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="475" y="1985" width="300" height="76" as="geometry"/>
+        </mxCell>
+        <mxCell id="consolidate" value="Generate consolidated assessment outputs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="490" y="2070" width="270" height="48" as="geometry"/>
+        </mxCell>
+        <mxCell id="organiser-output" value="Publish the role-restricted organiser-safe summary&lt;br&gt;and detailed authority assessment record" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#EAF3FA;strokeColor=#6B8EAD;fontFamily=Times New Roman;fontSize=15;" vertex="1" parent="1">
+          <mxGeometry x="475" y="2140" width="300" height="58" as="geometry"/>
+        </mxCell>
+        <mxCell id="end" value="" style="ellipse;html=1;aspect=fixed;fillColor=#FFFFFF;strokeColor=#000000;strokeWidth=2;" vertex="1" parent="1">
+          <mxGeometry x="614" y="2210" width="22" height="22" as="geometry"/>
+        </mxCell>
+        <mxCell id="end-inner" value="" style="ellipse;html=1;aspect=fixed;fillColor=#000000;strokeColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="620" y="2216" width="10" height="10" as="geometry"/>
+        </mxCell>
+
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="start" target="submit"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="submit" target="retrieve"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="retrieve" target="provenance"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="provenance" target="readiness"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="readiness" target="proceed"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e6" value="No" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;fontFamily=Times New Roman;fontSize=14;" edge="1" parent="1" source="proceed" target="warnings"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="warnings" target="readiness-handoff"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="readiness-handoff" target="end-readiness"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e9" value="Yes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;fontFamily=Times New Roman;fontSize=14;" edge="1" parent="1" source="proceed" target="package"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="package" target="hazards"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="hazards" target="ai-return"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e12" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="ai-return" target="validate"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="validate" target="usable"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e14" value="No" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;fontFamily=Times New Roman;fontSize=14;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" edge="1" parent="1" source="usable" target="unavailable"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="unavailable" target="manual"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="manual" target="end-manual"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e17" value="Yes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;fontFamily=Times New Roman;fontSize=14;exitX=0;exitY=0.5;exitDx=0;exitDy=0;" edge="1" parent="1" source="usable" target="scoring-config"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e18" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="scoring-config" target="hard-rules"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e18a" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="hard-rules" target="provisional-category"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e18b" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="provisional-category" target="provisional-overall"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e18c" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="provisional-overall" target="provisional-level"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e18d" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="provisional-level" target="score-warnings"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e19" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="score-warnings" target="store"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e20" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="store" target="review"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e21" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="review" target="m3-return"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e21a" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="m3-return" target="confirmed"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e22" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="confirmed" target="official-category"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e22a" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="official-category" target="official-overall"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e22b" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="official-overall" target="official-level"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e22c" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="official-level" target="resources"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e22d" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="resources" target="resource-store"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e22e" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="resource-store" target="official-audit"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e23" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="official-audit" target="consolidate"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e24" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="consolidate" target="organiser-output"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e26" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endFill=1;strokeColor=#3F3F46;" edge="1" parent="1" source="organiser-output" target="end"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

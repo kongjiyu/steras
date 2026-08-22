@@ -2,7 +2,9 @@ import { createHash } from 'node:crypto';
 import { applicationDefault, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
+import { getStorage } from 'firebase-admin/storage';
 import {
+  ASSESSMENT_SCHEMA_VERSION,
   AssessmentContextSnapshot,
   AuthorityType,
   COLLECTIONS,
@@ -11,14 +13,10 @@ import {
   EventVersion,
   HistoricalEventOutcome,
   Incident,
-  RESOURCE_FORMULA_VERSION,
-  RESOURCE_GUIDELINE_VERSION,
-  ResourceRecommendation,
   RiskAssessment,
   UserProfile,
   Venue,
 } from '@shared/types';
-import { computeResources } from '../engines/resourceCalculator';
 import { computeCategoryBasedAssessment } from '../engines/ruleBased';
 import { VENUES, stableVenueId } from './seedVenues';
 
@@ -30,9 +28,10 @@ const NOW = Date.UTC(2026, 6, 24, 0, 0, 0);
 
 assertLocalEmulators();
 
-const app = initializeApp({ credential: applicationDefault(), projectId: PROJECT_ID }, 'steras-demo-seed');
+const app = initializeApp({ credential: applicationDefault(), projectId: PROJECT_ID, storageBucket: `${PROJECT_ID}.appspot.com` }, 'steras-demo-seed');
 const db = getFirestore(app);
 const auth = getAuth(app);
+const bucket = getStorage(app).bucket();
 
 const accounts: Array<{
   email: string;
@@ -58,6 +57,18 @@ async function seedDemo(): Promise<void> {
   const historicalEvents = buildHistoricalEvents(venues);
   const incidents = buildIncidents(historicalEvents);
   const applications = buildApplications(venues, organizer.uid);
+  for (const application of applications) {
+    const documentPath = application.version.documentPaths[0];
+    await bucket.file(documentPath).save(Buffer.from('Synthetic STERAS demo evidence.\n'), {
+      resumable: false,
+      metadata: { contentType: 'application/pdf' },
+    });
+    const metadata = (await bucket.file(documentPath).getMetadata())[0];
+    if (typeof metadata.generation !== 'string' || !/^\d+$/.test(metadata.generation)) {
+      throw new Error(`Storage did not return an immutable generation for ${documentPath}.`);
+    }
+    application.assessment.contextEvidence[0].sourceVersion = `storage-generation:${metadata.generation}`;
+  }
 
   for (const venue of venues) {
     batch.set(db.collection(COLLECTIONS.VENUES).doc(venue.venueId), venue);
@@ -73,7 +84,6 @@ async function seedDemo(): Promise<void> {
     batch.set(eventReference, application.event);
     batch.set(eventReference.collection(COLLECTIONS.VERSIONS).doc(application.version.versionId), application.version);
     batch.set(eventReference.collection(COLLECTIONS.ASSESSMENTS).doc(application.assessment.assessmentId), application.assessment);
-    batch.set(eventReference.collection(COLLECTIONS.RESOURCES).doc(application.resources.resourceId), application.resources);
   }
   batch.set(db.collection(COLLECTIONS.DATASET_MANIFESTS).doc(DATASET_VERSION), {
     datasetVersion: DATASET_VERSION,
@@ -128,6 +138,7 @@ function buildVenues(): Venue[] {
     return {
       ...fixture,
       venueId,
+      active: true,
       jurisdiction: fixture.address.includes('Kuala Lumpur') ? 'DBKL' : 'Relevant State PBT',
       verifiedSafeCapacity: fixture.capacity,
       ...(index % 3 === 0 ? { fixedSeats: Math.floor(fixture.capacity * 0.7) } : {}),
@@ -226,6 +237,8 @@ function buildApplications(venues: Venue[], organizerId: string) {
     const venue = venues[index];
     const eventId = `demo-application-${String(index + 1).padStart(2, '0')}`;
     const versionId = `${eventId}-v1`;
+    const assessmentId = `${versionId}-assessment-demo`;
+    const documentPath = `event_documents/${eventId}/${versionId}/demo-evidence.pdf`;
     const startDatetime = NOW + (30 + index * 4) * DAY;
     const event: EventRecord = {
       eventId,
@@ -250,13 +263,20 @@ function buildApplications(venues: Venue[], organizerId: string) {
           alcoholServed: index % 4 === 0,
           foodServed: true,
           freeDrinkingWater: index % 2 === 0,
+          ticketedEntry: true,
+          overnightAccommodation: false,
           pyrotechnics: index === 2,
           temporaryStructures: index % 3 === 1,
+          rivalryOrTensionExpected: false,
           crowdManagementPlan: true,
           trafficManagementPlan: index % 2 === 0,
           severeWeatherPlan: index % 2 === 0,
           medicalPlan: true,
           evacuationPlanTested: index % 3 === 0,
+          authorityCoordinationConfirmed: false,
+          vulnerableAttendeesPercent: 10,
+          standingAttendeesPercent: index % 3 === 0 ? 0 : 80,
+          nearestHospitalTravelMinutes: venue.nearestHospitalTravelMinutes,
         },
         organizerName: 'Demo Organizer',
         organizerEmail: 'organizer.demo@steras.local',
@@ -265,21 +285,20 @@ function buildApplications(venues: Venue[], organizerId: string) {
       status: 'Pending',
       currentVersionId: versionId,
       currentVersionNumber: 1,
-      currentAssessmentId: versionId,
-      currentResourceId: versionId,
-      draftDocumentPaths: [],
+      currentAssessmentId: assessmentId,
+      draftDocumentPaths: [documentPath],
       requiredAuthorities: ['PDRM', 'BOMBA', 'KKM', 'DBKL'],
       createdAt: NOW,
       updatedAt: NOW,
       submittedAt: NOW,
     };
-    const inputHash = hash(event.eventDetails);
+    const inputHash = hash({ eventDetails: event.eventDetails, documentPaths: [documentPath] });
     const version: EventVersion = {
       versionId,
       eventId,
       versionNumber: 1,
       eventDetails: event.eventDetails,
-      documentPaths: [],
+      documentPaths: [documentPath],
       submittedBy: organizerId,
       submittedAt: NOW,
       inputHash,
@@ -287,56 +306,38 @@ function buildApplications(venues: Venue[], organizerId: string) {
     const context = demoContext(event, venue, index);
     const official = computeCategoryBasedAssessment(event, context, NOW);
     const assessment: RiskAssessment = {
-      assessmentId: versionId,
+      assessmentId,
       eventId,
       versionId,
-      status: 'ready',
-      ...official,
-      aiAdvisory: {
-        model: 'demo-fixture',
-        promptVersion: 'demo-fixture-v1',
-        responseSchemaVersion: 'demo-fixture-v1',
-        status: 'unavailable',
-        label: 'advisory',
-        overallExplanation: 'Synthetic fixture: run the live pipeline to exercise MiniMax.',
-        categories: [],
-        keyConcerns: ['Synthetic history must not be treated as real-world validation.'],
-        resourceConsiderations: ['Authority review is required for every prototype quantity.'],
-        citedEvidenceKeys: ['history'],
-        cacheStatus: 'not-applicable',
-        generatedAt: NOW,
-      },
+      schemaVersion: ASSESSMENT_SCHEMA_VERSION,
+      status: 'manual_review_required',
       contextSnapshot: context,
+      evidence: official.evidence,
+      contextEvidence: [{ evidenceId: `document-${eventId}`, evidenceKey: 'compliance', sourceKind: 'submitted_document', sourceLocator: documentPath, retrievedAt: NOW, sourceVersion: 'storage-generation:pending', eligibility: 'eligible', synthetic: true, visibility: 'authority_only' }],
       sourceTimestamps: { weather: NOW, holiday: NOW, venue: NOW, incidents: NOW },
-      contextStatuses: { weather: 'fallback:not_assessable_yet', venue: 'matched', incidents: 'synthetic-demo-evidence', ai: 'not-applicable' },
+      contextStatuses: { weather: 'fallback:not_assessable_yet', venue: 'matched', incidents: 'synthetic-demo-evidence' },
+      assessmentReadiness: official.assessmentReadiness ?? 'insufficient_data',
+      complianceStatus: official.complianceStatus ?? 'review_required',
+      complianceChecks: official.complianceChecks ?? [],
+      dataConfidenceScore: official.dataConfidenceScore ?? 0,
+      dataConfidenceLevel: official.dataConfidenceLevel ?? 'low',
+      aiProposal: null,
+      warnings: [{ warningId: 'missing_evidence.demo', code: 'missing_evidence', message: 'Synthetic demo data requires live reassessment.', evidenceReferences: ['history'] }],
+      authorityReviewRequired: true,
+      manualReviewReason: 'Synthetic fixtures do not fabricate MiniMax scores; run the live pipeline to create a proposal.',
       inputHash,
       createdAt: NOW,
     };
-    const calculation = computeResources(event.eventDetails, official);
-    const resources: ResourceRecommendation = {
-      resourceId: versionId,
-      eventId,
-      versionId,
-      assessmentId: versionId,
-      ...calculation.quantities,
-      rationales: calculation.rationales,
-      items: calculation.items,
-      formulaVersion: RESOURCE_FORMULA_VERSION,
-      guidelineVersion: RESOURCE_GUIDELINE_VERSION,
-      guidelineStatus: 'prototype',
-      aiConsiderations: assessment.aiAdvisory.resourceConsiderations,
-      confidenceLevel: 'prototype',
-      notes: 'Synthetic demo recommendation; reviewing authorities must validate the range.',
-      computedAt: NOW,
-    };
-    return { event, version, assessment, resources };
+    return { event, version, assessment };
   });
 }
 
 function demoContext(event: EventRecord, venue: Venue, index: number): AssessmentContextSnapshot {
   return {
     weather: {
-      data: { forecast: 'Forecast not assessable yet', temperature: 30, humidity: 75, windSpeed: 0, precipitationProbability: 0, severeAlert: false },
+      data: null,
+      measurementStatus: 'unavailable',
+      unavailableReason: 'outside_forecast_horizon',
       source: 'fallback',
       freshness: 'not_assessable_yet',
       fetchedAt: NOW,
@@ -350,6 +351,7 @@ function demoContext(event: EventRecord, venue: Venue, index: number): Assessmen
       isHolidayOrAdjacent: index === 4,
       sourceVersion: 'demo-calendar-v1',
       sourceTimestamp: NOW,
+      coverageStatus: 'verified',
     },
     venue: {
       matched: true,
@@ -381,6 +383,7 @@ function demoContext(event: EventRecord, venue: Venue, index: number): Assessmen
       comparableEvents: [],
       lookbackStart: NOW - 3 * 365 * DAY,
       syntheticEvidence: true,
+      syntheticStatus: 'all',
       fetchedAt: NOW,
     },
   };
@@ -394,6 +397,7 @@ function assertLocalEmulators(): void {
   const required = [
     ['FIRESTORE_EMULATOR_HOST', process.env.FIRESTORE_EMULATOR_HOST],
     ['FIREBASE_AUTH_EMULATOR_HOST', process.env.FIREBASE_AUTH_EMULATOR_HOST],
+    ['FIREBASE_STORAGE_EMULATOR_HOST', process.env.FIREBASE_STORAGE_EMULATOR_HOST],
   ] as const;
   for (const [name, value] of required) {
     if (!value || !/^(localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(value)) {

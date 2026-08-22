@@ -25,6 +25,7 @@
     "seed:demo": "npm --workspace functions run seed:demo",
     "uat:staging": "npm --workspace functions run uat:staging",
     "uat:fallback": "npm --workspace functions run uat:fallback",
+    "cutover:resource-v3": "npm --workspace functions run cutover:resource-v3",
     "deploy:hosting": "npm --workspace frontend run build && firebase deploy --only hosting",
     "lint": "npm --workspace frontend run lint && npm --workspace functions run lint",
     "check": "npm run typecheck && npm run lint && npm run test && npm run build"

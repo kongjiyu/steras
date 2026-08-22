@@ -4,7 +4,9 @@ import { AssessmentRecord, COLLECTIONS, EventRecord } from '@shared/types';
 import { db, isFirebaseConfigured } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import {
+  isCurrentEventRecord,
   isCurrentResourceRecommendation,
+  isCurrentAssessmentRecord,
   isCurrentRiskAssessment,
   M2PortfolioRecord,
 } from './m2PortfolioData';
@@ -38,26 +40,33 @@ export function useM2Portfolio(previewRecords?: M2PortfolioRecord[]) {
     const unsubscribe = onSnapshot(eventsQuery, async (snapshot) => {
       const currentRequest = ++requestId;
       try {
-        const nextRecords = await Promise.all(snapshot.docs.map(async (eventDocument) => {
-          const event = { eventId: eventDocument.id, ...eventDocument.data() } as EventRecord;
-          const eventReference = doc(db, COLLECTIONS.EVENTS, event.eventId);
-          const assessmentId = event.currentAssessmentId ?? event.currentVersionId;
-          const resourceId = event.currentResourceId ?? event.currentVersionId;
-          const [assessmentDocument, resourceDocument] = await Promise.all([
-            assessmentId ? getDoc(doc(eventReference, COLLECTIONS.ASSESSMENTS, assessmentId)) : Promise.resolve(null),
-            resourceId ? getDoc(doc(eventReference, COLLECTIONS.RESOURCES, resourceId)) : Promise.resolve(null),
-          ]);
-          const rawAssessment = assessmentDocument?.data() as AssessmentRecord | undefined;
-          const rawResources = resourceDocument?.data();
-          return {
-            event,
-            assessment: isCurrentRiskAssessment(rawAssessment) ? rawAssessment : undefined,
-            assessmentStatus: rawAssessment?.status,
-            resources: isCurrentResourceRecommendation(rawResources) ? rawResources : undefined,
-            legacyAssessment: rawAssessment?.status === 'ready' && !isCurrentRiskAssessment(rawAssessment),
-            legacyResources: Boolean(rawResources) && !isCurrentResourceRecommendation(rawResources),
-          } satisfies M2PortfolioRecord;
-        }));
+        const nextRecords = await Promise.all(snapshot.docs
+          .map((eventDocument) => ({ expectedEventId: eventDocument.id, value: { eventId: eventDocument.id, ...eventDocument.data() } }))
+          .filter(({ expectedEventId, value }) => isCurrentEventRecord(value, expectedEventId))
+          .map(async ({ value }) => {
+            const event = value as EventRecord;
+            const eventReference = doc(db, COLLECTIONS.EVENTS, event.eventId);
+            const assessmentId = event.currentAssessmentId ?? event.currentVersionId;
+            const resourceId = event.currentResourceId;
+            const [assessmentDocument, resourceDocument] = await Promise.all([
+              assessmentId ? getDoc(doc(eventReference, COLLECTIONS.ASSESSMENTS, assessmentId)) : Promise.resolve(null),
+              resourceId ? getDoc(doc(eventReference, COLLECTIONS.RESOURCES, resourceId)) : Promise.resolve(null),
+            ]);
+            const rawAssessment = assessmentDocument?.data() as AssessmentRecord | undefined;
+            const rawResources = resourceDocument?.data();
+            const validResources = isCurrentResourceRecommendation(rawResources)
+              && rawResources.resourceId === resourceId
+              && rawResources.eventId === event.eventId
+              && rawResources.versionId === event.currentVersionId;
+            return {
+              event,
+              assessment: isCurrentRiskAssessment(rawAssessment) ? rawAssessment : undefined,
+              assessmentStatus: rawAssessment?.status,
+              resources: validResources ? rawResources : undefined,
+              legacyAssessment: Boolean(assessmentDocument?.exists() && !isCurrentAssessmentRecord(rawAssessment)),
+              legacyResources: Boolean(rawResources) && !validResources,
+            } satisfies M2PortfolioRecord;
+          }));
 
         if (active && currentRequest === requestId) {
           setRecords(nextRecords);

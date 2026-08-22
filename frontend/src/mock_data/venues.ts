@@ -9,7 +9,7 @@ import { VENUE_IDS, daysAhead } from './ids';
  * marker is set on each so M5 analytics can exclude them by default.
  */
 
-export const mockVenues: Venue[] = [
+const rawMockVenues: Array<Omit<Venue, 'active'>> = [
   // --------------------------------------------------------------------------
   // V001 - Dataran Merdeka (KL) - outdoor, used by E001/E010/E013
   // --------------------------------------------------------------------------
@@ -259,6 +259,8 @@ export const mockVenues: Venue[] = [
     incidentCount: 0,
   },
 ];
+
+export const mockVenues: Venue[] = rawMockVenues.map((venue) => ({ ...venue, active: true }));
 
 // ============================================================================
 // Lookups

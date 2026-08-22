@@ -7,7 +7,8 @@ import {
   RiskLevel,
 } from '@shared/types';
 import { RESOURCE_FIELDS } from '../../components/m2/m2Presentation';
-export { isCurrentResourceRecommendation, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
+import { assessmentResult, assessmentRiskLevel } from '../../components/m2/m2Contract';
+export { isCurrentAssessmentRecord, isCurrentEventRecord, isCurrentResourceRecommendation, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
 
 export interface M2PortfolioRecord {
   event: EventRecord;
@@ -19,7 +20,7 @@ export interface M2PortfolioRecord {
 }
 
 export type RiskPortfolioFilter = RiskLevel | 'Unassessed' | 'all';
-export type ResourcePortfolioFilter = 'all' | 'prototype' | 'authorityValidated' | 'missing';
+export type ResourcePortfolioFilter = 'all' | 'prototype' | 'authority_validated' | 'missing';
 
 export function filterRiskPortfolio(
   records: M2PortfolioRecord[],
@@ -30,7 +31,7 @@ export function filterRiskPortfolio(
   const riskWeight: Record<RiskLevel | 'Unassessed', number> = { High: 4, Medium: 3, Low: 2, Unassessed: 1 };
   return records
     .filter((record) => {
-      const level = record.assessment?.officialRiskLevel ?? 'Unassessed';
+      const level = assessmentRiskLevel(record.assessment) ?? 'Unassessed';
       return filter === 'all' || level === filter;
     })
     .filter((record) => !normalizedSearch || [
@@ -39,8 +40,8 @@ export function filterRiskPortfolio(
       record.event.eventDetails.type,
     ].some((value) => value.toLocaleLowerCase().includes(normalizedSearch)))
     .sort((left, right) => {
-      const leftRisk = left.assessment?.officialRiskLevel ?? 'Unassessed';
-      const rightRisk = right.assessment?.officialRiskLevel ?? 'Unassessed';
+      const leftRisk = assessmentRiskLevel(left.assessment) ?? 'Unassessed';
+      const rightRisk = assessmentRiskLevel(right.assessment) ?? 'Unassessed';
       return riskWeight[rightRisk] - riskWeight[leftRisk] || right.event.updatedAt - left.event.updatedAt;
     });
 }
@@ -67,9 +68,9 @@ export function filterResourcePortfolio(
 
 export function riskPortfolioSummary(records: M2PortfolioRecord[]) {
   return records.reduce((summary, record) => {
-    const level = record.assessment?.officialRiskLevel ?? 'Unassessed';
+    const level = assessmentRiskLevel(record.assessment) ?? 'Unassessed';
     summary[level] += 1;
-    if (record.assessment?.aiAdvisory.status !== 'success') summary.advisoryUnavailable += 1;
+    if (record.assessment?.aiProposal?.status !== 'success') summary.advisoryUnavailable += 1;
     if (record.legacyAssessment) summary.requiresRecompute += 1;
     return summary;
   }, { Low: 0, Medium: 0, High: 0, Unassessed: 0, advisoryUnavailable: 0, requiresRecompute: 0 });
@@ -84,16 +85,17 @@ export function resourcePortfolioSummary(records: M2PortfolioRecord[]) {
     if (record.legacyResources) requiresRecompute += 1;
     if (!record.resources) return;
     recommended += 1;
-    if (record.resources.confidenceLevel === 'authorityValidated') authorityValidated += 1;
-    RESOURCE_FIELDS.forEach(({ key }) => { totals[key] += record.resources?.[key] ?? 0; });
+    if (record.resources.confidenceLevel === 'authority_validated') authorityValidated += 1;
+    RESOURCE_FIELDS.forEach(({ key }) => { totals[key] += record.resources?.items[key].baseline ?? 0; });
   });
   return { totals, recommended, authorityValidated, missing: records.length - recommended, requiresRecompute };
 }
 
 export function highestCategory(assessment?: RiskAssessment) {
-  return assessment?.categoryAssignments.reduce((highest, category) => (
-    !highest || category.score > highest.score ? category : highest
-  ), undefined as RiskAssessment['categoryAssignments'][number] | undefined);
+  const categories = assessment ? assessmentResult(assessment)?.categories : undefined;
+  return categories?.reduce((highest, category) => (
+    !highest || category.normalizedScore > highest.normalizedScore ? category : highest
+  ), undefined as (typeof categories)[number] | undefined);
 }
 
 export function assessmentFreshness(assessment?: RiskAssessment): 'fresh' | 'stale' | 'fallback' | 'unavailable' {

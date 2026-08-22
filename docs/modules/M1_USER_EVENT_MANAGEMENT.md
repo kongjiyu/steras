@@ -2,13 +2,13 @@
 
 **Owner:** Module 1 teammate
 
-**PRD requirements:** FR-01 to FR-06
+**PRD requirements:** FR-M1-01 to FR-M1-21
 
 ## Goal
 
 Own the organiser identity and event-application lifecycle from registration through immutable submission, revision, withdrawal, status tracking, and public approved-event display.
 
-M1 does not calculate risk, recommend resources, make authority decisions, or manage incidents and complaints.
+M1 does not calculate risk, recommend resources, make authority decisions, or manage incident handling.
 
 ## Current Progress
 
@@ -68,7 +68,7 @@ M1 owns each full page file above. M2 and M3 provide typed data contracts; they 
 |---|---|
 | M2 | Assessment processing/ready/failed state, official score/profile, advisory explanation status, and resource recommendation |
 | M3 | Current decision status, revision/rejection rationale, approval/publication state, and notifications |
-| M4 | Organiser incident and complaint summaries linked to owned events |
+| M4 | Organiser-visible incident status and resolution history linked to owned events |
 
 ## Outputs To Other Modules
 
@@ -76,14 +76,14 @@ M1 owns each full page file above. M2 and M3 provide typed data contracts; they 
 |---|---|
 | M2 | Immutable `EventVersion`, evidence paths, stable venue input, attendance, schedule, and event characteristics |
 | M3 | Application/version records, supporting evidence, organiser ownership, and required authority list |
-| M4 | Event, organiser, venue, and version identifiers for incident/complaint linking |
+| M4 | Event, organiser, venue, and version identifiers for incident linking |
 | M5 | Event type, dates, status, venue, and privacy-safe aggregation fields |
 
 ## Remaining Work
 
 - Keep the event form, `EventRiskProfile`, and server validation contract synchronized.
 - Add notification display when M3 creates the notifications contract.
-- Add links into M4 incident/complaint pages after those routes exist.
+- Add links into M4 incident pages after those routes exist.
 - Confirm public calendar fields remain sanitised after any schema change.
 - Add browser tests for draft, upload, submit, revision, withdrawal, and public visibility.
 

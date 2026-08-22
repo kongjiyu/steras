@@ -6,10 +6,15 @@ import {
   COLLECTIONS,
   EventDetails,
   EventRecord,
+  EventRiskProfile,
   EventType,
   EventVersion,
 } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
+import { RESOURCE_CUTOVER_LOCK_PATH } from '../config/resourceCutoverLock';
+import { inspectStorageEvidence } from '../utils/storageEvidence';
+
+export { isValidEvidenceMetadata } from '../utils/storageEvidence';
 
 interface SubmitEventRequest {
   eventId?: string;
@@ -26,20 +31,47 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
   const db = getFirestore();
   const eventReference = db.collection(COLLECTIONS.EVENTS).doc(eventId);
   const userReference = db.collection(COLLECTIONS.USERS).doc(uid);
+  const [preflightUser, preflightEvent, preflightLock] = await db.getAll(
+    userReference,
+    eventReference,
+    db.doc(RESOURCE_CUTOVER_LOCK_PATH),
+  );
+  if (preflightLock.exists) throw new HttpsError('unavailable', 'Resource migration is in progress. Retry the submission shortly.');
+  if (!preflightUser.exists || preflightUser.data()?.role !== 'organizer') throw new HttpsError('permission-denied', 'Only organizer accounts can submit applications.');
+  if (!preflightEvent.exists) throw new HttpsError('not-found', 'Event draft was not found.');
+  const preflight = { eventId, ...preflightEvent.data() } as EventRecord;
+  if (preflight.organizerId !== uid) throw new HttpsError('permission-denied', 'You do not own this event.');
+  const preflightVersionId = `v${(preflight.currentVersionNumber ?? 0) + 1}`;
+  await validateSubmissionAssets(eventId, preflightVersionId, preflight.draftDocumentPaths ?? []);
+  await validateCanonicalVenue(preflight.eventDetails);
+  const preflightFingerprint = submissionFingerprint(preflight);
+  const venueReference = preflight.eventDetails.venueId
+    ? db.collection(COLLECTIONS.VENUES).doc(preflight.eventDetails.venueId)
+    : undefined;
 
   return db.runTransaction(async (transaction) => {
-    const [userSnapshot, eventSnapshot] = await Promise.all([
+    const [userSnapshot, eventSnapshot, cutoverLockSnapshot, venueSnapshot] = await Promise.all([
       transaction.get(userReference),
       transaction.get(eventReference),
+      transaction.get(db.doc(RESOURCE_CUTOVER_LOCK_PATH)),
+      venueReference ? transaction.get(venueReference) : Promise.resolve(undefined),
     ]);
+    if (cutoverLockSnapshot.exists) {
+      throw new HttpsError('unavailable', 'Resource migration is in progress. Retry the submission shortly.');
+    }
     if (!userSnapshot.exists || userSnapshot.data()?.role !== 'organizer') {
       throw new HttpsError('permission-denied', 'Only organizer accounts can submit applications.');
     }
     if (!eventSnapshot.exists) throw new HttpsError('not-found', 'Event draft was not found.');
     const event = { eventId, ...eventSnapshot.data() } as EventRecord;
+    if (submissionFingerprint(event) !== preflightFingerprint) throw new HttpsError('aborted', 'The draft changed during submission. Review it and retry.');
     if (event.organizerId !== uid) throw new HttpsError('permission-denied', 'You do not own this event.');
     if (!['Draft', 'AmendmentRequested'].includes(event.status)) {
       throw new HttpsError('failed-precondition', 'Only drafts or amendment requests can be submitted.');
+    }
+    if (event.eventDetails.venueId && (!venueSnapshot?.exists
+      || validateCanonicalVenueRecord(event.eventDetails, venueSnapshot.data()).length > 0)) {
+      throw new HttpsError('failed-precondition', 'The selected venue changed during submission. Review the verified venue and retry.');
     }
 
     const errors = validateEventDetails(event.eventDetails, now);
@@ -78,6 +110,8 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
       currentVersionNumber: versionNumber,
       currentAssessmentId: FieldValue.delete(),
       currentResourceId: FieldValue.delete(),
+      authorityReviewCompletedAt: FieldValue.delete(),
+      authorityReviewCompletedVersionId: FieldValue.delete(),
       editableVersionId: null,
       requiredAuthorities,
       submittedAt: now,
@@ -133,7 +167,97 @@ export function validateEventDetails(value: unknown, now = Date.now()): string[]
     || value.endDatetime <= value.startDatetime) {
     errors.push('End datetime must be after the start datetime.');
   }
+  validateRiskProfile(value.riskProfile, errors);
   return errors;
+}
+
+const RISK_BOOLEAN_FIELDS = [
+  'internationalAttendees', 'alcoholServed', 'foodServed', 'freeDrinkingWater', 'ticketedEntry',
+  'overnightAccommodation', 'pyrotechnics', 'temporaryStructures', 'rivalryOrTensionExpected',
+  'crowdManagementPlan', 'trafficManagementPlan', 'severeWeatherPlan', 'medicalPlan',
+  'evacuationPlanTested', 'authorityCoordinationConfirmed',
+] as const satisfies readonly (keyof EventRiskProfile)[];
+const RISK_PROFILE_FIELDS = new Set<string>([
+  'vulnerableAttendeesPercent', 'standingAttendeesPercent', 'nearestHospitalTravelMinutes', ...RISK_BOOLEAN_FIELDS,
+]);
+
+function validateRiskProfile(value: unknown, errors: string[]): void {
+  if (!isRecord(value)) { errors.push('A complete all-hazards profile is required.'); return; }
+  const unknown = Object.keys(value).filter((key) => !RISK_PROFILE_FIELDS.has(key));
+  if (unknown.length) errors.push(`All-hazards profile contains unsupported fields: ${unknown.join(', ')}.`);
+  for (const key of RISK_BOOLEAN_FIELDS) if (typeof value[key] !== 'boolean') errors.push(`${key} must be answered true or false.`);
+  boundedNumber(value.vulnerableAttendeesPercent, 'Vulnerable attendees percent', 0, 100, errors);
+  boundedNumber(value.standingAttendeesPercent, 'Standing attendees percent', 0, 100, errors);
+  if (value.nearestHospitalTravelMinutes !== undefined) boundedNumber(value.nearestHospitalTravelMinutes, 'Nearest hospital travel time', 0, 240, errors);
+}
+
+async function validateSubmissionAssets(eventId: string, versionId: string, paths: string[]): Promise<void> {
+  const pathErrors = validateEvidencePaths(eventId, versionId, paths);
+  if (pathErrors.length > 0) throw new HttpsError('invalid-argument', pathErrors.join(' '));
+  const inspections = await inspectStorageEvidence(paths);
+  const missing = inspections.find((item) => item.status === 'missing');
+  if (missing) throw new HttpsError('failed-precondition', `Supporting evidence is missing from Storage: ${missing.path}.`);
+  if (inspections.some((item) => item.status !== 'eligible')) {
+    throw new HttpsError('invalid-argument', 'Supporting evidence must be a non-empty PDF, JPEG, PNG, or WebP file no larger than 10 MB.');
+  }
+}
+
+async function validateCanonicalVenue(details: EventDetails): Promise<void> {
+  if (!details.venueId) return;
+  const snapshot = await getFirestore().collection(COLLECTIONS.VENUES).doc(details.venueId).get();
+  if (!snapshot.exists || snapshot.data()?.active !== true || snapshot.data()?.deactivatedAt !== undefined) {
+    throw new HttpsError('failed-precondition', 'The selected venue is not an active verified registry venue.');
+  }
+  if (validateCanonicalVenueRecord(details, snapshot.data()).length > 0) {
+    throw new HttpsError('failed-precondition', 'The submitted venue identity does not match the verified registry record.');
+  }
+}
+
+export function validateEvidencePaths(eventId: string, versionId: string, paths: unknown): string[] {
+  if (!Array.isArray(paths) || paths.length < 1 || paths.length > 20 || new Set(paths).size !== paths.length) {
+    return ['Submit between 1 and 20 unique supporting evidence files.'];
+  }
+  const prefix = `event_documents/${eventId}/${versionId}/`;
+  return paths.some((path) => typeof path !== 'string' || !path.startsWith(prefix) || path.length > 1_024)
+    ? ['One or more uploaded document paths do not belong to this application version.']
+    : [];
+}
+
+export function validateCanonicalVenueRecord(details: EventDetails, value: unknown): string[] {
+  if (!isRecord(value) || value.active !== true || value.deactivatedAt !== undefined) {
+    return ['The selected venue is not an active verified registry venue.'];
+  }
+  const location = isRecord(value.location) ? value.location : {};
+  const canonicalCapacity = value.verifiedSafeCapacity ?? value.capacity;
+  return normalizeText(details.venueName) !== normalizeText(value.name)
+    || normalizeText(details.venueAddress) !== normalizeText(value.address)
+    || details.venueCapacity !== canonicalCapacity
+    || !sameCoordinate(details.venueLocation?.lat, location.lat)
+    || !sameCoordinate(details.venueLocation?.lng, location.lng)
+    ? ['The submitted venue identity does not match the verified registry record.']
+    : [];
+}
+
+function submissionFingerprint(event: EventRecord): string {
+  return createHash('sha256').update(JSON.stringify({
+    status: event.status,
+    currentVersionNumber: event.currentVersionNumber,
+    editableVersionId: event.editableVersionId,
+    eventDetails: event.eventDetails,
+    documentPaths: event.draftDocumentPaths,
+  })).digest('hex');
+}
+
+function normalizeText(value: unknown): string {
+  return typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').toLowerCase() : '';
+}
+
+function sameCoordinate(left: unknown, right: unknown): boolean {
+  return typeof left === 'number' && Number.isFinite(left) && typeof right === 'number' && Number.isFinite(right) && Math.abs(left - right) <= 0.00001;
+}
+
+function boundedNumber(value: unknown, label: string, min: number, max: number, errors: string[]): void {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max) errors.push(`${label} must be between ${min} and ${max}.`);
 }
 
 export function requiredAuthoritiesFor(details: EventDetails): AuthorityType[] {

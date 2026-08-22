@@ -1,6 +1,6 @@
 # STERAS Team Documentation
 
-This folder is the working entry point for the five module owners. `STERAS_PRD.md` v5.0 (Final, 104 functional requirements, 2026-08-12) is the only product source of truth. Module documents translate that PRD into implementation ownership, assumptions, interfaces, and page responsibilities.
+This folder is the working entry point for the five module owners. `STERAS_PRD.md` v5.0 (Final, 105 functional requirements, 2026-08-12) is the only product source of truth. Module documents translate that PRD into implementation ownership, assumptions, interfaces, and page responsibilities.
 
 ## Read First
 
@@ -20,7 +20,7 @@ This folder is the working entry point for the five module owners. `STERAS_PRD.m
 | M1 — User and Event Management | Module 1 teammate | `modules/M1_USER_EVENT_MANAGEMENT.md` |
 | M2 — Smart Risk Assessment and Safety Resource Recommendation | M2 owner / project integrator | `modules/M2_SMART_RISK_AND_RESOURCES.md` |
 | M3 — Authority Approval and Notification | Module 3 teammate | `modules/M3_AUTHORITY_APPROVAL_NOTIFICATIONS.md` |
-| M4 — Incident Reporting and Complaint Handling | Module 4 teammate | `modules/M4_INCIDENT_COMPLAINTS.md` |
+| M4 — Incident Reporting and Handling | Module 4 teammate | `modules/M4_INCIDENT_REPORTING_HANDLING.md` |
 | M5 — Analytics and Reporting | Module 5 teammate | `modules/M5_ANALYTICS_REPORTING.md` |
 
 Replace “Module N teammate” with names after the team confirms assignments. Until then, ownership is by module number.
@@ -39,6 +39,7 @@ Replace “Module N teammate” with names after the team confirms assignments. 
 
 | Document | Purpose |
 |---|---|
+| `ARCHITECTURE.md` | Current architecture model, diagram, layer boundaries, and design principles |
 | `STERAS_DESIGN_GUIDELINES.md` | Shared visual and interaction rules |
 | `ASSET_GUIDE.md` | Asset usage and generation guidance |
 | `BACKUP_RESTORE.md` | Firebase backup and recovery operations |

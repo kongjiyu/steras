@@ -126,6 +126,31 @@ service cloud.firestore {
 
       match /assessments/{assessmentId} {
         allow read: if isAdmin()
+                    || (isSignedIn() && isAssignedAuthority(eventId));
+        allow write: if false;
+
+        match /score_reviews/{reviewId} {
+          allow read: if isAdmin()
+                      || (isSignedIn() && isAssignedAuthority(eventId)
+                          && resource.data.authorityType == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.authorityType);
+          allow write: if false;
+        }
+
+        match /score_resolutions/{resolutionId} {
+          allow read: if isAdmin()
+                      || (isSignedIn() && isAssignedAuthority(eventId));
+          allow write: if false;
+        }
+
+        match /manual_assessments/{manualAssessmentId} {
+          allow read: if isAdmin()
+                      || (isSignedIn() && isAssignedAuthority(eventId));
+          allow write: if false;
+        }
+      }
+
+      match /assessment_summaries/{assessmentId} {
+        allow read: if isAdmin()
                     || (isSignedIn() && isAssignedAuthority(eventId))
                     || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
         allow write: if false;
@@ -135,29 +160,25 @@ service cloud.firestore {
       // Written by Cloud Functions only.
       match /resources/{resourceId} {
         allow read: if isAdmin()
-                    || (isSignedIn() && isAssignedAuthority(eventId))
-                    || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
+                    || (isSignedIn() && isAssignedAuthority(eventId));
         allow write: if false; // server-only
       }
 
       match /decisions/{decisionId} {
         allow read: if isAdmin()
-                    || (isSignedIn() && isAssignedAuthority(eventId))
-                    || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
+                    || (isSignedIn() && isAssignedAuthority(eventId));
         allow write: if false;
       }
 
       match /decision_history/{historyId} {
         allow read: if isAdmin()
-                    || (isSignedIn() && isAssignedAuthority(eventId))
-                    || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
+                    || (isSignedIn() && isAssignedAuthority(eventId));
         allow write: if false;
       }
 
       match /resource_overrides/{overrideId} {
         allow read: if isAdmin()
-                    || (isSignedIn() && isAssignedAuthority(eventId))
-                    || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
+                    || (isSignedIn() && isAssignedAuthority(eventId));
         allow write: if false;
       }
 

@@ -3,50 +3,52 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AIAdvisoryError = exports.AI_TIMEOUT_MS = exports.AI_RESPONSE_SCHEMA_VERSION = exports.PROMPT_VERSION = exports.DEFAULT_MINIMAX_MODEL = exports.DEFAULT_MINIMAX_BASE_URL = void 0;
+exports.AIProposalError = exports.AI_TIMEOUT_MS = exports.AI_RESPONSE_SCHEMA_VERSION = exports.PROMPT_VERSION = exports.DEFAULT_MINIMAX_MODEL = exports.DEFAULT_MINIMAX_BASE_URL = void 0;
 exports.predictWithAI = predictWithAI;
-exports.analyseWithAIOrFallback = analyseWithAIOrFallback;
-exports.unavailableAIAdvisory = unavailableAIAdvisory;
-exports.parseAIAdvisory = parseAIAdvisory;
+exports.analyseWithAI = analyseWithAI;
+exports.failedProposal = failedProposal;
+exports.parseAIProposal = parseAIProposal;
 exports.buildAllowedInput = buildAllowedInput;
 exports.clearAICache = clearAICache;
 const node_crypto_1 = require("node:crypto");
 const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
-const types_1 = require("../../../shared/types");
+const categorySchema_1 = require("../config/categorySchema");
+const hardRuleEvaluator_1 = require("./hardRuleEvaluator");
 const minimax_1 = require("../config/minimax");
 const standardsRegistry_1 = require("../config/standardsRegistry");
+const proposalContract_1 = require("./proposalContract");
 var minimax_2 = require("../config/minimax");
 Object.defineProperty(exports, "DEFAULT_MINIMAX_BASE_URL", { enumerable: true, get: function () { return minimax_2.DEFAULT_MINIMAX_BASE_URL; } });
 Object.defineProperty(exports, "DEFAULT_MINIMAX_MODEL", { enumerable: true, get: function () { return minimax_2.DEFAULT_MINIMAX_MODEL; } });
-exports.PROMPT_VERSION = 'v4.0.0-all-hazards-evidence-advisory';
-exports.AI_RESPONSE_SCHEMA_VERSION = '2026-07-24-all-hazards-advisory-v2';
+exports.PROMPT_VERSION = 'v5.0.0-prd-numeric-proposal';
+exports.AI_RESPONSE_SCHEMA_VERSION = '2026-08-21-m2-proposal-v4';
 exports.AI_TIMEOUT_MS = 30_000;
 const MAX_RESPONSE_CHARS = 24_000;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1_000;
 const MAX_CACHE_ENTRIES = 200;
-const EVIDENCE_KEYS = new Set([
-    'weather', 'crowd', 'venue', 'history', 'holiday', 'public_health',
-    'sanitation', 'medical', 'security', 'transport', 'compliance',
+const CONFIDENCE_LEVELS = new Set(['low', 'medium', 'high']);
+const RESPONSE_KEYS = new Set(['hazards', 'categories']);
+const HAZARD_KEYS = new Set(['hazardId', 'hazardName', 'categoryId', 'evidenceReferences', 'rationale']);
+const CATEGORY_KEYS = new Set([
+    'categoryId', 'likelihood', 'severity', 'evidenceReferences', 'rationale',
+    'confidence', 'concerns', 'missingInformation',
 ]);
-const RISK_LEVELS = new Set(['Low', 'Medium', 'High']);
-const RESPONSE_KEYS = new Set(['overallBand', 'overallExplanation', 'categories', 'keyConcerns', 'resourceConsiderations', 'citedEvidenceKeys']);
-const CATEGORY_KEYS = new Set(['categoryId', 'advisoryBand', 'explanation', 'evidenceReferences', 'keyConcerns', 'resourceConsiderations']);
 const CACHE = new Map();
-class AIAdvisoryError extends Error {
+class AIProposalError extends Error {
     kind;
     constructor(kind, message) {
         super(message);
         this.kind = kind;
-        this.name = 'AIAdvisoryError';
+        this.name = 'AIProposalError';
     }
 }
-exports.AIAdvisoryError = AIAdvisoryError;
-async function predictWithAI(apiKey, event, context, officialResult, options = {}) {
+exports.AIProposalError = AIProposalError;
+async function predictWithAI(apiKey, event, context, baseline, options = {}) {
     const now = options.now ?? Date.now();
     const timeoutMs = options.timeoutMs ?? exports.AI_TIMEOUT_MS;
     const model = options.model ?? process.env.MINIMAX_MODEL ?? minimax_1.DEFAULT_MINIMAX_MODEL;
-    const categoryIds = officialResult.categoryAssignments.map((category) => category.categoryId);
-    const user = buildAllowedInput(event, context, officialResult);
+    const categoryIds = categorySchema_1.ACTIVE_CATEGORY_SCHEMA.categories.map((category) => category.id);
+    const user = buildAllowedInput(event, context, baseline);
     const cacheKey = (0, node_crypto_1.createHash)('sha256').update(JSON.stringify({ model, promptVersion: exports.PROMPT_VERSION, user })).digest('hex');
     const cached = CACHE.get(cacheKey);
     if (cached && cached.expiresAt > now)
@@ -54,7 +56,7 @@ async function predictWithAI(apiKey, event, context, officialResult, options = {
     let text;
     try {
         if (options.request) {
-            text = await withTimeout(options.request({ model, system: buildSystemPrompt(categoryIds), user, maxTokens: 1_600 }), timeoutMs);
+            text = await withTimeout(options.request({ model, system: buildSystemPrompt(categoryIds), user, maxTokens: 2_400 }), timeoutMs);
         }
         else {
             const client = new sdk_1.default({
@@ -65,7 +67,7 @@ async function predictWithAI(apiKey, event, context, officialResult, options = {
             });
             const response = await client.messages.create({
                 model,
-                max_tokens: 1_600,
+                max_tokens: 2_400,
                 temperature: 0.1,
                 system: buildSystemPrompt(categoryIds),
                 messages: [{ role: 'user', content: user }],
@@ -77,19 +79,19 @@ async function predictWithAI(apiKey, event, context, officialResult, options = {
         }
     }
     catch (error) {
-        if (error instanceof AIAdvisoryError)
+        if (error instanceof AIProposalError)
             throw error;
         const message = error instanceof Error ? error.message : 'Unknown MiniMax failure';
-        const isTimeout = error instanceof Error && (error.name === 'AbortError' || /timeout|timed out/i.test(error.message));
-        throw new AIAdvisoryError(isTimeout ? 'timeout' : 'unavailable', message);
+        const timeout = error instanceof Error && (error.name === 'AbortError' || /timeout|timed out/i.test(error.message));
+        throw new AIProposalError(timeout ? 'timeout' : 'unavailable', message);
     }
-    const parsed = parseAIAdvisory(text, categoryIds);
+    const parsed = parseAIProposal(text, categoryIds);
     const value = {
+        status: 'success',
+        proposalId: (0, node_crypto_1.createHash)('sha256').update(`${cacheKey}:${text}`).digest('hex').slice(0, 24),
         model,
         promptVersion: exports.PROMPT_VERSION,
         responseSchemaVersion: exports.AI_RESPONSE_SCHEMA_VERSION,
-        status: 'success',
-        label: 'advisory',
         ...parsed,
         cacheStatus: 'miss',
         generatedAt: now,
@@ -99,57 +101,49 @@ async function predictWithAI(apiKey, event, context, officialResult, options = {
     CACHE.set(cacheKey, { value, expiresAt: now + CACHE_TTL_MS });
     return value;
 }
-async function analyseWithAIOrFallback(apiKey, event, context, officialResult, predictor = predictWithAI) {
+async function analyseWithAI(apiKey, event, context, baseline, predictor = predictWithAI) {
     if (!apiKey)
-        return unavailableAIAdvisory('unavailable', 'MiniMax was not configured; the official deterministic category result remains available.');
+        return failedProposal('unavailable', 'MiniMax is not configured.');
     try {
-        return await predictor(apiKey, event, context, officialResult);
+        return await predictor(apiKey, event, context, baseline);
     }
     catch (error) {
-        const kind = error instanceof AIAdvisoryError ? error.kind : 'unavailable';
-        const invalid = kind === 'invalid';
+        const kind = error instanceof AIProposalError ? error.kind : 'unavailable';
         const detail = error instanceof Error ? error.message : 'Unknown MiniMax failure';
-        return unavailableAIAdvisory(invalid ? 'invalid' : 'unavailable', `${invalid ? `Invalid MiniMax output: ${detail}` : kind === 'timeout' ? 'MiniMax timed out' : 'MiniMax unavailable'}; the official deterministic category result was preserved.`);
+        return failedProposal(kind, detail);
     }
 }
-function unavailableAIAdvisory(status, explanation) {
+function failedProposal(status, errorSummary, now = Date.now()) {
     return {
+        status,
         model: process.env.MINIMAX_MODEL ?? minimax_1.DEFAULT_MINIMAX_MODEL,
         promptVersion: exports.PROMPT_VERSION,
         responseSchemaVersion: exports.AI_RESPONSE_SCHEMA_VERSION,
-        status,
-        label: 'advisory',
-        overallExplanation: explanation,
-        categories: [],
-        keyConcerns: [],
-        resourceConsiderations: [],
-        citedEvidenceKeys: [],
+        retryable: true,
+        errorSummary: errorSummary.slice(0, 500),
         cacheStatus: 'not-applicable',
-        generatedAt: Date.now(),
+        generatedAt: now,
     };
 }
-function parseAIAdvisory(text, allowedCategoryIds) {
+function parseAIProposal(text, allowedCategoryIds) {
     if (text.length > MAX_RESPONSE_CHARS)
-        throw new AIAdvisoryError('invalid', 'MiniMax response exceeds the allowed size.');
+        throw new AIProposalError('invalid', 'MiniMax response exceeds the allowed size.');
     let value;
     try {
         value = JSON.parse(extractJson(text));
     }
     catch {
-        throw new AIAdvisoryError('invalid', 'MiniMax response is not valid JSON.');
+        throw new AIProposalError('invalid', 'MiniMax response is not valid JSON.');
     }
     if (!isRecord(value))
-        throw new AIAdvisoryError('invalid', 'MiniMax response must be a JSON object.');
+        throw new AIProposalError('invalid', 'MiniMax response must be a JSON object.');
     rejectUnknownKeys(value, RESPONSE_KEYS, 'MiniMax response');
-    const overallBand = readRiskLevel(value.overallBand, 'overallBand');
-    const overallExplanation = readText(value.overallExplanation, 'overallExplanation', 2_000);
-    const categories = readCategories(value.categories, allowedCategoryIds);
-    const keyConcerns = readStringArray(value.keyConcerns, 'keyConcerns', 10, 200);
-    const resourceConsiderations = readStringArray(value.resourceConsiderations, 'resourceConsiderations', 10, 300);
-    const citedEvidenceKeys = readEvidenceKeys(value.citedEvidenceKeys, 'citedEvidenceKeys');
-    return { overallBand, overallExplanation, categories, keyConcerns, resourceConsiderations, citedEvidenceKeys };
+    return {
+        hazards: readHazards(value.hazards, allowedCategoryIds),
+        categories: readCategories(value.categories, allowedCategoryIds),
+    };
 }
-function buildAllowedInput(event, context, officialResult) {
+function buildAllowedInput(event, context, baseline) {
     const details = event.eventDetails;
     return JSON.stringify({
         event: {
@@ -161,15 +155,58 @@ function buildAllowedInput(event, context, officialResult) {
             coverage: details.coverage,
             seating: details.seating,
             durationHours: Math.max(0, details.endDatetime - details.startDatetime) / 3_600_000,
+            riskProfile: details.riskProfile ? {
+                vulnerableAttendeesPercent: details.riskProfile.vulnerableAttendeesPercent,
+                standingAttendeesPercent: details.riskProfile.standingAttendeesPercent,
+                internationalAttendees: details.riskProfile.internationalAttendees,
+                alcoholServed: details.riskProfile.alcoholServed,
+                foodServed: details.riskProfile.foodServed,
+                freeDrinkingWater: details.riskProfile.freeDrinkingWater,
+                ticketedEntry: details.riskProfile.ticketedEntry,
+                overnightAccommodation: details.riskProfile.overnightAccommodation,
+                pyrotechnics: details.riskProfile.pyrotechnics,
+                temporaryStructures: details.riskProfile.temporaryStructures,
+                rivalryOrTensionExpected: details.riskProfile.rivalryOrTensionExpected,
+                crowdManagementPlan: details.riskProfile.crowdManagementPlan,
+                trafficManagementPlan: details.riskProfile.trafficManagementPlan,
+                severeWeatherPlan: details.riskProfile.severeWeatherPlan,
+                medicalPlan: details.riskProfile.medicalPlan,
+                evacuationPlanTested: details.riskProfile.evacuationPlanTested,
+                authorityCoordinationConfirmed: details.riskProfile.authorityCoordinationConfirmed,
+                nearestHospitalTravelMinutes: details.riskProfile.nearestHospitalTravelMinutes,
+            } : {},
         },
         context: {
-            weather: context.weather,
-            calendar: context.calendar,
+            weather: {
+                measurementStatus: context.weather.data ? 'available' : 'unavailable',
+                ...(context.weather.data ? { data: context.weather.data } : { unavailableReason: context.weather.unavailableReason ?? 'provider_unavailable' }),
+                source: context.weather.source,
+                freshness: context.weather.freshness,
+                forecastFor: context.weather.forecastFor,
+            },
+            calendar: {
+                localDate: context.calendar.localDate,
+                dayOfWeek: context.calendar.dayOfWeek,
+                isWeekend: context.calendar.isWeekend,
+                coverageStatus: context.calendar.coverageStatus,
+                ...(context.calendar.coverageStatus === 'verified'
+                    ? {
+                        isHolidayOrAdjacent: context.calendar.isHolidayOrAdjacent,
+                        holidayDistanceDays: context.calendar.holidayDistanceDays,
+                        holidayName: context.calendar.holidayName,
+                    }
+                    : { unavailableReason: 'holiday_dataset_year_unsupported' }),
+            },
             venue: {
                 matched: context.venue.matched,
                 submittedCapacity: context.venue.submittedCapacity,
                 registeredCapacity: context.venue.registeredCapacity,
                 capacityDifference: context.venue.capacityDifference,
+                verifiedSafeCapacity: context.venue.verifiedSafeCapacity,
+                fireCertificateStatus: context.venue.fireCertificateStatus,
+                fireCertificateExpiresAt: context.venue.fireCertificateExpiresAt,
+                emergencyAccessVerified: context.venue.emergencyAccessVerified,
+                nearestHospitalTravelMinutes: context.venue.nearestHospitalTravelMinutes,
             },
             incidentHistory: {
                 matched: context.incidentHistory.matched,
@@ -181,80 +218,161 @@ function buildAllowedInput(event, context, officialResult) {
                 patientPresentationRatePerThousand: context.incidentHistory.patientPresentationRatePerThousand,
                 hospitalTransferRatePerThousand: context.incidentHistory.hospitalTransferRatePerThousand,
                 incidentRatePerThousandAttendeeHours: context.incidentHistory.incidentRatePerThousandAttendeeHours,
-                comparableEvents: context.incidentHistory.comparableEvents,
-                syntheticEvidence: context.incidentHistory.syntheticEvidence ?? false,
+                syntheticEvidence: context.incidentHistory.syntheticEvidence,
+                syntheticStatus: context.incidentHistory.syntheticStatus ?? 'none',
             },
         },
-        officialResult: {
-            score: officialResult.officialScore,
-            riskLevel: officialResult.officialRiskLevel,
-            categorySchemaVersion: officialResult.categorySchemaVersion,
-            scoringLogicVersion: officialResult.scoringLogicVersion,
-            categories: officialResult.categoryAssignments,
-            evidence: officialResult.evidence,
-            assessmentReadiness: officialResult.assessmentReadiness,
-            complianceStatus: officialResult.complianceStatus,
-            complianceChecks: officialResult.complianceChecks,
-            hazards: officialResult.hazards,
-            domainSummaries: officialResult.domainSummaries,
-            dataConfidenceScore: officialResult.dataConfidenceScore,
-            manualReviewRequired: officialResult.manualReviewRequired,
-        },
-        applicableGuidance: guidelinePayload(officialResult),
-        resourceGuidance: {
-            version: types_1.RESOURCE_GUIDELINE_VERSION,
-            status: 'prototype-unverified',
-        },
+        evidence: baseline.evidence.map((item) => ({
+            key: item.key,
+            status: item.status,
+            quality: item.quality,
+            confidenceScore: item.confidenceScore,
+            sourceTimestamp: item.sourceTimestamp,
+        })),
+        readiness: baseline.assessmentReadiness,
+        compliance: baseline.complianceChecks?.map((check) => ({
+            checkId: check.checkId,
+            status: check.status,
+            authority: check.authority,
+            evidenceKeys: check.evidenceKeys,
+            guidelineReference: check.guidelineReference,
+        })),
+        rubric: categorySchema_1.ACTIVE_CATEGORY_SCHEMA,
+        hardRuleFloors: (0, hardRuleEvaluator_1.evaluateCategoryHardRules)(baseline),
+        guidance: guidelinePayload(),
     });
 }
 function clearAICache() {
     CACHE.clear();
 }
 function buildSystemPrompt(categoryIds) {
-    const categoryTemplate = categoryIds.map((categoryId) => ({
+    const categories = categoryIds.map((categoryId) => ({
         categoryId,
-        advisoryBand: 'Low',
-        explanation: `Evidence-based explanation for ${categoryId}.`,
+        likelihood: 1,
+        severity: 1,
         evidenceReferences: [categoryEvidenceKey(categoryId)],
-        keyConcerns: [],
-        resourceConsiderations: [],
+        rationale: `Evidence-based rationale for ${categoryId}.`,
+        confidence: 'medium',
+        concerns: [],
+        missingInformation: [],
     }));
-    return `You provide advisory all-hazards analysis for Malaysian tourism-event safety. The deterministic hazard result and compliance checks are official and immutable. Explain only supplied evidence, distinguish synthetic history from real evidence, identify missing information, and suggest contextual safety or resource considerations. Do not change any score, quantity, category assignment, compliance result, or approval outcome.
+    return `You provide structured advisory risk proposals for Malaysian tourism events. Use only supplied evidence. Propose integer likelihood and severity ratings from 1 to 5 for every category. Do not make approval decisions, calculate official results, invent evidence, or include personal data.
 
-Return only one JSON object matching this exact shape:
+Return only one JSON object matching this shape:
 ${JSON.stringify({
-        overallBand: 'Low',
-        overallExplanation: 'Concise evidence-based explanation.',
-        categories: categoryTemplate,
-        keyConcerns: [],
-        resourceConsiderations: [],
-        citedEvidenceKeys: [],
+        hazards: [{ hazardId: 'hazard-id', hazardName: 'Hazard name', categoryId: categoryIds[0], evidenceReferences: [categoryEvidenceKey(categoryIds[0])], rationale: 'Evidence-based rationale.' }],
+        categories,
     })}
 
-Schema rules:
-- overallBand and advisoryBand: Low, Medium, or High; these are advisory labels only
-- categories: keep exactly the ${categoryIds.length} items in the template, with these categoryIds and no duplicates: ${categoryIds.join(', ')}
-- evidenceReferences and citedEvidenceKeys: use only weather, crowd, venue, history, holiday, public_health, sanitation, medical, security, transport, or compliance; cite each relevant key at most once
-- all concerns and considerations: arrays of short strings; use [] when none
-- explanations: non-empty evidence-based strings
-
-Do not add fields, Markdown, numeric scores, resource quantities, approval decisions, or personal data.`;
+Rules:
+- categories must contain exactly these IDs once each: ${categoryIds.join(', ')}
+- likelihood and severity must be integers from 1 to 5
+- confidence must be low, medium, or high
+- evidence references may only use: ${[...proposalContract_1.CANONICAL_EVIDENCE_KEYS].join(', ')}
+- concerns and missingInformation are arrays of short strings; use [] when none
+- hazards may be empty, but every hazard must belong to an allowed category
+- do not add fields, Markdown, resource quantities, approval decisions, or personal data.`;
+}
+function readHazards(value, allowedCategoryIds) {
+    if (!Array.isArray(value) || value.length > 40)
+        throw new AIProposalError('invalid', 'hazards must be an array of at most 40 items.');
+    const allowed = new Set(allowedCategoryIds);
+    const seenHazardIds = new Set();
+    return value.map((item, index) => {
+        if (!isRecord(item))
+            throw new AIProposalError('invalid', `hazards[${index}] must be an object.`);
+        rejectUnknownKeys(item, HAZARD_KEYS, `hazards[${index}]`);
+        const categoryId = readText(item.categoryId, `hazards[${index}].categoryId`, 100);
+        if (!allowed.has(categoryId))
+            throw new AIProposalError('invalid', `hazards[${index}] has an unknown categoryId.`);
+        const hazardId = readText(item.hazardId, `hazards[${index}].hazardId`, 100);
+        const normalizedHazardId = (0, proposalContract_1.canonicalHazardId)(hazardId);
+        if (seenHazardIds.has(normalizedHazardId))
+            throw new AIProposalError('invalid', `hazards contains a duplicate hazardId: ${hazardId}.`);
+        seenHazardIds.add(normalizedHazardId);
+        return {
+            hazardId,
+            hazardName: readText(item.hazardName, `hazards[${index}].hazardName`, 200),
+            categoryId: categoryId,
+            evidenceReferences: readEvidenceKeys(item.evidenceReferences, `hazards[${index}].evidenceReferences`),
+            rationale: readText(item.rationale, `hazards[${index}].rationale`, 2_000),
+        };
+    });
+}
+function readCategories(value, allowedCategoryIds) {
+    if (!Array.isArray(value) || value.length !== allowedCategoryIds.length) {
+        throw new AIProposalError('invalid', `categories must contain exactly ${allowedCategoryIds.length} items.`);
+    }
+    const allowed = new Set(allowedCategoryIds);
+    const seen = new Set();
+    return value.map((item, index) => {
+        if (!isRecord(item))
+            throw new AIProposalError('invalid', `categories[${index}] must be an object.`);
+        rejectUnknownKeys(item, CATEGORY_KEYS, `categories[${index}]`);
+        const categoryId = readText(item.categoryId, `categories[${index}].categoryId`, 100);
+        if (!allowed.has(categoryId) || seen.has(categoryId)) {
+            throw new AIProposalError('invalid', `categories contains an unknown or duplicate categoryId: ${categoryId}.`);
+        }
+        seen.add(categoryId);
+        return {
+            categoryId,
+            likelihood: readRating(item.likelihood, `categories[${index}].likelihood`),
+            severity: readRating(item.severity, `categories[${index}].severity`),
+            evidenceReferences: readEvidenceKeys(item.evidenceReferences, `categories[${index}].evidenceReferences`),
+            rationale: readText(item.rationale, `categories[${index}].rationale`, 2_000),
+            confidence: readConfidence(item.confidence, `categories[${index}].confidence`),
+            concerns: readStringArray(item.concerns, `categories[${index}].concerns`, 10, 200),
+            missingInformation: readStringArray(item.missingInformation, `categories[${index}].missingInformation`, 10, 200),
+        };
+    });
+}
+function readRating(value, field) {
+    if (!Number.isInteger(value) || Number(value) < 1 || Number(value) > 5) {
+        throw new AIProposalError('invalid', `${field} must be an integer from 1 to 5.`);
+    }
+    return value;
+}
+function readConfidence(value, field) {
+    if (typeof value !== 'string' || !CONFIDENCE_LEVELS.has(value)) {
+        throw new AIProposalError('invalid', `${field} must be low, medium, or high.`);
+    }
+    return value;
+}
+function readEvidenceKeys(value, field) {
+    const keys = readStringArray(value, field, proposalContract_1.CANONICAL_EVIDENCE_KEYS.size, 100);
+    if (!(0, proposalContract_1.isCanonicalEvidenceReferenceList)(keys)) {
+        if (new Set(keys).size !== keys.length)
+            throw new AIProposalError('invalid', `${field} contains duplicate evidence keys.`);
+        throw new AIProposalError('invalid', `${field} contains an unknown evidence key.`);
+    }
+    return keys;
+}
+function readText(value, field, maxLength) {
+    if (typeof value !== 'string' || value.trim().length === 0 || value.length > maxLength) {
+        throw new AIProposalError('invalid', `${field} must be a non-empty string of at most ${maxLength} characters.`);
+    }
+    return value.trim();
+}
+function readStringArray(value, field, maxItems, maxItemLength) {
+    if (!Array.isArray(value) || value.length > maxItems || !value.every((item) => typeof item === 'string' && item.trim().length > 0 && item.length <= maxItemLength)) {
+        throw new AIProposalError('invalid', `${field} must be an array of at most ${maxItems} non-empty short strings.`);
+    }
+    return value.map((item) => item.trim());
+}
+function rejectUnknownKeys(value, allowed, field) {
+    const unknownKeys = Object.keys(value).filter((key) => !allowed.has(key));
+    if (unknownKeys.length > 0)
+        throw new AIProposalError('invalid', `${field} contains unsupported fields: ${unknownKeys.join(', ')}.`);
 }
 function categoryEvidenceKey(categoryId) {
     const mapping = {
-        crowd: 'crowd',
-        venue_fire: 'venue',
-        weather_environment: 'weather',
-        public_health: 'public_health',
-        food_water_sanitation: 'sanitation',
-        medical_capacity: 'medical',
-        security_cbrn: 'security',
-        transport_accessibility: 'transport',
+        crowd: 'crowd', venue_fire: 'venue', weather_environment: 'weather', public_health: 'public_health',
+        food_water_sanitation: 'sanitation', medical_capacity: 'medical', security_cbrn: 'security', transport_accessibility: 'transport',
     };
     return mapping[categoryId] ?? 'compliance';
 }
-function guidelinePayload(officialResult) {
-    const ids = new Set(officialResult.categoryAssignments.flatMap((category) => category.guidelineChecks));
+function guidelinePayload() {
+    const ids = new Set(categorySchema_1.ACTIVE_CATEGORY_SCHEMA.categories.flatMap((category) => category.guidelineChecks));
     return [...ids].map((id) => standardsRegistry_1.GUIDELINES[id]).filter(Boolean).map((guideline) => ({
         id: guideline.id,
         title: guideline.title,
@@ -264,60 +382,6 @@ function guidelinePayload(officialResult) {
         url: guideline.url,
         note: guideline.note,
     }));
-}
-function readCategories(value, allowedCategoryIds) {
-    if (!Array.isArray(value) || value.length !== allowedCategoryIds.length) {
-        throw new AIAdvisoryError('invalid', `categories must contain exactly ${allowedCategoryIds.length} items.`);
-    }
-    const allowed = new Set(allowedCategoryIds);
-    const seen = new Set();
-    const categories = value.map((item, index) => {
-        if (!isRecord(item))
-            throw new AIAdvisoryError('invalid', `categories[${index}] must be an object.`);
-        rejectUnknownKeys(item, CATEGORY_KEYS, `categories[${index}]`);
-        const categoryId = readText(item.categoryId, `categories[${index}].categoryId`, 100);
-        if (!allowed.has(categoryId) || seen.has(categoryId))
-            throw new AIAdvisoryError('invalid', `categories contains an unknown or duplicate categoryId: ${categoryId}.`);
-        seen.add(categoryId);
-        return {
-            categoryId,
-            advisoryBand: readRiskLevel(item.advisoryBand, `categories[${index}].advisoryBand`),
-            explanation: readText(item.explanation, `categories[${index}].explanation`, 2_000),
-            evidenceReferences: readEvidenceKeys(item.evidenceReferences, `categories[${index}].evidenceReferences`),
-            keyConcerns: readStringArray(item.keyConcerns, `categories[${index}].keyConcerns`, 10, 200),
-            resourceConsiderations: readStringArray(item.resourceConsiderations, `categories[${index}].resourceConsiderations`, 10, 300),
-        };
-    });
-    return categories;
-}
-function readRiskLevel(value, field) {
-    if (typeof value !== 'string' || !RISK_LEVELS.has(value))
-        throw new AIAdvisoryError('invalid', `${field} must be Low, Medium, or High.`);
-    return value;
-}
-function readEvidenceKeys(value, field) {
-    const keys = readStringArray(value, field, EVIDENCE_KEYS.size, 100);
-    if (!keys.every((key) => EVIDENCE_KEYS.has(key))) {
-        throw new AIAdvisoryError('invalid', `${field} contains an unknown evidence key.`);
-    }
-    return keys;
-}
-function readText(value, field, maxLength) {
-    if (typeof value !== 'string' || value.trim().length === 0 || value.length > maxLength) {
-        throw new AIAdvisoryError('invalid', `${field} must be a non-empty string of at most ${maxLength} characters.`);
-    }
-    return value.trim();
-}
-function readStringArray(value, field, maxItems, maxItemLength) {
-    if (!Array.isArray(value) || value.length > maxItems || !value.every((item) => typeof item === 'string' && item.trim().length > 0 && item.length <= maxItemLength)) {
-        throw new AIAdvisoryError('invalid', `${field} must be an array of at most ${maxItems} non-empty short strings.`);
-    }
-    return value.map((item) => item.trim());
-}
-function rejectUnknownKeys(value, allowed, field) {
-    const unknownKeys = Object.keys(value).filter((key) => !allowed.has(key));
-    if (unknownKeys.length > 0)
-        throw new AIAdvisoryError('invalid', `${field} contains unsupported fields: ${unknownKeys.join(', ')}.`);
 }
 function extractJson(text) {
     const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -333,7 +397,7 @@ async function withTimeout(promise, timeoutMs) {
         return await Promise.race([
             promise,
             new Promise((_, reject) => {
-                timeout = setTimeout(() => reject(new AIAdvisoryError('timeout', `MiniMax request timed out after ${timeoutMs}ms.`)), timeoutMs);
+                timeout = setTimeout(() => reject(new AIProposalError('timeout', `MiniMax request timed out after ${timeoutMs}ms.`)), timeoutMs);
             }),
         ]);
     }

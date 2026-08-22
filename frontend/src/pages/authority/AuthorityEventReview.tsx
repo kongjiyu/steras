@@ -8,38 +8,47 @@ import { Check, ChevronLeft, Download, FileText, Pencil, RotateCcw, Shield, Shie
 import toast from 'react-hot-toast';
 import {
   AssessmentRecord,
+  AdminManualAssessment,
   AuthorityDecision,
+  AuthorityScoreResolution,
   AuthorityType,
+  CATEGORY_SCHEMA_VERSION,
   COLLECTIONS,
   ControlVerificationStatus,
   DecisionValue,
   EventControl,
   EventRecord,
   EventVersion,
-  ResourceQuantities,
+  HARD_RULE_VERSION,
+  MANUAL_ASSESSMENT_SCHEMA_VERSION,
+  MANUAL_OFFICIAL_FORMULA_VERSION,
   ResourceRecommendation,
   RiskAssessment,
   Stage1Doc,
 } from '@shared/types';
 import { db, functions, isFirebaseConfigured, storage } from '../../config/firebase';
-import { useAuth } from '../../contexts/AuthContext';
 import AIAdvisory from '../../components/m2/AIAdvisory';
 import CategoryProfile from '../../components/m2/CategoryProfile';
 import ContextEvidence from '../../components/m2/ContextEvidence';
 import ResourceRecommendationView from '../../components/m2/ResourceRecommendation';
-import { isCurrentResourceRecommendation, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
-import { RESOURCE_FIELDS, toResourceQuantities } from '../../components/m2/m2Presentation';
+import AuthorityScoreReviewForm from '../../components/m2/AuthorityScoreReviewForm';
+import AuthorityAssessmentWarnings from '../../components/m2/AuthorityAssessmentWarnings';
+import { assessmentRiskLevel, isAuthorityScoreResolution, isCurrentAssessmentRecord, isCurrentAuthorityDecision, isCurrentEventRecord, isCurrentEventVersion, isCurrentResourceRecommendation, isCurrentRiskAssessment, isSafeManualAssessmentId } from '../../components/m2/m2Contract';
 import EmptyState from '../../components/ui/EmptyState';
 import StatusBadge from '../../components/ui/StatusBadge';
+import { useAuth } from '../../contexts/AuthContext';
+import { activeScoreResolutionId } from './authorityReviewPresentation';
 
 export default function AuthorityEventReview() {
-  const { eventId } = useParams<{ eventId: string }>();
   const { profile } = useAuth();
+  const { eventId } = useParams<{ eventId: string }>();
   const myAuthorityType = profile?.authorityType;
   const [event, setEvent] = useState<EventRecord | null>(null);
   const [assessment, setAssessment] = useState<RiskAssessment | null>(null);
   const [assessmentStatus, setAssessmentStatus] = useState<AssessmentRecord['status'] | null>(null);
   const [resources, setResources] = useState<ResourceRecommendation | null>(null);
+  const [scoreResolution, setScoreResolution] = useState<AuthorityScoreResolution | null>(null);
+  const [manualAssessment, setManualAssessment] = useState<AdminManualAssessment | null>(null);
   const [legacyAssessment, setLegacyAssessment] = useState(false);
   const [legacyResources, setLegacyResources] = useState(false);
   const [decisions, setDecisions] = useState<AuthorityDecision[]>([]);
@@ -53,11 +62,9 @@ export default function AuthorityEventReview() {
   // before approving. The server-side Cloud Function (recordOfficerProposal
   // + the legacy makeAuthorityDecision) refuses Approved without it.
   const [confirmedReview, setConfirmedReview] = useState(false);
+  const [suggestion, setSuggestion] = useState('');
+  const [materialsReviewed, setMaterialsReviewed] = useState(false);
   const [submittingDecision, setSubmittingDecision] = useState<DecisionValue | null>(null);
-  const [editingResources, setEditingResources] = useState(false);
-  const [resourceDraft, setResourceDraft] = useState<ResourceQuantities | null>(null);
-  const [resourceRationale, setResourceRationale] = useState('');
-  const [savingResources, setSavingResources] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [supportingDataError, setSupportingDataError] = useState('');
@@ -80,7 +87,14 @@ export default function AuthorityEventReview() {
     }
     const eventReference = doc(db, COLLECTIONS.EVENTS, eventId);
     const unsubscribeEvent = onSnapshot(eventReference, (snapshot) => {
-      setEvent(snapshot.exists() ? { eventId: snapshot.id, ...snapshot.data() } as EventRecord : null);
+      const value = snapshot.exists() ? { eventId: snapshot.id, ...snapshot.data() } : undefined;
+      if (value && !isCurrentEventRecord(value, eventId)) {
+        setEvent(null);
+        setLoadError('The application data is invalid or incomplete.');
+        setLoading(false);
+        return;
+      }
+      setEvent(value ?? null);
       setLoadError('');
       setLoading(false);
     }, () => {
@@ -92,8 +106,11 @@ export default function AuthorityEventReview() {
 
   useEffect(() => {
     const versionId = event?.currentVersionId;
-    if (!isFirebaseConfigured || !eventId || !versionId) {
+    const assessmentId = event?.currentAssessmentId;
+    const resourceId = event?.currentResourceId;
+    if (!isFirebaseConfigured || !eventId || !versionId || !assessmentId) {
       setAssessment(null);
+      setAssessmentStatus(null);
       setResources(null);
       setLegacyAssessment(false);
       setLegacyResources(false);
@@ -101,26 +118,44 @@ export default function AuthorityEventReview() {
     }
     const eventReference = doc(db, COLLECTIONS.EVENTS, eventId);
     const supportingError = () => setSupportingDataError('Some review evidence could not be refreshed.');
-    const unsubscribeAssessment = onSnapshot(doc(eventReference, COLLECTIONS.ASSESSMENTS, versionId), (snapshot) => {
+    const unsubscribeAssessment = onSnapshot(doc(eventReference, COLLECTIONS.ASSESSMENTS, assessmentId), (snapshot) => {
       const record = snapshot.data() as AssessmentRecord | undefined;
       setAssessmentStatus(record?.status ?? null);
       setAssessment(isCurrentRiskAssessment(record) ? record : null);
-      setLegacyAssessment(record?.status === 'ready' && !isCurrentRiskAssessment(record));
+      setLegacyAssessment(snapshot.exists() && !isCurrentAssessmentRecord(record));
       setSupportingDataError('');
     }, supportingError);
-    const unsubscribeResources = onSnapshot(doc(eventReference, COLLECTIONS.RESOURCES, versionId), (snapshot) => {
-      const record = snapshot.data();
-      setResources(isCurrentResourceRecommendation(record) ? record : null);
-      setLegacyResources(snapshot.exists() && !isCurrentResourceRecommendation(record));
-    }, supportingError);
+    const unsubscribeResources = resourceId
+      ? onSnapshot(doc(eventReference, COLLECTIONS.RESOURCES, resourceId), (snapshot) => {
+          const record = snapshot.data();
+          const valid = isCurrentResourceRecommendation(record)
+            && record.resourceId === resourceId
+            && record.eventId === eventId
+            && record.versionId === versionId;
+          setResources(valid ? record : null);
+          setLegacyResources(snapshot.exists() && !valid);
+        }, supportingError)
+      : (() => {
+          setResources(null);
+          setLegacyResources(false);
+          return () => undefined;
+        })();
     const unsubscribeDecisions = onSnapshot(query(collection(eventReference, COLLECTIONS.DECISIONS)), (snapshot) => {
-      setDecisions(snapshot.docs.map((item) => item.data() as AuthorityDecision));
+      setDecisions(snapshot.docs
+        .map((item) => isCurrentAuthorityDecision(item.data(), eventId, item.id) ? item.data() as AuthorityDecision : undefined)
+        .filter((item): item is AuthorityDecision => Boolean(item)));
     }, supportingError);
     const unsubscribeDecisionHistory = onSnapshot(query(collection(eventReference, COLLECTIONS.DECISION_HISTORY)), (snapshot) => {
-      setDecisionHistory(snapshot.docs.map((item) => item.data() as AuthorityDecision).sort((a, b) => b.decidedAt - a.decidedAt));
+      setDecisionHistory(snapshot.docs
+        .map((item) => isCurrentAuthorityDecision(item.data(), eventId, item.id) ? item.data() as AuthorityDecision : undefined)
+        .filter((item): item is AuthorityDecision => Boolean(item))
+        .sort((a, b) => b.decidedAt - a.decidedAt));
     }, supportingError);
     const unsubscribeVersions = onSnapshot(query(collection(eventReference, COLLECTIONS.VERSIONS)), (snapshot) => {
-      setVersions(snapshot.docs.map((item) => item.data() as EventVersion).sort((a, b) => b.versionNumber - a.versionNumber));
+      setVersions(snapshot.docs
+        .map((item) => isCurrentEventVersion(item.data(), eventId, item.id) ? item.data() as EventVersion : undefined)
+        .filter((item): item is EventVersion => Boolean(item))
+        .sort((a, b) => b.versionNumber - a.versionNumber));
     }, supportingError);
     const unsubscribeControls = onSnapshot(query(collection(eventReference, COLLECTIONS.EVENT_CONTROLS)), (snapshot) => {
       const controls = snapshot.docs.map((item) => ({ controlId: item.id, ...(item.data() as EventControl) }) as EventControl)
@@ -147,70 +182,99 @@ export default function AuthorityEventReview() {
       unsubscribeVersions();
       unsubscribeControls();
     };
-  }, [event?.currentVersionId, eventId]);
+  }, [event?.currentAssessmentId, event?.currentResourceId, event?.currentVersionId, eventId]);
+
+  const currentVersion = versions.find((version) => version.versionId === event?.currentVersionId);
+  const activeResolutionId = activeScoreResolutionId(assessment);
+  const activeAssessmentId = assessment?.assessmentId;
+  const activeManualAssessmentId = assessment?.status === 'official_ready'
+    && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual'
+    ? assessment.activeManualAssessmentId : undefined;
+  useEffect(() => {
+    if (!isFirebaseConfigured || !eventId || !activeAssessmentId || !activeResolutionId) { setScoreResolution(null); return; }
+    return onSnapshot(doc(db, COLLECTIONS.EVENTS, eventId, COLLECTIONS.ASSESSMENTS, activeAssessmentId, COLLECTIONS.SCORE_RESOLUTIONS, activeResolutionId), (snapshot) => {
+      const value = snapshot.data();
+      setScoreResolution(snapshot.exists() && isAuthorityScoreResolution(value, snapshot.id, {
+        eventId, versionId: event?.currentVersionId, assessmentId: activeAssessmentId,
+      }) ? value : null);
+    }, () => setSupportingDataError('The score resolution could not be refreshed.'));
+  }, [activeAssessmentId, activeResolutionId, event?.currentVersionId, eventId]);
 
   useEffect(() => {
-    if (!resources || editingResources) return;
-    setResourceDraft(toResourceQuantities(resources));
-  }, [resources, editingResources]);
+    if (!isFirebaseConfigured || !eventId || !activeAssessmentId || !activeManualAssessmentId) {
+      setManualAssessment(null);
+      return;
+    }
+    return onSnapshot(
+      doc(db, COLLECTIONS.EVENTS, eventId, COLLECTIONS.ASSESSMENTS, activeAssessmentId, COLLECTIONS.MANUAL_ASSESSMENTS, activeManualAssessmentId),
+      (snapshot) => {
+        const value = snapshot.data();
+        setManualAssessment(snapshot.exists() && isSafeManualAssessment(value, activeManualAssessmentId, {
+          eventId, versionId: event?.currentVersionId ?? '', assessmentId: activeAssessmentId,
+          inputHash: assessment?.inputHash ?? '', eventVersionInputHash: currentVersion?.inputHash ?? '',
+          evidence: assessment?.evidence ?? [],
+        })
+          ? value : null);
+      },
+      () => setSupportingDataError('The manual assessment provenance could not be refreshed.'),
+    );
+  }, [activeAssessmentId, activeManualAssessmentId, assessment?.evidence, assessment?.inputHash, currentVersion?.inputHash, event?.currentVersionId, eventId]);
 
   const currentDecisions = useMemo(() => new Map(
     decisions
       .filter((decision) => decision.current && decision.versionId === event?.currentVersionId)
       .map((decision) => [decision.authorityType, decision]),
   ), [decisions, event?.currentVersionId]);
-  const currentVersion = versions.find((version) => version.versionId === event?.currentVersionId);
-
   if (loading) return <div className="p-8 text-ink-500">Loading application...</div>;
   if (loadError) return <div className="p-8"><EmptyState title="Application unavailable" description={loadError}><button type="button" className="btn-secondary" onClick={() => { setLoading(true); setRetryKey((value) => value + 1); }}>Try again</button></EmptyState></div>;
   if (!event) return <div className="p-8"><EmptyState title="Event not found" description="It may have been removed or you do not have access." /></div>;
 
   const details = event.eventDetails;
   const reviewOpen = ['Pending', 'UnderReview'].includes(event.status);
-  const evidenceReady = Boolean(assessment && resources);
-  // FR-M3-16: Approve additionally requires the confirmedReview checkbox.
-  // Reject / AmendmentRequested don't (per the PRD's intent — the
-  // checkbox is a "I have reviewed everything before I bless this" gate,
-  // not a "I have to agree" gate).
-  const canApprove = reviewOpen && evidenceReady && rationale.trim().length >= 10 && confirmedReview;
-  const canRejectOrAmend = reviewOpen && evidenceReady && rationale.trim().length >= 10;
+  const evidenceReady = Boolean(
+    assessment
+    && resources
+    && resources.versionId === event.currentVersionId
+    && (resources.stage !== 'official' || assessment.status === 'official_ready')
+    && (event.currentResourceId === undefined || event.currentResourceId === resources.resourceId),
+  );
+  // FR-M3-16: approval requires an explicit materials-review confirmation.
+  // M2 additionally asks for a corrective suggestion on rejection/amendment.
+  const canApprove = reviewOpen && evidenceReady && rationale.trim().length >= 10
+    && confirmedReview && materialsReviewed && assessment?.complianceStatus !== 'blocked';
+  const canRejectOrAmend = reviewOpen && evidenceReady && rationale.trim().length >= 10
+    && suggestion.trim().length >= 10;
 
   const submitDecision = async (decision: DecisionValue) => {
-    if (!eventId) return;
-    if (decision === 'Approved' && !canApprove) return;
-    if (decision !== 'Approved' && !canRejectOrAmend) return;
+    const isApproval = decision === 'Approved';
+    if (!eventId || (isApproval ? !canApprove : !canRejectOrAmend)) return;
     setSubmittingDecision(decision);
     try {
-      const command = httpsCallable<{ eventId: string; decision: DecisionValue; rationale: string; confirmedReview?: boolean }>(functions, 'makeAuthorityDecision');
+      const command = httpsCallable<{
+        eventId: string;
+        decision: DecisionValue;
+        rationale: string;
+        confirmedReview?: boolean;
+        materialsReviewed?: boolean;
+        suggestion?: string;
+      }>(functions, 'makeAuthorityDecision');
       await command({
         eventId,
         decision,
         rationale: rationale.trim(),
-        ...(decision === 'Approved' ? { confirmedReview: true } : {}),
+        ...(isApproval
+          ? { confirmedReview: true, materialsReviewed: true }
+          : { suggestion: suggestion.trim() }),
       });
       toast.success(decision === 'Approved' ? 'Approval recorded.' : decision === 'Rejected' ? 'Rejection recorded.' : 'Amendment request recorded.');
       setRationale('');
       setConfirmedReview(false);
+      setSuggestion('');
+      setMaterialsReviewed(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Unable to record decision.');
     } finally {
       setSubmittingDecision(null);
-    }
-  };
-
-  const saveResourceOverride = async () => {
-    if (!eventId || !resourceDraft || resourceRationale.trim().length < 10) return;
-    setSavingResources(true);
-    try {
-      const command = httpsCallable<{ eventId: string; quantities: ResourceQuantities; rationale: string }>(functions, 'overrideResources');
-      await command({ eventId, quantities: resourceDraft, rationale: resourceRationale.trim() });
-      toast.success('Resource recommendation updated.');
-      setEditingResources(false);
-      setResourceRationale('');
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Unable to update resources.');
-    } finally {
-      setSavingResources(false);
     }
   };
 
@@ -295,16 +359,23 @@ export default function AuthorityEventReview() {
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
         <div className="space-y-5">
           <section className="card">
-            <div className="card-header"><div><h2 className="font-semibold">Official category-based assessment</h2><p className="mt-0.5 text-xs text-ink-500">Deterministic result · AI cannot change this score</p></div></div>
+            <div className="card-header"><div><h2 className="font-semibold">{assessment?.status === 'official_ready' ? 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual' ? 'Official manual assessment' : 'Official AI-assisted assessment' : 'Provisional category assessment'}</h2><p className="mt-0.5 text-xs text-ink-500">{assessment?.status === 'official_ready' ? 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual' ? 'Admin-authored recovery assessment · no AI score proposal' : 'Finalized human-reviewed risk inputs with retained AI provenance' : 'Validated AI proposal · authority confirmation required'}</p></div></div>
             <div className="card-body">
               {!assessment ? <p className="text-sm text-ink-500">{legacyAssessment ? 'Legacy assessment detected. Recompute this event version before recording a decision.' : assessmentStatus === 'failed' ? 'Assessment failed and requires a retry.' : 'Assessment is still processing.'}</p> : (
                 <div className="space-y-5">
                   <CategoryProfile assessment={assessment} />
-                  <AIAdvisory advisory={assessment.aiAdvisory} officialRiskLevel={assessment.officialRiskLevel} />
+                  <AuthorityAssessmentWarnings warnings={assessment.warnings} />
+                  {assessment.status === 'official_ready' && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual'
+                    ? <><ManualOfficialProvenance assessment={assessment} />{manualAssessment && <ManualAssessmentDetails assessment={manualAssessment} />}</>
+                    : <AIAdvisory advisory={assessment.aiProposal} resultRiskLevel={assessmentRiskLevel(assessment)} official={assessment.status === 'official_ready'} />}
                   <div className="border-t border-[#e3dacb] pt-5">
                     <h3 className="mb-4 font-display text-sm font-semibold text-ink-800">Versioned context evidence</h3>
                     <ContextEvidence assessment={assessment} />
                   </div>
+                  {scoreResolution && <div className="rounded-md border border-gold-200 bg-gold-50 p-4 text-xs leading-5 text-ink-700"><p className="font-semibold text-ink-800">Admin score-conflict resolution</p><p className="mt-1">{scoreResolution.rationale}</p><ul className="mt-2 space-y-1">{scoreResolution.categories.map((category) => <li key={category.categoryId}><span className="font-semibold">{formatWorkflowValue(category.categoryId)} {category.likelihood}×{category.severity}:</span> {category.reason}</li>)}</ul></div>}
+                  {(assessment.status === 'provisional_ready' || assessment.status === 'authority_review') && profile?.authorityType && (
+                    <AuthorityScoreReviewForm eventId={eventId!} assessment={assessment} authorityType={profile.authorityType} />
+                  )}
                 </div>
               )}
             </div>
@@ -314,31 +385,18 @@ export default function AuthorityEventReview() {
             <div className="card-header">
               <div>
                 <h2 className="font-semibold">Recommended resources</h2>
-                {resources?.confidenceLevel === 'authorityValidated' && <p className="mt-0.5 text-xs text-status-approved">Authority validated</p>}
+                {resources?.confidenceLevel === 'authority_validated' && <p className="mt-0.5 text-xs text-status-approved">Official risk input · prototype resource ratios</p>}
               </div>
-              {resources && reviewOpen && !editingResources && <button type="button" className="btn-secondary !px-3 !py-1.5" onClick={() => setEditingResources(true)}><Pencil size={14} /> Adjust</button>}
             </div>
             <div className="card-body">
-              {!resources || !resourceDraft ? <p className="text-sm text-ink-500">{legacyResources ? 'Legacy resource record detected. Recompute this event version before review.' : 'No recommendation yet.'}</p> : editingResources ? (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                    {RESOURCE_FIELDS.map(({ key, label }) => (
-                      <label key={key} className="text-xs font-medium text-ink-600">{label}
-                        <input type="number" min={0} step={1} className="input mt-1" value={resourceDraft[key]} onChange={(e) => setResourceDraft({ ...resourceDraft, [key]: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} />
-                      </label>
-                    ))}
-                  </div>
-                  <label className="block text-xs font-medium text-ink-600">Reason for adjustment
-                    <textarea className="input mt-1 resize-y" rows={3} maxLength={1000} value={resourceRationale} onChange={(e) => setResourceRationale(e.target.value)} placeholder="Explain the operational basis for this change." />
-                  </label>
-                  <div className="flex justify-end gap-2">
-                    <button type="button" className="btn-secondary" onClick={() => { setEditingResources(false); setResourceDraft(toResourceQuantities(resources)); setResourceRationale(''); }}><RotateCcw size={15} /> Cancel</button>
-                    <button type="button" className="btn-primary" disabled={savingResources || resourceRationale.trim().length < 10} onClick={saveResourceOverride}>{savingResources ? 'Saving...' : 'Save adjustment'}</button>
-                  </div>
-                </div>
-              ) : (
-                <ResourceRecommendationView recommendation={resources} showOverrideProvenance />
-              )}
+              {!resources
+                ? <p className="text-sm text-ink-500">{legacyResources ? 'Legacy resource record detected. Recompute this event version before review.' : 'No recommendation yet.'}</p>
+                : <>
+                    <p className="mb-4 rounded-md border border-gold-200 bg-gold-50 p-3 text-xs leading-5 text-gold-700">
+                      Resource adjustments remain frozen until the append-only resource override workflow is delivered.
+                    </p>
+                    <ResourceRecommendationView recommendation={resources} />
+                  </>}
             </div>
           </section>
 
@@ -396,7 +454,10 @@ export default function AuthorityEventReview() {
           <section className="card">
             <div className="card-header"><h2 className="font-semibold">Review progress</h2></div>
             <div className="card-body space-y-3">
-              {event.requiredAuthorities.map((authority) => <AuthorityProgress key={authority} authority={authority} decision={currentDecisions.get(authority)} />)}
+              {event.requiredAuthorities.map((authority) => {
+                const manualOfficial = assessment?.status === 'official_ready' && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual';
+                return <AuthorityProgress key={authority} authority={authority} decision={currentDecisions.get(authority)} scoreReviewed={Boolean(assessment && (manualOfficial || ('authorityReviewState' in assessment && assessment.authorityReviewState?.activeReviewHeads[authority])))} manualOfficial={manualOfficial} />;
+              })}
             </div>
           </section>
 
@@ -425,7 +486,7 @@ export default function AuthorityEventReview() {
                 <input
                   type="checkbox"
                   checked={confirmedReview}
-                  onChange={(e) => setConfirmedReview(e.target.checked)}
+                  onChange={(e) => { setConfirmedReview(e.target.checked); setMaterialsReviewed(e.target.checked); }}
                   disabled={!reviewOpen}
                   className="mt-0.5 h-4 w-4 accent-brand-600"
                   data-testid="confirmed-review-checkbox"
@@ -435,9 +496,13 @@ export default function AuthorityEventReview() {
                   <span className="mt-0.5 block text-[11px] text-ink-500">Required to approve (FR-M3-16). Not required to reject or request amendment.</span>
                 </span>
               </label>
-              <button className="btn-success w-full" disabled={!canApprove || submittingDecision !== null} onClick={() => submitDecision('Approved')}><Check size={16} />{submittingDecision === 'Approved' ? 'Recording...' : 'Approve'}</button>
-              <button className="btn-secondary w-full" disabled={!canRejectOrAmend || submittingDecision !== null} onClick={() => submitDecision('AmendmentRequested')}><RotateCcw size={16} />{submittingDecision === 'AmendmentRequested' ? 'Recording...' : 'Request amendment'}</button>
-              <button className="btn-danger w-full" disabled={!canRejectOrAmend || submittingDecision !== null} onClick={() => submitDecision('Rejected')}><X size={16} />{submittingDecision === 'Rejected' ? 'Recording...' : 'Reject'}</button>
+              <label className="block text-xs font-medium text-ink-600">Suggestion for rejection or amendment
+                <textarea className="input mt-1 resize-y" rows={3} maxLength={1000} disabled={!reviewOpen} value={suggestion} onChange={(event) => setSuggestion(event.target.value)} placeholder="Describe the corrective action the organizer should take." />
+              </label>
+              {assessment?.complianceStatus === 'blocked' && <p className="rounded-md bg-red-50 p-3 text-xs leading-5 text-status-rejected">Approval is blocked by compliance. You may record a rejection or amendment recommendation.</p>}
+              <button className="btn-success w-full" disabled={!canApprove || submittingDecision !== null} onClick={() => submitDecision('Approved')}><Check size={16} />{submittingDecision === 'Approved' ? 'Recording...' : 'Recommend approval'}</button>
+              <button className="btn-secondary w-full" disabled={!canRejectOrAmend || submittingDecision !== null} onClick={() => submitDecision('AmendmentRequested')}><RotateCcw size={16} />{submittingDecision === 'AmendmentRequested' ? 'Recording...' : 'Recommend amendment'}</button>
+              <button className="btn-danger w-full" disabled={!canRejectOrAmend || submittingDecision !== null} onClick={() => submitDecision('Rejected')}><X size={16} />{submittingDecision === 'Rejected' ? 'Recording...' : 'Recommend rejection'}</button>
             </div>
           </section>
         </aside>
@@ -446,9 +511,91 @@ export default function AuthorityEventReview() {
   );
 }
 
-function AuthorityProgress({ authority, decision }: { authority: AuthorityType; decision?: AuthorityDecision }) {
+function ManualOfficialProvenance({ assessment }: { assessment: import('@shared/types').AdminManualOfficialRiskAssessment }) {
+  return <div className="border-l-4 border-brand-500 bg-brand-50 p-4 text-sm text-ink-700">
+    <p className="text-[11px] font-bold uppercase tracking-[0.09em] text-brand-700">Source · Admin manual assessment</p>
+    <p className="mt-2">This official result was calculated from a locked human assessment after AI failure or insufficient data. No AI proposal was fabricated.</p>
+    <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2"><div><dt className="text-ink-500">Manual assessment</dt><dd className="font-mono text-ink-800">{assessment.activeManualAssessmentId}</dd></div><div><dt className="text-ink-500">Finalized by</dt><dd className="font-mono text-ink-800">{assessment.officialResult.finalizedBy}</dd></div></dl>
+    <h3 className="mt-4 font-display font-semibold text-ink-800">Manual hazards</h3>
+    <ul className="mt-2 space-y-2">{assessment.officialResult.manualHazards.map((hazard) => <li key={hazard.hazardId} className="border-t border-brand-200 pt-2"><strong>{hazard.hazardName}</strong> · {formatWorkflowValue(hazard.categoryId)}<p className="mt-1 text-xs">{hazard.rationale}</p><p className="mt-1 text-[11px] text-ink-500">Evidence: {hazard.evidenceReferences.join(', ')}</p></li>)}</ul>
+  </div>;
+}
+
+function ManualAssessmentDetails({ assessment }: { assessment: AdminManualAssessment }) {
+  return <div className="border border-brand-200 bg-cream-50 p-4 text-sm text-ink-700">
+    <div className="flex flex-wrap items-baseline justify-between gap-2"><h3 className="font-display font-semibold text-ink-800">Locked Admin input</h3><span className="text-[11px] font-mono text-ink-500">{assessment.manualAssessmentId}</span></div>
+    <p className="mt-2 leading-6">{assessment.rationale}</p>
+    <div className="mt-4 space-y-3">
+      {assessment.categories.map((category) => <div key={category.categoryId} className="border-t border-brand-200 pt-3 text-xs"><div className="flex flex-wrap justify-between gap-2"><strong>{category.categoryId}</strong><span className="font-semibold text-brand-700">Admin input {category.likelihood}×{category.severity}</span></div><p className="mt-1 leading-5">{category.rationale}</p><p className="mt-1 text-ink-500">Evidence: {category.evidenceReferences.length ? category.evidenceReferences.join(', ') : 'None · missing information documented'}</p>{category.missingInformation && <p className="mt-1 text-gold-700">Missing information: {category.missingInformation}</p>}</div>)}
+    </div>
+  </div>;
+}
+
+function isSafeManualAssessment(value: unknown, expectedId: string, identity: {
+  eventId: string;
+  versionId: string;
+  assessmentId: string;
+  inputHash: string;
+  eventVersionInputHash: string;
+  evidence: Array<{ key: string; status: string; quality?: string }>;
+}): value is AdminManualAssessment {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (!isSafeManualAssessmentId(expectedId)
+    || !isSafeManualAssessmentId(record.manualAssessmentId)
+    || record.manualAssessmentId !== expectedId
+    || record.schemaVersion !== MANUAL_ASSESSMENT_SCHEMA_VERSION
+    || record.eventId !== identity.eventId || record.versionId !== identity.versionId
+    || record.assessmentId !== identity.assessmentId || record.assessmentInputHash !== identity.inputHash
+    || typeof record.eventVersionInputHash !== 'string' || !record.eventVersionInputHash.trim()
+    || record.eventVersionInputHash !== identity.eventVersionInputHash
+    || record.categorySchemaVersion !== CATEGORY_SCHEMA_VERSION
+    || record.hardRuleVersion !== HARD_RULE_VERSION
+    || record.officialFormulaVersion !== MANUAL_OFFICIAL_FORMULA_VERSION
+    || typeof record.submittedBy !== 'string' || !record.submittedBy.trim()
+    || typeof record.idempotencyKey !== 'string' || !record.idempotencyKey.trim()
+    || !Number.isFinite(record.createdAt)
+    || typeof record.rationale !== 'string' || record.rationale.trim().length < 20 || record.rationale.length > 2000
+    || !Array.isArray(record.hazards) || !Array.isArray(record.categories)) return false;
+  const eligibleEvidence = new Set(identity.evidence
+    .filter((evidence) => evidence.quality !== 'missing' && !['unavailable', 'unmatched', 'missing'].includes(evidence.status.trim().toLowerCase()))
+    .map((evidence) => evidence.key));
+  const validReferences = (references: unknown[], requireOne = false) => references.length >= (requireOne ? 1 : 0)
+    && new Set(references).size === references.length
+    && references.every((reference) => typeof reference === 'string' && eligibleEvidence.has(reference));
+  const categoryIds = new Set(['crowd', 'venue_fire', 'weather_environment', 'public_health', 'food_water_sanitation', 'medical_capacity', 'security_cbrn', 'transport_accessibility']);
+  const hazardIds = new Set<string>();
+  const hazardsValid = record.hazards.length >= 1 && record.hazards.length <= 40 && record.hazards.every((hazard) => {
+    if (!hazard || typeof hazard !== 'object' || Array.isArray(hazard)) return false;
+    const item = hazard as Record<string, unknown>;
+    const valid = typeof item.hazardId === 'string' && Boolean(item.hazardId) && !hazardIds.has(item.hazardId)
+      && typeof item.hazardName === 'string' && item.hazardName.trim().length >= 3 && item.hazardName.length <= 200
+      && typeof item.categoryId === 'string' && categoryIds.has(item.categoryId)
+      && Array.isArray(item.evidenceReferences) && validReferences(item.evidenceReferences, eligibleEvidence.size > 0)
+      && typeof item.rationale === 'string' && item.rationale.trim().length >= 10 && item.rationale.length <= 1000;
+    if (valid) hazardIds.add(item.hazardId as string);
+    return valid;
+  });
+  const seenCategories = new Set<string>();
+  const categoriesValid = record.categories.length === categoryIds.size && record.categories.every((category) => {
+    if (!category || typeof category !== 'object' || Array.isArray(category)) return false;
+    const item = category as Record<string, unknown>;
+    const valid = typeof item.categoryId === 'string' && categoryIds.has(item.categoryId) && !seenCategories.has(item.categoryId)
+      && Number.isInteger(item.likelihood) && Number(item.likelihood) >= 1 && Number(item.likelihood) <= 5
+      && Number.isInteger(item.severity) && Number(item.severity) >= 1 && Number(item.severity) <= 5
+      && Array.isArray(item.evidenceReferences) && validReferences(item.evidenceReferences)
+      && typeof item.rationale === 'string' && item.rationale.trim().length >= 10 && item.rationale.length <= 1000
+      && typeof item.missingInformation === 'string' && item.missingInformation.length <= 1000
+      && (item.evidenceReferences.length > 0 || item.missingInformation.trim().length >= 10);
+    if (valid) seenCategories.add(item.categoryId as string);
+    return valid;
+  });
+  return hazardsValid && categoriesValid && seenCategories.size === categoryIds.size;
+}
+
+function AuthorityProgress({ authority, decision, scoreReviewed, manualOfficial }: { authority: AuthorityType; decision?: AuthorityDecision; scoreReviewed: boolean; manualOfficial: boolean }) {
   const color = decision?.decision === 'Approved' ? 'bg-green-100 text-status-approved' : decision?.decision === 'Rejected' ? 'bg-red-100 text-status-rejected' : decision?.decision === 'AmendmentRequested' ? 'bg-orange-100 text-orange-700' : 'bg-ink-100 text-ink-500';
-  return <div className="flex items-center justify-between gap-3"><span className="text-sm font-semibold text-ink-700">{authority}</span><span className={`badge ${color}`}>{decision ? formatWorkflowValue(decision.decision) : 'Awaiting review'}</span></div>;
+  return <div className="flex items-center justify-between gap-3"><span className="text-sm font-semibold text-ink-700">{authority}</span><div className="flex flex-wrap justify-end gap-1"><span className={`badge ${scoreReviewed ? 'bg-green-100 text-status-approved' : 'bg-ink-100 text-ink-500'}`}>{manualOfficial ? 'Manual official ready' : scoreReviewed ? 'Scores reviewed' : 'Scores pending'}</span><span className={`badge ${color}`}>{decision ? formatWorkflowValue(decision.decision) : 'Decision pending'}</span></div></div>;
 }
 
 function formatWorkflowValue(value: string): string {

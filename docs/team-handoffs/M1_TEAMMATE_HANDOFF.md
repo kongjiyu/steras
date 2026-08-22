@@ -29,7 +29,7 @@
 - 完整 application lifecycle 的 **end-to-end UAT**
 - Revision Requested 后 edit/resubmit 的验证
 - M3 notification presentation
-- M4 incident/complaint navigation
+- M4 incident navigation
 - Cross-organiser permission browser tests
 - 所有页面的 loading、empty、error、permission 和 mobile states
 
@@ -49,8 +49,8 @@
 4. 验证 Draft/Pending 状态下允许的 withdrawal behavior。
 5. 补齐 loading、empty、error、permission、mobile 和 keyboard states。
 6. 建立 Organizer notification presentation，读取 M3 提供的 notification records。
-7. M4 routes 完成后加入 incident/complaint navigation。
-8. 验证 `public_events` 不包含 PII、private evidence、risk details、incidents 或 complaints。
+7. M4 routes 完成后加入 incident navigation。
+8. 验证 `public_events` 不包含 PII、private evidence、risk details 或 incidents。
 9. 添加 complete golden-path 和 forbidden cross-user browser tests。
 
 ## 验收条件 | Acceptance Criteria
@@ -66,7 +66,7 @@
 
 - **M2:** Assessment status、official risk、AI advisory status、resource recommendation。
 - **M3:** Current decision、rationale、publication state、notifications。
-- **M4:** Organizer-visible incident/complaint summaries。
+- **M4:** Organizer-visible incident status 和 resolution history。
 
 ## 你需要提供给其他 Module | Outputs
 

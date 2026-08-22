@@ -3,26 +3,21 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { format } from 'date-fns';
-import { AssessmentRecord, COLLECTIONS, EventRecord, ResourceRecommendation, RiskAssessment } from '@shared/types';
+import { COLLECTIONS, EventRecord, OrganizerAssessmentSummary } from '@shared/types';
 import { db, functions, isFirebaseConfigured } from '../../config/firebase';
 import toast from 'react-hot-toast';
 import EmptyState from '../../components/ui/EmptyState';
 import PageHeader from '../../components/ui/PageHeader';
 import StatusBadge from '../../components/ui/StatusBadge';
-import AIAdvisory from '../../components/m2/AIAdvisory';
-import CategoryProfile from '../../components/m2/CategoryProfile';
-import ResourceRecommendationView from '../../components/m2/ResourceRecommendation';
-import { isCurrentResourceRecommendation, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
+import OrganizerAssessmentSummaryView, { OrganizerResourceSummaryView } from '../../components/m2/OrganizerAssessmentSummaryView';
+import { isCurrentEventRecord, isOrganizerAssessmentSummary } from '../../components/m2/m2Contract';
 
 export default function EventDetail() {
   const { eventId } = useParams<{ eventId: string }>();
   const navigate = useNavigate();
   const [event, setEvent] = useState<EventRecord | null>(null);
-  const [assessment, setAssessment] = useState<RiskAssessment | null>(null);
-  const [assessmentStatus, setAssessmentStatus] = useState<AssessmentRecord['status'] | null>(null);
-  const [resources, setResources] = useState<ResourceRecommendation | null>(null);
-  const [legacyAssessment, setLegacyAssessment] = useState(false);
-  const [legacyResources, setLegacyResources] = useState(false);
+  const [summary, setSummary] = useState<OrganizerAssessmentSummary | null>(null);
+  const [legacySummary, setLegacySummary] = useState(false);
   const [loading, setLoading] = useState(true);
   const [withdrawing, setWithdrawing] = useState(false);
   const [loadError, setLoadError] = useState('');
@@ -35,7 +30,14 @@ export default function EventDetail() {
       return;
     }
     const unsubscribeEvent = onSnapshot(doc(db, COLLECTIONS.EVENTS, eventId), (snapshot) => {
-      if (snapshot.exists()) setEvent({ eventId: snapshot.id, ...snapshot.data() } as EventRecord);
+      const value = snapshot.exists() ? { eventId: snapshot.id, ...snapshot.data() } : undefined;
+      if (value && !isOrganizerEventRecord(value, eventId)) {
+        setEvent(null);
+        setLoadError('The application data is invalid or incomplete.');
+        setLoading(false);
+        return;
+      }
+      setEvent((value as EventRecord | undefined) ?? null);
       setLoadError('');
       setLoading(false);
     }, () => {
@@ -48,33 +50,19 @@ export default function EventDetail() {
   useEffect(() => {
     const versionId = event?.currentVersionId;
     if (!isFirebaseConfigured || !eventId || !versionId) {
-      setAssessment(null);
-      setAssessmentStatus(null);
-      setResources(null);
-      setLegacyAssessment(false);
-      setLegacyResources(false);
+      setSummary(null);
+      setLegacySummary(false);
       return;
     }
-    setAssessment(null);
-    setAssessmentStatus(null);
-    setResources(null);
+    setSummary(null);
     const eventReference = doc(db, COLLECTIONS.EVENTS, eventId);
-    const unsubscribeAssessment = onSnapshot(doc(eventReference, COLLECTIONS.ASSESSMENTS, versionId), (snapshot) => {
-      const record = snapshot.data() as AssessmentRecord | undefined;
-      setAssessmentStatus(record?.status ?? null);
-      setAssessment(isCurrentRiskAssessment(record) ? record : null);
-      setLegacyAssessment(record?.status === 'ready' && !isCurrentRiskAssessment(record));
-      setSupportingDataError('');
-    }, () => setSupportingDataError('Assessment or resource data could not be refreshed.'));
-    const unsubscribeResources = onSnapshot(doc(eventReference, COLLECTIONS.RESOURCES, versionId), (snapshot) => {
+    const unsubscribeSummary = onSnapshot(doc(eventReference, COLLECTIONS.ASSESSMENT_SUMMARIES, versionId), (snapshot) => {
       const record = snapshot.data();
-      setResources(isCurrentResourceRecommendation(record) ? record : null);
-      setLegacyResources(snapshot.exists() && !isCurrentResourceRecommendation(record));
-    }, () => setSupportingDataError('Assessment or resource data could not be refreshed.'));
-    return () => {
-      unsubscribeAssessment();
-      unsubscribeResources();
-    };
+      setSummary(isOrganizerAssessmentSummary(record, eventId, versionId) ? record : null);
+      setLegacySummary(snapshot.exists() && !isOrganizerAssessmentSummary(record, eventId, versionId));
+      setSupportingDataError('');
+    }, () => setSupportingDataError('Assessment summary could not be refreshed.'));
+    return unsubscribeSummary;
   }, [event?.currentVersionId, eventId]);
 
   if (loading) return <div className="py-16 text-center text-ink-500">Loading application…</div>;
@@ -124,13 +112,10 @@ export default function EventDetail() {
         </section>
 
         <section className="card">
-          <div className="card-header"><div><h2 className="section-title">Official category assessment</h2><p className="mt-1 text-xs text-ink-500">Deterministic result for the current submitted version</p></div></div>
+          <div className="card-header"><div><h2 className="section-title">Risk assessment summary</h2><p className="mt-1 text-xs text-ink-500">{summary?.status === 'official_ready' ? 'Official result available for authority decision' : 'Provisional until authority confirmation is complete'}</p></div></div>
           <div className="card-body">
-            {!assessment ? <p className="text-sm text-ink-500">{!event.currentVersionId ? 'No assessment has been created for this application.' : legacyAssessment ? 'This version has a legacy assessment and must be recomputed before the current result can be shown.' : assessmentStatus === 'failed' ? 'Assessment could not be completed. It can be retried by an authority.' : 'Assessment is processing.'}</p> : (
-              <div className="space-y-5">
-                <CategoryProfile assessment={assessment} density="compact" />
-                <AIAdvisory advisory={assessment.aiAdvisory} officialRiskLevel={assessment.officialRiskLevel} showCategories={false} />
-              </div>
+            {!summary ? <p className="text-sm text-ink-500">{!event.currentVersionId ? 'No assessment has been created for this application.' : legacySummary ? 'This version has a legacy assessment and must be recomputed before the current result can be shown.' : 'Assessment is processing.'}</p> : (
+              <OrganizerAssessmentSummaryView summary={summary} />
             )}
           </div>
         </section>
@@ -138,8 +123,8 @@ export default function EventDetail() {
         <section className="card lg:col-span-2">
           <div className="card-header"><div><h2 className="section-title">Recommended resources</h2><p className="mt-1 text-xs text-ink-500">Operational quantities linked to the current assessment</p></div></div>
           <div className="card-body">
-            {!resources ? <p className="text-sm text-ink-500">{legacyResources ? 'This version has a legacy resource record and must be recomputed before quantities can be shown.' : event.currentVersionId ? 'Resources appear after assessment.' : 'No resource recommendation has been created for this application.'}</p> : (
-              <ResourceRecommendationView recommendation={resources} />
+            {!summary ? <p className="text-sm text-ink-500">{event.currentVersionId ? 'Resources appear after assessment.' : 'No resource recommendation has been created for this application.'}</p> : (
+              <OrganizerResourceSummaryView summary={summary} />
             )}
           </div>
         </section>
@@ -150,4 +135,31 @@ export default function EventDetail() {
 
 function Row({ label, value }: { label: string; value: string }) {
   return <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3 py-3"><span className="text-ink-500">{label}</span><span className="break-words font-medium text-ink-800">{value}</span></div>;
+}
+
+function isOrganizerEventRecord(value: unknown, expectedEventId: string): value is EventRecord {
+  if (isCurrentEventRecord(value, expectedEventId)) return true;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const details = record.eventDetails;
+  return record.eventId === expectedEventId
+    && record.status === 'Draft'
+    && typeof record.organizerId === 'string' && Boolean(record.organizerId)
+    && Number.isSafeInteger(record.currentVersionNumber) && Number(record.currentVersionNumber) >= 0
+    && (record.currentVersionId === undefined || isSafeDocumentId(record.currentVersionId))
+    && (record.currentAssessmentId === undefined || isSafeDocumentId(record.currentAssessmentId))
+    && (record.currentResourceId === undefined || isSafeDocumentId(record.currentResourceId))
+    && Array.isArray(record.draftDocumentPaths) && record.draftDocumentPaths.every((path) => typeof path === 'string')
+    && Array.isArray(record.requiredAuthorities)
+    && Number.isFinite(record.createdAt) && Number.isFinite(record.updatedAt)
+    && Boolean(details) && typeof details === 'object' && !Array.isArray(details)
+    && ['name', 'type', 'venueName', 'environment', 'coverage', 'seating'].every((field) => typeof (details as Record<string, unknown>)[field] === 'string')
+    && ['venueCapacity', 'expectedAttendance', 'startDatetime', 'endDatetime'].every((field) => Number.isFinite((details as Record<string, unknown>)[field]))
+    && Number((details as Record<string, unknown>).venueCapacity) >= 0
+    && Number((details as Record<string, unknown>).expectedAttendance) >= 0
+    && Number((details as Record<string, unknown>).endDatetime) >= Number((details as Record<string, unknown>).startDatetime);
+}
+
+function isSafeDocumentId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 }

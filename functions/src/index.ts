@@ -19,6 +19,7 @@ import { initializeApp } from 'firebase-admin/app';
 initializeApp();
 
 export { onEventCreated, onEventUpdated } from './triggers/onEventCreated';
+export { refreshAssessmentContext } from './triggers/refreshAssessmentContext';
 export { recomputeRiskAndResources } from './triggers/computeRisk';
 
 // HTTP-callable functions (e.g. for manual authority re-trigger, seed runs)
@@ -26,6 +27,8 @@ export { manualRecompute } from './http/manualRecompute';
 export { submitEvent } from './http/submitEvent';
 export { withdrawEvent } from './http/withdrawEvent';
 export { makeAuthorityDecision } from './http/authorityDecision';
+export { submitAuthorityScoreReview, resolveAuthorityScoreConflict, retryOfficialFinalisation } from './http/authorityScoreReview';
+export { submitAdminManualAssessment, retryManualOfficialFinalisation } from './http/adminManualAssessment';
 export { overrideResources } from './http/overrideResources';
 export { verifyStage1Doc } from './http/verifyStage1Doc';
 export { markNotificationRead, listMyNotifications } from './http/notifications';

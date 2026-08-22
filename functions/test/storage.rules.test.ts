@@ -43,6 +43,7 @@ describe('Storage security rules', () => {
     await assertFails(uploadBytes(ref(storage, 'event_documents/event-1/v1/empty.pdf'), new Uint8Array(), { contentType: 'application/pdf' }));
     await assertFails(uploadBytes(ref(storage, 'event_documents/event-1/v1/vector.svg'), bytes, { contentType: 'image/svg+xml' }));
     await assertFails(uploadBytes(ref(storage, `event_documents/event-1/v1/${'x'.repeat(201)}.pdf`), bytes, { contentType: 'application/pdf' }));
+    await assertFails(deleteObject(ref(storage, 'event_documents/event-1/v1/plan.pdf')));
   });
 
   it('allows only the owner and assigned authorities to read submitted evidence', async () => {

@@ -86,6 +86,6 @@
 ## 不属于你的工作 | Out of Scope
 
 - 不替 M3 做最终 human decision。
-- 不把 complaints 直接加入 risk score。
+- 不把 unverified 或 assessment-ineligible incident reports 加入 risk score。
 - 不将 synthetic dataset 当作模型准确率证明。
 - 不在没有 authority validation 时声称 resource ratios 是官方标准。

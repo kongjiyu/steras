@@ -5,7 +5,7 @@
 
 ## Team Objective
 
-Deliver one demonstrable end-to-end prototype in which an organiser can submit an event, M2 can assess it, authorities can review it, incidents and complaints can be recorded, and authorised users can inspect auditable analytics.
+Deliver one demonstrable end-to-end prototype in which an organiser can submit an event, M2 can assess it, authorities can review it, incidents can be reported and handled, and authorised users can inspect auditable analytics.
 
 Each teammate owns a vertical result, not just a collection of UI screens. Their work includes the relevant types, Firebase Rules, backend behavior, UI states, tests, and module documentation.
 
@@ -16,7 +16,7 @@ Each teammate owns a vertical result, not just a collection of UI screens. Their
 | M1 | Auth, organiser dashboard, event form, venue selection, draft saving, uploads, submission, withdrawal, event list/detail, public calendar, public event detail, server validation, and base Rules are implemented | Full lifecycle UAT, revision-path verification, M3 notifications, M4 navigation, and broader browser coverage |
 | M2 | Eight-domain HIRARC assessment, readiness/compliance/confidence, evidence snapshots, historical retrieval, MiniMax advisory/fallback, resource ranges, demo data, authority risk/resource pages, tests, and external-service verification are implemented | Contract stabilisation, M3 verified-control handoff, real M4 outcomes, authority validation of resource assumptions, and final integration |
 | M3 | Authority dashboard, assigned review queue, event review, evidence download, scoped decisions, multi-authority aggregation, decision history, resource override, audit writes, and approved-event publication are implemented | Durable notifications, verified-control workflow, explicit readiness/compliance decision gates, standalone audit UX, and complete branch/UAT coverage |
-| M4 | Shared incident/history fields and synthetic demo incident/history data exist for M2 testing | No production routes, pages, complaint types, report/verification Functions, evidence workflow, Rules contract, or end-to-end tests currently exist |
+| M4 | Shared incident/history fields and synthetic demo incident/history data exist for M2 testing | No production routes, pages, report/triage/assignment/verification Functions, evidence workflow, Rules contract, or end-to-end tests currently exist |
 | M5 | Authority-scoped reports page, date filter, application/approval trends, risk distribution, average score, AI agreement/fallback, turnaround summary, CSV export, and unit tests are implemented | Remaining PRD filters/metrics, readiness/compliance/confidence views, resource/override/re-application charts, M4 metrics, schema metadata, bounded aggregation, and stronger export/privacy tests |
 | General | Role-protected routing, layouts, navigation, shared UI, dashboard preview, module ownership documents, emulator setup, and integration scripts exist | Final cross-module navigation, contract conflict management, end-to-end release walkthrough, and coordinated deployment |
 
@@ -35,7 +35,7 @@ Each teammate owns a vertical result, not just a collection of UI screens. Their
 | M1 teammate | Complete and verify the organiser application lifecycle | An organiser can register, create/save/upload/submit, view status, respond to a revision, withdraw when eligible, and view only sanitised approved events |
 | M2 owner / General integrator | Freeze and support the all-hazards assessment contract | Every submitted version produces an explainable HIRARC result, readiness/compliance state, advisory AI result, and prototype resource ranges without breaking other modules |
 | M3 teammate | Complete the human authority review and notification workflow | Assigned authorities can review, verify controls, decide with rationale, aggregate multi-agency decisions, publish approved events, and notify the organiser |
-| M4 teammate | Build the incident and complaint vertical slice | Organisers can report incidents/complaints; authorities can investigate and verify them; only eligible verified incidents become future M2 history |
+| M4 teammate | Build the incident-handling vertical slice | Organisers can report incidents; admins can decide whether action is required; assigned parties can investigate and resolve them; only eligible verified incidents become future M2 history |
 | M5 teammate | Complete auditable analytics and safe export | An authorised reviewer can filter required KPIs, distinguish synthetic/missing data, and export privacy-safe data with documented formulas |
 
 ## M1 — User and Event Management
@@ -59,7 +59,7 @@ Turn the existing organiser pages into a verified end-to-end application lifecyc
 2. Verify draft saving, version-scoped uploads, immutable submission, revision re-submission, and withdrawal.
 3. Complete loading, empty, error, permission, and mobile states on all M1-owned pages.
 4. Add an organiser notification presentation interface that can consume M3 notification records without implementing M3 business logic.
-5. Verify that `public_events` exposes no organiser PII, private evidence, risk assessment, incident, or complaint data.
+5. Verify that `public_events` exposes no organiser PII, private evidence, risk assessment, or incident data.
 6. Add browser/UAT coverage for the complete organiser golden path and forbidden cross-organiser access.
 
 ### Acceptance evidence
@@ -148,34 +148,30 @@ Finish the real human-decision workflow around the existing authority pages and 
 - Provide M1 with stable decision and notification display fields.
 - Provide M5 with decision stage, reviewer scope, timestamps, overrides, and publication outcome.
 
-## M4 — Incident Reporting and Complaint Handling
+## M4 — Incident Reporting and Handling
 
 ### Current progress
 
 - M2-compatible incident and historical-outcome fields exist in shared types.
 - The emulator demo seed provides synthetic venues, historical outcomes, and incidents for retrieval testing.
 - Authority-only read protection exists for the current synthetic historical evidence.
-- There are no production M4 pages or registered routes, no complaint collection contract in code, no incident submission/verification Functions, and no complete M4 Rules or evidence-upload workflow.
+- There are no production M4 pages or registered routes, no incident triage/assignment contract in code, no incident submission/verification Functions, and no complete M4 Rules or evidence-upload workflow.
 
 ### Current delivery goal
 
-Build the largest missing module as two small vertical slices: incident workflow first, complaint workflow second.
+Build the largest missing module as one complete vertical slice: reporting, admin triage, assignment, investigation, resolution, and authority verification.
 
-### Work package A — Incident MVP
+### Work package — Incident Handling MVP
 
 1. Add final incident types, collections, indexes, Firestore Rules, and Storage Rules.
 2. Implement organiser incident create/list/detail pages.
-3. Implement authority incident queue, verification, status changes, and assessment-eligibility control.
+3. Implement authority incident queue, action-required triage, assignment, verification, status changes, and assessment-eligibility control.
 4. Store event/version/venue linkage, occurred time, severity, evidence, outcome, reporter, and reviewer provenance.
 5. Expose only `status: verified` plus `assessmentEligible: true` records to future M2 retrieval.
 6. Add completed-event outcome fields for attendance exposure, medical presentations, transfers, resources used, interruptions, near misses, and after-action findings.
-
-### Work package B — Complaint MVP
-
-1. Implement organiser complaint create/list/detail pages.
-2. Implement authority assignment, investigation, public-safe updates, resolution, and private notes.
-3. Ensure complaints never alter M2 directly; a confirmed safety event must create or link a separate verified incident.
-4. Emit notification requests for material updates.
+7. Require a recorded justification when the admin closes a report with no further action.
+8. When action is required, let the assigned organiser or authority record response actions, investigation findings, evidence, and final outcome.
+9. Emit notification requests for assignment, material updates, and final resolution.
 
 ### Acceptance evidence
 
@@ -183,7 +179,7 @@ Build the largest missing module as two small vertical slices: incident workflow
 - Authorities can act only within their assigned scope.
 - Evidence is private and versioned.
 - Unverified, rejected, future, or ineligible incidents never enter M2 history.
-- Incident and complaint status histories are auditable.
+- Incident triage, assignment, investigation, and status histories are auditable.
 
 ### Handoff required
 
@@ -209,7 +205,7 @@ Turn the current analytics foundation into an auditable PRD-complete reporting p
 1. Document every metric formula, source fields, denominator, exclusions, unavailable rule, and schema-version behavior.
 2. Add submission, status, residual-risk, readiness, compliance, confidence, resource, override, decision, turnaround, and re-application views.
 3. Add AI-success/fallback coverage and AI-vs-deterministic agreement without implying that AI makes decisions.
-4. Add incident and complaint metrics behind a clear “data available” state until M4 delivers its contract.
+4. Add incident action-required, verification, severity/status, and resolution metrics behind a clear “data available” state until M4 delivers its contract.
 5. Exclude synthetic records from operational KPIs by default and provide an explicit demo-data filter.
 6. Add date, event type, venue, risk, application status, authority scope, and schema-version filters.
 7. Extend and test the existing CSV export for complete PII exclusion, schema metadata, active filters, and spreadsheet-formula neutralisation.
