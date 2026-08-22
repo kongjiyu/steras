@@ -7,9 +7,10 @@ import { assertFails, assertSucceeds, initializeTestEnvironment, RulesTestEnviro
 import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { App, deleteApp, initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
+import { getStorage } from 'firebase-admin/storage';
 import { submitEventForUser } from '../src/http/submitEvent';
 import { withdrawEventForUser } from '../src/http/withdrawEvent';
-import { __testOnlyMarkFailed, recomputeResourceForStoredAssessment, runRiskAndResourcePipeline } from '../src/triggers/onEventCreated';
+import { __testOnlyMarkFailed, __testOnlyPersistResourceCalculation, recomputeResourceForStoredAssessment, runRiskAndResourcePipeline } from '../src/triggers/onEventCreated';
 import { makeAuthorityDecisionForUser } from '../src/http/authorityDecision';
 import {
   submitScoreReviewForUser,
@@ -43,6 +44,7 @@ import {
   transitionCutoverAnchor,
 } from '../src/scripts/cutoverResourceV3';
 import { encodeFirestoreValue } from '../src/scripts/firestoreBackupCodec';
+import { __testOnlyRollbackHardeningAttempt } from '../src/scripts/cutoverM2Hardening';
 import {
   acquireResourceCutoverLock,
   createResourceCutoverQueueToken,
@@ -65,7 +67,7 @@ beforeAll(async () => {
       rules: readFileSync('../firestore.rules', 'utf8'),
     },
   });
-  adminApp = initializeApp({ projectId: 'steras-test' });
+  adminApp = initializeApp({ projectId: 'steras-test', storageBucket: 'steras-test.appspot.com' });
 });
 
 afterEach(() => environment.clearFirestore());
@@ -91,7 +93,24 @@ const validDetails = {
   organizerName: 'Organizer',
   organizerEmail: 'organizer@example.com',
   organizerPhone: '+60123456789',
+  riskProfile: {
+    internationalAttendees: false, alcoholServed: false, foodServed: true, freeDrinkingWater: true,
+    ticketedEntry: true, overnightAccommodation: false, pyrotechnics: false, temporaryStructures: false,
+    rivalryOrTensionExpected: false, crowdManagementPlan: true, trafficManagementPlan: true,
+    severeWeatherPlan: true, medicalPlan: true, evacuationPlanTested: true,
+    authorityCoordinationConfirmed: true, vulnerableAttendeesPercent: 10, standingAttendeesPercent: 20,
+    nearestHospitalTravelMinutes: 15,
+  },
 };
+
+async function uploadTestEvidence(eventId: string, versionId: string): Promise<string> {
+  const evidencePath = `event_documents/${eventId}/${versionId}/evidence.pdf`;
+  await getStorage(adminApp).bucket().file(evidencePath).save(Buffer.from('%PDF-1.4\ntest\n%%EOF\n'), {
+    resumable: false,
+    metadata: { contentType: 'application/pdf' },
+  });
+  return evidencePath;
+}
 
 async function seedProfilesAndEvent() {
   await environment.withSecurityRulesDisabled(async (context) => {
@@ -125,12 +144,13 @@ describe('Firestore security rules', () => {
   });
 
   it('submits exactly one immutable version through the server transaction', async () => {
+    const v1Evidence = await uploadTestEvidence('draft-1', 'v1');
     await environment.withSecurityRulesDisabled(async (context) => {
       const db = context.firestore();
       await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer' });
       await setDoc(doc(db, 'events/draft-1'), {
         organizerId: 'organizer-1', eventDetails: validDetails, status: 'Draft', currentVersionNumber: 0,
-        editableVersionId: 'v1', draftDocumentPaths: [], requiredAuthorities: [], createdAt: 1, updatedAt: 1,
+        editableVersionId: 'v1', draftDocumentPaths: [v1Evidence], requiredAuthorities: [], createdAt: 1, updatedAt: 1,
       });
     });
     await submitEventForUser('organizer-1', 'draft-1', 1_000);
@@ -145,10 +165,11 @@ describe('Firestore security rules', () => {
       () => undefined,
     );
     const versionOne = versionSnapshot.data();
+    const v2Evidence = await uploadTestEvidence('draft-1', 'v2');
     await environment.withSecurityRulesDisabled((context) => updateDoc(doc(context.firestore(), 'events/draft-1'), {
       status: 'AmendmentRequested',
       editableVersionId: 'v2',
-      draftDocumentPaths: [],
+      draftDocumentPaths: [v2Evidence],
       eventDetails: { ...validDetails, name: 'KL Cultural Festival - Revised' },
     }));
     await submitEventForUser('organizer-1', 'draft-1', 1_002);
@@ -156,6 +177,30 @@ describe('Firestore security rules', () => {
     const versionTwo = await assertSucceeds(getDoc(doc(db, 'events/draft-1/versions/v2')));
     if (JSON.stringify(versionOneAfter.data()) !== JSON.stringify(versionOne)) throw new Error('Version 1 changed during resubmission.');
     if (versionTwo.data()?.versionNumber !== 2 || versionTwo.data()?.eventDetails.name !== 'KL Cultural Festival - Revised') throw new Error('Version 2 was not created from the amendment.');
+  });
+
+  it('rejects missing Storage evidence and spoofed registry venue identity before version creation', async () => {
+    const evidencePath = await uploadTestEvidence('integrity-draft', 'v1');
+    const adminDb = getFirestore(adminApp);
+    await Promise.all([
+      adminDb.doc('users/organizer-1').set({ role: 'organizer' }),
+      adminDb.doc('venues/venue-1').set({
+        venueId: 'venue-1', active: true, name: 'Canonical Hall', address: 'Canonical Address',
+        capacity: 2_000, location: { lat: 3.139, lng: 101.687 },
+      }),
+      adminDb.doc('events/missing-evidence').set({
+        organizerId: 'organizer-1', eventDetails: validDetails, status: 'Draft', currentVersionNumber: 0,
+        editableVersionId: 'v1', draftDocumentPaths: ['event_documents/missing-evidence/v1/missing.pdf'], requiredAuthorities: [], createdAt: 1, updatedAt: 1,
+      }),
+      adminDb.doc('events/integrity-draft').set({
+        organizerId: 'organizer-1', eventDetails: { ...validDetails, venueId: 'venue-1', venueName: 'Spoofed Hall' },
+        status: 'Draft', currentVersionNumber: 0, editableVersionId: 'v1', draftDocumentPaths: [evidencePath],
+        requiredAuthorities: [], createdAt: 1, updatedAt: 1,
+      }),
+    ]);
+    await expect(submitEventForUser('organizer-1', 'missing-evidence', 1_000)).rejects.toMatchObject({ code: 'failed-precondition' });
+    await expect(submitEventForUser('organizer-1', 'integrity-draft', 1_000)).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect((await adminDb.collection('events/integrity-draft/versions').get()).empty).toBe(true);
   });
 
   it('allows only the owner to withdraw an eligible event', async () => {
@@ -177,12 +222,13 @@ describe('Firestore security rules', () => {
   });
 
   it('claims one assessment when duplicate triggers run concurrently', async () => {
+    const evidencePath = await uploadTestEvidence('draft-1', 'v1');
     await environment.withSecurityRulesDisabled(async (context) => {
       const db = context.firestore();
       await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer' });
       await setDoc(doc(db, 'events/draft-1'), {
         organizerId: 'organizer-1', eventDetails: validDetails, status: 'Draft', currentVersionNumber: 0,
-        editableVersionId: 'v1', draftDocumentPaths: [], requiredAuthorities: [], createdAt: 1, updatedAt: 1,
+        editableVersionId: 'v1', draftDocumentPaths: [evidencePath], requiredAuthorities: [], createdAt: 1, updatedAt: 1,
       });
     });
     await submitEventForUser('organizer-1', 'draft-1', 1_000);
@@ -197,7 +243,9 @@ describe('Firestore security rules', () => {
       ]);
       expect(results.map((result) => result.status).sort()).toEqual(['processed', 'skipped']);
       const adminDb = getFirestore(adminApp);
-      const assessment = await adminDb.doc('events/draft-1/assessments/v1').get();
+      const currentAssessmentId = (await adminDb.doc('events/draft-1').get()).data()?.currentAssessmentId;
+      expect(currentAssessmentId).toMatch(/^v1-assessment-/);
+      const assessment = await adminDb.doc(`events/draft-1/assessments/${currentAssessmentId}`).get();
       const organizerSummary = await adminDb.doc('events/draft-1/assessment_summaries/v1').get();
       const resources = await adminDb.collection('events/draft-1/resources').get();
       const audits = await adminDb.collection('events/draft-1/audit_logs').get();
@@ -209,10 +257,7 @@ describe('Firestore security rules', () => {
       expect(organizerSummary.data()).not.toHaveProperty('warnings');
       expect(organizerSummary.data()).not.toHaveProperty('manualReviewReason');
       expect(resources.docs).toHaveLength(0);
-      expect(audits.docs.map((item) => item.id).sort()).toEqual([
-        '1000-submitted-v1',
-        'v1-risk-score-computed-v3',
-      ]);
+      expect(audits.docs.map((item) => item.id).sort()).toEqual(['1000-submitted-v1', `${currentAssessmentId}-risk-score-computed`].sort());
       await Promise.all([
         adminDb.doc('users/pdrm-unassigned').set({ role: 'authority', authorityType: 'PDRM' }),
         adminDb.doc('events/draft-1').update({ requiredAuthorities: ['BOMBA'] }),
@@ -223,7 +268,7 @@ describe('Firestore security rules', () => {
       expect(unauthorizedRetry).toMatchObject({ status: 'skipped', reason: 'retry-not-authorized' });
       await Promise.all([
         adminDb.doc('events/draft-1').update({ requiredAuthorities: ['PDRM'] }),
-        adminDb.doc('events/draft-1/assessments/v1').set({
+        adminDb.doc(`events/draft-1/assessments/${currentAssessmentId}`).set({
           status: 'provisional_ready', inputHash: 'stale-hash', versionId: 'v1',
         }),
       ]);
@@ -249,7 +294,8 @@ describe('Firestore security rules', () => {
     expect(await runRiskAndResourcePipeline('missing-version', 1_000)).toMatchObject({
       status: 'processed', reason: 'version-not-found', versionId: 'v404',
     });
-    expect((await adminDb.doc('events/missing-version/assessments/v404').get()).data()).toMatchObject({
+    const missingAssessment = (await adminDb.collection('events/missing-version/assessments').get()).docs[0];
+    expect(missingAssessment.data()).toMatchObject({
       status: 'failed', error: 'Immutable event version v404 was not found.',
     });
     expect((await adminDb.doc('events/missing-version/assessment_summaries/v404').get()).data()).toMatchObject({
@@ -271,7 +317,8 @@ describe('Firestore security rules', () => {
     expect(await runRiskAndResourcePipeline('invalid-version', 1_100)).toMatchObject({
       status: 'processed', reason: 'invalid-version-contract', versionId: 'v1',
     });
-    expect((await adminDb.doc('events/invalid-version/assessments/v1').get()).data()).toMatchObject({
+    const invalidAssessment = (await adminDb.collection('events/invalid-version/assessments').get()).docs[0];
+    expect(invalidAssessment.data()).toMatchObject({
       status: 'failed', error: 'Immutable event version v1 failed runtime contract validation.',
     });
     expect((await adminDb.collection('events/invalid-version/resources').get()).empty).toBe(true);
@@ -288,12 +335,18 @@ describe('Firestore security rules', () => {
   it('UC-M2-07 rejects ambiguous venue names and excludes incidents that are not verified and eligible', async () => {
     const adminDb = getFirestore(adminApp);
     await Promise.all([
-      adminDb.doc('venues/venue-a').set({ name: 'Twin Hall', capacity: 100 }),
-      adminDb.doc('venues/venue-b').set({ name: 'Twin Hall', capacity: 200 }),
+      adminDb.doc('venues/venue-a').set({ active: true, name: 'Twin Hall', capacity: 100 }),
+      adminDb.doc('venues/venue-b').set({ active: true, name: 'Twin Hall', capacity: 200 }),
     ]);
-    expect(await fetchVenueContext(undefined, 'Twin Hall', 50, 10)).toMatchObject({ matched: false });
+    expect(await fetchVenueContext({
+      venueId: undefined, venueName: 'Twin Hall', venueAddress: 'KL', venueCapacity: 50,
+      venueLocation: { lat: 3.1, lng: 101.7 },
+    }, 10)).toMatchObject({ matched: false });
 
-    await adminDb.doc('venues/stable-venue').set({ name: 'Stable Hall', capacity: 500 });
+    await adminDb.doc('venues/stable-venue').set({
+      active: true, name: 'Stable Hall', address: validDetails.venueAddress,
+      capacity: validDetails.venueCapacity, location: validDetails.venueLocation,
+    });
     const event = {
       eventId: 'history-event', organizerId: 'organizer-1', status: 'Pending', currentVersionNumber: 1,
       draftDocumentPaths: [], requiredAuthorities: ['PDRM'], createdAt: 1, updatedAt: 1,
@@ -312,6 +365,9 @@ describe('Firestore security rules', () => {
     const history = await fetchHistoricalContext(event, 20);
     expect(history.incidentIds).toEqual(['eligible']);
     expect(history.total).toBe(1);
+    expect(await fetchHistoricalContext({
+      ...event, eventDetails: { ...event.eventDetails, venueAddress: 'Spoofed address' },
+    }, 21)).toMatchObject({ matched: false, incidentIds: [] });
   });
 
   it('UC-M2-18 exposes only the owner-safe summary and denies raw assessment/resource records', async () => {
@@ -861,6 +917,7 @@ describe('Firestore security rules', () => {
     }, 3_101);
 
     const adminDb = getFirestore(adminApp);
+    const v2Evidence = await uploadTestEvidence('review-1', 'v2');
     const revisedDetails = {
       ...validDetails,
       startDatetime: 20_000,
@@ -872,7 +929,7 @@ describe('Firestore security rules', () => {
     await adminDb.doc('events/review-1').update({
       status: 'AmendmentRequested',
       editableVersionId: 'v2',
-      draftDocumentPaths: [],
+      draftDocumentPaths: [v2Evidence],
       eventDetails: revisedDetails,
     });
     await submitEventForUser('organizer-1', 'review-1', 3_200);
@@ -924,6 +981,70 @@ describe('Firestore security rules', () => {
     expect((await adminDb.doc('events/review-1').get()).data()?.currentResourceId).toBeUndefined();
     expect((await adminDb.doc(`events/review-1/resources/${officialResourceId('v1')}`).get()).exists).toBe(true);
     expect((await adminDb.doc('events/review-1/assessment_summaries/v1').get()).data()).not.toHaveProperty('resourceQuantities');
+  });
+
+  it('publishes a new provisional assessment, resource, pointers, summary and audits atomically', async () => {
+    const adminDb = getFirestore(adminApp);
+    const eventReference = adminDb.doc('events/atomic-1');
+    const versionId = 'v1';
+    const assessmentId = 'v1-assessment-atomic';
+    const claimId = 'atomic-claim';
+    const official = officialAssessmentFixture(versionId);
+    const { officialResult: _official, authorityReviewState: _state, ...base } = official;
+    void _official;
+    void _state;
+    const assessment = {
+      ...base,
+      eventId: 'atomic-1', assessmentId, status: 'provisional_ready' as const,
+      authorityReviewRequired: true as const,
+    };
+    const version = {
+      versionId, eventId: 'atomic-1', versionNumber: 1, eventDetails: validDetails,
+      documentPaths: ['event_documents/atomic-1/v1/evidence.pdf'], submittedBy: 'organizer-1', submittedAt: 1,
+      inputHash: 'f'.repeat(64),
+    };
+    const calculation = computeResources({
+      eventId: 'atomic-1', versionId, assessmentId, eventDetails: validDetails,
+      assessmentResult: assessment.provisionalResult,
+    });
+    if (!calculation.ok) throw new Error('Expected a valid atomic publication fixture.');
+    await Promise.all([
+      eventReference.set({
+        eventId: 'atomic-1', organizerId: 'organizer-1', eventDetails: validDetails, status: 'Pending',
+        currentVersionId: versionId, currentVersionNumber: 1, draftDocumentPaths: version.documentPaths,
+        requiredAuthorities: ['PDRM'], createdAt: 1, updatedAt: 1,
+      }),
+      eventReference.collection('versions').doc(versionId).set(version),
+      eventReference.collection('assessments').doc(assessmentId).set({
+        assessmentId, eventId: 'atomic-1', versionId, status: 'processing', inputHash: assessment.inputHash,
+        claimId, claimedAt: 1, leaseExpiresAt: Number.MAX_SAFE_INTEGER, createdAt: 1,
+      }),
+      eventReference.collection('resources').doc('corrupt').set({ versionId, stage: 'provisional' }),
+    ]);
+    const failed = await __testOnlyPersistResourceCalculation(
+      eventReference, version as never, assessment as never, calculation, 5_000,
+      undefined, undefined, false, false, claimId,
+    );
+    expect(failed.status).toBe('failed');
+    expect((await eventReference.get()).data()?.currentAssessmentId).toBeUndefined();
+    expect((await eventReference.collection('assessment_summaries').doc(versionId).get()).exists).toBe(false);
+    expect((await eventReference.collection('audit_logs').get()).empty).toBe(true);
+    await eventReference.collection('resources').doc('corrupt').delete();
+    const published = await __testOnlyPersistResourceCalculation(
+      eventReference, version as never, assessment as never, calculation, 5_001,
+      undefined, undefined, false, false, claimId,
+    );
+    expect(published.status).toBe('created');
+    expect((await eventReference.get()).data()).toMatchObject({
+      currentAssessmentId: assessmentId,
+      currentResourceId: published.resourceId,
+    });
+    expect((await eventReference.collection('assessments').doc(assessmentId).get()).data()?.status).toBe('provisional_ready');
+    expect((await eventReference.collection('assessment_summaries').doc(versionId).get()).data()).toMatchObject({
+      assessmentId,
+      resourceRecommendation: { resourceId: published.resourceId },
+    });
+    expect((await eventReference.collection('audit_logs').get()).size).toBe(2);
   });
 
   it('recomputes resources idempotently from the stored provisional result without mutating the assessment', async () => {
@@ -1190,6 +1311,46 @@ describe('Firestore security rules', () => {
     expect((await adminDb.doc(RESOURCE_CUTOVER_LOCK_PATH).get()).exists).toBe(false);
   });
 
+  it('rolls back only the hardening generation and restores its original pointers and summary', async () => {
+    const adminDb = getFirestore(adminApp);
+    const eventPath = 'events/hardening-rollback';
+    await adminDb.doc(eventPath).set({
+      eventId: 'hardening-rollback', currentVersionId: 'v1', currentAssessmentId: 'new-assessment',
+      currentResourceId: 'new-resource', status: 'Pending', updatedAt: 2,
+    });
+    await Promise.all([
+      adminDb.doc(`${eventPath}/assessments/old-assessment`).set({ immutable: 'old-assessment' }),
+      adminDb.doc(`${eventPath}/resources/old-resource`).set({ immutable: 'old-resource' }),
+      adminDb.doc(`${eventPath}/assessments/new-assessment`).set({ assessmentId: 'new-assessment' }),
+      adminDb.doc(`${eventPath}/resources/new-resource`).set({ resourceId: 'new-resource', assessmentId: 'new-assessment' }),
+      adminDb.doc(`${eventPath}/audit_logs/new-assessment-risk-score-computed`).set({ action: 'risk_score_computed' }),
+      adminDb.doc(`${eventPath}/audit_logs/new-resource-recommended`).set({ action: 'resource_recommended' }),
+      adminDb.doc(`${eventPath}/assessment_summaries/v1`).set({ assessmentId: 'new-assessment' }),
+    ]);
+    const oldSummary = { assessmentId: 'old-assessment', marker: 'original-summary' };
+    const backup = {
+      manifestVersion: 1 as const, projectId: 'linkos-496505' as const, sessionId: 'hardening-session', createdAt: 1,
+      events: [{ eventId: 'hardening-rollback', path: eventPath, currentVersionId: 'v1', currentAssessmentId: 'old-assessment', currentResourceId: 'old-resource', versionInputHash: 'a'.repeat(64), summary: { path: `${eventPath}/assessment_summaries/v1`, data: encodeFirestoreValue(oldSummary) } }],
+      documents: [
+        { path: `${eventPath}/assessments/old-assessment`, data: encodeFirestoreValue({ immutable: 'old-assessment' }) },
+        { path: `${eventPath}/resources/old-resource`, data: encodeFirestoreValue({ immutable: 'old-resource' }) },
+      ],
+    };
+    await acquireResourceCutoverLock(adminDb, 'hardening-session', 'apply');
+    await __testOnlyRollbackHardeningAttempt(adminDb, backup, {
+      eventId: 'hardening-rollback', eventPath, versionId: 'v1', assessmentId: 'new-assessment',
+      originalAssessmentId: 'old-assessment', originalResourceId: 'old-resource', auditPaths: [], status: 'succeeded',
+    }, 'hardening-session');
+    const restored = (await adminDb.doc(eventPath).get()).data();
+    expect(restored).toMatchObject({ currentAssessmentId: 'old-assessment', currentResourceId: 'old-resource' });
+    expect((await adminDb.doc(`${eventPath}/assessment_summaries/v1`).get()).data()).toEqual(oldSummary);
+    expect((await adminDb.doc(`${eventPath}/assessments/new-assessment`).get()).exists).toBe(false);
+    expect((await adminDb.doc(`${eventPath}/resources/new-resource`).get()).exists).toBe(false);
+    expect((await adminDb.doc(`${eventPath}/assessments/old-assessment`).get()).exists).toBe(true);
+    expect((await adminDb.doc(`${eventPath}/resources/old-resource`).get()).exists).toBe(true);
+    await releaseResourceCutoverLock(adminDb, 'hardening-session');
+  });
+
   it('leases and fences stale pre-destructive owners without permitting post-destructive takeover', async () => {
     const adminDb = getFirestore(adminApp);
     const now = Date.now();
@@ -1286,18 +1447,16 @@ describe('Firestore security rules', () => {
     expect(summary?.resourceRecommendation).toBeUndefined();
   });
 
-  it('queues a generation-bound terminal token when a version disappears during cutover inventory', async () => {
+  it('fails closed without changing pointers when a version disappears during cutover inventory', async () => {
     await seedReviewableEvent(['PDRM']);
     const adminDb = getFirestore(adminApp);
     await acquireResourceCutoverLock(adminDb, 'inventory-owner', 'apply');
     await adminDb.doc('events/review-1/versions/v1').delete();
+    const pointerBefore = (await adminDb.doc('events/review-1').get()).data()?.currentResourceId;
     await runRiskAndResourcePipeline('review-1', 4_300);
     const queued = (await adminDb.doc(RESOURCE_CUTOVER_LOCK_PATH).get()).data()?.queuedEvents;
-    expect(queued).toHaveLength(1);
-    expect(queued[0]).toMatchObject({ eventId: 'review-1', currentVersionId: 'v1', currentAssessmentId: 'v1' });
-    await drainQueuedResourceEvents(adminDb, 'inventory-owner', []);
-    expect((await adminDb.doc('events/review-1').get()).data()?.currentResourceId).toBeUndefined();
-    expect((await adminDb.doc(RESOURCE_CUTOVER_LOCK_PATH).get()).data()?.queuedEvents).toEqual([]);
+    expect(queued).toEqual([]);
+    expect((await adminDb.doc('events/review-1').get()).data()?.currentResourceId).toBe(pointerBefore);
     await releaseResourceCutoverLock(adminDb, 'inventory-owner');
   });
 
@@ -1809,9 +1968,10 @@ async function seedManualReviewEvent(detailsPatch: Partial<typeof validDetails> 
     adminDb.doc('events/manual-1/versions/v1').set({ versionId: 'v1', eventId: 'manual-1', versionNumber: 1, eventDetails, documentPaths: [], submittedBy: 'organizer-1', submittedAt: 1, inputHash: 'manual-version-hash' }),
     adminDb.doc('events/manual-1/assessments/v1').set({
       status: 'manual_review_required', schemaVersion: ASSESSMENT_SCHEMA_VERSION, assessmentId: 'v1', eventId: 'manual-1', versionId: 'v1',
-      assessmentReadiness: 'provisional', complianceStatus: 'pass', contextSnapshot: benignContextSnapshot(), inputHash: 'manual-assessment-hash',
+      assessmentReadiness: 'provisional', complianceStatus: 'pass', contextSnapshot: benignContextSnapshot(), inputHash: 'a'.repeat(64),
       warnings: [], sourceTimestamps: {}, contextStatuses: {}, complianceChecks: [], dataConfidenceScore: 50, dataConfidenceLevel: 'medium', authorityReviewRequired: true,
-      evidence: [{ key: 'crowd', description: 'Verified attendance and venue evidence', sourceTimestamp: 1, source: 'test', status: 'available', quality: 'verified' }],
+      evidence: [{ key: 'crowd', description: 'Verified attendance and venue evidence', sourceTimestamp: 1, source: 'test', status: 'available', quality: 'verified', confidenceScore: 100, eligibility: 'eligible', syntheticStatus: 'none' }],
+      contextEvidence: [{ evidenceId: 'manual-document', evidenceKey: 'compliance', sourceKind: 'submitted_document', sourceLocator: 'event_documents/manual-1/v1/evidence.pdf', retrievedAt: 1, sourceVersion: 'storage-generation:1', eligibility: 'eligible', synthetic: false, visibility: 'authority_only' }],
       createdAt: 1, aiProposal: { status: 'timeout', model: 'test-model', promptVersion: 'test-prompt', responseSchemaVersion: 'test-schema', retryable: true, errorSummary: 'Timed out', cacheStatus: 'not-applicable', generatedAt: 1 },
       manualReviewReason: 'AI proposal timed out and no score fallback was created.',
     }),
@@ -1935,7 +2095,7 @@ function officialAssessmentFixture(versionId: string, eventDetails = validDetail
     assessmentReadiness: 'complete',
     complianceStatus: 'pass',
     contextSnapshot: benignContextSnapshot(),
-    inputHash: `assessment-${versionId}`,
+    inputHash: assessmentInputHashFixture(versionId),
     warnings: [],
     sourceTimestamps: {},
     contextStatuses: {},
@@ -1943,7 +2103,8 @@ function officialAssessmentFixture(versionId: string, eventDetails = validDetail
     dataConfidenceScore: 100,
     dataConfidenceLevel: 'high',
     authorityReviewRequired: true,
-    evidence: [{ key: 'crowd', description: 'Test attendance evidence', sourceTimestamp: 1, source: 'test', status: 'available', quality: 'verified' }],
+    evidence: [{ key: 'crowd', description: 'Test attendance evidence', sourceTimestamp: 1, source: 'test', status: 'available', quality: 'verified', confidenceScore: 100, eligibility: 'eligible', syntheticStatus: 'none' }],
+    contextEvidence: [{ evidenceId: `document-${versionId}`, evidenceKey: 'compliance', sourceKind: 'submitted_document', sourceLocator: `event_documents/review-1/${versionId}/evidence.pdf`, retrievedAt: 1, sourceVersion: 'storage-generation:1', eligibility: 'eligible', synthetic: false, visibility: 'authority_only' }],
     createdAt: 1,
     aiProposal: {
       status: 'success', proposalId: `proposal-${versionId}`, model: 'test-model', promptVersion: 'test-prompt',
@@ -1978,7 +2139,7 @@ function scoreReviewFixture(versionId: string, authorityType: 'PDRM' | 'BOMBA') 
   return {
     reviewId: `${versionId}-${authorityType}-review`, schemaVersion: SCORE_REVIEW_SCHEMA_VERSION,
     eventId: 'review-1', versionId, assessmentId: versionId, proposalId: `proposal-${versionId}`,
-    provisionalCalculatedAt: 1, assessmentInputHash: `assessment-${versionId}`, categorySchemaVersion: ACTIVE_CATEGORY_SCHEMA.version,
+    provisionalCalculatedAt: 1, assessmentInputHash: assessmentInputHashFixture(versionId), categorySchemaVersion: ACTIVE_CATEGORY_SCHEMA.version,
     authorityType, reviewerId: authorityType === 'PDRM' ? 'pdrm-1' : 'bomba-1',
     categories: ACTIVE_CATEGORY_SCHEMA.categories.map((category) => ({ categoryId: category.id, likelihood: 5 as const, severity: 5 as const, decision: 'confirmed' as const })),
     rationale: 'All application evidence and risk materials were reviewed.', idempotencyKey: `${versionId}_${authorityType}_review`, createdAt: 2,
@@ -1989,15 +2150,20 @@ function benignContextSnapshot() {
   return {
     weather: {
       data: { forecast: 'Clear', temperature: 25, humidity: 50, windSpeed: 1, precipitationProbability: 0, severeAlert: false },
+      measurementStatus: 'available',
       source: 'openweather', freshness: 'fresh', fetchedAt: 1, expiresAt: 2, forecastFor: 10_000,
     },
     calendar: {
       localDate: '2026-08-19', dayOfWeek: 'Wednesday', isWeekend: false, isHolidayOrAdjacent: false,
-      holidayDistanceDays: 10, sourceVersion: 'test', sourceTimestamp: 1,
+      holidayDistanceDays: 10, sourceVersion: 'test', sourceTimestamp: 1, coverageStatus: 'verified',
     },
     venue: { matched: true, venueId: 'venue-1', submittedCapacity: 1_000, registeredCapacity: 1_000, capacityDifference: 0, fetchedAt: 1 },
-    incidentHistory: { matched: true, venueId: 'venue-1', incidentIds: [], total: 0, bySeverity: { low: 0, medium: 0, high: 0 }, fetchedAt: 1 },
+    incidentHistory: { matched: true, venueId: 'venue-1', incidentIds: [], total: 0, bySeverity: { low: 0, medium: 0, high: 0 }, syntheticStatus: 'none', fetchedAt: 1 },
   };
+}
+
+function assessmentInputHashFixture(versionId: string): string {
+  return (versionId === 'v1' ? 'a' : 'b').repeat(64);
 }
 
 function officialResourceFixture(versionId: string, computedAt: number, eventDetails = validDetails) {
@@ -2011,6 +2177,7 @@ function officialResourceFixture(versionId: string, computedAt: number, eventDet
     assessmentReference: { stage: 'official', assessmentId: versionId, proposalId: `proposal-${versionId}`, finalizedAt: 2, finalizedBy: 'system' },
     resourceInputHash: calculation.resourceInputHash, formulaVersion: RESOURCE_FORMULA_VERSION, configVersion: RESOURCE_CONFIG_VERSION,
     sourceRegistryVersion: RESOURCE_SOURCE_REGISTRY_VERSION, items,
+    validationScope: 'official_risk_input_only',
     confidenceLevel: 'authority_validated', authorityReviewRequired: false, computedAt,
   };
 }
@@ -2032,6 +2199,7 @@ function provisionalResourceFixture(versionId: string, computedAt: number) {
     items,
     confidenceLevel: 'prototype',
     authorityReviewRequired: true,
+    validationScope: 'provisional_risk_input',
   };
 }
 

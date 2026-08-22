@@ -49,7 +49,9 @@ if (isFirebaseConfigured) {
   functionsInst = getFunctions(app, import.meta.env.VITE_FIREBASE_FUNCTIONS_REGION ?? 'asia-southeast1');
 
   // Connect to local emulators if enabled.
-  const useEmulator = import.meta.env.VITE_USE_FIREBASE_EMULATOR === 'true';
+  // Never compile emulator endpoints into a production bundle, even when a
+  // developer's local `.env` enables them for day-to-day testing.
+  const useEmulator = import.meta.env.DEV && import.meta.env.VITE_USE_FIREBASE_EMULATOR === 'true';
   if (useEmulator) {
     try {
       connectAuthEmulator(authInst, 'http://localhost:9099', { disableWarnings: true });

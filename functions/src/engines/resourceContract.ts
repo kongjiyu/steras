@@ -37,6 +37,7 @@ export function validateResourceRecommendation(value: unknown): ResourceContract
   if (!nonEmptyString(value.sourceRegistryVersion)) errors.push('source-registry-version');
   if (!Number.isFinite(value.computedAt)) errors.push('computed-at');
   if (typeof value.authorityReviewRequired !== 'boolean') errors.push('review-required');
+  if (value.validationScope !== (value.stage === 'official' ? 'official_risk_input_only' : 'provisional_risk_input')) errors.push('validation-scope');
   if (!['prototype', 'low', 'medium', 'authority_validated'].includes(String(value.confidenceLevel))) errors.push('confidence');
   validateAssessmentReference(value, errors);
   if (!isRecord(value.items)) errors.push('items');

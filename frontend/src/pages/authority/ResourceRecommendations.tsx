@@ -81,7 +81,7 @@ export default function ResourceRecommendations({ previewRecords, previewAgency 
             <select className="input" value={filter} onChange={(event) => setFilter(event.target.value as ResourcePortfolioFilter)}>
               <option value="all">All assigned ({records.length})</option>
               <option value="prototype">Prototype ({records.filter((item) => item.resources?.confidenceLevel === 'prototype').length})</option>
-              <option value="authority_validated">Authority validated ({summary.authorityValidated})</option>
+              <option value="authority_validated">Official risk input ({summary.authorityValidated})</option>
               <option value="missing">Awaiting plan ({summary.missing})</option>
             </select>
           </label>
@@ -141,7 +141,7 @@ function ResourceRecord({ record }: { record: M2PortfolioRecord }) {
         <div className="m2-score">
           {assessmentRiskLevel(assessment) ? <RiskMeter level={assessmentRiskLevel(assessment)!} size="compact" /> : <span className="text-xs font-semibold text-ink-500">Risk pending</span>}
           <span className={`badge ${resources?.confidenceLevel === 'authority_validated' ? 'badge-green' : resources ? 'badge-amber' : 'badge-gray'}`}>
-            {resources?.confidenceLevel === 'authority_validated' ? 'Validated' : resources ? 'Prototype' : 'Missing'}
+            {resources?.confidenceLevel === 'authority_validated' ? 'Official risk input' : resources ? 'Prototype' : 'Missing'}
           </span>
         </div>
       </div>

@@ -270,6 +270,7 @@ function storedInputs(): {
       resourceInputHash: calculation.resourceInputHash, formulaVersion: calculation.formulaVersion,
       configVersion: calculation.configVersion, sourceRegistryVersion: calculation.sourceRegistryVersion,
       items: calculation.items, confidenceLevel: 'prototype', authorityReviewRequired: true, computedAt: 1,
+      validationScope: 'provisional_risk_input',
     },
   };
 }

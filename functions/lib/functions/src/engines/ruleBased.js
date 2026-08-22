@@ -2,9 +2,9 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.computeCategoryBasedAssessment = computeCategoryBasedAssessment;
 exports.fetchHistoricalContext = fetchHistoricalContext;
-exports.fetchIncidentsForVenue = fetchIncidentsForVenue;
 exports.fetchVenueContext = fetchVenueContext;
 exports.buildHistoricalIncidentContext = buildHistoricalIncidentContext;
+exports.buildContextEvidenceProvenance = buildContextEvidenceProvenance;
 exports.riskLevelForMatrix = riskLevelForMatrix;
 const firebase_admin_1 = require("firebase-admin");
 const types_1 = require("../../../shared/types");
@@ -14,7 +14,7 @@ function computeCategoryBasedAssessment(event, context, now = Date.now()) {
     const evidence = buildEvidence(event, context, now);
     const complianceChecks = buildComplianceChecks(event, context, now);
     const complianceStatus = highestComplianceStatus(complianceChecks);
-    const assessmentReadiness = readinessFor(context);
+    const assessmentReadiness = readinessFor(event, context);
     const hazards = buildHazards(event, context);
     const domainSummaries = buildDomainSummaries(hazards, context);
     const dominant = hazards.reduce((highest, hazard) => (hazard.residualMatrixScore > highest.residualMatrixScore ? hazard : highest), hazards[0]);
@@ -71,10 +71,9 @@ function buildHazards(event, context) {
     const utilization = safeCapacity > 0 ? attendance / safeCapacity : 1;
     const durationHours = Math.max(1, (details.endDatetime - details.startDatetime) / 3_600_000);
     const isOutdoor = details.environment !== 'indoor';
-    const verifiedControls = new Set(profile.verifiedControlIds ?? []);
     const control = (controlId, declared, affects, verifiedByRegistry = false) => ({
         controlId,
-        status: verifiedByRegistry || verifiedControls.has(controlId)
+        status: verifiedByRegistry
             ? 'verified'
             : declared === true
                 ? 'declared'
@@ -96,9 +95,7 @@ function buildHazards(event, context) {
         ], ['venue', 'compliance'], context.venue.matched ? [] : ['verified venue safety record'], ['my.fire-services-act.1988', 'my.ubbl.state-specific']),
         hazard('venue.temporary-structure', 'Temporary structure and structural exposure', 'venue_fire', profile.temporaryStructures ? 4 : 1, profile.temporaryStructures && attendance > 5_000 ? 5 : profile.temporaryStructures ? 3 : 1, [], ['venue'], [], ['my.dosh.hirarc.2008']),
         hazard('weather.severe', 'Thunderstorm, wind, heavy rain and flood exposure', 'weather_environment', weatherLikelihood(context.weather), isOutdoor ? 5 : details.environment === 'mixed' ? 4 : 2, [control('severe-weather-plan', profile.severeWeatherPlan, 'severity')], ['weather', 'venue'], weatherMissing(context.weather), ['my.met.warning-criteria', 'who.mass-gathering.all-hazards.2023']),
-        hazard('weather.heat', 'Heat, humidity and exposure duration', 'weather_environment', context.weather.data.temperature >= 37 ? 5
-            : context.weather.data.temperature >= 35 ? 4
-                : context.weather.data.temperature >= 32 && context.weather.data.humidity >= 70 ? 3 : 2, isOutdoor && durationHours >= 6 ? 5 : isOutdoor ? 4 : 2, [
+        hazard('weather.heat', 'Heat, humidity and exposure duration', 'weather_environment', heatLikelihood(context.weather), isOutdoor && durationHours >= 6 ? 5 : isOutdoor ? 4 : 2, [
             control('free-drinking-water', profile.freeDrinkingWater, 'severity'),
             control('severe-weather-plan', profile.severeWeatherPlan, 'severity'),
         ], ['weather', 'crowd'], weatherMissing(context.weather), ['my.met.warning-criteria', 'who.mass-gathering.all-hazards.2023']),
@@ -113,7 +110,8 @@ function buildHazards(event, context) {
             control('verified-emergency-access', context.venue.emergencyAccessVerified, 'severity', context.venue.emergencyAccessVerified === true),
         ], ['medical', 'history'], [], ['who.mass-gathering.all-hazards.2023']),
         hazard('security.behaviour', 'Security, behaviour, rivalry and deliberate threats', 'security_cbrn', profile.rivalryOrTensionExpected ? 5 : profile.alcoholServed || details.type === 'concert' ? 4 : 2, attendance > 10_000 ? 5 : attendance > 1_000 ? 4 : 3, [control('authority-coordination', profile.authorityCoordinationConfirmed, 'likelihood')], ['security', 'crowd'], [], ['who.mass-gathering.all-hazards.2023']),
-        hazard('transport.emergency-access', 'Transport, pedestrian separation and emergency access', 'transport_accessibility', context.calendar.isHolidayOrAdjacent || context.calendar.isWeekend ? 4 : attendance > 5_000 ? 4 : 3, attendance > 10_000 ? 5 : attendance > 1_000 ? 4 : 3, [
+        hazard('transport.emergency-access', 'Transport, pedestrian separation and emergency access', 'transport_accessibility', (context.calendar.coverageStatus !== 'unsupported_year' && context.calendar.isHolidayOrAdjacent)
+            || context.calendar.isWeekend ? 4 : attendance > 5_000 ? 4 : 3, attendance > 10_000 ? 5 : attendance > 1_000 ? 4 : 3, [
             control('traffic-management-plan', profile.trafficManagementPlan, 'likelihood'),
             control('verified-emergency-access', context.venue.emergencyAccessVerified, 'severity', context.venue.emergencyAccessVerified === true),
         ], ['transport', 'holiday', 'venue'], [], ['who.mass-gathering.all-hazards.2023', 'my.ubbl.state-specific']),
@@ -224,12 +222,15 @@ function buildEvidence(event, context, now) {
     return [
         {
             key: 'weather',
-            description: context.weather.data.forecast || 'Weather unavailable',
+            description: context.weather.data?.forecast || 'Weather measurements unavailable',
             sourceTimestamp: context.weather.fetchedAt,
             source: context.weather.source,
             status: context.weather.freshness,
-            quality: weatherQuality(context.weather),
-            confidenceScore: weatherConfidence(context.weather),
+            quality: context.weather.freshness === 'not_assessable_yet' ? 'declared' : weatherQuality(context.weather),
+            confidenceScore: context.weather.freshness === 'not_assessable_yet' ? 25 : weatherConfidence(context.weather),
+            eligibility: context.weather.data || context.weather.freshness === 'not_assessable_yet'
+                ? 'eligible' : 'ineligible',
+            syntheticStatus: 'none',
         },
         {
             key: 'crowd',
@@ -239,6 +240,8 @@ function buildEvidence(event, context, now) {
             status: context.venue.matched ? 'matched' : 'submitted-only',
             quality: context.venue.matched ? 'verified' : 'declared',
             confidenceScore: context.venue.matched ? 100 : 60,
+            eligibility: 'eligible',
+            syntheticStatus: 'none',
         },
         {
             key: 'venue',
@@ -248,6 +251,8 @@ function buildEvidence(event, context, now) {
             status: context.venue.matched ? 'matched' : 'unmatched',
             quality: context.venue.matched ? 'verified' : 'declared',
             confidenceScore: context.venue.matched ? 100 : 60,
+            eligibility: context.venue.matched ? 'eligible' : 'ineligible',
+            syntheticStatus: 'none',
         },
         {
             key: 'history',
@@ -259,19 +264,27 @@ function buildEvidence(event, context, now) {
             status: history.syntheticEvidence ? 'synthetic-demo-evidence' : history.matched ? 'matched' : 'unmatched',
             quality: history.syntheticEvidence ? 'stale' : history.matched ? 'verified' : 'missing',
             confidenceScore: history.syntheticEvidence ? 25 : history.matched ? 85 : 0,
+            eligibility: history.matched ? 'eligible' : 'missing',
+            syntheticStatus: history.syntheticStatus ?? 'none',
         },
         {
             key: 'holiday',
-            description: context.calendar.isHolidayOrAdjacent
-                ? `${context.calendar.holidayName ?? 'Public holiday'} context on ${context.calendar.dayOfWeek}`
-                : context.calendar.isWeekend
-                    ? `Weekend event on ${context.calendar.dayOfWeek}`
-                    : `Regular weekday on ${context.calendar.dayOfWeek}`,
+            description: context.calendar.coverageStatus === 'unsupported_year'
+                ? `Public-holiday dataset does not cover ${context.calendar.localDate.slice(0, 4)}`
+                : context.calendar.isHolidayOrAdjacent
+                    ? `${context.calendar.holidayName ?? 'Public holiday'} context on ${context.calendar.dayOfWeek}`
+                    : context.calendar.isWeekend
+                        ? `Weekend event on ${context.calendar.dayOfWeek}`
+                        : `Regular weekday on ${context.calendar.dayOfWeek}`,
             sourceTimestamp: context.calendar.sourceTimestamp,
             source: context.calendar.sourceVersion,
-            status: context.calendar.isHolidayOrAdjacent ? 'holiday-or-adjacent' : context.calendar.isWeekend ? 'weekend' : 'weekday',
-            quality: 'verified',
-            confidenceScore: 85,
+            status: context.calendar.coverageStatus === 'unsupported_year'
+                ? 'unsupported-year'
+                : context.calendar.isHolidayOrAdjacent ? 'holiday-or-adjacent' : context.calendar.isWeekend ? 'weekend' : 'weekday',
+            quality: context.calendar.coverageStatus === 'unsupported_year' ? 'missing' : 'verified',
+            confidenceScore: context.calendar.coverageStatus === 'unsupported_year' ? 0 : 85,
+            eligibility: context.calendar.coverageStatus === 'unsupported_year' ? 'missing' : 'eligible',
+            syntheticStatus: 'none',
         },
         ...[
             ['public_health', 'Public-health exposure profile', 'international attendees, vulnerable attendees, and overnight accommodation'],
@@ -288,12 +301,14 @@ function buildEvidence(event, context, now) {
             status: 'submitted',
             quality: 'declared',
             confidenceScore: 60,
+            eligibility: profileEvidenceComplete(event, context) ? 'eligible' : 'missing',
+            syntheticStatus: 'none',
         })),
     ].map((item) => ({ ...item, sourceTimestamp: item.sourceTimestamp || now }));
 }
 async function fetchHistoricalContext(event, now = Date.now()) {
     const db = (0, firebase_admin_1.firestore)();
-    const venueId = await resolveVenueId(event.eventDetails.venueId, event.eventDetails.venueName);
+    const venueId = await resolveCanonicalVenueId(event.eventDetails);
     if (!venueId)
         return emptyHistory(now);
     const [incidentsSnapshot, historicalSnapshot] = await Promise.all([
@@ -322,7 +337,13 @@ async function fetchHistoricalContext(event, now = Date.now()) {
     const totalAttendeeHours = historicalEvents.reduce((sum, item) => sum + item.attendeeHours, 0);
     const patientPresentations = historicalEvents.reduce((sum, item) => sum + item.patientPresentations, 0);
     const hospitalTransfers = historicalEvents.reduce((sum, item) => sum + item.hospitalTransfers, 0);
-    const syntheticEvidence = historicalEvents.length > 0 && historicalEvents.every((item) => item.synthetic);
+    const sourceSyntheticFlags = [
+        ...incidents.map((item) => item.synthetic === true),
+        ...historicalEvents.map((item) => item.synthetic),
+    ];
+    const syntheticStatus = sourceSyntheticFlags.length === 0 || sourceSyntheticFlags.every((item) => !item)
+        ? 'none'
+        : sourceSyntheticFlags.every(Boolean) ? 'all' : 'partial';
     return {
         matched: true,
         venueId,
@@ -338,7 +359,13 @@ async function fetchHistoricalContext(event, now = Date.now()) {
         incidentRatePerThousandAttendeeHours: rate(incidents.length, totalAttendeeHours),
         comparableEvents: historicalEvents.slice(0, 5),
         lookbackStart,
-        syntheticEvidence,
+        syntheticEvidence: syntheticStatus === 'all',
+        syntheticStatus,
+        incidentEvidence: incidents.map((incident) => ({
+            incidentId: incident.incidentId,
+            synthetic: incident.synthetic === true,
+            ...(incident.datasetVersion ? { datasetVersion: incident.datasetVersion } : {}),
+        })),
         fetchedAt: now,
     };
 }
@@ -369,43 +396,25 @@ function comparableEvent(historical, event, resolvedVenueId) {
         synthetic: historical.synthetic,
     };
 }
-async function fetchIncidentsForVenue(venueId, venueName, now = Date.now()) {
-    const resolvedVenueId = await resolveVenueId(venueId, venueName);
-    if (!resolvedVenueId)
-        return { incidents: [], matched: false, fetchedAt: now };
-    const snapshot = await (0, firebase_admin_1.firestore)().collection(types_1.COLLECTIONS.INCIDENTS).where('venueId', '==', resolvedVenueId).get();
-    return {
-        incidents: snapshot.docs.map((document) => ({ incidentId: document.id, ...document.data() })),
-        venueId: resolvedVenueId,
-        matched: true,
-        fetchedAt: now,
-    };
-}
-async function fetchVenueContext(venueId, venueName, submittedCapacity, now = Date.now()) {
+async function fetchVenueContext(details, now = Date.now()) {
     const db = (0, firebase_admin_1.firestore)();
     let venueDocument;
-    if (venueId) {
-        const snapshot = await db.collection(types_1.COLLECTIONS.VENUES).doc(venueId).get();
-        if (snapshot.exists)
+    if (details.venueId) {
+        const snapshot = await db.collection(types_1.COLLECTIONS.VENUES).doc(details.venueId).get();
+        if (snapshot.exists && snapshot.data()?.active === true && snapshot.data()?.deactivatedAt === undefined)
             venueDocument = snapshot;
     }
-    if (!venueDocument && venueName.trim()) {
-        const exact = await db.collection(types_1.COLLECTIONS.VENUES).where('name', '==', venueName.trim()).limit(2).get();
-        if (exact.docs.length > 1)
-            return { matched: false, submittedCapacity, fetchedAt: now };
-        venueDocument = exact.docs[0];
-        if (!venueDocument) {
-            const all = await db.collection(types_1.COLLECTIONS.VENUES).get();
-            const matches = all.docs.filter((document) => String(document.data().name).toLowerCase() === venueName.trim().toLowerCase());
-            if (matches.length > 1)
-                return { matched: false, submittedCapacity, fetchedAt: now };
-            venueDocument = matches[0];
-        }
-    }
-    if (!venueDocument?.exists)
+    const submittedCapacity = details.venueCapacity;
+    if (!venueDocument?.exists || venueDocument.data()?.active !== true)
         return { matched: false, submittedCapacity, fetchedAt: now };
     const venue = { venueId: venueDocument.id, ...venueDocument.data() };
     const registeredCapacity = venue.verifiedSafeCapacity ?? venue.capacity;
+    if (normalizeVenueName(venue.name) !== normalizeVenueName(details.venueName)
+        || normalizeVenueName(venue.address) !== normalizeVenueName(details.venueAddress)
+        || registeredCapacity !== submittedCapacity
+        || !sameLocation(venue.location, details.venueLocation)) {
+        return { matched: false, submittedCapacity, fetchedAt: now };
+    }
     return {
         matched: true,
         venueId: venue.venueId,
@@ -422,6 +431,26 @@ async function fetchVenueContext(venueId, venueName, submittedCapacity, now = Da
         fetchedAt: now,
     };
 }
+async function resolveCanonicalVenueId(details) {
+    if (!details.venueId)
+        return undefined;
+    const snapshot = await (0, firebase_admin_1.firestore)().collection(types_1.COLLECTIONS.VENUES).doc(details.venueId).get();
+    if (!snapshot.exists || snapshot.data()?.active !== true || snapshot.data()?.deactivatedAt !== undefined)
+        return undefined;
+    const venue = { venueId: snapshot.id, ...snapshot.data() };
+    return normalizeVenueName(venue.name) === normalizeVenueName(details.venueName)
+        && normalizeVenueName(venue.address) === normalizeVenueName(details.venueAddress)
+        && (venue.verifiedSafeCapacity ?? venue.capacity) === details.venueCapacity
+        && sameLocation(venue.location, details.venueLocation)
+        ? details.venueId : undefined;
+}
+function sameLocation(left, right) {
+    return Boolean(left && right
+        && Number.isFinite(left.lat) && Number.isFinite(left.lng)
+        && Number.isFinite(right.lat) && Number.isFinite(right.lng)
+        && Math.abs(left.lat - right.lat) <= 0.00001
+        && Math.abs(left.lng - right.lng) <= 0.00001);
+}
 function buildHistoricalIncidentContext(snapshot) {
     return {
         matched: snapshot.matched,
@@ -429,26 +458,19 @@ function buildHistoricalIncidentContext(snapshot) {
         incidentIds: snapshot.incidents.map((incident) => incident.incidentId),
         total: snapshot.incidents.length,
         bySeverity: countIncidentSeverity(snapshot.incidents),
+        syntheticStatus: snapshot.incidents.length > 0 && snapshot.incidents.every((incident) => incident.synthetic === true)
+            ? 'all'
+            : snapshot.incidents.some((incident) => incident.synthetic === true) ? 'partial' : 'none',
+        incidentEvidence: snapshot.incidents.map((incident) => ({ incidentId: incident.incidentId, synthetic: incident.synthetic === true })),
         fetchedAt: snapshot.fetchedAt,
     };
 }
-function resolveVenueIdFromName(name) {
-    return (0, firebase_admin_1.firestore)().collection(types_1.COLLECTIONS.VENUES).get().then((snapshot) => {
-        const matches = snapshot.docs.filter((document) => String(document.data().name).toLowerCase() === name.trim().toLowerCase());
-        return matches.length === 1 ? matches[0].id : undefined;
-    });
-}
-async function resolveVenueId(venueId, venueName) {
-    if (venueId)
-        return venueId;
-    if (!venueName?.trim())
-        return undefined;
-    return resolveVenueIdFromName(venueName);
-}
-function readinessFor(context) {
-    if (context.weather.freshness === 'not_assessable_yet')
+function readinessFor(event, context) {
+    if (!context.venue.matched || !profileEvidenceComplete(event, context) || (event.draftDocumentPaths?.length ?? 0) < 1)
+        return 'insufficient_data';
+    if (context.weather.freshness === 'not_assessable_yet' || context.calendar.coverageStatus === 'unsupported_year')
         return 'provisional';
-    if (['fallback', 'unavailable'].includes(context.weather.freshness) || !context.venue.matched)
+    if (['fallback', 'unavailable'].includes(context.weather.freshness))
         return 'insufficient_data';
     return 'complete';
 }
@@ -462,6 +484,8 @@ function highestComplianceStatus(checks) {
 function weatherLikelihood(weather) {
     if (weather.freshness === 'fallback' || weather.freshness === 'unavailable' || weather.freshness === 'not_assessable_yet')
         return 3;
+    if (!weather.data)
+        return 3;
     const forecast = weather.data.forecast.toLowerCase();
     if (weather.data.severeAlert || forecast.includes('thunder'))
         return 5;
@@ -470,6 +494,85 @@ function weatherLikelihood(weather) {
     if (forecast.includes('rain') || forecast.includes('shower'))
         return 3;
     return 2;
+}
+function heatLikelihood(weather) {
+    if (!weather.data)
+        return 3;
+    return weather.data.temperature >= 37 ? 5
+        : weather.data.temperature >= 35 ? 4
+            : weather.data.temperature >= 32 && weather.data.humidity >= 70 ? 3 : 2;
+}
+const REQUIRED_PROFILE_BOOLEAN_FIELDS = [
+    'internationalAttendees', 'alcoholServed', 'foodServed', 'freeDrinkingWater', 'ticketedEntry',
+    'overnightAccommodation', 'pyrotechnics', 'temporaryStructures', 'rivalryOrTensionExpected',
+    'crowdManagementPlan', 'trafficManagementPlan', 'severeWeatherPlan', 'medicalPlan',
+    'evacuationPlanTested', 'authorityCoordinationConfirmed',
+];
+function profileEvidenceComplete(event, context) {
+    const profile = event.eventDetails.riskProfile;
+    return Boolean(profile
+        && REQUIRED_PROFILE_BOOLEAN_FIELDS.every((key) => typeof profile[key] === 'boolean')
+        && Number.isFinite(profile.vulnerableAttendeesPercent)
+        && Number(profile.vulnerableAttendeesPercent) >= 0 && Number(profile.vulnerableAttendeesPercent) <= 100
+        && Number.isFinite(profile.standingAttendeesPercent)
+        && Number(profile.standingAttendeesPercent) >= 0 && Number(profile.standingAttendeesPercent) <= 100
+        && (Number.isFinite(profile.nearestHospitalTravelMinutes)
+            || Number.isFinite(context.venue.nearestHospitalTravelMinutes)));
+}
+function normalizeVenueName(value) {
+    return typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').toLowerCase() : '';
+}
+function buildContextEvidenceProvenance(event, context, now = Date.now(), submittedEvidence) {
+    const weatherEligible = Boolean(context.weather.data);
+    const holidayEligible = context.calendar.coverageStatus !== 'unsupported_year';
+    const historyItems = context.incidentHistory.comparableEvents ?? [];
+    const historySyntheticCount = historyItems.filter((item) => item.synthetic).length;
+    const submittedAt = event.submittedAt ?? now;
+    const profileComplete = profileEvidenceComplete(event, context);
+    const base = [
+        provenance('context.event.crowd', 'crowd', 'submitted_declaration', 'immutable-event-version:eventDetails.expectedAttendance', submittedAt, 'immutable-event-version', true, false),
+        provenance('context.event.risk-profile', 'compliance', 'submitted_declaration', 'immutable-event-version:eventDetails.riskProfile', submittedAt, 'immutable-event-version', profileComplete, false, profileComplete ? undefined : 'all_hazards_declaration_incomplete'),
+        ...['public_health', 'sanitation', 'medical', 'security', 'transport'].map((evidenceKey) => provenance(`context.event.risk-profile.${evidenceKey}`, evidenceKey, 'submitted_declaration', `immutable-event-version:eventDetails.riskProfile#${evidenceKey}`, submittedAt, 'immutable-event-version', profileComplete, false, profileComplete ? undefined : 'all_hazards_declaration_incomplete')),
+        provenance('context.weather', 'weather', 'external_api', context.weather.source, context.weather.fetchedAt, context.weather.source === 'met-malaysia' ? 'met-malaysia-current' : context.weather.source === 'fallback' ? types_1.WEATHER_POLICY_VERSION : 'openweather-v3', weatherEligible, false, weatherEligible ? undefined : context.weather.unavailableReason ?? 'weather_measurements_unavailable'),
+        provenance('context.calendar', 'holiday', 'official_dataset', context.calendar.sourceVersion, context.calendar.sourceTimestamp, context.calendar.sourceVersion, holidayEligible, false, holidayEligible ? undefined : 'holiday_dataset_year_unsupported'),
+        provenance('context.venue', 'venue', 'official_registry', context.venue.venueId ?? 'custom-venue', context.venue.fetchedAt, types_1.VENUE_BINDING_VERSION, context.venue.matched, false, context.venue.matched ? undefined : 'canonical_venue_unmatched'),
+        provenance('context.history.aggregate', 'history', 'derived', context.incidentHistory.venueId ?? 'unmatched', context.incidentHistory.fetchedAt, types_1.CONTEXT_EVIDENCE_SCHEMA_VERSION, context.incidentHistory.matched, context.incidentHistory.syntheticStatus !== 'none' || historySyntheticCount > 0, context.incidentHistory.matched ? undefined : 'canonical_venue_history_unavailable'),
+    ];
+    const documentEvidence = submittedEvidence ?? event.draftDocumentPaths.map((path) => ({
+        path, status: 'eligible', retrievedAt: submittedAt, sourceVersion: 'immutable-event-version',
+    }));
+    for (const item of documentEvidence) {
+        base.push(provenance(`document.${createStableEvidenceId(item.path)}`, 'compliance', 'submitted_document', item.path, item.retrievedAt, item.sourceVersion, item.status === 'eligible', false, item.reason));
+    }
+    for (const item of historyItems) {
+        base.push(provenance(`history.${item.historicalEventId}`, 'history', 'official_registry', item.historicalEventId, context.incidentHistory.fetchedAt, 'historical-event-outcome-v1', true, item.synthetic));
+    }
+    const incidentEvidence = context.incidentHistory.incidentEvidence
+        ?? context.incidentHistory.incidentIds.map((incidentId) => ({ incidentId, synthetic: false }));
+    for (const incident of incidentEvidence) {
+        base.push(provenance(`incident.${incident.incidentId}`, 'history', 'official_registry', incident.incidentId, context.incidentHistory.fetchedAt, incident.datasetVersion ?? 'closed-verified-incident-v1', true, incident.synthetic));
+    }
+    return base;
+}
+function provenance(evidenceId, evidenceKey, sourceKind, sourceLocator, retrievedAt, sourceVersion, eligible, synthetic, eligibilityReason) {
+    return {
+        evidenceId,
+        evidenceKey,
+        sourceKind,
+        sourceLocator,
+        retrievedAt,
+        sourceVersion,
+        eligibility: eligible ? 'eligible' : ['unavailable', 'unsupported', 'missing'].some((marker) => eligibilityReason?.includes(marker)) ? 'missing' : 'ineligible',
+        ...(eligibilityReason ? { eligibilityReason } : {}),
+        synthetic,
+        visibility: 'authority_only',
+    };
+}
+function createStableEvidenceId(value) {
+    let hash = 2166136261;
+    for (const character of value)
+        hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
+    return (hash >>> 0).toString(16).padStart(8, '0');
 }
 function weatherMissing(weather) {
     return ['fallback', 'unavailable', 'not_assessable_yet'].includes(weather.freshness)
@@ -500,7 +603,9 @@ function weatherQuality(weather) {
 function domainConfidence(domain, context) {
     const venue = context.venue.matched ? 100 : 60;
     const weather = weatherConfidence(context.weather);
-    const history = context.incidentHistory.syntheticEvidence ? 25 : context.incidentHistory.matched ? 85 : 0;
+    const history = context.incidentHistory.syntheticStatus === 'all' ? 25
+        : context.incidentHistory.syntheticStatus === 'partial' ? 55
+            : context.incidentHistory.matched ? 85 : 0;
     const declared = 60;
     const calendar = 85;
     const values = {
@@ -539,6 +644,7 @@ function emptyHistory(now) {
         totalAttendance: 0,
         totalAttendeeHours: 0,
         comparableEvents: [],
+        syntheticStatus: 'none',
         fetchedAt: now,
     };
 }

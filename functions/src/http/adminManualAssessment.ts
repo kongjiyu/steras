@@ -33,7 +33,7 @@ import {
 } from '../engines/manualFinalisation';
 import { computeResources, matchesDeterministicResourceItems, stableStringify, validateManualOfficialAssessmentResult } from '../engines/resourceCalculator';
 import { validateResourceRecommendation, validateResourceRevisionChain } from '../engines/resourceContract';
-import { resourceDocumentId } from '../triggers/onEventCreated';
+import { isCurrentManualReviewAssessment, resourceDocumentId } from '../triggers/onEventCreated';
 
 interface SubmitManualRequest extends Partial<ManualAssessmentInput> { eventId?: string }
 interface RetryManualRequest { eventId?: string }
@@ -70,6 +70,12 @@ export async function submitAdminManualAssessmentForUser(uid: string, data: Subm
   };
   const db = firestore();
   const eventRef = db.collection(COLLECTIONS.EVENTS).doc(eventId);
+  const preflightEvent = (await eventRef.get()).data() as EventRecord | undefined;
+  const preflightAssessmentId = preflightEvent?.currentAssessmentId;
+  const preflightManualIds = preflightAssessmentId
+    ? (await eventRef.collection(COLLECTIONS.ASSESSMENTS).doc(preflightAssessmentId)
+      .collection(COLLECTIONS.MANUAL_ASSESSMENTS).limit(2).get()).docs.map((snapshot) => snapshot.id)
+    : [];
   const persisted = await db.runTransaction(async (transaction) => {
     const [profileSnap, eventSnap, lockSnap] = await Promise.all([
       transaction.get(db.collection(COLLECTIONS.USERS).doc(uid)),
@@ -93,12 +99,9 @@ export async function submitAdminManualAssessmentForUser(uid: string, data: Subm
     }
     const manualAssessmentId = manualId(versionId, uid, input.idempotencyKey);
     const manualRef = assessmentRef.collection(COLLECTIONS.MANUAL_ASSESSMENTS).doc(manualAssessmentId);
-    const [existingSnap, manualHistorySnap] = await Promise.all([
-      transaction.get(manualRef),
-      transaction.get(assessmentRef.collection(COLLECTIONS.MANUAL_ASSESSMENTS).limit(2)),
-    ]);
+    const existingSnap = await transaction.get(manualRef);
     const existing = existingSnap.data() as AdminManualAssessment | undefined;
-    if (manualHistorySnap.docs.some((snapshot) => snapshot.id !== manualAssessmentId)) {
+    if (preflightAssessmentId !== assessmentId || preflightManualIds.some((id) => id !== manualAssessmentId)) {
       throw new HttpsError('failed-precondition', 'This application version already contains a different manual assessment record.');
     }
     const hasManualLockField = Object.prototype.hasOwnProperty.call(assessment, 'activeManualAssessmentId');
@@ -272,6 +275,7 @@ export async function finalizeStoredManualAssessment(
       resourceInputHash: calculation.resourceInputHash, formulaVersion: RESOURCE_FORMULA_VERSION,
       configVersion: RESOURCE_CONFIG_VERSION, sourceRegistryVersion: RESOURCE_SOURCE_REGISTRY_VERSION,
       items, confidenceLevel: 'authority_validated', authorityReviewRequired: false,
+      validationScope: 'official_risk_input_only',
       notes: 'Official deterministic planning ranges based on the locked Admin manual assessment.', computedAt: now,
     };
     if (existing && (existing.resourceId !== resourceId || existing.eventId !== eventId
@@ -342,75 +346,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isEligibleManualAssessment(value: AssessmentRecord | undefined, eventId: string, versionId: string, assessmentId: string): value is ManualReviewRiskAssessment {
+  if (!isCurrentManualReviewAssessment(value, eventId, versionId, assessmentId)) return false;
   const hasManualLockField = Boolean(value && Object.prototype.hasOwnProperty.call(value, 'activeManualAssessmentId'));
   const activeManualAssessmentId = isRecord(value) ? value.activeManualAssessmentId : undefined;
   const manualLockValid = !hasManualLockField || safeIdentifier(activeManualAssessmentId);
-  return Boolean(value && value.status === 'manual_review_required' && value.schemaVersion === ASSESSMENT_SCHEMA_VERSION
-    && value.eventId === eventId && value.versionId === versionId && value.assessmentId === assessmentId
-    && typeof value.inputHash === 'string' && Boolean(value.inputHash)
-    && Number.isFinite(value.createdAt)
-    && ['complete', 'provisional', 'insufficient_data'].includes(value.assessmentReadiness)
-    && ['pass', 'review_required', 'blocked'].includes(value.complianceStatus)
-    && Number.isFinite(value.dataConfidenceScore)
-    && ['low', 'medium', 'high'].includes(value.dataConfidenceLevel)
-    && typeof value.manualReviewReason === 'string' && value.manualReviewReason.trim().length > 0
-    && isManualContextSnapshot(value.contextSnapshot)
-    && Array.isArray(value.evidence) && value.evidence.every(isManualEvidence)
-    && Array.isArray(value.warnings) && value.warnings.every(isManualWarning)
-    && manualLockValid
-    && isManualAssessmentSourceEligible(value));
-}
-
-function isManualContextSnapshot(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  const weather = value.weather;
-  const calendar = value.calendar;
-  const venue = value.venue;
-  const history = value.incidentHistory;
-  return isRecord(weather) && isRecord(weather.data)
-    && typeof weather.data.forecast === 'string'
-    && [weather.data.temperature, weather.data.humidity, weather.data.windSpeed, weather.data.precipitationProbability,
-      weather.fetchedAt, weather.expiresAt, weather.forecastFor].every(Number.isFinite)
-    && typeof weather.data.severeAlert === 'boolean'
-    && ['met-malaysia', 'openweather', 'cache', 'fallback'].includes(String(weather.source))
-    && ['fresh', 'stale', 'fallback', 'not_assessable_yet', 'unavailable'].includes(String(weather.freshness))
-    && isRecord(calendar)
-    && typeof calendar.localDate === 'string' && typeof calendar.dayOfWeek === 'string'
-    && typeof calendar.isWeekend === 'boolean' && typeof calendar.isHolidayOrAdjacent === 'boolean'
-    && Number.isFinite(calendar.sourceTimestamp) && typeof calendar.sourceVersion === 'string'
-    && isRecord(venue) && typeof venue.matched === 'boolean'
-    && Number.isFinite(venue.submittedCapacity) && Number.isFinite(venue.fetchedAt)
-    && optionalFinite(venue.registeredCapacity) && optionalFinite(venue.capacityDifference)
-    && optionalFinite(venue.verifiedSafeCapacity) && optionalFinite(venue.nearestHospitalTravelMinutes)
-    && optionalBoolean(venue.emergencyAccessVerified)
-    && isRecord(history) && typeof history.matched === 'boolean'
-    && Array.isArray(history.incidentIds) && history.incidentIds.every((id) => typeof id === 'string')
-    && Number.isFinite(history.total) && isRecord(history.bySeverity)
-    && [history.bySeverity.low, history.bySeverity.medium, history.bySeverity.high, history.fetchedAt].every(Number.isFinite);
-}
-
-function isManualEvidence(value: unknown): boolean {
-  return isRecord(value)
-    && ['weather', 'crowd', 'venue', 'history', 'holiday', 'public_health', 'sanitation', 'medical', 'security', 'transport', 'compliance'].includes(String(value.key))
-    && typeof value.description === 'string' && typeof value.source === 'string' && typeof value.status === 'string'
-    && Number.isFinite(value.sourceTimestamp);
-}
-
-function isManualWarning(value: unknown): boolean {
-  return isRecord(value)
-    && typeof value.warningId === 'string' && value.warningId.trim().length > 0
-    && typeof value.code === 'string' && value.code.trim().length > 0
-    && typeof value.message === 'string' && value.message.trim().length > 0
-    && Array.isArray(value.evidenceReferences)
-    && value.evidenceReferences.every((reference) => typeof reference === 'string');
-}
-
-function optionalFinite(value: unknown): boolean {
-  return value === undefined || Number.isFinite(value);
-}
-
-function optionalBoolean(value: unknown): boolean {
-  return value === undefined || typeof value === 'boolean';
+  return manualLockValid && isManualAssessmentSourceEligible(value);
 }
 
 function isManualOfficial(value: AssessmentRecord | undefined, eventId?: string, versionId?: string, assessmentId?: string): value is AdminManualOfficialRiskAssessment {

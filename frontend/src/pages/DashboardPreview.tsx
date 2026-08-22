@@ -133,7 +133,12 @@ function previewAssessment(event: EventRecord, risk: RiskLevel, versionId: strin
       sourceTimestamp: now,
       source: category.categoryId === 'weather_environment' ? 'openweather' : 'versioned-input',
       status: 'matched',
+      quality: 'verified' as const,
+      confidenceScore: 85,
+      eligibility: 'eligible',
+      syntheticStatus: 'none',
     })),
+    contextEvidence: categories.map((category) => ({ evidenceId: `preview-${category.evidenceKeys[0]}`, evidenceKey: category.evidenceKeys[0], sourceKind: 'derived' as const, sourceLocator: 'dashboard-preview', retrievedAt: now, sourceVersion: 'preview-v1', eligibility: 'eligible' as const, synthetic: true, visibility: 'authority_only' as const })),
     aiProposal: {
       proposalId: `preview-${event.eventId}`,
       model: 'MiniMax-M3',
@@ -148,11 +153,12 @@ function previewAssessment(event: EventRecord, risk: RiskLevel, versionId: strin
     contextSnapshot: {
       weather: {
         data: { forecast: 'Scattered showers', temperature: 30, humidity: 76, windSpeed: 2.8, precipitationProbability: 55, severeAlert: false },
+        measurementStatus: 'available',
         source: 'openweather', freshness: 'fresh', fetchedAt: now, expiresAt: now + 3_600_000, forecastFor: event.eventDetails.startDatetime,
       },
-      calendar: { localDate: '2026-08-31', dayOfWeek: 'Monday', isWeekend: false, isHolidayOrAdjacent: true, holidayName: 'National Day', holidayDistanceDays: 0, sourceVersion: 'my-holidays-v1', sourceTimestamp: now },
+      calendar: { localDate: '2026-08-31', dayOfWeek: 'Monday', isWeekend: false, isHolidayOrAdjacent: true, holidayName: 'National Day', holidayDistanceDays: 0, sourceVersion: 'my-holidays-v1', sourceTimestamp: now, coverageStatus: 'verified' },
       venue: { matched: true, venueId: `venue-${event.eventId}`, submittedCapacity: event.eventDetails.venueCapacity, registeredCapacity: event.eventDetails.venueCapacity, capacityDifference: 0, fetchedAt: now },
-      incidentHistory: { matched: true, venueId: `venue-${event.eventId}`, incidentIds: ['incident-preview'], total: 1, bySeverity: { low: 0, medium: 1, high: 0 }, fetchedAt: now },
+      incidentHistory: { matched: true, venueId: `venue-${event.eventId}`, incidentIds: ['incident-preview'], total: 1, bySeverity: { low: 0, medium: 1, high: 0 }, syntheticStatus: 'none', fetchedAt: now },
     },
     sourceTimestamps: { event: event.updatedAt, weather: now, calendar: now, venue: now, history: now },
     contextStatuses: { weather: 'fresh', calendar: 'matched', venue: 'matched', history: 'matched' },
@@ -219,6 +225,7 @@ function previewResources(event: EventRecord, assessment: RiskAssessment, versio
     formulaVersion: '2026-08-19-deterministic-v4', configVersion: '2026-08-19-prototype-v1', sourceRegistryVersion: '2026-08-19-v1',
     items,
     confidenceLevel: 'prototype', authorityReviewRequired: true,
+    validationScope: 'provisional_risk_input',
     notes: 'Indicative academic prototype guidance; not an operational deployment authorisation.',
     computedAt: now,
   };

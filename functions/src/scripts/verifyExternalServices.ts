@@ -118,14 +118,9 @@ function buildSyntheticAssessmentInput(): { event: EventRecord; context: Assessm
   };
   const context: AssessmentContextSnapshot = {
     weather: {
-      data: {
-        forecast: 'Weather API unavailable',
-        temperature: 28,
-        humidity: 70,
-        windSpeed: 2,
-        precipitationProbability: 20,
-        severeAlert: false,
-      },
+      data: null,
+      measurementStatus: 'unavailable',
+      unavailableReason: 'provider_unavailable',
       source: 'fallback',
       freshness: 'fallback',
       fetchedAt: now,
@@ -139,6 +134,7 @@ function buildSyntheticAssessmentInput(): { event: EventRecord; context: Assessm
       isHolidayOrAdjacent: false,
       sourceVersion: 'synthetic-test',
       sourceTimestamp: now,
+      coverageStatus: 'verified',
     },
     venue: { matched: false, submittedCapacity: 30_000, fetchedAt: now },
     incidentHistory: {
@@ -146,6 +142,7 @@ function buildSyntheticAssessmentInput(): { event: EventRecord; context: Assessm
       incidentIds: [],
       total: 0,
       bySeverity: { low: 0, medium: 0, high: 0 },
+      syntheticStatus: 'none',
       fetchedAt: now,
     },
   };

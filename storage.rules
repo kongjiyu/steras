@@ -54,7 +54,10 @@ service firebase.storage {
                     && request.resource.size <= 10 * 1024 * 1024
                     && request.resource.contentType.matches('image/(jpeg|png|webp)|application/pdf');
       allow update: if false;
-      allow delete: if ownsEvent(eventId) && isEditableVersion(eventId, versionId);
+      // Keep evidence bytes immutable. A draft can stop referring to an upload,
+      // but delete-and-recreate would permit a client to swap a file after the
+      // submit callable has validated its Storage metadata.
+      allow delete: if false;
     }
 
     // Default deny everything else

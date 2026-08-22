@@ -63,7 +63,7 @@ async function seedVenues() {
     for (const [venueIndex, value] of exports.VENUES.entries()) {
         const venueId = stableVenueId(value.name);
         const incidents = generateIncidents(venueId, value.name, venueIndex);
-        const venue = { ...value, venueId, incidentCount: incidents.length };
+        const venue = { ...value, venueId, active: true, incidentCount: incidents.length };
         await db.collection(types_1.COLLECTIONS.VENUES).doc(venueId).set(venue);
         for (const [index, incident] of incidents.entries()) {
             await db.collection(types_1.COLLECTIONS.INCIDENTS).doc(`${venueId}-${String(index + 1).padStart(2, '0')}`).set(incident);

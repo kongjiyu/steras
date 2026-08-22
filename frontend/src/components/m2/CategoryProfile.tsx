@@ -76,6 +76,12 @@ export default function CategoryProfile({ assessment, density = 'detailed', show
             {showInternalDetails && !compact && 'missingInformation' in category && typeof category.missingInformation === 'string' && category.missingInformation && (
               <p className="mt-2 text-xs leading-5 text-gold-700">Missing information: {category.missingInformation}</p>
             )}
+            {showInternalDetails && !compact && 'missingInformation' in category && Array.isArray(category.missingInformation) && category.missingInformation.length > 0 && (
+              <p className="mt-2 text-xs leading-5 text-gold-700">Missing information: {category.missingInformation.join('; ')}</p>
+            )}
+            {showInternalDetails && !compact && 'concerns' in category && Array.isArray(category.concerns) && category.concerns.length > 0 && (
+              <p className="mt-2 text-xs leading-5 text-gold-700">Concerns: {category.concerns.join('; ')}</p>
+            )}
             <p className="mt-2 text-[11px] text-ink-500">
               {showInternalDetails
                 ? `${'manualLikelihood' in category ? 'Admin input' : 'Proposed'} ${'manualLikelihood' in category ? category.manualLikelihood : category.proposedLikelihood}×${'manualSeverity' in category ? category.manualSeverity : category.proposedSeverity} · validated ${category.validatedLikelihood}×${category.validatedSeverity} · ${category.riskLevel}`

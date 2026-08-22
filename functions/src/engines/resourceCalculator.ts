@@ -29,6 +29,7 @@ import {
 } from '../config/resourceRecommendationConfig';
 import { ACTIVE_CATEGORY_SCHEMA } from '../config/categorySchema';
 import { evaluateCategoryHardRules } from './hardRuleEvaluator';
+import { canonicalHazardId, isCanonicalEvidenceReferenceList } from './proposalContract';
 
 export interface ResourceCalculationInput<T extends CalculatedAssessmentResult = ProvisionalAssessmentResult> {
   eventId: string;
@@ -455,17 +456,17 @@ export function validateProvisionalAssessmentResult(
   const seen = new Set<string>();
   const hazardIds = new Set<string>();
   for (const hazard of validatedHazards) {
+    const normalizedHazardId = typeof hazard?.hazardId === 'string' ? canonicalHazardId(hazard.hazardId) : '';
     if (!hazard || typeof hazard !== 'object'
-      || typeof hazard.hazardId !== 'string' || !hazard.hazardId.trim() || hazardIds.has(hazard.hazardId)
+      || typeof hazard.hazardId !== 'string' || !normalizedHazardId || hazardIds.has(normalizedHazardId)
       || typeof hazard.hazardName !== 'string' || !hazard.hazardName.trim()
       || !expected.has(hazard.categoryId)
-      || !Array.isArray(hazard.evidenceReferences) || hazard.evidenceReferences.length === 0
-      || new Set(hazard.evidenceReferences).size !== hazard.evidenceReferences.length
-      || hazard.evidenceReferences.some((reference) => typeof reference !== 'string' || !evidenceKeys.has(reference))
+      || !isCanonicalEvidenceReferenceList(hazard.evidenceReferences)
+      || hazard.evidenceReferences.some((reference) => !evidenceKeys.has(reference))
       || typeof hazard.rationale !== 'string' || !hazard.rationale.trim()) {
       errors.push('validated-hazard-shape');
     } else {
-      hazardIds.add(hazard.hazardId);
+      hazardIds.add(normalizedHazardId);
     }
   }
   let weightedScore = 0;
@@ -500,9 +501,8 @@ export function validateProvisionalAssessmentResult(
       || category.weightedContribution !== round(normalized * weight)
       || category.riskLevel !== hirarcRiskLevelFor(matrix)
       || typeof category.categoryName !== 'string' || category.categoryName !== definition?.name
-      || !Array.isArray(category.evidenceReferences) || category.evidenceReferences.length === 0
-      || new Set(category.evidenceReferences).size !== category.evidenceReferences.length
-      || category.evidenceReferences.some((reference) => typeof reference !== 'string' || !evidenceKeys.has(reference))
+      || !isCanonicalEvidenceReferenceList(category.evidenceReferences)
+      || category.evidenceReferences.some((reference) => !evidenceKeys.has(reference))
       || typeof category.rationale !== 'string' || !category.rationale.trim()
       || !['low', 'medium', 'high'].includes(category.confidence)
       || !stringArray(category.concerns) || !stringArray(category.missingInformation)

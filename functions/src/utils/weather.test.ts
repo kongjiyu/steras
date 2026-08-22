@@ -45,7 +45,9 @@ describe('weather context', () => {
   });
 
   it('does not invent Kuala Lumpur coordinates when location is absent', async () => {
-    expect(await fetchWeather(undefined, 'Unknown', forecastFor, { now: 100, apiKey: 'test' })).toMatchObject({ source: 'fallback', freshness: 'unavailable' });
+    const result = await fetchWeather(undefined, 'Unknown', forecastFor, { now: 100, apiKey: 'test' });
+    expect(result).toMatchObject({ source: 'fallback', freshness: 'unavailable', measurementStatus: 'unavailable', data: null });
+    expect(JSON.stringify(result)).not.toMatch(/temperature|humidity|windSpeed|precipitationProbability/);
   });
 
   it.each([
@@ -63,7 +65,7 @@ describe('weather context', () => {
         throw new Error('must not be called');
       },
     });
-    expect(result).toMatchObject({ source: 'fallback', freshness: 'unavailable' });
+    expect(result).toMatchObject({ source: 'fallback', freshness: 'unavailable', data: null });
     expect(requests).toBe(0);
   });
 
@@ -75,7 +77,7 @@ describe('weather context', () => {
       request: async () => {
         attempts += 1;
         if (attempts === 1) throw new Error('temporary');
-        return { daily: [{ dt: forecastFor / 1_000, temp: { day: 29 }, humidity: 70, wind_speed: 2, weather: [{ main: 'Clear' }] }] };
+        return { daily: [{ dt: forecastFor / 1_000, temp: { day: 29 }, humidity: 70, wind_speed: 2, pop: 0, weather: [{ main: 'Clear' }] }] };
       },
     });
     expect(result.source).toBe('openweather');

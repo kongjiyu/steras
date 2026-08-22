@@ -6,6 +6,7 @@ import { validateAndCalculateProvisional } from './assessmentValidator';
 const evidence = ACTIVE_CATEGORY_SCHEMA.categories.map((category) => ({
   key: ({ crowd: 'crowd', venue_fire: 'venue', weather_environment: 'weather', public_health: 'public_health', food_water_sanitation: 'sanitation', medical_capacity: 'medical', security_cbrn: 'security', transport_accessibility: 'transport' } as const)[category.id],
   description: category.name, sourceTimestamp: 1, source: 'test', status: 'available',
+  quality: 'verified', confidenceScore: 100, eligibility: 'eligible', syntheticStatus: 'none',
 })) satisfies ScoreEvidence[];
 
 function proposal(overrides: Partial<AISuccessfulProposal['categories'][number]> = {}): AISuccessfulProposal {
@@ -59,7 +60,7 @@ describe('validateAndCalculateProvisional', () => {
     ]) {
       const ineligibleBaseline = structuredClone(baseline);
       ineligibleBaseline.evidence = ineligibleBaseline.evidence.map((item) => (
-        item.key === 'crowd' ? { ...item, ...unavailable } : item
+        item.key === 'crowd' ? { ...item, ...unavailable, eligibility: 'ineligible' as const } : item
       ));
       const result = validateAndCalculateProvisional(proposal(), ineligibleBaseline, 10);
       expect(result.ok).toBe(false);

@@ -3,7 +3,7 @@ import { EVENT_TYPES, EventType, EventDetails, EventRiskProfile, Venue } from '@
 import { useEffect, useState, FormEvent, ChangeEvent } from 'react';
 import { arrayRemove, arrayUnion, collection, addDoc, doc, getDoc, getDocs, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { deleteObject, ref, uploadBytesResumable } from 'firebase/storage';
+import { ref, uploadBytesResumable } from 'firebase/storage';
 import { db, functions, isFirebaseConfigured, storage } from '../../config/firebase';
 import { COLLECTIONS } from '@shared/types';
 import { useAuth } from '../../contexts/AuthContext';
@@ -40,6 +40,7 @@ export default function NewEvent() {
     endDatetime: 0,
     description: '',
     emergencyPlanSummary: '',
+    riskProfile: completeRiskProfile(),
     organizerName: profile?.name ?? '',
     organizerEmail: profile?.email ?? '',
     organizerPhone: profile?.phone ?? '',
@@ -61,6 +62,7 @@ export default function NewEvent() {
     getDocs(collection(db, COLLECTIONS.VENUES))
       .then((snapshot) => setVenues(snapshot.docs
         .map((document) => ({ venueId: document.id, ...document.data() }) as Venue)
+        .filter((venue) => venue.active === true)
         .sort((left, right) => left.name.localeCompare(right.name))))
       .catch(() => setVenues([]));
   }, []);
@@ -71,7 +73,7 @@ export default function NewEvent() {
       if (!snapshot.exists()) throw new Error('Event draft not found.');
       const data = snapshot.data();
       if (!['Draft', 'AmendmentRequested'].includes(data.status)) throw new Error('This application can no longer be edited.');
-      setForm(data.eventDetails as EventDetails);
+      setForm({ ...(data.eventDetails as EventDetails), riskProfile: completeRiskProfile(data.eventDetails?.riskProfile) });
       setEditableStatus(data.status as 'Draft' | 'AmendmentRequested');
       setCurrentVersionNumber(data.currentVersionNumber ?? 0);
       setEditableVersionId(data.editableVersionId ?? `v${(data.currentVersionNumber ?? 0) + 1}`);
@@ -165,6 +167,7 @@ export default function NewEvent() {
   const handleFiles = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = [...(event.target.files ?? [])];
     if (files.length === 0) return;
+    if (documentPaths.length + files.length > 20) return toast.error('Submit no more than 20 supporting evidence files.');
     const allowedTypes = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
     const invalid = files.find((file) => file.size === 0 || file.size > 10 * 1024 * 1024 || !allowedTypes.has(file.type));
     if (invalid) return toast.error(`${invalid.name} must be a non-empty PDF, JPEG, PNG, or WebP file no larger than 10 MB.`);
@@ -198,7 +201,6 @@ export default function NewEvent() {
   const removeDocument = async (path: string) => {
     if (!draftId || !path.startsWith(`event_documents/${draftId}/${editableVersionId}/`)) return;
     try {
-      await deleteObject(ref(storage, path));
       await updateDoc(doc(db, COLLECTIONS.EVENTS, draftId), { draftDocumentPaths: arrayRemove(path), updatedAt: Date.now() });
       setDocumentPaths((current) => current.filter((item) => item !== path));
     } catch (error) {
@@ -280,29 +282,29 @@ export default function NewEvent() {
               </div>
               <div>
                 <label htmlFor="venue-name" className="field-label">Venue name *</label>
-                <input id="venue-name" className="input mt-1" required value={form.venueName} onChange={(e) => setForm((previous) => ({ ...previous, venueId: undefined, venueName: e.target.value }))} />
+                <input id="venue-name" className="input mt-1" required disabled={Boolean(form.venueId)} value={form.venueName} onChange={(e) => setForm((previous) => ({ ...previous, venueId: undefined, venueName: e.target.value }))} />
               </div>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label htmlFor="venue-address" className="field-label">Venue address *</label>
-                <input id="venue-address" className="input mt-1" required value={form.venueAddress} onChange={(e) => update('venueAddress', e.target.value)} />
+                <input id="venue-address" className="input mt-1" required disabled={Boolean(form.venueId)} value={form.venueAddress} onChange={(e) => update('venueAddress', e.target.value)} />
               </div>
               <div>
                 <label htmlFor="venue-capacity" className="field-label">Venue capacity *</label>
-                <input id="venue-capacity" type="number" min={1} className="input mt-1" required value={form.venueCapacity || ''} onChange={(e) => update('venueCapacity', Number(e.target.value))} />
+                <input id="venue-capacity" type="number" min={1} className="input mt-1" required disabled={Boolean(form.venueId)} value={form.venueCapacity || ''} onChange={(e) => update('venueCapacity', Number(e.target.value))} />
               </div>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label htmlFor="venue-latitude" className="field-label">Latitude *</label>
-                <input id="venue-latitude" type="number" step="any" min={-90} max={90} className="input mt-1" required value={form.venueLocation?.lat ?? ''} onChange={(e) => update('venueLocation', { lat: Number(e.target.value), lng: form.venueLocation?.lng ?? 0 })} />
+                <input id="venue-latitude" type="number" step="any" min={-90} max={90} className="input mt-1" required disabled={Boolean(form.venueId)} value={form.venueLocation?.lat ?? ''} onChange={(e) => update('venueLocation', { lat: Number(e.target.value), lng: form.venueLocation?.lng ?? 0 })} />
               </div>
               <div>
                 <label htmlFor="venue-longitude" className="field-label">Longitude *</label>
-                <input id="venue-longitude" type="number" step="any" min={-180} max={180} className="input mt-1" required value={form.venueLocation?.lng ?? ''} onChange={(e) => update('venueLocation', { lat: form.venueLocation?.lat ?? 0, lng: Number(e.target.value) })} />
+                <input id="venue-longitude" type="number" step="any" min={-180} max={180} className="input mt-1" required disabled={Boolean(form.venueId)} value={form.venueLocation?.lng ?? ''} onChange={(e) => update('venueLocation', { lat: form.venueLocation?.lat ?? 0, lng: Number(e.target.value) })} />
               </div>
             </div>
 
@@ -376,7 +378,11 @@ export default function NewEvent() {
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label htmlFor="vulnerable-attendees" className="field-label">Vulnerable attendees estimate (%)</label>
-                <input id="vulnerable-attendees" type="number" min={0} max={100} className="input mt-1" value={form.riskProfile?.vulnerableAttendeesPercent ?? ''} onChange={(event) => updateRiskProfile('vulnerableAttendeesPercent', Number(event.target.value))} />
+                <input id="vulnerable-attendees" type="number" min={0} max={100} required className="input mt-1" value={form.riskProfile?.vulnerableAttendeesPercent ?? ''} onChange={(event) => updateRiskProfile('vulnerableAttendeesPercent', Number(event.target.value))} />
+              </div>
+              <div>
+                <label htmlFor="standing-attendees" className="field-label">Standing attendees estimate (%)</label>
+                <input id="standing-attendees" type="number" min={0} max={100} required className="input mt-1" value={form.riskProfile?.standingAttendeesPercent ?? ''} onChange={(event) => updateRiskProfile('standingAttendeesPercent', Number(event.target.value))} />
               </div>
               <div>
                 <label htmlFor="hospital-travel" className="field-label">Nearest hospital travel time (minutes)</label>
@@ -432,6 +438,30 @@ export default function NewEvent() {
   );
 }
 
+function completeRiskProfile(value: unknown = {}): EventRiskProfile {
+  const source = value && typeof value === 'object' ? value as Partial<EventRiskProfile> : {};
+  return {
+    vulnerableAttendeesPercent: source.vulnerableAttendeesPercent ?? 0,
+    standingAttendeesPercent: source.standingAttendeesPercent ?? 0,
+    internationalAttendees: source.internationalAttendees ?? false,
+    alcoholServed: source.alcoholServed ?? false,
+    foodServed: source.foodServed ?? false,
+    freeDrinkingWater: source.freeDrinkingWater ?? false,
+    ticketedEntry: source.ticketedEntry ?? false,
+    overnightAccommodation: source.overnightAccommodation ?? false,
+    pyrotechnics: source.pyrotechnics ?? false,
+    temporaryStructures: source.temporaryStructures ?? false,
+    rivalryOrTensionExpected: source.rivalryOrTensionExpected ?? false,
+    crowdManagementPlan: source.crowdManagementPlan ?? false,
+    trafficManagementPlan: source.trafficManagementPlan ?? false,
+    severeWeatherPlan: source.severeWeatherPlan ?? false,
+    medicalPlan: source.medicalPlan ?? false,
+    evacuationPlanTested: source.evacuationPlanTested ?? false,
+    authorityCoordinationConfirmed: source.authorityCoordinationConfirmed ?? false,
+    ...(source.nearestHospitalTravelMinutes !== undefined ? { nearestHospitalTravelMinutes: source.nearestHospitalTravelMinutes } : {}),
+  };
+}
+
 function documentName(path: string): string {
   const encoded = path.split('/').pop() ?? 'supporting-file';
   return decodeURIComponent(encoded).replace(/^[0-9a-f]{8}-[0-9a-f-]{27}-/i, '');
@@ -444,6 +474,7 @@ const RISK_PROFILE_OPTIONS: Array<{
     | 'alcoholServed'
     | 'foodServed'
     | 'freeDrinkingWater'
+    | 'ticketedEntry'
     | 'overnightAccommodation'
     | 'pyrotechnics'
     | 'temporaryStructures'
@@ -461,6 +492,7 @@ const RISK_PROFILE_OPTIONS: Array<{
   { key: 'alcoholServed', label: 'Alcohol served' },
   { key: 'foodServed', label: 'Food served' },
   { key: 'freeDrinkingWater', label: 'Free drinking water planned' },
+  { key: 'ticketedEntry', label: 'Ticketed entry or attendee registration' },
   { key: 'overnightAccommodation', label: 'Overnight accommodation involved' },
   { key: 'pyrotechnics', label: 'Pyrotechnics or special effects' },
   { key: 'temporaryStructures', label: 'Temporary stages or structures' },

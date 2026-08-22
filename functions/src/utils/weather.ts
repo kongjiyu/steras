@@ -18,7 +18,7 @@ export async function fetchWeather(
   options: WeatherOptions = {},
 ): Promise<WeatherSnapshot> {
   const now = options.now ?? Date.now();
-  if (!isValidLocation(location)) return fallbackSnapshot(forecastFor, now, 'Location unavailable', 'unavailable');
+  if (!isValidLocation(location)) return fallbackSnapshot(forecastFor, now, 'unavailable');
 
   const cacheKey = `${location.lat.toFixed(2)},${location.lng.toFixed(2)},${localDate(forecastFor)}`;
   const cached = CACHE.get(cacheKey);
@@ -30,7 +30,7 @@ export async function fetchWeather(
   if (!apiKey || apiKey === 'disabled') {
     return cached
       ? { ...cached, source: 'cache', freshness: 'stale' }
-      : fallbackSnapshot(forecastFor, now, 'Weather API not configured', 'unavailable');
+      : fallbackSnapshot(forecastFor, now, 'unavailable');
   }
 
   try {
@@ -41,6 +41,7 @@ export async function fetchWeather(
     const data = parseWeatherResponse(payload, forecastFor);
     const snapshot: WeatherSnapshot = {
       data,
+      measurementStatus: 'available',
       source: 'openweather',
       freshness: 'fresh',
       fetchedAt: now,
@@ -57,7 +58,6 @@ export async function fetchWeather(
       : fallbackSnapshot(
         forecastFor,
         now,
-        outsideHorizon ? 'Event is outside the available weather forecast horizon' : 'Weather unavailable',
         outsideHorizon ? 'not_assessable_yet' : 'unavailable',
       );
   }
@@ -104,10 +104,12 @@ export function parseWeatherResponse(payload: unknown, forecastFor: number): Wea
     || !isFiniteNumber(windSpeed) || windSpeed < 0) {
     throw new Error('OpenWeather response contains an invalid weather measurement.');
   }
-  if (source.pop !== undefined && (!isFiniteNumber(source.pop) || source.pop < 0 || source.pop > 1)) {
+  if (!isFiniteNumber(source.pop) || source.pop < 0 || source.pop > 1) {
     throw new Error('OpenWeather response contains an invalid weather measurement.');
   }
   const weather = Array.isArray(source.weather) && isRecord(source.weather[0]) ? source.weather[0] : undefined;
+  const forecast = stringValue(weather?.main) ?? stringValue(weather?.description);
+  if (!forecast) throw new Error('OpenWeather response contains an invalid weather description.');
   const alerts = Array.isArray(payload.alerts) ? payload.alerts.filter(isRecord) : [];
   const severeAlert = alerts.some((alert) => {
     const start = typeof alert.start === 'number' ? alert.start * 1_000 : 0;
@@ -115,11 +117,11 @@ export function parseWeatherResponse(payload: unknown, forecastFor: number): Wea
     return forecastFor >= start && forecastFor <= end;
   });
   return {
-    forecast: stringValue(weather?.main) ?? stringValue(weather?.description) ?? 'Unknown',
+    forecast,
     temperature: roundedNumber(temperature, 28),
     humidity: roundedNumber(humidity, 70),
     windSpeed: roundedNumber(windSpeed, 2, 1),
-    precipitationProbability: Math.round(numberValue(source.pop, 0.2) * 100),
+    precipitationProbability: Math.round(source.pop * 100),
     severeAlert,
   };
 }
@@ -131,11 +133,12 @@ export function clearWeatherCache(): void {
 function fallbackSnapshot(
   forecastFor: number,
   now: number,
-  forecast: string,
   freshness: 'not_assessable_yet' | 'unavailable',
 ): WeatherSnapshot {
   return {
-    data: { forecast, temperature: 28, humidity: 70, windSpeed: 2, precipitationProbability: 20, severeAlert: false },
+    data: null,
+    measurementStatus: 'unavailable',
+    unavailableReason: freshness === 'not_assessable_yet' ? 'outside_forecast_horizon' : 'provider_unavailable',
     source: 'fallback',
     freshness,
     fetchedAt: now,

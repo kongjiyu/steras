@@ -257,7 +257,7 @@ export default function AuthorityEventReview() {
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
         <div className="space-y-5">
           <section className="card">
-            <div className="card-header"><div><h2 className="font-semibold">{assessment?.status === 'official_ready' && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual' ? 'Official manual assessment' : 'Provisional category assessment'}</h2><p className="mt-0.5 text-xs text-ink-500">{assessment?.status === 'official_ready' && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual' ? 'Admin-authored recovery assessment · no AI score proposal' : 'Validated AI proposal · authority confirmation required'}</p></div></div>
+            <div className="card-header"><div><h2 className="font-semibold">{assessment?.status === 'official_ready' ? 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual' ? 'Official manual assessment' : 'Official AI-assisted assessment' : 'Provisional category assessment'}</h2><p className="mt-0.5 text-xs text-ink-500">{assessment?.status === 'official_ready' ? 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual' ? 'Admin-authored recovery assessment · no AI score proposal' : 'Finalized human-reviewed risk inputs with retained AI provenance' : 'Validated AI proposal · authority confirmation required'}</p></div></div>
             <div className="card-body">
               {!assessment ? <p className="text-sm text-ink-500">{legacyAssessment ? 'Legacy assessment detected. Recompute this event version before recording a decision.' : assessmentStatus === 'failed' ? 'Assessment failed and requires a retry.' : 'Assessment is still processing.'}</p> : (
                 <div className="space-y-5">
@@ -265,7 +265,7 @@ export default function AuthorityEventReview() {
                   <AuthorityAssessmentWarnings warnings={assessment.warnings} />
                   {assessment.status === 'official_ready' && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual'
                     ? <><ManualOfficialProvenance assessment={assessment} />{manualAssessment && <ManualAssessmentDetails assessment={manualAssessment} />}</>
-                    : <AIAdvisory advisory={assessment.aiProposal} resultRiskLevel={assessmentRiskLevel(assessment)} />}
+                    : <AIAdvisory advisory={assessment.aiProposal} resultRiskLevel={assessmentRiskLevel(assessment)} official={assessment.status === 'official_ready'} />}
                   <div className="border-t border-[#e3dacb] pt-5">
                     <h3 className="mb-4 font-display text-sm font-semibold text-ink-800">Versioned context evidence</h3>
                     <ContextEvidence assessment={assessment} />
@@ -283,7 +283,7 @@ export default function AuthorityEventReview() {
             <div className="card-header">
               <div>
                 <h2 className="font-semibold">Recommended resources</h2>
-                {resources?.confidenceLevel === 'authority_validated' && <p className="mt-0.5 text-xs text-status-approved">{resources.assessmentReference.stage === 'official' && resources.assessmentReference.sourceKind === 'admin_manual' ? 'Admin manual official' : 'Authority validated'}</p>}
+                {resources?.confidenceLevel === 'authority_validated' && <p className="mt-0.5 text-xs text-status-approved">Official risk input · prototype resource ratios</p>}
               </div>
             </div>
             <div className="card-body">

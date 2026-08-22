@@ -13,6 +13,7 @@ const types_1 = require("../../../shared/types");
 const resourceRecommendationConfig_1 = require("../config/resourceRecommendationConfig");
 const categorySchema_1 = require("../config/categorySchema");
 const hardRuleEvaluator_1 = require("./hardRuleEvaluator");
+const proposalContract_1 = require("./proposalContract");
 class ResourceCalculationFault extends Error {
     code;
     constructor(code, message) {
@@ -372,18 +373,18 @@ function validateProvisionalAssessmentResult(result, expectedCategoryIds = resou
     const seen = new Set();
     const hazardIds = new Set();
     for (const hazard of validatedHazards) {
+        const normalizedHazardId = typeof hazard?.hazardId === 'string' ? (0, proposalContract_1.canonicalHazardId)(hazard.hazardId) : '';
         if (!hazard || typeof hazard !== 'object'
-            || typeof hazard.hazardId !== 'string' || !hazard.hazardId.trim() || hazardIds.has(hazard.hazardId)
+            || typeof hazard.hazardId !== 'string' || !normalizedHazardId || hazardIds.has(normalizedHazardId)
             || typeof hazard.hazardName !== 'string' || !hazard.hazardName.trim()
             || !expected.has(hazard.categoryId)
-            || !Array.isArray(hazard.evidenceReferences) || hazard.evidenceReferences.length === 0
-            || new Set(hazard.evidenceReferences).size !== hazard.evidenceReferences.length
-            || hazard.evidenceReferences.some((reference) => typeof reference !== 'string' || !evidenceKeys.has(reference))
+            || !(0, proposalContract_1.isCanonicalEvidenceReferenceList)(hazard.evidenceReferences)
+            || hazard.evidenceReferences.some((reference) => !evidenceKeys.has(reference))
             || typeof hazard.rationale !== 'string' || !hazard.rationale.trim()) {
             errors.push('validated-hazard-shape');
         }
         else {
-            hazardIds.add(hazard.hazardId);
+            hazardIds.add(normalizedHazardId);
         }
     }
     let weightedScore = 0;
@@ -422,9 +423,8 @@ function validateProvisionalAssessmentResult(result, expectedCategoryIds = resou
             || category.weightedContribution !== round(normalized * weight)
             || category.riskLevel !== (0, types_1.hirarcRiskLevelFor)(matrix)
             || typeof category.categoryName !== 'string' || category.categoryName !== definition?.name
-            || !Array.isArray(category.evidenceReferences) || category.evidenceReferences.length === 0
-            || new Set(category.evidenceReferences).size !== category.evidenceReferences.length
-            || category.evidenceReferences.some((reference) => typeof reference !== 'string' || !evidenceKeys.has(reference))
+            || !(0, proposalContract_1.isCanonicalEvidenceReferenceList)(category.evidenceReferences)
+            || category.evidenceReferences.some((reference) => !evidenceKeys.has(reference))
             || typeof category.rationale !== 'string' || !category.rationale.trim()
             || !['low', 'medium', 'high'].includes(category.confidence)
             || !stringArray(category.concerns) || !stringArray(category.missingInformation)

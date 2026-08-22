@@ -227,6 +227,7 @@ describe('M2 portfolio data', () => {
       assessmentReference: { stage: 'official', assessmentId: base.assessmentId, sourceKind: 'admin_manual', manualAssessmentId: 'manual-v1', finalizedAt: 2, finalizedBy: 'admin-1' },
       items: Object.fromEntries(Object.entries(base.items).map(([key, item]) => [key, { ...item, confidence: 'authority_validated', authorityReviewRequired: false }])),
       confidenceLevel: 'authority_validated', authorityReviewRequired: false,
+      validationScope: 'official_risk_input_only',
     } as unknown as ResourceRecommendation;
     expect(isCurrentResourceRecommendation(resource)).toBe(true);
     expect(isCurrentResourceRecommendation({ ...resource, assessmentReference: { ...resource.assessmentReference, proposalId: 'fake-proposal' } })).toBe(false);
