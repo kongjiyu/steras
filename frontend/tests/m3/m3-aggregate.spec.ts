@@ -36,7 +36,7 @@ test.describe('@M3 aggregate decision flows', () => {
     // multiple elements under strict mode.
     const decisionSection = page.locator('section', { has: page.getByRole('heading', { name: /your decision/i }) });
     await decisionSection.getByLabel(/decision rationale/i).fill('PDRM E2E — crowd ingress plan fails. Rejecting for revision.');
-    await decisionSection.getByLabel(/suggestion/i).fill('Please revise the crowd ingress and traffic management plan before resubmission.');
+    await decisionSection.getByRole('textbox', { name: /^Suggestion \/ corrective action/ }).fill('Please revise the crowd ingress and traffic management plan before resubmission.');
     const rejectBtn = decisionSection.getByRole('button', { name: /propose rejection/i });
     await rejectBtn.scrollIntoViewIfNeeded();
     await expect(rejectBtn).toBeEnabled();
@@ -86,6 +86,8 @@ test.describe('@M3 aggregate decision flows', () => {
     }
     expect(callError).toMatch(/no longer open|already|initial review/i);
     // Final result remains Rejected.
+    await api.signOut();
+    await loginAs('admin');
     const eventAfter = await api.getDoc(`events/${EVENTS.foodFair}`);
     expect(eventAfter!.status).toBe('Rejected');
   });
