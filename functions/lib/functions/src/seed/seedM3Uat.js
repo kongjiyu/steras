@@ -271,8 +271,8 @@ function assessmentContext(scenario, now) {
 }
 function uatProposal(baseline, scenario, now) {
     const evidenceByCategory = {
-        crowd: 'crowd', venue_fire: 'venue', weather_environment: 'weather', public_health: 'public_health',
-        food_water_sanitation: 'sanitation', medical_capacity: 'medical', security_cbrn: 'security', transport_accessibility: 'transport',
+        crowd: 'crowd', venue_fire: 'venue', weather_environment: 'weather', public_health: 'crowd',
+        food_water_sanitation: 'venue', medical_capacity: 'venue', security_cbrn: 'crowd', transport_accessibility: 'venue',
     };
     return {
         status: 'success',

@@ -336,8 +336,8 @@ function assessmentContext(scenario: Scenario, now: number) {
 
 function uatProposal(baseline: ReturnType<typeof computeCategoryBasedAssessment>, scenario: Scenario, now: number) {
   const evidenceByCategory: Record<string, string> = {
-    crowd: 'crowd', venue_fire: 'venue', weather_environment: 'weather', public_health: 'public_health',
-    food_water_sanitation: 'sanitation', medical_capacity: 'medical', security_cbrn: 'security', transport_accessibility: 'transport',
+    crowd: 'crowd', venue_fire: 'venue', weather_environment: 'weather', public_health: 'crowd',
+    food_water_sanitation: 'venue', medical_capacity: 'venue', security_cbrn: 'crowd', transport_accessibility: 'venue',
   };
   return {
     status: 'success' as const,

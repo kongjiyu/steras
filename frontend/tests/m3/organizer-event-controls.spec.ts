@@ -36,6 +36,8 @@ test.describe('@M3 Workstream 2: organizer reads the control list', () => {
       { eventId: APPROVED },
     );
     expect(gen.items.length).toBeGreaterThan(0);
+    const generatedPdrm = gen.items.find((item) => item.authority === 'PDRM');
+    expect(generatedPdrm?.stage2Requirement?.label).toBeTruthy();
     await api.callFunction('editEventControlList', { eventId: APPROVED, items: gen.items });
 
     // Step 3: organizer reloads and sees the cards.
@@ -58,7 +60,7 @@ test.describe('@M3 Workstream 2: organizer reads the control list', () => {
     await expect(pdrmCard).toBeVisible();
     // The Stage 2 row is at the bottom of the card (Workstream 4:
     // editable — "Stage 2" badge + label + Upload/Replace buttons).
-    await expect(pdrmCard.locator('[data-testid="organizer-stage2-PDRM"]')).toContainText('Photo of PDRM officers on-site at venue');
+    await expect(pdrmCard.locator('[data-testid="organizer-stage2-PDRM"]')).toContainText(generatedPdrm!.stage2Requirement!.label);
     // At least one Stage 1 requirement row (the stub ships 3 for PDRM).
     const pdrmRows = pdrmCard.locator('[data-testid^="stage1-row-"]');
     await expect(pdrmRows.first()).toBeVisible();

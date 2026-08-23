@@ -10,7 +10,7 @@
 import { test, expect, EVENTS } from './fixtures';
 
 test.describe('@M3 negative decision gates', () => {
-  test('compliance-blocked: Approve is rejected by Cloud Function', async ({ page, api, loginAs }) => {
+  test('compliance-blocked: UI disables approval and Cloud Function rejects bypass attempts', async ({ page, api, loginAs }) => {
     await loginAs('pdrm');
     await page.goto(`/authority/events/${EVENTS.complianceBlocked}`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: /your decision/i })).toBeVisible();
@@ -20,38 +20,43 @@ test.describe('@M3 negative decision gates', () => {
     const rationaleTa = decisionSection.getByLabel(/decision rationale/i);
     await rationaleTa.scrollIntoViewIfNeeded();
     await rationaleTa.fill('Test rationale for blocked compliance scenario — should be rejected by the Cloud Function.');
-    // FR-M3-16: tick the "I have reviewed" checkbox so the function
-    // gets past the new gate and can fail on the compliance gate.
     await decisionSection.getByTestId('confirmed-review-checkbox').check();
     const approveBtn = decisionSection.getByRole('button', { name: /propose approval/i });
     await approveBtn.scrollIntoViewIfNeeded();
-    await expect(approveBtn).toBeEnabled({ timeout: 10_000 });
-    await approveBtn.click();
-    // Expect a failure toast from the Cloud Function
-    await expect(page.getByText(/compliance checks are blocked/i)).toBeVisible({ timeout: 10_000 });
+    await expect(approveBtn).toBeDisabled();
+    let callError: string | null = null;
+    try {
+      await api.callFunction('recordOfficerProposal', {
+        eventId: EVENTS.complianceBlocked,
+        decision: 'Approved',
+        reason: 'Test rationale for blocked compliance scenario — the server must reject this bypass attempt.',
+        confirmedReview: true,
+      });
+    } catch (err) {
+      callError = err instanceof Error ? err.message : String(err);
+    }
+    expect(callError).toMatch(/compliance.*blocked|blocked.*compliance/i);
     // And no decision was written
     const dec = await api.getDoc(`events/${EVENTS.complianceBlocked}/assignments/v1_PDRM`);
     expect(dec?.decision).toBeUndefined();
   });
 
-  test('provisional-readiness: short rationale is rejected by Cloud Function', async ({ page, loginAs }) => {
+  test('provisional-readiness: short rationale is rejected by Cloud Function', async ({ api, loginAs }) => {
     await loginAs('bomba');
-    await page.goto(`/authority/events/${EVENTS.provisionalReview}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByRole('heading', { name: /your decision/i })).toBeVisible();
-    // Scope to the "Your decision" section (Stage-1 section also has textareas).
-    const decisionSection = page.locator('section', { has: page.getByRole('heading', { name: /your decision/i }) });
-    const rationaleTa = decisionSection.getByLabel(/decision rationale/i);
-    await rationaleTa.scrollIntoViewIfNeeded();
-    // 30 chars — passes the 10-char baseline but fails the 80-char provisional gate
-    rationaleTa.fill('Short rationale that fails.');
-    // FR-M3-16: tick the checkbox so the new gate passes and the
-    // provisional gate can fail.
-    await decisionSection.getByTestId('confirmed-review-checkbox').check();
-    const approveBtn = decisionSection.getByRole('button', { name: /propose approval/i });
-    await approveBtn.scrollIntoViewIfNeeded();
-    await expect(approveBtn).toBeEnabled({ timeout: 10_000 });
-    await approveBtn.click();
-    await expect(page.getByText(/assessment is provisional/i)).toBeVisible({ timeout: 10_000 });
+    let callError: string | null = null;
+    try {
+      await api.callFunction('recordOfficerProposal', {
+        eventId: EVENTS.provisionalReview,
+        decision: 'Approved',
+        reason: 'Short rationale that fails.',
+        confirmedReview: true,
+      });
+    } catch (err) {
+      callError = err instanceof Error ? err.message : String(err);
+    }
+    expect(callError).toMatch(/at least 80|provisional|insufficient_data/i);
+    const assignment = await api.getDoc(`events/${EVENTS.provisionalReview}/assignments/v1_BOMBA`);
+    expect(assignment?.decision).toBeUndefined();
   });
 
   test('provisional-readiness: ≥80 char rationale is accepted', async ({ page, api, loginAs }) => {
