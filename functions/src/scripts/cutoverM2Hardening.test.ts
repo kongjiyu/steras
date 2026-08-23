@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import path from 'node:path';
-import { backupChecksum, parseHardeningCutoverArguments, validateHardeningBackup, validateHardeningCutoverOptions } from './cutoverM2Hardening';
+import {
+  backupChecksum,
+  HARDENING_CUTOVER_BUCKET,
+  parseHardeningCutoverArguments,
+  validateHardeningBackup,
+  validateHardeningCutoverOptions,
+} from './cutoverM2Hardening';
 import { assessmentDocumentId, assessmentInputHashForVersion } from '../triggers/onEventCreated';
 
 describe('M2 hardening cutover safety boundary', () => {
@@ -9,6 +15,7 @@ describe('M2 hardening cutover safety boundary', () => {
     expect(options.mode).toBe('plan');
     expect(path.isAbsolute(options.backupDirectory)).toBe(true);
     expect(() => validateHardeningCutoverOptions(options)).not.toThrow();
+    expect(HARDENING_CUTOVER_BUCKET).toBe('linkos-496505.firebasestorage.app');
   });
 
   it('requires exact project confirmation and trusted restore checksum', () => {
