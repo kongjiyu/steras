@@ -13,6 +13,7 @@ const onEventCreated_1 = require("../triggers/onEventCreated");
         (0, vitest_1.expect)(options.mode).toBe('plan');
         (0, vitest_1.expect)(node_path_1.default.isAbsolute(options.backupDirectory)).toBe(true);
         (0, vitest_1.expect)(() => (0, cutoverM2Hardening_1.validateHardeningCutoverOptions)(options)).not.toThrow();
+        (0, vitest_1.expect)(cutoverM2Hardening_1.HARDENING_CUTOVER_BUCKET).toBe('linkos-496505.firebasestorage.app');
     });
     (0, vitest_1.it)('requires exact project confirmation and trusted restore checksum', () => {
         (0, vitest_1.expect)(() => (0, cutoverM2Hardening_1.validateHardeningCutoverOptions)((0, cutoverM2Hardening_1.parseHardeningCutoverArguments)(['--project=x', '--mode=apply', '--confirm=x']))).toThrow(/project/);

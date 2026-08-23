@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.__testOnlyRollbackHardeningAttempt = exports.HARDENING_CUTOVER_ANCHORS = exports.HARDENING_CUTOVER_PROJECT = void 0;
+exports.__testOnlyRollbackHardeningAttempt = exports.HARDENING_CUTOVER_ANCHORS = exports.HARDENING_CUTOVER_BUCKET = exports.HARDENING_CUTOVER_PROJECT = void 0;
 exports.parseHardeningCutoverArguments = parseHardeningCutoverArguments;
 exports.validateHardeningCutoverOptions = validateHardeningCutoverOptions;
 exports.backupChecksum = backupChecksum;
@@ -23,6 +23,7 @@ const resourceContract_1 = require("../engines/resourceContract");
 const ruleBased_1 = require("../engines/ruleBased");
 const storageEvidence_1 = require("../utils/storageEvidence");
 exports.HARDENING_CUTOVER_PROJECT = 'linkos-496505';
+exports.HARDENING_CUTOVER_BUCKET = `${exports.HARDENING_CUTOVER_PROJECT}.firebasestorage.app`;
 exports.HARDENING_CUTOVER_ANCHORS = 'system_controls/m2_resource_v3_cutover/hardening_anchors';
 function parseHardeningCutoverArguments(values) {
     const args = new Map();
@@ -610,7 +611,11 @@ async function verifyRollbackState(db, backup, attempts) {
 async function main() {
     const options = parseHardeningCutoverArguments(process.argv.slice(2));
     validateHardeningCutoverOptions(options);
-    (0, app_1.initializeApp)({ credential: (0, app_1.applicationDefault)(), projectId: options.projectId });
+    (0, app_1.initializeApp)({
+        credential: (0, app_1.applicationDefault)(),
+        projectId: options.projectId,
+        storageBucket: exports.HARDENING_CUTOVER_BUCKET,
+    });
     const db = (0, firestore_1.getFirestore)();
     if (options.mode === 'plan') {
         const state = await inventory(db, 'dry-run');
