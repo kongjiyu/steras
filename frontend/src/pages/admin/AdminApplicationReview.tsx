@@ -32,12 +32,10 @@ import {
   EventStatus,
   RiskAssessment,
   ResourceRecommendation,
-  ResourceQuantities,
   AuthorityDecision,
   Assignment,
   UserProfile,
   AuthorityType,
-  RiskLevel,
 } from '@shared/types';
 import { WorkspaceTopBar } from '../../components/layout/Sidebar';
 import { useAuth } from '../../contexts/AuthContext';
@@ -163,13 +161,6 @@ export default function AdminApplicationReview() {
   const [rationale, setRationale] = useState('');
   const [suggestion, setSuggestion] = useState('');
   const [attachOfficerFeedback, setAttachOfficerFeedback] = useState(true);
-  const [manualScore, setManualScore] = useState('50');
-  const [manualRiskLevel, setManualRiskLevel] = useState<RiskLevel>('Medium');
-  const [manualRationale, setManualRationale] = useState('');
-  const [manualInputs, setManualInputs] = useState('{"assessmentBasis":"Admin review"}');
-  const [manualResources, setManualResources] = useState<ResourceQuantities>({
-    police: 0, medicalTeams: 0, ambulances: 0, toilets: 0, wasteBins: 0, security: 0, fireOfficers: 0,
-  });
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -247,7 +238,13 @@ export default function AdminApplicationReview() {
   }, [officers]);
 
   const canReview = event && (event.status === 'Pending' || event.status === 'UnderReview' || event.status === 'AmendmentRequested' || event.status === 'Manual Review Required');
-  const initialReviewOpen = Boolean(canReview && !event?.initialReview && !event?.assignedOfficerUids?.length && !['authority', 'second', 'closed'].includes(event?.reviewStage ?? ''));
+  const manualOfficialReady = assessment?.status === 'official_ready'
+    && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual';
+  const initialReviewOpen = Boolean(canReview
+    && (event?.status !== 'Manual Review Required' || manualOfficialReady)
+    && !event?.initialReview
+    && !event?.assignedOfficerUids?.length
+    && !['authority', 'second', 'closed'].includes(event?.reviewStage ?? ''));
   const attachableOfficerFeedback = assignments.filter((assignment) => Boolean(assignment.decision && assignment.reason && assignment.versionId === event?.currentVersionId));
   const minRationaleLen = 10;
 
@@ -261,34 +258,6 @@ export default function AdminApplicationReview() {
       toast.error('A suggestion is required when rejecting.');
       return;
     }
-    let manualAssessment: {
-      score: number;
-      riskLevel: RiskLevel;
-      inputs: Record<string, string | number | boolean>;
-      rationale: string;
-      resourceQuantities: ResourceQuantities;
-    } | undefined;
-    if (event.status === 'Manual Review Required') {
-      const score = Number(manualScore);
-      if (!Number.isFinite(score) || score < 0 || score > 100 || manualRationale.trim().length < minRationaleLen) {
-        toast.error('Enter a manual score from 0–100 and a manual assessment rationale.');
-        return;
-      }
-      try {
-        const parsed = JSON.parse(manualInputs) as unknown;
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('JSON must be an object.');
-        manualAssessment = {
-          score,
-          riskLevel: manualRiskLevel,
-          inputs: parsed as Record<string, string | number | boolean>,
-          rationale: manualRationale.trim(),
-          resourceQuantities: manualResources,
-        };
-      } catch {
-        toast.error('Manual assessment inputs must be a JSON object.');
-        return;
-      }
-    }
     setSubmitting(true);
     try {
       const decision = decisionMode === 'approve' ? 'Approved' : 'Rejected';
@@ -298,7 +267,6 @@ export default function AdminApplicationReview() {
         reason: string;
         suggestion?: string;
         attachOfficerFeedback?: boolean;
-        manualAssessment?: typeof manualAssessment;
       }, { status: EventStatus; decision: 'Approved' | 'Rejected' }>(functions, 'makeInitialReviewDecision');
       await command({
         eventId,
@@ -306,18 +274,16 @@ export default function AdminApplicationReview() {
         reason: rationale.trim(),
         ...(suggestion.trim() ? { suggestion: suggestion.trim() } : {}),
         ...(decision === 'Rejected' && attachOfficerFeedback ? { attachOfficerFeedback: true } : {}),
-        ...(manualAssessment ? { manualAssessment } : {}),
       });
       toast.success(decision === 'Approved' ? 'Application released for authority assignment.' : 'Application rejected and feedback sent.');
       setRationale('');
       setSuggestion('');
-      setManualRationale('');
       setDecisionMode(null);
       setEvent((current) => current ? {
         ...current,
         status: decision === 'Approved' ? 'UnderReview' : 'Rejected',
         reviewStage: decision === 'Approved' ? 'initial' : 'closed',
-        initialReview: { decision, reason: rationale.trim(), ...(suggestion.trim() ? { suggestion: suggestion.trim() } : {}), reviewerUid: profile?.uid ?? '', reviewedAt: Date.now(), manualAssessmentRecorded: Boolean(manualAssessment) },
+        initialReview: { decision, reason: rationale.trim(), ...(suggestion.trim() ? { suggestion: suggestion.trim() } : {}), reviewerUid: profile?.uid ?? '', reviewedAt: Date.now(), manualAssessmentRecorded: manualOfficialReady },
       } : current);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Unable to record the initial review.');
@@ -652,33 +618,11 @@ export default function AdminApplicationReview() {
                             </label>
                           </div>
                         )}
-                        {event.status === 'Manual Review Required' && (
-                          <div className="space-y-3 rounded-md border border-gold-300 bg-gold-50 p-3">
-                            <p className="text-xs font-semibold uppercase tracking-[0.06em] text-gold-700">Manual assessment required</p>
-                            <div className="grid grid-cols-2 gap-2">
-                              <label className="text-xs font-semibold text-ink-600">Score (0–100)
-                                <input className="input mt-1" type="number" min={0} max={100} value={manualScore} onChange={(e) => setManualScore(e.target.value)} />
-                              </label>
-                              <label className="text-xs font-semibold text-ink-600">Risk level
-                                <select className="input mt-1" value={manualRiskLevel} onChange={(e) => setManualRiskLevel(e.target.value as RiskLevel)}>
-                                  <option value="Low">Low (0–39)</option><option value="Medium">Medium (40–69)</option><option value="High">High (70–100)</option>
-                                </select>
-                              </label>
-                            </div>
-                            <label className="block text-xs font-semibold text-ink-600">Assessment rationale
-                              <textarea className="input mt-1 min-h-20" maxLength={1000} value={manualRationale} onChange={(e) => setManualRationale(e.target.value)} placeholder="Record the inputs and reasoning used for the manual score." />
-                            </label>
-                            <label className="block text-xs font-semibold text-ink-600">Assessment inputs (JSON)
-                              <textarea className="input mt-1 font-mono text-xs" rows={3} value={manualInputs} onChange={(e) => setManualInputs(e.target.value)} />
-                            </label>
-                            <p className="text-[11px] text-ink-500">If no resource recommendation exists, the manual path also records zero-based resource quantities; update them before submitting.</p>
-                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                              {(Object.keys(manualResources) as Array<keyof ResourceQuantities>).map((key) => (
-                                <label key={key} className="text-[11px] font-semibold capitalize text-ink-600">{key}
-                                  <input className="input mt-1 !h-8 !px-2 text-xs" type="number" min={0} value={manualResources[key]} onChange={(e) => setManualResources((current) => ({ ...current, [key]: Math.max(0, Math.floor(Number(e.target.value) || 0)) }))} />
-                                </label>
-                              ))}
-                            </div>
+                        {event.status === 'Manual Review Required' && !manualOfficialReady && (
+                          <div className="rounded-md border border-gold-300 bg-gold-50 p-3 text-sm text-ink-700">
+                            <p className="font-semibold text-gold-700">Manual assessment required before initial review</p>
+                            <p className="mt-1 text-xs leading-5">Complete the locked eight-category assessment in the Admin manual assessment queue. This screen cannot create a legacy inline assessment or resource record.</p>
+                            <Link to="/admin" className="btn-secondary mt-3 inline-flex !px-3 !py-1.5 text-xs">Open manual assessment queue →</Link>
                           </div>
                         )}
                         <div className="flex gap-2">

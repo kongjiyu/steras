@@ -1,28 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { validateManualAssessment } from './initialReview';
+import { makeInitialReviewDecisionForUser } from './initialReview';
 
-describe('validateManualAssessment', () => {
-  it('accepts a score whose risk band matches the manual risk level', () => {
-    expect(validateManualAssessment({
-      score: 72,
-      riskLevel: 'High',
-      inputs: { attendanceReviewed: true, notes: 'Admin review' },
-      rationale: 'Manual review considered the submitted evidence and venue conditions.',
-    })).toMatchObject({ score: 72, riskLevel: 'High' });
-  });
-
-  it('rejects an inconsistent risk band and empty inputs', () => {
-    expect(() => validateManualAssessment({
-      score: 72,
-      riskLevel: 'Medium',
-      inputs: { attendanceReviewed: true },
-      rationale: 'Manual review considered the submitted evidence and venue conditions.',
-    })).toThrow(/must match the score band/i);
-    expect(() => validateManualAssessment({
-      score: 42,
-      riskLevel: 'Medium',
-      inputs: {},
-      rationale: 'Manual review considered the submitted evidence and venue conditions.',
-    })).toThrow(/inputs/i);
+describe('makeInitialReviewDecisionForUser', () => {
+  it('keeps inline legacy manual assessments out of the initial-review command', async () => {
+    await expect(makeInitialReviewDecisionForUser('admin-1', {
+      eventId: 'event-1',
+      decision: 'Approved',
+      reason: 'The submitted evidence and operational plan are ready for review.',
+      manualAssessment: {} as never,
+    } as never)).rejects.toMatchObject({ code: 'failed-precondition' });
   });
 });

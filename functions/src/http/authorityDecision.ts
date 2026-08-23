@@ -205,7 +205,9 @@ export async function makeAuthorityDecisionForUser(
     }
     const readiness = assessment?.assessmentReadiness;
     const isProvisional = readiness === 'provisional' || readiness === 'insufficient_data';
-    if (isProvisional && rationale.trim().length < PROVISIONAL_MIN_RATIONALE) {
+    const finalizedAdminManual = assessment?.status === 'official_ready'
+      && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual';
+    if (!finalizedAdminManual && isProvisional && rationale.trim().length < PROVISIONAL_MIN_RATIONALE) {
       throw new HttpsError(
         'invalid-argument',
         `When the assessment is ${readiness}, the decision rationale must explain the gap ` +

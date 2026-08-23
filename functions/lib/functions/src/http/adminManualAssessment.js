@@ -302,7 +302,7 @@ function organizerSummary(assessment, resource, now) {
 function assertManualEvent(event, allowOfficial = false) {
     if (!event?.currentVersionId || !event.currentAssessmentId
         || !safeIdentifier(event.currentVersionId) || !safeIdentifier(event.currentAssessmentId)
-        || !['Pending', 'UnderReview'].includes(event.status)) {
+        || !['Pending', 'UnderReview', 'Manual Review Required'].includes(event.status)) {
         throw new https_1.HttpsError('failed-precondition', 'The event is not open for manual assessment.');
     }
     void allowOfficial;

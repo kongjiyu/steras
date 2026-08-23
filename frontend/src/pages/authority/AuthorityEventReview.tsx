@@ -24,6 +24,7 @@ import {
   MANUAL_ASSESSMENT_SCHEMA_VERSION,
   MANUAL_OFFICIAL_FORMULA_VERSION,
   ResourceRecommendation,
+  ResourceOverrideRecord,
   ResourceQuantities,
   RiskAssessment,
   Stage1Doc,
@@ -50,6 +51,7 @@ export default function AuthorityEventReview() {
   const [assessment, setAssessment] = useState<RiskAssessment | null>(null);
   const [assessmentStatus, setAssessmentStatus] = useState<AssessmentRecord['status'] | null>(null);
   const [resources, setResources] = useState<ResourceRecommendation | null>(null);
+  const [resourceOverrides, setResourceOverrides] = useState<ResourceOverrideRecord[]>([]);
   const [scoreResolution, setScoreResolution] = useState<AuthorityScoreResolution | null>(null);
   const [manualAssessment, setManualAssessment] = useState<AdminManualAssessment | null>(null);
   const [legacyAssessment, setLegacyAssessment] = useState(false);
@@ -72,6 +74,7 @@ export default function AuthorityEventReview() {
   const [editingResources, setEditingResources] = useState(false);
   const [resourceDraft, setResourceDraft] = useState<ResourceQuantities | null>(null);
   const [resourceRationale, setResourceRationale] = useState('');
+  const [resourceOverrideKey, setResourceOverrideKey] = useState(() => `resource-override-${crypto.randomUUID()}`);
   const [savingResources, setSavingResources] = useState(false);
   const [resourceConfirmed, setResourceConfirmed] = useState(false);
   const [confirmingResources, setConfirmingResources] = useState(false);
@@ -154,6 +157,19 @@ export default function AuthorityEventReview() {
           setLegacyResources(false);
           return () => undefined;
         })();
+    const unsubscribeResourceOverrides = resourceId
+      ? onSnapshot(query(collection(eventReference, COLLECTIONS.RESOURCE_OVERRIDES)), (snapshot) => {
+          setResourceOverrides(snapshot.docs
+            .map((item) => item.data() as ResourceOverrideRecord)
+            .filter((item) => item.eventId === eventId
+              && item.versionId === versionId
+              && item.baseResourceId === resourceId
+              && item.resourceId === resourceId
+              && item.quantities
+              && item.rationale)
+            .sort((left, right) => right.overriddenAt - left.overriddenAt));
+        }, supportingError)
+      : (() => { setResourceOverrides([]); return () => undefined; })();
     const unsubscribeDecisions = onSnapshot(query(collection(eventReference, COLLECTIONS.DECISIONS)), (snapshot) => {
       setDecisions(snapshot.docs
         .map((item) => isCurrentAuthorityDecision(item.data(), eventId, item.id) ? item.data() as AuthorityDecision : undefined)
@@ -194,6 +210,7 @@ export default function AuthorityEventReview() {
     return () => {
       unsubscribeAssessment();
       unsubscribeResources();
+      unsubscribeResourceOverrides();
       unsubscribeDecisions();
       unsubscribeDecisionHistory();
       unsubscribeAssignments();
@@ -208,6 +225,11 @@ export default function AuthorityEventReview() {
   const activeManualAssessmentId = assessment?.status === 'official_ready'
     && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual'
     ? assessment.activeManualAssessmentId : undefined;
+  const latestResourceOverride = resourceOverrides[0];
+  const effectiveResources = useMemo(
+    () => resources && latestResourceOverride ? applyResourceOverride(resources, latestResourceOverride) : resources,
+    [latestResourceOverride, resources],
+  );
   useEffect(() => {
     if (!isFirebaseConfigured || !eventId || !activeAssessmentId || !activeResolutionId) { setScoreResolution(null); return; }
     return onSnapshot(doc(db, COLLECTIONS.EVENTS, eventId, COLLECTIONS.ASSESSMENTS, activeAssessmentId, COLLECTIONS.SCORE_RESOLUTIONS, activeResolutionId), (snapshot) => {
@@ -239,8 +261,8 @@ export default function AuthorityEventReview() {
   }, [activeAssessmentId, activeManualAssessmentId, assessment?.evidence, assessment?.inputHash, currentVersion?.inputHash, event?.currentVersionId, eventId]);
 
   useEffect(() => {
-    if (resources && editingResources) setResourceDraft(toResourceQuantities(resources));
-  }, [resources, editingResources]);
+    if (effectiveResources && editingResources) setResourceDraft(toResourceQuantities(effectiveResources));
+  }, [effectiveResources, editingResources]);
 
   useEffect(() => {
     const hazards = getReviewHazards(assessment);
@@ -326,11 +348,12 @@ export default function AuthorityEventReview() {
     if (!eventId || !resourceDraft || resourceRationale.trim().length < 10 || !isNamedOfficer) return;
     setSavingResources(true);
     try {
-      const command = httpsCallable<{ eventId: string; quantities: ResourceQuantities; rationale: string }>(functions, 'overrideResources');
-      await command({ eventId, quantities: resourceDraft, rationale: resourceRationale.trim() });
-      toast.success('Resource recommendation updated.');
+      const command = httpsCallable<{ eventId: string; quantities: ResourceQuantities; rationale: string; idempotencyKey: string }>(functions, 'overrideResources');
+      await command({ eventId, quantities: resourceDraft, rationale: resourceRationale.trim(), idempotencyKey: resourceOverrideKey });
+      toast.success('Append-only resource adjustment recorded.');
       setEditingResources(false);
       setResourceRationale('');
+      setResourceOverrideKey(`resource-override-${crypto.randomUUID()}`);
       setResourceConfirmed(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Unable to update resources.');
@@ -527,7 +550,7 @@ export default function AuthorityEventReview() {
               )}
             </div>
             <div className="card-body">
-              {!resources || !resourceDraft ? <p className="text-sm text-ink-500">{legacyResources ? 'Legacy resource record detected. Recompute this event version before review.' : 'No recommendation yet.'}</p> : editingResources ? (
+              {!effectiveResources || !resourceDraft ? <p className="text-sm text-ink-500">{legacyResources ? 'Legacy resource record detected. Recompute this event version before review.' : 'No recommendation yet.'}</p> : editingResources ? (
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                     {RESOURCE_FIELDS.map(({ key, label }) => (
@@ -540,11 +563,11 @@ export default function AuthorityEventReview() {
                     <textarea className="input mt-1 resize-y" rows={3} maxLength={1000} value={resourceRationale} onChange={(e) => setResourceRationale(e.target.value)} placeholder="Explain the operational basis for this change." />
                   </label>
                   <div className="flex justify-end gap-2">
-                    <button type="button" className="btn-secondary" onClick={() => { setEditingResources(false); setResourceDraft(toResourceQuantities(resources)); setResourceRationale(''); }}><RotateCcw size={15} /> Cancel</button>
+                    <button type="button" className="btn-secondary" onClick={() => { setEditingResources(false); setResourceDraft(toResourceQuantities(effectiveResources)); setResourceRationale(''); }}><RotateCcw size={15} /> Cancel</button>
                     <button type="button" className="btn-primary" disabled={savingResources || resourceRationale.trim().length < 10} onClick={saveResourceOverride}>{savingResources ? 'Saving...' : 'Save adjustment'}</button>
                   </div>
                 </div>
-              ) : <ResourceRecommendationView recommendation={resources} showOverrideProvenance />}
+              ) : <ResourceRecommendationView recommendation={effectiveResources} latestOverride={latestResourceOverride} showOverrideProvenance />}
             </div>
           </section>
 
@@ -806,6 +829,22 @@ function getReviewHazards(assessment: RiskAssessment | null): ScoreReviewHazard[
 function VersionHistory({ versions, currentVersionId }: { versions: EventVersion[]; currentVersionId?: string }) {
   if (versions.length === 0) return <p className="text-sm text-ink-500">No submitted versions are available.</p>;
   return <ol className="divide-y divide-ink-100 border-y border-ink-100">{versions.map((version) => <li key={version.versionId} className="flex min-h-16 items-center justify-between gap-4 py-3"><div><p className="text-sm font-semibold text-ink-800">Version {version.versionNumber}{version.versionId === currentVersionId && <span className="ml-2 badge bg-green-100 text-status-approved">Current</span>}</p><p className="mt-1 text-xs text-ink-500">Submitted {format(new Date(version.submittedAt), 'PPp')}</p></div><span className="text-xs font-medium text-ink-500">{version.documentPaths.length} files</span></li>)}</ol>;
+}
+
+function applyResourceOverride(resource: ResourceRecommendation, override: ResourceOverrideRecord): ResourceRecommendation {
+  const items = Object.fromEntries(RESOURCE_FIELDS.map(({ key }) => {
+    const quantity = override.quantities[key];
+    const item = resource.items[key];
+    return [key, {
+      ...item,
+      baseline: quantity,
+      planningRange: {
+        min: quantity,
+        max: Math.max(item.planningRange.max, quantity),
+      },
+    }];
+  })) as ResourceRecommendation['items'];
+  return { ...resource, items };
 }
 
 function evidenceName(path: string): string {

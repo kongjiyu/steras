@@ -1,24 +1,31 @@
-import { ResourceRecommendation as ResourceRecommendationRecord } from '@shared/types';
+import { ResourceOverrideRecord, ResourceRecommendation as ResourceRecommendationRecord } from '@shared/types';
 import { formatM2Timestamp, RESOURCE_FIELDS } from './m2Presentation';
 
 interface ResourceRecommendationProps {
   recommendation: ResourceRecommendationRecord;
   showRationales?: boolean;
   showOverrideProvenance?: boolean;
+  latestOverride?: ResourceOverrideRecord;
 }
 
 export default function ResourceRecommendation({
   recommendation,
   showRationales = true,
   showOverrideProvenance = false,
+  latestOverride,
 }: ResourceRecommendationProps) {
   const manualOfficial = recommendation.stage === 'official'
     && recommendation.assessmentReference.sourceKind === 'admin_manual';
-  const override = recommendation as ResourceRecommendationRecord & {
+  const legacyOverride = recommendation as ResourceRecommendationRecord & {
     overriddenBy?: string;
     overrideRationale?: string;
     overriddenAt?: number;
   };
+  const override = latestOverride ?? (legacyOverride.overriddenBy ? {
+    reviewerId: legacyOverride.overriddenBy,
+    rationale: legacyOverride.overrideRationale,
+    overriddenAt: legacyOverride.overriddenAt,
+  } : undefined);
   return (
     <div className="space-y-5" data-testid="resource-recommendation">
       <div className="grid grid-cols-2 gap-x-5 border-y border-[#e3dacb] sm:grid-cols-4">
@@ -44,11 +51,11 @@ export default function ResourceRecommendation({
 
       {recommendation.notes && <p className="border-l-2 border-brand-200 pl-3 text-xs leading-5 text-ink-600">{recommendation.notes}</p>}
 
-      {showOverrideProvenance && override.overriddenBy && (
+      {showOverrideProvenance && override?.reviewerId && (
         <div className="rounded-md border border-brand-200 bg-brand-50/50 p-3 text-xs leading-5 text-ink-700">
           <p className="font-semibold text-brand-800">Authority resource adjustment recorded</p>
-          <p className="mt-1">Adjusted by <span className="font-mono">{override.overriddenBy}</span>{override.overriddenAt ? ` on ${formatM2Timestamp(override.overriddenAt)}` : ''}.</p>
-          {override.overrideRationale && <p className="mt-1">Reason: {override.overrideRationale}</p>}
+          <p className="mt-1">Adjusted by <span className="font-mono">{override.reviewerId}</span>{override.overriddenAt ? ` on ${formatM2Timestamp(override.overriddenAt)}` : ''}.</p>
+          {override.rationale && <p className="mt-1">Reason: {override.rationale}</p>}
         </div>
       )}
 

@@ -48,12 +48,12 @@ This document is the **handoff contract** for cross-module integration. It tells
 
 > **If you're another module and you need any of these, CALL THEM DIRECTLY. Don't re-implement.**
 
-The intended region is `asia-southeast1`. Deploy the functions to a dedicated staging project first; the currently configured `linkos-496505` site is a legacy development deployment and is not a safe UAT/reset target. Callable from any signed-in client only where the function's role/assignment check permits it (or via Admin SDK with auth context).
+The intended region is `asia-southeast1`. The current UAT target is the shared `linkos-496505` project. Mutating tests are permitted only for the manifest-owned `m3-linkos-v1` dataset with the explicit shared-project safety flags; reset and cleanup must never scan or modify unrelated events. Callable from any signed-in client only where the function's role/assignment check permits it (or via Admin SDK with auth context).
 
 | Function | Signature | Notes for callers |
 |---|---|---|
 | `makeAuthorityDecision` | `(eventId, decision, rationale, confirmedReview?: boolean)` | **Legacy callable only.** Assigned events reject this path so it cannot bypass named officer proposals and admin second review. Use `recordOfficerProposal` for the current M3 workflow. |
-| `makeInitialReviewDecision` | `({ eventId, decision: 'Approved'|'Rejected', reason, suggestion?, manualAssessment? })` | **SHIPPED.** Admin-only initial gate. `Approved` releases the version to `UnderReview`/officer assignment; `Rejected` stores reason + suggestion, sets the version editable for resubmission, and notifies the organiser. `Manual Review Required` applications must include a scored manual assessment (and manual resource quantities when no recommendation exists). |
+| `makeInitialReviewDecision` | `({ eventId, decision: 'Approved'|'Rejected', reason, suggestion? })` | **SHIPPED.** Admin-only initial gate. Reads the assessment/resource IDs from the event's `currentAssessmentId`/`currentResourceId` pointers and validates the M2 contracts. `Approved` releases the version to `UnderReview`/officer assignment; `Rejected` stores reason + suggestion, sets the version editable for resubmission, and notifies the organiser. It does not accept legacy inline manual assessment/resource payloads; manual cases are submitted through `submitAdminManualAssessment`. |
 | `reviewAssessmentScores` | `({ eventId, rationale, overrides?, resourceConfirmed? })` | **SHIPPED.** Named officer only. Records an explicit resource confirmation and/or per-hazard residual likelihood/severity override with original values, reviewer UID, timestamp, and audit metadata; the official M2 assessment remains immutable. |
 | `recordOfficerProposal` | `({ eventId, decision, reason, suggestion?, confirmedReview?: boolean })` | **SHIPPED (`44a7840` + `7bd47f1`).** The new officer flow (replaces the legacy `makeAuthorityDecision` for assigned officers). Requires an active `assignments/{versionId}_{auth}` doc for the calling officer. `decision === 'Approved'` requires `confirmedReview: true` (FR-M3-16). `decision === 'Rejected'` requires non-empty `suggestion`. Sets `event.reviewStage = 'second'` when all officers complete; emits admin + organiser notifications. Idempotent on `(versionId, authType)`. |
 | `makeSecondReviewDecision` | **SHIPPED.** `({ eventId, finalDecision, confirmedDecision?, adminNote? })` | Admin only. Requires all current-version officer proposals to be complete. The officer aggregate is retained for audit, but `finalDecision` is the admin's authoritative outcome and may differ from that aggregate. Decrements officer workload, writes `decision_made` audit log, and sends the final organiser notification with reason + suggestion fields. `confirmedDecision` remains a backwards-compatible alias. |
@@ -64,7 +64,7 @@ The intended region is `asia-southeast1`. Deploy the functions to a dedicated st
 | `editEventControlList` | **SHIPPED (`af9805f`).** `({ eventId, items: ProposedControlItem[] })` | Admin only. The commit point. Wipes existing `event_controls/*` + per-control `stage1_docs/*`, writes one `event_controls/{controlId}` doc per item, sets `event.controlListGenerated = true` + writes `event.controlListSnapshot`, writes a `control_list_published` audit log entry (`controlItemVersion=1, controlIds=[…]`), notifies the organiser. Does NOT pre-seed `stage1_docs` — that's Workstream 3 (organizer upload). Idempotent. |
 | `uploadStage1Doc` → renamed to `submitStage1Doc` (per WS3) | **SHIPPED (`ddf22d7`).** `({ eventId, controlId, docId, fileName?, mimeType?, fileBase64?, label?, usePrevious? })` | Organiser only. Two paths: (1) **upload**: writes `event_controls/{controlId}/stage1_docs/{docId}` with `status: 'pending_verification'` + a data: URL `filePath` (700 KB binary cap = ~940 KB base64, under the 1 MB Firestore doc limit). Accepted mimes: JPEG, PNG, PDF. (2) **`usePrevious: true`**: one-click flag, only allowed when `docType === 'receipt'` (A25). Writes `status: 'use_previous'`. M3 owner decision 2026-08-19: NO source-event picker — Stage 2 is the public verification backstop. Both paths: refills the `stage1_doc_submitted` audit log; notifies the assigned officer (looked up from `events/{id}/assignments/{versionId}_{auth}`) + all admin users. Refuses if the existing doc is `status: 'verified'` (organizer cannot re-upload after an officer approved without admin involvement). On resubmit after a rejection, preserves the prior `rejectionReason` on the doc (Q4) — cleared on the next verification. Idempotent on `(eventId, controlId, docId)`; new submit overwrites. |
 | `submitStage2Doc` | `({ eventId, controlId, fileName, mimeType, fileBase64 })` | **SHIPPED.** Organiser-only upload; writes a private `stage2_docs/{controlId}-s2` record as `published: false`. Replacements remove the previous public projection until the admin reviews the new image. |
-| `overrideResources` | `(eventId, quantities, rationale)` | Existing. Officer in `requiredAuthorities`. Captures original + revised + UID + authority + timestamp for audit. |
+| `overrideResources` | `(eventId, quantities, rationale, idempotencyKey)` | Officer with an active named assignment. Reads the current M2 resource through `currentResourceId`, validates the resource contract, and appends an immutable `resource_overrides/{overrideId}` record containing base/effective resource IDs, previous and revised quantities, reviewer, rationale, and idempotency key. The canonical M2 resource is never mutated; the latest override is the effective UI value. |
 | `listMyNotifications` | `({ limit?: number })` | **USE THIS for the bell.** Returns `{ items: Notification[], unread: number }`. Scoped to `request.auth.uid`. |
 | `markNotificationRead` | `({ notificationId, read?: boolean })` | **USE THIS when the user clicks a notification.** Idempotent. Updates `read` + `readAt`. |
 | `publishStage2Doc` / `unpublishStage2Doc` | `({ eventId, controlId, reason? })` | **SHIPPED.** Admin publish gate. Publish writes the sanitised `public_event_controls/{eventId}/items/{controlId}-stage2` projection; unpublish/reject removes it and optionally stores organiser feedback. |
@@ -269,9 +269,9 @@ Read-by-rules is already configured. Writes are server-only.
 
 **M3 reads:**
 - `events/{eventId}/assessments/{versionId}.complianceStatus` — for the Approve gate.
-- `events/{eventId}/assessments/{versionId}.assessmentReadiness` — for the rationale-length gate.
+- `events/{eventId}/assessments/{currentAssessmentId}.assessmentReadiness` — for the rationale-length gate. A finalized `admin_manual` official assessment uses the normal 10-character gate; true provisional/insufficient-data assessments require 80 characters.
 - `events/{eventId}/assessments/{versionId}.officialRiskLevel`, `.officialScore` — display in the review page.
-- `events/{eventId}/resources/{versionId}` — the resource recommendation.
+- `events/{eventId}/resources/{currentResourceId}` — the current hash-addressed M2 resource recommendation. Never infer this document ID from `versionId`.
 - `events/{eventId}.verifiedControlIds` — *you* (M2) read this when recalculating residual hazards. **M3 writes to this field.** (Already in production.)
 
 **M3 needs from you (M2):**
@@ -397,7 +397,7 @@ proposeEventControlList: httpsCallable<{
 
 **Behaviour:**
 1. Read `events/{eventId}/assessments/{versionId}` for the official risk + residual hazards.
-2. Read `events/{eventId}/resources/{versionId}` for the resource recommendation.
+2. Read the event's `currentResourceId`, then read `events/{eventId}/resources/{currentResourceId}` for the resource recommendation. Query `resource_overrides` for the latest append-only override when displaying effective quantities.
 3. Build an allowlisted MiniMax prompt from event characteristics, required authorities, and the selected M2 fields:
    ```
    You are generating a Stage-1/Stage-2 event control list for a [eventType] event
@@ -530,7 +530,7 @@ These should be answered before the next round starts.
 3. Will the `Withdrawn` withdrawal reason be stored on the event doc or in a separate audit log? (M3's cleanup trigger wants the reason in the notification.)
 
 ### For M2 owner
-1. Keep `events/{id}/assessments/{versionId}` and `resources/{versionId}` fields stable for the allowlisted proposer input.
+1. Keep the event's `currentAssessmentId`/`currentResourceId` pointers and the hash-addressed assessment/resource contracts stable for the allowlisted proposer input. New M3 overrides append to `resource_overrides`; they must not rewrite the canonical M2 resource.
 2. Confirm the exact `status` value you set when AI is unavailable. (FR-M3-03 needs a "Manual Review Required" signal distinct from `UnderReview`.)
 3. Share any provider model/version change with M3 so `promptVersion` and staging verification remain auditable.
 

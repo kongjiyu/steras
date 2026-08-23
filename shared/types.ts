@@ -970,8 +970,33 @@ export type ResourceRecommendation = ResourceRecommendationBase & (
   | {
       stage: 'official';
       assessmentReference: Extract<ResourceAssessmentReference, { stage: 'official' }>;
-    }
+  }
 );
+
+/**
+ * Append-only authority adjustment to a canonical M2 resource revision.
+ *
+ * The M2 resource document remains immutable.  M3 renders the latest record
+ * in this collection as the effective operational quantity while retaining
+ * the original recommendation and every prior adjustment for audit.
+ */
+export interface ResourceOverrideRecord {
+  overrideId: string;
+  eventId: string;
+  versionId: string;
+  assessmentId: string;
+  baseResourceId: string;
+  /** Kept as an explicit alias for older audit/export consumers. */
+  resourceId: string;
+  authorityType: AuthorityType;
+  reviewerId: string;
+  rationale: string;
+  previousQuantities: ResourceQuantities;
+  quantities: ResourceQuantities;
+  idempotencyKey: string;
+  supersedesOverrideId?: string;
+  overriddenAt: number;
+}
 /** Authority-owned confirmation/override of deterministic hazard scores.
  * The official M2 assessment remains immutable; this record is the M3 human
  * review artifact that can be consumed by a later M2 recomputation. */

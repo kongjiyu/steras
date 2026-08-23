@@ -145,7 +145,9 @@ async function makeAuthorityDecisionForUser(uid, request, now = Date.now()) {
         }
         const readiness = assessment?.assessmentReadiness;
         const isProvisional = readiness === 'provisional' || readiness === 'insufficient_data';
-        if (isProvisional && rationale.trim().length < PROVISIONAL_MIN_RATIONALE) {
+        const finalizedAdminManual = assessment?.status === 'official_ready'
+            && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual';
+        if (!finalizedAdminManual && isProvisional && rationale.trim().length < PROVISIONAL_MIN_RATIONALE) {
             throw new https_1.HttpsError('invalid-argument', `When the assessment is ${readiness}, the decision rationale must explain the gap ` +
                 `(at least ${PROVISIONAL_MIN_RATIONALE} characters).`);
         }

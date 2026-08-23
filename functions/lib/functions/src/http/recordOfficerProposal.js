@@ -31,6 +31,7 @@ const firebase_admin_1 = require("firebase-admin");
 const https_1 = require("firebase-functions/v2/https");
 const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
+const resourceContract_1 = require("../engines/resourceContract");
 const notifications_1 = require("../utils/notifications");
 const REASON_MIN = 10;
 const REASON_MAX = 1000;
@@ -76,22 +77,42 @@ exports.recordOfficerProposal = (0, https_1.onCall)({ region: runtime_1.FUNCTION
     const versionId = event.currentVersionId;
     if (!versionId)
         throw new https_1.HttpsError('failed-precondition', 'The application has no submitted version.');
-    const assessmentSnap = await eventRef.collection(types_1.COLLECTIONS.ASSESSMENTS).doc(versionId).get();
+    const assessmentId = event.currentAssessmentId;
+    const resourceId = event.currentResourceId;
+    if (!assessmentId || !resourceId || !safeDocumentId(assessmentId) || !safeDocumentId(resourceId)) {
+        throw new https_1.HttpsError('failed-precondition', 'Risk assessment and resources must point to the current M2 generation.');
+    }
+    const [assessmentSnap, resourceSnap] = await Promise.all([
+        eventRef.collection(types_1.COLLECTIONS.ASSESSMENTS).doc(assessmentId).get(),
+        eventRef.collection(types_1.COLLECTIONS.RESOURCES).doc(resourceId).get(),
+    ]);
     if (!['Pending', 'UnderReview'].includes(event.status)) {
         throw new https_1.HttpsError('failed-precondition', 'This application version is no longer open for officer review.');
     }
     if (event.initialReview?.decision !== 'Approved') {
         throw new https_1.HttpsError('failed-precondition', 'The admin initial review has not released this application for officer review.');
     }
-    if (event.currentAssessmentId !== versionId || event.currentResourceId !== versionId) {
+    const resource = resourceSnap.data();
+    const assessment = assessmentSnap.data();
+    if (!assessmentSnap.exists || !resourceSnap.exists || !assessment
+        || assessment.assessmentId !== assessmentId
+        || assessment.eventId !== eventId
+        || assessment.versionId !== versionId
+        || !resource
+        || !(0, resourceContract_1.validateResourceRecommendation)(resource).ok
+        || resource.resourceId !== resourceId
+        || resource.eventId !== eventId
+        || resource.versionId !== versionId
+        || resource.assessmentId !== assessmentId) {
         throw new https_1.HttpsError('failed-precondition', 'Risk assessment and resources must be ready before recording a proposal.');
     }
-    const assessment = assessmentSnap?.data();
     if (assessment?.complianceStatus === 'blocked' && decision === 'Approved') {
         throw new https_1.HttpsError('failed-precondition', 'This application cannot be approved while compliance checks are blocked.');
     }
-    const readiness = assessment?.assessmentReadiness;
-    if ((readiness === 'provisional' || readiness === 'insufficient_data') && reason.length < 80) {
+    const readiness = assessment.assessmentReadiness;
+    const finalizedAdminManual = assessment.status === 'official_ready'
+        && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual';
+    if (!finalizedAdminManual && (readiness === 'provisional' || readiness === 'insufficient_data') && reason.length < 80) {
         throw new https_1.HttpsError('invalid-argument', `When the assessment is ${readiness}, the proposal reason must be at least 80 characters.`);
     }
     // Find this officer's assignment.
@@ -114,7 +135,15 @@ exports.recordOfficerProposal = (0, https_1.onCall)({ region: runtime_1.FUNCTION
     const now = Date.now();
     return db.runTransaction(async (tx) => {
         // Reads first (Firestore requires all reads before all writes).
-        const allAssignmentsSnap = await tx.get(eventRef.collection(types_1.COLLECTIONS.ASSIGNMENTS));
+        const [currentEventSnap, allAssignmentsSnap] = await Promise.all([
+            tx.get(eventRef),
+            tx.get(eventRef.collection(types_1.COLLECTIONS.ASSIGNMENTS)),
+        ]);
+        const currentEvent = currentEventSnap.data();
+        if (!currentEventSnap.exists || currentEvent?.currentVersionId !== versionId
+            || currentEvent.currentAssessmentId !== assessmentId || currentEvent.currentResourceId !== resourceId) {
+            throw new https_1.HttpsError('aborted', 'The application generation changed before the proposal was recorded.');
+        }
         const all = allAssignmentsSnap.docs
             .map((d) => d.data())
             .filter((candidate) => candidate.versionId === versionId);
@@ -175,6 +204,9 @@ exports.recordOfficerProposal = (0, https_1.onCall)({ region: runtime_1.FUNCTION
 });
 function isDecision(v) {
     return v === 'Approved' || v === 'Rejected' || v === 'AmendmentRequested';
+}
+function safeDocumentId(value) {
+    return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 }
 async function findFirstAdminUid(db) {
     const snap = await db.collection(types_1.COLLECTIONS.USERS).where('role', '==', 'admin').limit(1).get();

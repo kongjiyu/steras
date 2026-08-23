@@ -1,36 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { overrideResourcesForUser, throwResourceOverridesUnavailable, validateResourceOverrideRequest } from './overrideResources';
+import { validateResourceOverrideRequest } from './overrideResources';
 
 const quantities = { police: 2, medicalTeams: 1, ambulances: 1, toilets: 10, wasteBins: 3, security: 5, fireOfficers: 1 };
 
 describe('validateResourceOverrideRequest', () => {
   it('accepts complete bounded integer quantities', () => {
-    expect(validateResourceOverrideRequest({ eventId: ' event-1 ', quantities, rationale: '  Operational review.  ' }))
-      .toEqual({ eventId: 'event-1', quantities, rationale: 'Operational review.' });
+    expect(validateResourceOverrideRequest({ eventId: ' event-1 ', quantities, rationale: '  Operational review.  ', idempotencyKey: 'override-key-1' }))
+      .toEqual({ eventId: 'event-1', quantities, rationale: 'Operational review.', idempotencyKey: 'override-key-1' });
   });
 
   it.each([
     [{ eventId: '', quantities, rationale: 'Operational review.' }, 'eventId is required.'],
-    [{ eventId: 'event-1', quantities: { ...quantities, police: -1 }, rationale: 'Operational review.' }, 'Every resource quantity must be a non-negative integer.'],
-    [{ eventId: 'event-1', quantities: { ...quantities, extra: 1 }, rationale: 'Operational review.' }, 'Every resource quantity must be a non-negative integer.'],
-    [{ eventId: 'event-1', quantities, rationale: 'short' }, 'Rationale must be between 10 and 1,000 characters.'],
+    [{ eventId: 'event-1', quantities: { ...quantities, police: -1 }, rationale: 'Operational review.', idempotencyKey: 'override-key-1' }, 'Every resource quantity must be a non-negative integer.'],
+    [{ eventId: 'event-1', quantities: { ...quantities, extra: 1 }, rationale: 'Operational review.', idempotencyKey: 'override-key-1' }, 'Every resource quantity must be a non-negative integer.'],
+    [{ eventId: 'event-1', quantities, rationale: 'short', idempotencyKey: 'override-key-1' }, 'Rationale must be between 10 and 1,000 characters.'],
+    [{ eventId: 'event-1', quantities, rationale: 'Operational review.' }, 'idempotencyKey must be 8-128 characters.'],
   ])('rejects malformed resource overrides', (request, message) => {
     expect(() => validateResourceOverrideRequest(request)).toThrow(message);
-  });
-});
-
-describe('PR2 resource override boundary', () => {
-  it('rejects a valid override before any persistence work can start', async () => {
-    await expect(overrideResourcesForUser('authority-1', {
-      eventId: 'event-1',
-      quantities,
-      rationale: 'Operational review.',
-    })).rejects.toMatchObject({ code: 'failed-precondition' });
-  });
-
-  it('exposes a deterministic failed-precondition guard for every resource stage', () => {
-    expect(throwResourceOverridesUnavailable).toThrow(
-      'Resource adjustments are unavailable until the append-only authority finalisation workflow is enabled.',
-    );
   });
 });

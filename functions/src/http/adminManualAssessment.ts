@@ -330,7 +330,7 @@ function organizerSummary(assessment: AdminManualOfficialRiskAssessment, resourc
 function assertManualEvent(event: EventRecord | undefined, allowOfficial = false) {
   if (!event?.currentVersionId || !event.currentAssessmentId
     || !safeIdentifier(event.currentVersionId) || !safeIdentifier(event.currentAssessmentId)
-    || !['Pending', 'UnderReview'].includes(event.status)) {
+    || !['Pending', 'UnderReview', 'Manual Review Required'].includes(event.status)) {
     throw new HttpsError('failed-precondition', 'The event is not open for manual assessment.');
   }
   void allowOfficial;

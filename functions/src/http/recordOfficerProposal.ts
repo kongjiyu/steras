@@ -31,10 +31,12 @@ import {
   COLLECTIONS,
   DecisionValue,
   EventRecord,
+  ResourceRecommendation,
   RiskAssessment,
   UserProfile,
 } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
+import { validateResourceRecommendation } from '../engines/resourceContract';
 import { createNotification } from '../utils/notifications';
 
 interface RecordOfficerProposalRequest {
@@ -97,22 +99,42 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
   const event = eventSnap.data() as EventRecord;
   const versionId = event.currentVersionId;
   if (!versionId) throw new HttpsError('failed-precondition', 'The application has no submitted version.');
-  const assessmentSnap = await eventRef.collection(COLLECTIONS.ASSESSMENTS).doc(versionId).get();
+  const assessmentId = event.currentAssessmentId;
+  const resourceId = event.currentResourceId;
+  if (!assessmentId || !resourceId || !safeDocumentId(assessmentId) || !safeDocumentId(resourceId)) {
+    throw new HttpsError('failed-precondition', 'Risk assessment and resources must point to the current M2 generation.');
+  }
+  const [assessmentSnap, resourceSnap] = await Promise.all([
+    eventRef.collection(COLLECTIONS.ASSESSMENTS).doc(assessmentId).get(),
+    eventRef.collection(COLLECTIONS.RESOURCES).doc(resourceId).get(),
+  ]);
   if (!['Pending', 'UnderReview'].includes(event.status)) {
     throw new HttpsError('failed-precondition', 'This application version is no longer open for officer review.');
   }
   if (event.initialReview?.decision !== 'Approved') {
     throw new HttpsError('failed-precondition', 'The admin initial review has not released this application for officer review.');
   }
-  if (event.currentAssessmentId !== versionId || event.currentResourceId !== versionId) {
+  const resource = resourceSnap.data() as ResourceRecommendation | undefined;
+  const assessment = assessmentSnap.data() as RiskAssessment | undefined;
+  if (!assessmentSnap.exists || !resourceSnap.exists || !assessment
+    || assessment.assessmentId !== assessmentId
+    || assessment.eventId !== eventId
+    || assessment.versionId !== versionId
+    || !resource
+    || !validateResourceRecommendation(resource).ok
+    || resource.resourceId !== resourceId
+    || resource.eventId !== eventId
+    || resource.versionId !== versionId
+    || resource.assessmentId !== assessmentId) {
     throw new HttpsError('failed-precondition', 'Risk assessment and resources must be ready before recording a proposal.');
   }
-  const assessment = assessmentSnap?.data() as RiskAssessment | undefined;
   if (assessment?.complianceStatus === 'blocked' && decision === 'Approved') {
     throw new HttpsError('failed-precondition', 'This application cannot be approved while compliance checks are blocked.');
   }
-  const readiness = assessment?.assessmentReadiness;
-  if ((readiness === 'provisional' || readiness === 'insufficient_data') && reason.length < 80) {
+  const readiness = assessment.assessmentReadiness;
+  const finalizedAdminManual = assessment.status === 'official_ready'
+    && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual';
+  if (!finalizedAdminManual && (readiness === 'provisional' || readiness === 'insufficient_data') && reason.length < 80) {
     throw new HttpsError('invalid-argument', `When the assessment is ${readiness}, the proposal reason must be at least 80 characters.`);
   }
 
@@ -137,7 +159,15 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
   const now = Date.now();
   return db.runTransaction(async (tx) => {
     // Reads first (Firestore requires all reads before all writes).
-    const allAssignmentsSnap = await tx.get(eventRef.collection(COLLECTIONS.ASSIGNMENTS));
+    const [currentEventSnap, allAssignmentsSnap] = await Promise.all([
+      tx.get(eventRef),
+      tx.get(eventRef.collection(COLLECTIONS.ASSIGNMENTS)),
+    ]);
+    const currentEvent = currentEventSnap.data() as EventRecord | undefined;
+    if (!currentEventSnap.exists || currentEvent?.currentVersionId !== versionId
+      || currentEvent.currentAssessmentId !== assessmentId || currentEvent.currentResourceId !== resourceId) {
+      throw new HttpsError('aborted', 'The application generation changed before the proposal was recorded.');
+    }
     const all = allAssignmentsSnap.docs
       .map((d) => d.data() as Assignment)
       .filter((candidate) => candidate.versionId === versionId);
@@ -201,6 +231,10 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
 
 function isDecision(v: unknown): v is DecisionValue {
   return v === 'Approved' || v === 'Rejected' || v === 'AmendmentRequested';
+}
+
+function safeDocumentId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 }
 
 async function findFirstAdminUid(db: FirebaseFirestore.Firestore): Promise<string | null> {

@@ -14,10 +14,16 @@ const auth_1 = require("firebase-admin/auth");
 const firestore_1 = require("firebase-admin/firestore");
 const storage_1 = require("firebase-admin/storage");
 const m3UatFixtures_1 = require("../../../shared/m3UatFixtures");
+const types_1 = require("../../../shared/types");
+const categorySchema_1 = require("../config/categorySchema");
+const authorityFinalisation_1 = require("../engines/authorityFinalisation");
+const resourceCalculator_1 = require("../engines/resourceCalculator");
+const assessmentValidator_1 = require("../engines/assessmentValidator");
+const ruleBased_1 = require("../engines/ruleBased");
+const resourceContract_1 = require("../engines/resourceContract");
+const onEventCreated_1 = require("../triggers/onEventCreated");
 const MANAGED_BY = 'seed:m3:uat';
 const VERSION_ID = 'v1';
-const ASSESSMENT_ID = 'v1';
-const RESOURCE_ID = 'v1';
 const STORAGE_BUCKET = process.env.M3_UAT_STORAGE_BUCKET
     ?? `${m3UatFixtures_1.M3_UAT_SHARED_PROJECT_ID}.firebasestorage.app`;
 const REQUIRED_AUTHORITIES = ['PDRM', 'BOMBA', 'KKM', 'DBKL'];
@@ -219,69 +225,208 @@ function eventDetails(scenario, now) {
         organizerPhone: '+60 12-000 0303',
     };
 }
-function assessment(scenario, now) {
-    const inputHash = `${m3UatFixtures_1.M3_UAT_DATASET_ID}:${scenario.id}:v1`;
+function assessmentContext(scenario, now) {
     return {
-        assessmentId: ASSESSMENT_ID,
-        eventId: scenario.id,
-        versionId: VERSION_ID,
-        status: 'ready',
-        inputHash: processingHash(inputHash),
-        officialScore: 42,
-        officialRiskLevel: 'Medium',
-        categoryAssignments: [
-            { categoryId: 'crowd', categoryName: 'Crowd', score: 44, riskLevel: 'Medium', weight: 0.4, weightedContribution: 17.6, rationale: 'UAT fixture', evidenceKeys: ['crowd'], guidelineChecks: [] },
-            { categoryId: 'venue', categoryName: 'Venue', score: 40, riskLevel: 'Medium', weight: 0.3, weightedContribution: 12, rationale: 'UAT fixture', evidenceKeys: ['venue'], guidelineChecks: [] },
-            { categoryId: 'weather', categoryName: 'Weather', score: 41, riskLevel: 'Medium', weight: 0.3, weightedContribution: 12.3, rationale: 'UAT fixture', evidenceKeys: ['weather'], guidelineChecks: [] },
-        ],
-        hazards: [
-            { hazardId: 'crowd-density', domain: 'crowd', hazard: 'Crowd density', likelihood: 3, severity: 3, inherentRisk: 9, controls: ['Managed entry lanes'], residualLikelihood: 2, residualSeverity: 3, residualRisk: 6, evidenceKeys: ['crowd'] },
-        ],
-        evidence: [
-            { key: 'weather', description: 'UAT weather evidence', source: 'fixture', sourceTimestamp: now, status: 'matched', quality: 'verified' },
-            { key: 'crowd', description: 'UAT crowd plan', source: 'versioned-input', sourceTimestamp: now, status: 'matched', quality: 'verified' },
-        ],
-        categorySchemaVersion: '2026-07-24-all-hazards-v2',
-        scoringLogicVersion: '2026-07-24-hirarc-residual-v2',
-        categorySchemaStatus: 'prototype',
-        complianceStatus: scenario.complianceStatus ?? 'pass',
-        assessmentReadiness: scenario.assessmentReadiness ?? 'complete',
-        confidenceLevel: 'high',
-        contextSnapshot: {
-            weather: { data: { forecast: 'Partly cloudy', temperature: 31, humidity: 75, windSpeed: 12, precipitationProbability: 20, severeAlert: false }, source: 'openweather', freshness: 'fresh', fetchedAt: now, expiresAt: now + 21_600_000, forecastFor: now + 3_600_000 },
-            calendar: { localDate: new Date(now).toISOString().slice(0, 10), dayOfWeek: 'Saturday', isWeekend: true, isHolidayOrAdjacent: false, sourceVersion: 'm3-uat-v1', sourceTimestamp: now },
-            venue: { matched: true, venueId: 'm3-uat-venue-selangor', submittedCapacity: 12_000, registeredCapacity: 12_000, capacityDifference: 0, jurisdiction: 'MBSA', fireCertificateStatus: 'valid', fireCertificateExpiresAt: now + 31_536_000_000, emergencyAccessVerified: true, nearestHospitalTravelMinutes: 10, fetchedAt: now },
-            incidentHistory: { matched: false, venueId: 'm3-uat-venue-selangor', incidentIds: [], total: 0, bySeverity: { low: 0, medium: 0, high: 0 }, fetchedAt: now },
+        weather: {
+            data: { forecast: 'Partly cloudy', temperature: 31, humidity: 75, windSpeed: 12, precipitationProbability: 20, severeAlert: false },
+            measurementStatus: 'available',
+            source: 'openweather',
+            freshness: 'fresh',
+            fetchedAt: now,
+            expiresAt: now + 21_600_000,
+            forecastFor: now + 3_600_000,
         },
-        sourceTimestamps: { weather: now, holiday: now, venue: now, incidents: now },
-        contextStatuses: { weather: 'matched', holiday: 'matched', venue: 'matched', incidents: 'unmatched', ai: 'not-applicable' },
-        aiAdvisory: { model: 'fixture', promptVersion: 'v4.0.0-all-hazards-evidence-advisory', responseSchemaVersion: '2026-07-24-all-hazards-advisory-v2', status: 'unavailable', label: 'advisory', overallBand: 'Medium', overallExplanation: 'Deterministic UAT fixture.', categories: [], keyConcerns: [], resourceConsiderations: [], limitations: ['Not operational advice'], generatedAt: now },
-        computedAt: now,
-        m3Uat: marker(scenario.id),
+        calendar: {
+            localDate: new Date(now).toISOString().slice(0, 10),
+            dayOfWeek: 'Saturday',
+            isWeekend: true,
+            isHolidayOrAdjacent: false,
+            sourceVersion: 'm3-uat-v1',
+            sourceTimestamp: now,
+            coverageStatus: 'verified',
+        },
+        venue: {
+            matched: true,
+            venueId: 'm3-uat-venue-selangor',
+            submittedCapacity: 12_000,
+            registeredCapacity: 12_000,
+            capacityDifference: 0,
+            jurisdiction: 'MBSA',
+            fireCertificateStatus: 'valid',
+            fireCertificateExpiresAt: now + 31_536_000_000,
+            emergencyAccessVerified: true,
+            nearestHospitalTravelMinutes: 10,
+            fetchedAt: now,
+        },
+        incidentHistory: {
+            matched: false,
+            venueId: 'm3-uat-venue-selangor',
+            incidentIds: [],
+            total: 0,
+            bySeverity: { low: 0, medium: 0, high: 0 },
+            syntheticStatus: 'none',
+            fetchedAt: now,
+        },
     };
 }
-function resource(scenario, now) {
+function uatProposal(baseline, scenario, now) {
+    const evidenceByCategory = {
+        crowd: 'crowd', venue_fire: 'venue', weather_environment: 'weather', public_health: 'public_health',
+        food_water_sanitation: 'sanitation', medical_capacity: 'medical', security_cbrn: 'security', transport_accessibility: 'transport',
+    };
     return {
-        resourceId: RESOURCE_ID,
+        status: 'success',
+        proposalId: `m3-uat-proposal-${scenario.id}`,
+        model: 'm3-uat-fixture',
+        promptVersion: 'm3-uat-v1',
+        responseSchemaVersion: 'm3-uat-v1',
+        hazards: [],
+        categories: categorySchema_1.ACTIVE_CATEGORY_SCHEMA.categories.map((category) => ({
+            categoryId: category.id,
+            likelihood: 2,
+            severity: 2,
+            evidenceReferences: [evidenceByCategory[category.id]],
+            rationale: `Deterministic UAT evidence for ${category.name}.`,
+            confidence: 'high',
+            concerns: [],
+            missingInformation: [],
+        })),
+        cacheStatus: 'not-applicable',
+        generatedAt: now,
+    };
+}
+function buildAssessmentArtifacts(scenario, event, uids, now) {
+    const assessmentId = `assessment-${VERSION_ID}-${scenario.id}`;
+    const context = assessmentContext(scenario, now);
+    const baseline = (0, ruleBased_1.computeCategoryBasedAssessment)(event, context, now);
+    const proposal = uatProposal(baseline, scenario, now);
+    const validation = (0, assessmentValidator_1.validateAndCalculateProvisional)(proposal, baseline, now);
+    if (!validation.ok)
+        throw new Error(`Unable to create M2 UAT assessment: ${validation.reason}`);
+    const common = {
+        assessmentId,
         eventId: scenario.id,
         versionId: VERSION_ID,
-        assessmentId: ASSESSMENT_ID,
-        police: 5,
-        security: 14,
-        medicalTeams: 1,
-        ambulances: 1,
-        toilets: 12,
-        wasteBins: 8,
-        fireOfficers: 2,
-        formulaVersion: '2026-07-24-prototype-range-v3',
-        guidelineVersion: '2026-07-24-malaysia-research-v2',
-        guidelineStatus: 'prototype',
-        rationales: {},
-        aiConsiderations: ['M3 UAT fixture'],
-        confidenceLevel: 'prototype',
-        notes: 'Testing only; not an operational deployment authorisation.',
-        computedAt: now,
+        schemaVersion: types_1.ASSESSMENT_SCHEMA_VERSION,
+        contextSnapshot: context,
+        evidence: baseline.evidence,
+        contextEvidence: [{ evidenceId: `m3-uat-${scenario.id}-context`, evidenceKey: 'compliance', sourceKind: 'submitted_document', sourceLocator: `event_documents/${scenario.id}/${VERSION_ID}/evidence.pdf`, retrievedAt: now, sourceVersion: 'm3-uat-v1', eligibility: 'eligible', synthetic: true, visibility: 'authority_only' }],
+        sourceTimestamps: { weather: now, holiday: now, venue: now, incidents: now },
+        contextStatuses: { weather: 'm3-uat:matched', holiday: 'm3-uat:verified', venue: 'matched', incidents: 'unmatched' },
+        assessmentReadiness: scenario.assessmentReadiness ?? 'complete',
+        complianceStatus: scenario.complianceStatus ?? 'pass',
+        complianceChecks: baseline.complianceChecks ?? [],
+        dataConfidenceScore: baseline.dataConfidenceScore ?? 100,
+        dataConfidenceLevel: baseline.dataConfidenceLevel ?? 'high',
+        inputHash: processingHash(`${m3UatFixtures_1.M3_UAT_DATASET_ID}:${scenario.id}:${VERSION_ID}`),
+        createdAt: now,
+    };
+    if (scenario.id === m3UatFixtures_1.M3_UAT_EVENTS.provisionalReview) {
+        const manualAssessment = {
+            ...common,
+            status: 'manual_review_required',
+            aiProposal: null,
+            warnings: [{ warningId: `m3-uat-${scenario.id}-manual`, code: 'missing_evidence', message: 'M3 UAT manual-review fixture.', evidenceReferences: [] }],
+            authorityReviewRequired: true,
+            manualReviewReason: 'M3 UAT fixture requires the Admin manual assessment queue.',
+            assessmentReadiness: 'insufficient_data',
+            m3Uat: marker(scenario.id),
+        };
+        const calculation = (0, resourceCalculator_1.computeResources)({ eventId: scenario.id, versionId: VERSION_ID, assessmentId, eventDetails: event.eventDetails, assessmentResult: validation.result });
+        if (!calculation.ok)
+            throw new Error(calculation.message);
+        return { assessment: manualAssessment, resource: provisionalResource(scenario, assessmentId, calculation, now), reviews: [] };
+    }
+    const reviews = scenario.requiredAuthorities.map((authority) => ({
+        reviewId: `${assessmentId}-${authority}-review`,
+        schemaVersion: types_1.SCORE_REVIEW_SCHEMA_VERSION,
+        eventId: scenario.id,
+        versionId: VERSION_ID,
+        assessmentId,
+        proposalId: validation.result.proposalId,
+        provisionalCalculatedAt: now,
+        assessmentInputHash: common.inputHash,
+        categorySchemaVersion: categorySchema_1.ACTIVE_CATEGORY_SCHEMA.version,
+        authorityType: authority,
+        reviewerId: uids[authority],
+        categories: proposal.categories.map((category) => ({ categoryId: category.categoryId, likelihood: category.likelihood, severity: category.severity, decision: 'confirmed' })),
+        rationale: `M3 UAT ${authority} review confirms the current assessment evidence.`,
+        idempotencyKey: `${assessmentId}-${authority}-review-key`,
+        createdAt: now,
+    }));
+    const provisional = {
+        ...common,
+        status: 'authority_review',
+        aiProposal: proposal,
+        warnings: validation.warnings,
+        authorityReviewRequired: true,
+        provisionalResult: validation.result,
+    };
+    const officialResult = (0, authorityFinalisation_1.buildOfficialAssessmentResult)({
+        assessment: provisional,
+        eventDetails: event.eventDetails,
+        requiredAuthorities: scenario.requiredAuthorities,
+        reviews,
+        finalizedAt: now,
+        finalizedBy: uids.admin,
+    });
+    const officialAssessment = {
+        ...provisional,
+        status: 'official_ready',
+        authorityReviewRequired: false,
+        authorityReviewState: (0, authorityFinalisation_1.buildAuthorityReviewState)(scenario.requiredAuthorities, reviews, now),
+        officialResult,
         m3Uat: marker(scenario.id),
+    };
+    const calculation = (0, resourceCalculator_1.computeResources)({ eventId: scenario.id, versionId: VERSION_ID, assessmentId, eventDetails: event.eventDetails, assessmentResult: officialResult });
+    if (!calculation.ok)
+        throw new Error(calculation.message);
+    return { assessment: officialAssessment, resource: officialResource(scenario, assessmentId, calculation, uids.admin, now), reviews };
+}
+function provisionalResource(scenario, assessmentId, calculation, now) {
+    return {
+        resourceId: (0, onEventCreated_1.resourceDocumentId)('provisional', VERSION_ID, calculation.resourceInputHash),
+        eventId: scenario.id,
+        versionId: VERSION_ID,
+        assessmentId,
+        schemaVersion: types_1.RESOURCE_SCHEMA_VERSION,
+        stage: 'provisional',
+        revision: 1,
+        supersedesResourceId: null,
+        assessmentReference: { stage: 'provisional', assessmentId, proposalId: `m3-uat-proposal-${scenario.id}` },
+        resourceInputHash: calculation.resourceInputHash,
+        formulaVersion: calculation.formulaVersion,
+        configVersion: calculation.configVersion,
+        sourceRegistryVersion: calculation.sourceRegistryVersion,
+        items: calculation.items,
+        confidenceLevel: 'prototype',
+        authorityReviewRequired: true,
+        validationScope: 'provisional_risk_input',
+        notes: 'M3 UAT fixture; not an operational deployment authorisation.',
+        computedAt: now,
+    };
+}
+function officialResource(scenario, assessmentId, calculation, finalizedBy, now) {
+    return {
+        resourceId: (0, onEventCreated_1.resourceDocumentId)('official', VERSION_ID, calculation.resourceInputHash),
+        eventId: scenario.id,
+        versionId: VERSION_ID,
+        assessmentId,
+        schemaVersion: types_1.RESOURCE_SCHEMA_VERSION,
+        stage: 'official',
+        revision: 1,
+        supersedesResourceId: null,
+        assessmentReference: { stage: 'official', assessmentId, proposalId: `m3-uat-proposal-${scenario.id}`, finalizedAt: now, finalizedBy },
+        resourceInputHash: calculation.resourceInputHash,
+        formulaVersion: calculation.formulaVersion,
+        configVersion: calculation.configVersion,
+        sourceRegistryVersion: calculation.sourceRegistryVersion,
+        items: Object.fromEntries(types_1.RESOURCE_KEYS.map((key) => [key, { ...calculation.items[key], confidence: 'authority_validated', authorityReviewRequired: false }])),
+        confidenceLevel: 'authority_validated',
+        authorityReviewRequired: false,
+        validationScope: 'official_risk_input_only',
+        notes: 'M3 UAT fixture; not an operational deployment authorisation.',
+        computedAt: now,
     };
 }
 function assignmentDecision(authority, scenario) {
@@ -304,15 +449,13 @@ async function writeScenario(ctx, scenario, uids) {
         ? scenario.requiredAuthorities
         : [];
     const assignedOfficerByAuthority = Object.fromEntries(assigned.map((authority) => [authority, uids[authority]]));
-    const event = {
+    const eventBase = {
         eventId: scenario.id,
         organizerId: uids.organizer,
         eventDetails: details,
         status: scenario.status,
         currentVersionId: VERSION_ID,
         currentVersionNumber: 1,
-        currentAssessmentId: ASSESSMENT_ID,
-        currentResourceId: RESOURCE_ID,
         editableVersionId: scenario.status === 'AmendmentRequested' ? 'v2' : null,
         draftDocumentPaths: [],
         requiredAuthorities: scenario.requiredAuthorities,
@@ -325,20 +468,26 @@ async function writeScenario(ctx, scenario, uids) {
         submittedAt: now,
         m3Uat: marker(scenario.id),
     };
+    const artifacts = buildAssessmentArtifacts(scenario, eventBase, uids, now);
+    const event = {
+        ...eventBase,
+        currentAssessmentId: artifacts.assessment.assessmentId,
+        currentResourceId: artifacts.resource.resourceId,
+    };
     if (scenario.reviewStage && ['authority', 'second', 'closed'].includes(scenario.reviewStage)) {
         event.initialReview = { decision: 'Approved', reason: 'M3 UAT initial review approved.', reviewerUid: uids.admin, reviewedAt: now, manualAssessmentRecorded: scenario.assessmentReadiness === 'provisional' };
-    }
-    if (scenario.reviewStage === 'manual') {
-        event.manualAssessment = { score: 42, riskLevel: 'Medium', inputs: { source: 'm3-uat' }, rationale: 'Manual assessment fixture requiring administrator review.', completedBy: uids.admin, completedAt: now };
     }
     if (scenario.finalDecision) {
         event.secondReview = { confirmedDecision: scenario.finalDecision, reviewerUid: uids.admin, reviewedAt: now, adminNote: `M3 UAT ${scenario.finalDecision} outcome.` };
     }
     const batch = ctx.db.batch();
     batch.set(eventRef, event);
-    batch.set(eventRef.collection('versions').doc(VERSION_ID), { versionId: VERSION_ID, eventId: scenario.id, versionNumber: 1, eventDetails: details, documentPaths: [], submittedBy: uids.organizer, submittedAt: now, inputHash: `${m3UatFixtures_1.M3_UAT_DATASET_ID}:${scenario.id}:v1`, m3Uat: marker(scenario.id) });
-    batch.set(eventRef.collection('assessments').doc(ASSESSMENT_ID), assessment(scenario, now));
-    batch.set(eventRef.collection('resources').doc(RESOURCE_ID), resource(scenario, now));
+    batch.set(eventRef.collection('versions').doc(VERSION_ID), { versionId: VERSION_ID, eventId: scenario.id, versionNumber: 1, eventDetails: details, documentPaths: [], submittedBy: uids.organizer, submittedAt: now, inputHash: processingHash(`${m3UatFixtures_1.M3_UAT_DATASET_ID}:${scenario.id}:version`), m3Uat: marker(scenario.id) });
+    batch.set(eventRef.collection('assessments').doc(artifacts.assessment.assessmentId), artifacts.assessment);
+    batch.set(eventRef.collection('resources').doc(artifacts.resource.resourceId), { ...artifacts.resource, m3Uat: marker(scenario.id) });
+    for (const review of artifacts.reviews) {
+        batch.set(eventRef.collection('assessments').doc(artifacts.assessment.assessmentId).collection('score_reviews').doc(review.reviewId), { ...review, m3Uat: marker(scenario.id) });
+    }
     batch.set(eventRef.collection('audit_logs').doc('m3-uat-seeded'), { id: 'm3-uat-seeded', eventId: scenario.id, versionId: VERSION_ID, action: 'uat_fixture_seeded', actorId: 'system', actorRole: 'system', timestamp: now, notes: `Seeded ${m3UatFixtures_1.M3_UAT_DATASET_ID}`, m3Uat: marker(scenario.id) });
     for (const authority of assigned) {
         const decision = assignmentDecision(authority, scenario);
@@ -517,19 +666,29 @@ async function verifyM3UatDataset(ctx) {
     const failures = [];
     for (const scenario of SCENARIOS) {
         const eventRef = ctx.db.collection('events').doc(scenario.id);
-        const [event, version, assessmentSnap, resourceSnap, audits] = await Promise.all([
-            eventRef.get(),
+        const event = await eventRef.get();
+        const eventData = event.data();
+        const assessmentId = eventData?.currentAssessmentId;
+        const resourceId = eventData?.currentResourceId;
+        const [version, assessmentSnap, resourceSnap, audits] = await Promise.all([
             eventRef.collection('versions').doc(VERSION_ID).get(),
-            eventRef.collection('assessments').doc(ASSESSMENT_ID).get(),
-            eventRef.collection('resources').doc(RESOURCE_ID).get(),
+            assessmentId ? eventRef.collection('assessments').doc(assessmentId).get() : Promise.resolve(undefined),
+            resourceId ? eventRef.collection('resources').doc(resourceId).get() : Promise.resolve(undefined),
             eventRef.collection('audit_logs').limit(1).get(),
         ]);
         if (!event.exists || !isManaged(event.data(), scenario.id))
             failures.push(`${scenario.id}: event missing or marker invalid`);
-        if (!version.exists || !assessmentSnap.exists || !resourceSnap.exists || audits.empty)
+        const assessmentData = assessmentSnap?.data();
+        const resourceData = resourceSnap?.data();
+        if (!version.exists || !assessmentSnap?.exists || !resourceSnap?.exists || audits.empty)
             failures.push(`${scenario.id}: core subdocuments incomplete`);
-        if (event.data()?.organizerId === undefined || event.data()?.currentVersionId !== VERSION_ID)
-            failures.push(`${scenario.id}: event references invalid`);
+        if (eventData?.organizerId === undefined || eventData?.currentVersionId !== VERSION_ID
+            || !assessmentId || !resourceId || assessmentData?.assessmentId !== assessmentId
+            || assessmentData?.eventId !== scenario.id || assessmentData?.versionId !== VERSION_ID
+            || resourceData?.resourceId !== resourceId || resourceData?.eventId !== scenario.id
+            || resourceData?.versionId !== VERSION_ID || resourceData?.assessmentId !== assessmentId
+            || !resourceData || !(0, resourceContract_1.validateResourceRecommendation)(resourceData).ok)
+            failures.push(`${scenario.id}: event references invalid current M2 pointers`);
         if (scenario.controls) {
             const controls = await eventRef.collection('event_controls').get();
             if (controls.size !== scenario.requiredAuthorities.length)

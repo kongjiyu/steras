@@ -17,26 +17,15 @@ import {
   AuthorityType,
   Assignment,
   EventRecord,
-  ResourceQuantities,
   ResourceRecommendation,
   RiskAssessment,
-  RiskLevel,
   UserProfile,
-  riskLevelFor,
 } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
+import { validateResourceRecommendation } from '../engines/resourceContract';
 import { createNotification, resolveAuthUid } from '../utils/notifications';
 
 type InitialDecision = 'Approved' | 'Rejected';
-type Primitive = string | number | boolean;
-
-interface ManualAssessmentInput {
-  score?: number;
-  riskLevel?: RiskLevel;
-  inputs?: Record<string, Primitive>;
-  rationale?: string;
-  resourceQuantities?: Partial<ResourceQuantities>;
-}
 
 interface InitialReviewRequest {
   eventId?: string;
@@ -45,7 +34,6 @@ interface InitialReviewRequest {
   suggestion?: string;
   /** Include completed named-officer feedback in an initial rejection. */
   attachOfficerFeedback?: boolean;
-  manualAssessment?: ManualAssessmentInput;
 }
 
 const REASON_MIN = 10;
@@ -76,6 +64,12 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
   if (decision === 'Rejected' && suggestion.length === 0) {
     throw new HttpsError('invalid-argument', 'A suggestion is required when rejecting.');
   }
+  if (Object.prototype.hasOwnProperty.call(data, 'manualAssessment')) {
+    throw new HttpsError(
+      'failed-precondition',
+      'Manual Review Required applications must be completed in the Admin manual assessment queue before initial review.',
+    );
+  }
 
   const db = firestore();
   const userSnap = await db.collection(COLLECTIONS.USERS).doc(uid).get();
@@ -89,7 +83,13 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
   if (!eventSnap.exists) throw new HttpsError('not-found', `Event ${eventId} not found.`);
   const event = { eventId, ...eventSnap.data() } as EventRecord;
   const versionId = event.currentVersionId;
-  if (!versionId) throw new HttpsError('failed-precondition', 'The application has no submitted version.');
+  const assessmentId = event.currentAssessmentId;
+  const resourceId = event.currentResourceId;
+  if (!versionId || !assessmentId) throw new HttpsError('failed-precondition', 'The application has no current assessment generation.');
+  if (!safeDocumentId(versionId) || !safeDocumentId(assessmentId)
+    || (resourceId !== undefined && !safeDocumentId(resourceId))) {
+    throw new HttpsError('failed-precondition', 'The application current-generation pointers are invalid.');
+  }
   if (!['Pending', 'UnderReview', 'Manual Review Required', 'AmendmentRequested'].includes(event.status)) {
     throw new HttpsError('failed-precondition', 'This application is not available for initial review.');
   }
@@ -100,11 +100,15 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
     throw new HttpsError('failed-precondition', 'Officers are already assigned; use the authority or second-review workflow.');
   }
 
-  const assessmentRef = eventRef.collection(COLLECTIONS.ASSESSMENTS).doc(versionId);
-  const resourceRef = eventRef.collection(COLLECTIONS.RESOURCES).doc(versionId);
-  const [assessmentSnap, resourceSnap] = await Promise.all([assessmentRef.get(), resourceRef.get()]);
-  const manualRequired = event.status === 'Manual Review Required' || data.manualAssessment !== undefined;
-  const manual = manualRequired ? validateManualAssessment(data.manualAssessment) : undefined;
+  const assessmentRef = eventRef.collection(COLLECTIONS.ASSESSMENTS).doc(assessmentId);
+  const resourceRef = resourceId ? eventRef.collection(COLLECTIONS.RESOURCES).doc(resourceId) : undefined;
+  const [assessmentSnap, resourceSnap] = await Promise.all([
+    assessmentRef.get(),
+    resourceRef ? resourceRef.get() : Promise.resolve(undefined),
+  ]);
+  const assessment = assessmentSnap.data() as RiskAssessment | undefined;
+  const resource = resourceSnap?.data() as ResourceRecommendation | undefined;
+  const manualOfficial = isManualOfficialAssessment(assessment, eventId, versionId, assessmentId);
 
   // Feedback is read before the decision transaction so the admin can
   // explicitly attach the completed officer rationale to an initial reject.
@@ -126,16 +130,17 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
       }));
   }
 
-  if (manualRequired && !manual) {
-    throw new HttpsError('invalid-argument', 'A complete manual assessment is required for this application.');
-  }
-  if (decision === 'Approved' && !manualRequired) {
-    if (!isReadyAssessment(assessmentSnap.data()) || !resourceSnap.exists) {
-      throw new HttpsError('failed-precondition', 'Smart Risk Assessment and Safety Resource Recommendation must be ready before initial approval.');
+  if (decision === 'Approved' && (!(isReadyAssessment(assessment, eventId, versionId, assessmentId) || manualOfficial)
+    || !resourceSnap?.exists || !resource || !resourceId
+    || !validateResourceRecommendation(resource).ok
+    || resource.resourceId !== resourceId
+    || resource.eventId !== eventId
+    || resource.versionId !== versionId
+    || resource.assessmentId !== assessmentId)) {
+    if (event.status === 'Manual Review Required' || assessment?.status === 'manual_review_required') {
+      throw new HttpsError('failed-precondition', 'Complete the Admin manual assessment queue before initial approval.');
     }
-  }
-  if (decision === 'Approved' && manualRequired && !resourceSnap.exists && !hasCompleteResourceQuantities(manual?.resourceQuantities)) {
-    throw new HttpsError('invalid-argument', 'Manual approval must include all safety-resource quantities when no recommendation exists.');
+    throw new HttpsError('failed-precondition', 'Smart Risk Assessment and Safety Resource Recommendation must be ready before initial approval.');
   }
 
   const nextStatus: EventRecord['status'] = decision === 'Approved' ? 'UnderReview' : 'Rejected';
@@ -145,23 +150,21 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
     ...(suggestion ? { suggestion } : {}),
     reviewerUid: uid,
     reviewedAt: now,
-    manualAssessmentRecorded: Boolean(manual),
+    manualAssessmentRecorded: manualOfficial,
     ...(officerFeedback && officerFeedback.length > 0 ? { officerFeedback } : {}),
   };
 
   const result = await db.runTransaction(async (tx) => {
     const currentEventSnap = await tx.get(eventRef);
     const currentEvent = { eventId, ...currentEventSnap.data() } as EventRecord;
-    if (currentEvent.reviewStage === 'authority' || currentEvent.reviewStage === 'second' || (currentEvent.assignedOfficerUids?.length ?? 0) > 0) {
+    if (!currentEventSnap.exists
+      || currentEvent.currentVersionId !== versionId
+      || currentEvent.currentAssessmentId !== assessmentId
+      || currentEvent.currentResourceId !== resourceId
+      || currentEvent.reviewStage === 'authority'
+      || currentEvent.reviewStage === 'second'
+      || (currentEvent.assignedOfficerUids?.length ?? 0) > 0) {
       throw new HttpsError('failed-precondition', 'Initial review was completed by another admin.');
-    }
-
-    if (manual) {
-      const manualAssessment = buildManualAssessment(event, versionId, manual, uid, now);
-      tx.set(assessmentRef, manualAssessment);
-      if (!resourceSnap.exists) {
-        tx.set(resourceRef, buildManualResources(event, versionId, manual.resourceQuantities!, uid, now));
-      }
     }
 
     const eventUpdate: Record<string, unknown> = {
@@ -170,18 +173,6 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
       initialReview,
       updatedAt: now,
     };
-    if (manual) {
-      eventUpdate.manualAssessment = {
-        score: manual.score,
-        riskLevel: manual.riskLevel,
-        inputs: manual.inputs,
-        rationale: manual.rationale,
-        completedBy: uid,
-        completedAt: now,
-      };
-      eventUpdate.currentAssessmentId = versionId;
-      if (!resourceSnap.exists) eventUpdate.currentResourceId = versionId;
-    }
     if (decision === 'Rejected') {
       eventUpdate.reviewStage = 'closed';
       eventUpdate.editableVersionId = `v${event.currentVersionNumber + 1}`;
@@ -206,7 +197,7 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
         decision,
         suggestion: suggestion || null,
         attachedOfficerFeedback: officerFeedback?.length ?? 0,
-        manualAssessmentRecorded: Boolean(manual),
+        manualAssessmentRecorded: manualOfficial,
       },
     });
     return { eventId, versionId, status: nextStatus, organizerId: event.organizerId };
@@ -232,35 +223,10 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
       console.warn('[makeInitialReviewDecision] organiser notification failed (non-fatal):', error);
     }
   }
-  return { eventId, versionId, status: result.status, decision, manualAssessmentRecorded: Boolean(manual) };
+  return { eventId, versionId, assessmentId, status: result.status, decision, manualAssessmentRecorded: manualOfficial };
 }
 
-export function validateManualAssessment(input: ManualAssessmentInput | undefined): (ManualAssessmentInput & { score: number; riskLevel: RiskLevel; inputs: Record<string, Primitive>; rationale: string }) | undefined {
-  if (!input) return undefined;
-  const score = input.score;
-  const riskLevel = input.riskLevel;
-  const rationale = (input.rationale ?? '').trim();
-  const inputs = input.inputs;
-  if (typeof score !== 'number' || !Number.isFinite(score) || score < 0 || score > 100) {
-    throw new HttpsError('invalid-argument', 'Manual assessment score must be a number from 0 to 100.');
-  }
-  if (riskLevel !== 'Low' && riskLevel !== 'Medium' && riskLevel !== 'High') {
-    throw new HttpsError('invalid-argument', 'Manual assessment riskLevel must be Low, Medium, or High.');
-  }
-  if (riskLevelFor(score) !== riskLevel) {
-    throw new HttpsError('invalid-argument', `Manual risk level must match the score band (${riskLevelFor(score)}).`);
-  }
-  if (rationale.length < REASON_MIN || rationale.length > REASON_MAX) {
-    throw new HttpsError('invalid-argument', `Manual assessment rationale must be ${REASON_MIN}-${REASON_MAX} characters.`);
-  }
-  if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs) || Object.keys(inputs).length === 0
-    || Object.values(inputs).some((value) => !['string', 'number', 'boolean'].includes(typeof value))) {
-    throw new HttpsError('invalid-argument', 'Manual assessment inputs must contain at least one primitive value.');
-  }
-  return { ...input, score, riskLevel, inputs, rationale };
-}
-
-function isReadyAssessment(value: unknown): value is RiskAssessment {
+function isReadyAssessment(value: unknown, eventId?: string, versionId?: string, assessmentId?: string): value is RiskAssessment {
   if (!value || typeof value !== 'object') return false;
   const assessment = value as Record<string, unknown>;
   // The current M2 contract uses `official_ready` (the older M3 fixture used
@@ -268,91 +234,25 @@ function isReadyAssessment(value: unknown): value is RiskAssessment {
   // review cannot release an incomplete or legacy record.
   return assessment.status === 'official_ready'
     && assessment.assessmentReadiness === 'complete'
-    && Array.isArray(assessment.evidence);
+    && Array.isArray(assessment.evidence)
+    && (!eventId || assessment.eventId === eventId)
+    && (!versionId || assessment.versionId === versionId)
+    && (!assessmentId || assessment.assessmentId === assessmentId);
 }
 
-function buildManualAssessment(event: EventRecord, versionId: string, input: ReturnType<typeof validateManualAssessment> extends infer T ? Exclude<T, undefined> : never, uid: string, now: number): RiskAssessment {
-  return {
-    assessmentId: versionId,
-    eventId: event.eventId,
-    versionId,
-    status: 'ready',
-    officialScore: input.score,
-    officialRiskLevel: input.riskLevel,
-    categoryAssignments: [{
-      categoryId: 'manual_review',
-      categoryName: 'Manual administrator assessment',
-      score: input.score,
-      riskLevel: input.riskLevel,
-      weight: 1,
-      weightedContribution: input.score,
-      rationale: input.rationale,
-      evidenceKeys: [],
-      guidelineChecks: [],
-    }],
-    evidence: [],
-    categorySchemaVersion: 'manual-review-v1',
-    scoringLogicVersion: 'manual-review-v1',
-    categorySchemaStatus: 'authorityValidated',
-    assessmentReadiness: 'complete',
-    complianceStatus: 'review_required',
-    complianceChecks: [],
-    computedAt: now,
-    aiAdvisory: {
-      model: 'manual-review',
-      promptVersion: 'manual-review-v1',
-      responseSchemaVersion: 'manual-review-v1',
-      status: 'unavailable',
-      label: 'advisory',
-      overallBand: input.riskLevel,
-      overallExplanation: `Manual assessment recorded by admin ${uid}.`,
-      categories: [],
-      keyConcerns: [],
-      resourceConsiderations: [],
-      citedEvidenceKeys: [],
-      cacheStatus: 'not-applicable',
-      generatedAt: now,
-    },
-    contextSnapshot: {
-      weather: { data: { forecast: 'Not assessed', temperature: 0, humidity: 0, windSpeed: 0, precipitationProbability: 0, severeAlert: false }, source: 'fallback', freshness: 'unavailable', fetchedAt: now, expiresAt: now, forecastFor: now },
-      calendar: { localDate: new Date(now).toISOString().slice(0, 10), dayOfWeek: 'Unknown', isWeekend: false, isHolidayOrAdjacent: false, sourceVersion: 'manual-review-v1', sourceTimestamp: now },
-      venue: { matched: false, venueId: event.eventDetails.venueId, submittedCapacity: event.eventDetails.venueCapacity, fetchedAt: now },
-      incidentHistory: { matched: false, venueId: event.eventDetails.venueId, incidentIds: [], total: 0, bySeverity: { low: 0, medium: 0, high: 0 }, fetchedAt: now },
-    },
-    sourceTimestamps: { manual: now },
-    contextStatuses: { manual: 'recorded' },
-    inputHash: `manual-${event.eventId}-${versionId}-${now}`,
-    createdAt: now,
-  } as unknown as RiskAssessment;
+function isManualOfficialAssessment(value: unknown, eventId: string, versionId: string, assessmentId: string): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const assessment = value as Record<string, unknown>;
+  return assessment.status === 'official_ready'
+    && assessment.sourceKind === 'admin_manual'
+    && assessment.authorityReviewRequired === false
+    && assessment.eventId === eventId
+    && assessment.versionId === versionId
+    && assessment.assessmentId === assessmentId
+    && typeof assessment.activeManualAssessmentId === 'string'
+    && assessment.activeManualAssessmentId.length > 0;
 }
 
-function hasCompleteResourceQuantities(value: Partial<ResourceQuantities> | undefined): value is ResourceQuantities {
-  if (!value) return false;
-  return ['police', 'medicalTeams', 'ambulances', 'toilets', 'wasteBins', 'security', 'fireOfficers']
-    .every((key) => Number.isInteger(value[key as keyof ResourceQuantities]) && Number(value[key as keyof ResourceQuantities]) >= 0);
-}
-
-function buildManualResources(event: EventRecord, versionId: string, quantities: Partial<ResourceQuantities>, uid: string, now: number): ResourceRecommendation {
-  const full = quantities as ResourceQuantities;
-  const rationales = Object.fromEntries(Object.keys(full).map((key) => [key, {
-    resource: key,
-    baselineQuantity: full[key as keyof ResourceQuantities],
-    factors: [`Manual review by ${uid}`],
-    guidelineReferences: ['manual-review-v1'],
-  }])) as Record<string, unknown>;
-  return {
-    ...full,
-    resourceId: versionId,
-    eventId: event.eventId,
-    versionId,
-    assessmentId: versionId,
-    formulaVersion: 'manual-review-v1',
-    guidelineVersion: 'manual-review-v1',
-    guidelineStatus: 'authorityValidated',
-    rationales,
-    aiConsiderations: ['No AI resource recommendation was available; quantities were recorded during manual review.'],
-    confidenceLevel: 'authority_validated',
-    notes: `Manual resource recommendation recorded by ${uid}.`,
-    computedAt: now,
-  } as unknown as ResourceRecommendation;
+function safeDocumentId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 }

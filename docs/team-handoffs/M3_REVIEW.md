@@ -61,7 +61,7 @@ Cross-module contracts (don't break these):
 
 **Added on `anny_cont` (this round, what you must review):**
 1. **M2 compliance gate** — `complianceStatus === 'blocked'` ⇒ Approve is rejected with `failed-precondition`.
-2. **Readiness rationale gate** — when `assessmentReadiness` is `provisional` or `insufficient_data`, the rationale must be ≥80 chars.
+2. **Readiness rationale gate** — a true `provisional` or `insufficient_data` assessment requires a rationale of ≥80 chars; a finalized `admin_manual` official assessment uses the standard ≥10-character rationale gate.
 3. **`verifyStage1Doc` Cloud Function** *(Q1 refactor — see `ab8b33d`)* — server-mediated per-doc Stage-1 verification on `event_controls/{controlId}/stage1_docs/{docId}`. Carries provenance on the doc itself (`status`, `verifiedBy`, `verifiedAt`, `rejectionReason`); recomputes the parent control's aggregate `label`; maintains `event.verifiedControlIds`; writes audit + organiser notification. **Replaces** the old `verifyEventControl` (function removed). See §6 for the Q1 refactor summary.
 4. **Durable notifications** — `notifications/{notificationId}` with idempotent `sourceActionId`, recipient-scoped reads, `markNotificationRead`. Added `stage1_doc_approved` / `stage1_doc_rejected` types.
 5. **NotificationBell UI** — real-time unread count + dropdown panel in `WorkspaceTopBar`.

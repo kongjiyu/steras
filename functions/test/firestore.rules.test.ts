@@ -12,6 +12,7 @@ import { submitEventForUser } from '../src/http/submitEvent';
 import { withdrawEventForUser } from '../src/http/withdrawEvent';
 import { __testOnlyMarkFailed, __testOnlyPersistResourceCalculation, recomputeResourceForStoredAssessment, runRiskAndResourcePipeline } from '../src/triggers/onEventCreated';
 import { makeAuthorityDecisionForUser } from '../src/http/authorityDecision';
+import { makeInitialReviewDecisionForUser } from '../src/http/initialReview';
 import {
   submitScoreReviewForUser,
   resolveScoreConflictForAdmin,
@@ -117,7 +118,10 @@ async function seedProfilesAndEvent() {
     const db = context.firestore();
     await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer' });
     await setDoc(doc(db, 'users/authority-1'), { role: 'authority', authorityType: 'PDRM' });
-    await setDoc(doc(db, 'events/event-1'), { organizerId: 'organizer-1', status: 'Pending', requiredAuthorities: ['PDRM'], assignedOfficerUids: ['authority-1'] });
+    await setDoc(doc(db, 'events/event-1'), {
+      organizerId: 'organizer-1', status: 'Pending', requiredAuthorities: ['PDRM'],
+      assignedOfficerUids: ['authority-1'], assignedOfficerByAuthority: { PDRM: 'authority-1' },
+    });
     await setDoc(doc(db, 'events/event-1/assessments/v1'), { officialScore: 50 });
     await setDoc(doc(db, 'events/event-1/assessment_summaries/v1'), {
       assessmentId: 'v1', eventId: 'event-1', versionId: 'v1', status: 'provisional_ready',
@@ -408,7 +412,11 @@ describe('Firestore security rules', () => {
     await seedProfilesAndEvent();
     await environment.withSecurityRulesDisabled(async (context) => {
       await setDoc(doc(context.firestore(), 'users/bomba-1'), { role: 'authority', authorityType: 'BOMBA' });
-      await updateDoc(doc(context.firestore(), 'events/event-1'), { requiredAuthorities: ['PDRM', 'BOMBA'] });
+      await updateDoc(doc(context.firestore(), 'events/event-1'), {
+        requiredAuthorities: ['PDRM', 'BOMBA'],
+        assignedOfficerUids: ['authority-1', 'bomba-1'],
+        assignedOfficerByAuthority: { PDRM: 'authority-1', BOMBA: 'bomba-1' },
+      });
       await setDoc(doc(context.firestore(), 'events/event-1/assessments/v1/score_reviews/review-1'), { reviewId: 'review-1', reviewerId: 'authority-1', authorityType: 'PDRM' });
       await setDoc(doc(context.firestore(), 'events/event-1/assessments/v1/score_reviews/review-2'), { reviewId: 'review-2', reviewerId: 'bomba-1', authorityType: 'BOMBA' });
     });
@@ -422,6 +430,10 @@ describe('Firestore security rules', () => {
   it('keeps manual assessments server-only and readable only by Admin or assigned authorities', async () => {
     await seedManualReviewEvent();
     const adminDb = getFirestore(adminApp);
+    await adminDb.doc('events/manual-1').update({
+      assignedOfficerUids: ['pdrm-1'],
+      assignedOfficerByAuthority: { PDRM: 'pdrm-1' },
+    });
     await adminDb.doc('events/manual-1/assessments/v1/manual_assessments/manual-1').set({ manualAssessmentId: 'manual-1' });
     const path = 'events/manual-1/assessments/v1/manual_assessments/manual-1';
     await assertSucceeds(getDoc(doc(environment.authenticatedContext('admin-1').firestore(), path)));
@@ -470,6 +482,28 @@ describe('Firestore security rules', () => {
       .resolves.toMatchObject({ status: 'official_ready', idempotent: true });
     const decision = await makeAuthorityDecisionForUser('pdrm-1', { eventId: 'manual-1', decision: 'Approved', rationale: 'The manual official assessment and resources were reviewed.', materialsReviewed: true }, 110);
     expect(decision.decision).toBe('Approved');
+  });
+
+  it('releases a finalized Admin manual assessment through the pointer-driven initial review', async () => {
+    await seedManualReviewEvent();
+    const adminDb = getFirestore(adminApp);
+    await adminDb.doc('events/manual-1').update({ status: 'Manual Review Required', reviewStage: 'manual' });
+    await submitAdminManualAssessmentForUser('admin-1', manualRequest(), 115);
+    const result = await makeInitialReviewDecisionForUser('admin-1', {
+      eventId: 'manual-1',
+      decision: 'Approved',
+      reason: 'The finalized manual assessment and resource recommendation are ready for officer review.',
+    }, 116);
+    expect(result).toMatchObject({
+      status: 'UnderReview',
+      decision: 'Approved',
+      manualAssessmentRecorded: true,
+    });
+    expect((await adminDb.doc('events/manual-1').get()).data()).toMatchObject({
+      status: 'UnderReview',
+      reviewStage: 'initial',
+      initialReview: { manualAssessmentRecorded: true },
+    });
   });
 
   it('makes duplicate manual submission idempotent and rejects a second record or key collision', async () => {
@@ -1014,9 +1048,22 @@ describe('Firestore security rules', () => {
     const quantities = { police: 12, medicalTeams: 3, ambulances: 2, toilets: 60, wasteBins: 20, security: 25, fireOfficers: 4 };
     const baselineReference = adminDb.doc(`events/review-1/resources/${officialResourceId('v1')}`);
     const before = (await baselineReference.get()).data();
-    await overrideResourcesForUser('pdrm-1', { eventId: 'review-1', quantities, rationale: 'Increased staffing for controlled entry and traffic management.' }, 4_000);
-    expect((await baselineReference.get()).data()).toMatchObject({ ...quantities, confidenceLevel: 'authorityValidated', overriddenBy: 'pdrm-1' });
+    const override = await overrideResourcesForUser('pdrm-1', {
+      eventId: 'review-1', quantities,
+      rationale: 'Increased staffing for controlled entry and traffic management.',
+      idempotencyKey: 'resource-override-test-1',
+    }, 4_000);
+    expect(override).toMatchObject({ eventId: 'review-1', baseResourceId: before?.resourceId, quantities, idempotent: false });
+    expect((await baselineReference.get()).data()).toEqual(before);
+    const replay = await overrideResourcesForUser('pdrm-1', {
+      eventId: 'review-1', quantities,
+      rationale: 'Increased staffing for controlled entry and traffic management.',
+      idempotencyKey: 'resource-override-test-1',
+    }, 4_001);
+    expect(replay).toMatchObject({ overrideId: override.overrideId, idempotent: true });
     expect((await adminDb.collection('events/review-1/resource_overrides').get()).size).toBe(1);
+    expect((await adminDb.doc(`events/review-1/resource_overrides/${override.overrideId}`).get()).data())
+      .toMatchObject({ baseResourceId: before?.resourceId, resourceId: before?.resourceId, reviewerId: 'pdrm-1', quantities });
   });
 
   it('unpublishes a stale resource projection when resource-only recomputation fails', async () => {
@@ -1408,7 +1455,7 @@ describe('Firestore security rules', () => {
     const now = Date.now();
     const expiredStart = now - RESOURCE_CUTOVER_LEASE_MS - 10;
     await acquireResourceCutoverLock(adminDb, 'stale-owner', 'apply', undefined, expiredStart);
-    const backupPath = '/tmp/steras-stale-prepared/backup.json';
+    const backupPath = path.join(tmpdir(), 'steras-stale-prepared', 'backup.json');
     await createAndVerifyCutoverStartAudit(adminDb, {
       action: 'resource_cutover_start', sessionId: 'stale-owner', projectId: 'linkos-496505',
       backupId: 'steras-stale-prepared', backupPath, backupChecksum: 'a'.repeat(64),
@@ -1435,8 +1482,12 @@ describe('Firestore security rules', () => {
     const heartbeat = startResourceCutoverHeartbeat(adminDb, 'heartbeat-owner', 5);
     try {
       await adminDb.doc(RESOURCE_CUTOVER_LOCK_PATH).update({ sessionId: 'replacement-owner' });
-      await new Promise((resolve) => setTimeout(resolve, 25));
-      expect(() => heartbeat.assertHealthy()).toThrow(/lost ownership/);
+      let ownershipLost = false;
+      for (let attempt = 0; attempt < 30 && !ownershipLost; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        try { heartbeat.assertHealthy(); } catch { ownershipLost = true; }
+      }
+      expect(ownershipLost).toBe(true);
     } finally {
       heartbeat.stop();
       await adminDb.doc(RESOURCE_CUTOVER_LOCK_PATH).delete();
