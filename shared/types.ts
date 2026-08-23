@@ -42,19 +42,19 @@ export type EventStatus =
   | 'Draft'
   | 'Pending'
   | 'UnderReview'
-  | 'AmendmentRequested'
   | 'Approved'
   | 'Rejected'
-  | 'Withdrawn';
+  | 'Withdrawn'
+  | 'Manual Review Required';
 
 export const EVENT_STATUSES: { value: EventStatus; label: string; color: string }[] = [
   { value: 'Draft', label: 'Draft', color: 'gray' },
   { value: 'Pending', label: 'Pending', color: 'amber' },
   { value: 'UnderReview', label: 'Under Review', color: 'blue' },
-  { value: 'AmendmentRequested', label: 'Amendment Requested', color: 'orange' },
   { value: 'Approved', label: 'Approved', color: 'green' },
   { value: 'Rejected', label: 'Rejected', color: 'red' },
   { value: 'Withdrawn', label: 'Withdrawn', color: 'gray' },
+  { value: 'Manual Review Required', label: 'Manual Review Required', color: 'purple' },
 ];
 
 export interface VenueLocation {
@@ -121,6 +121,66 @@ export interface EventRecord {
   editableVersionId?: string | null;
   draftDocumentPaths: string[];
   requiredAuthorities: AuthorityType[];
+  /** M3 named-officer authorization. Populated atomically with assignments. */
+  assignedOfficerUids?: string[];
+  /** Current named officer per required authority for the active version. */
+  assignedOfficerByAuthority?: Partial<Record<AuthorityType, string>>;
+  /** Control IDs that have been VERIFIED (not just declared) by an authority. */
+  verifiedControlIds?: string[];
+  /** M3 round N+1 (Workstream 1) — which review stage the event is in.
+   *  - 'initial':   admin initial gate is complete; assignment is next
+   *  - 'authority': officers are reviewing (admin clicked "Assign")
+   *  - 'second':    all officers have decided; admin must confirm aggregate
+   *  Absent = legacy flow (no assignment required). */
+  reviewStage?: 'initial' | 'authority' | 'second' | 'manual' | 'closed' | null;
+  /** Admin's initial-gate decision, including rejection feedback. */
+  initialReview?: {
+    decision: 'Approved' | 'Rejected';
+    reason: string;
+    suggestion?: string;
+    reviewerUid: string;
+    reviewedAt: number;
+    manualAssessmentRecorded?: boolean;
+    officerFeedback?: Array<{
+      authorityType: AuthorityType;
+      officerUid: string;
+      decision: DecisionValue;
+      reason: string;
+      suggestion?: string;
+      decidedAt?: number;
+    }>;
+  };
+  /** Human assessment captured when AI-assisted assessment is unavailable. */
+  manualAssessment?: {
+    score: number;
+    riskLevel: RiskLevel;
+    inputs: Record<string, string | number | boolean>;
+    rationale: string;
+    completedBy: string;
+    completedAt: number;
+  };
+  /** M3 round N+1 (Workstream 2) — true after the admin has generated AND
+   *  committed the per-authority event control list. The organizer can
+   *  then see the Stage 1 + Stage 2 requirements in
+   *  `OrganizerEventControls` (UC-34) and the officers can verify them.
+   *  Reset to `false` (or unset) if a new version is approved and a new
+   *  control list needs to be generated for that version. */
+  controlListGenerated?: boolean;
+  /** M3 round N+1 (Workstream 2) — the per-authority control list
+   *  items, mirrored from `event_controls/{controlId}` (or its absence
+   *  when the list hasn't been generated). Mainly used for the admin
+   *  UI to render the current list without re-querying the sub-collection.
+   *  Server-owned: written by `editEventControlList`. */
+  controlListSnapshot?: Array<{
+    controlId: string;
+    controlName: string;
+    authority: AuthorityType;
+    stageRequirement: 'stage1_only' | 'stage1_and_stage2';
+    stage1RequirementsCount: number;
+    stage2Label?: string;
+    controlItemVersion: number;
+    label: EventControl['label'];
+  }>;
   createdAt: number;
   updatedAt: number;
   submittedAt?: number;
@@ -908,10 +968,60 @@ export type ResourceRecommendation = ResourceRecommendationBase & (
   | {
       stage: 'official';
       assessmentReference: Extract<ResourceAssessmentReference, { stage: 'official' }>;
-    }
+  }
 );
 
-export type DecisionValue = 'Approved' | 'Rejected' | 'AmendmentRequested';
+/**
+ * Append-only authority adjustment to a canonical M2 resource revision.
+ *
+ * The M2 resource document remains immutable.  M3 renders the latest record
+ * in this collection as the effective operational quantity while retaining
+ * the original recommendation and every prior adjustment for audit.
+ */
+export interface ResourceOverrideRecord {
+  overrideId: string;
+  eventId: string;
+  versionId: string;
+  assessmentId: string;
+  baseResourceId: string;
+  /** Kept as an explicit alias for older audit/export consumers. */
+  resourceId: string;
+  authorityType: AuthorityType;
+  reviewerId: string;
+  rationale: string;
+  previousQuantities: ResourceQuantities;
+  quantities: ResourceQuantities;
+  idempotencyKey: string;
+  supersedesOverrideId?: string;
+  overriddenAt: number;
+}
+/** Authority-owned confirmation/override of deterministic hazard scores.
+ * The official M2 assessment remains immutable; this record is the M3 human
+ * review artifact that can be consumed by a later M2 recomputation. */
+export interface AuthorityAssessmentReview {
+  reviewId: string;
+  eventId: string;
+  versionId: string;
+  authorityType: AuthorityType;
+  reviewerUid: string;
+  rationale: string;
+  reviewedAt: number;
+  resourceConfirmed: boolean;
+  overrides: Array<{
+    hazardId: string;
+    hazardName: string;
+    originalResidualLikelihood: number;
+    originalResidualSeverity: number;
+    revisedResidualLikelihood: number;
+    revisedResidualSeverity: number;
+  }>;
+}
+
+/** Decisions that can be recorded for an event application. */
+export type ApplicationDecision = 'Approved' | 'Rejected';
+
+/** @deprecated Use ApplicationDecision. Kept as a narrow alias for existing callers. */
+export type DecisionValue = ApplicationDecision;
 
 export interface AuthorityDecision {
   decisionId: string;
@@ -938,7 +1048,7 @@ export type AuditAction =
   | 'resource_schema_cutover'
   | 'resource_recommended'
   | 'resource_overridden'
-  | 'amendment_requested'
+  | 'assignment_created'
   | 'authority_reviewed'
   | 'authority_score_reviewed'
   | 'authority_score_review_superseded'
@@ -951,7 +1061,74 @@ export type AuditAction =
   | 'manual_official_finalization_failed'
   | 'manual_official_finalization_retried'
   | 'decision_made'
-  | 'public_published';
+  | 'public_published'
+  | 'control_verified'
+  | 'control_rejected'
+  | 'assignment_revoked'
+  | 'control_list_published'
+  // M3 round N+1 (Workstream 3) — organizer Stage 1 upload
+  | 'stage1_doc_submitted'
+  // M3 round N+1 (Workstream 4) — Stage 2 + public flow
+  | 'stage2_doc_submitted'
+  | 'stage2_confirmed'
+  | 'stage2_reported'
+  // M3 round N+1 (Workstream 5) — admin publish gate
+  | 'stage2_doc_published'
+  | 'stage2_doc_rejected'
+  | 'control_resubmit_required'
+  | 'control_restored'
+  | 'assessment_reviewed'
+  | 'withdrawn_cleanup'
+  | 'deployment_migration';
+
+export type NotificationType =
+  | 'decision_made'
+  | 'application_approved'
+  | 'application_rejected'
+  | 'control_verified'
+  | 'control_rejected'
+  | 'control_list_published'
+  // Q1 refactor: per-doc Stage 1 verification notifications
+  | 'stage1_doc_approved'
+  | 'stage1_doc_rejected'
+  // M3 round N+1 (Workstream 3) — organizer Stage 1 upload
+  | 'stage1_doc_submitted'
+  // M3 round N+1 (Workstream 4) — Stage 2 public flow
+  | 'stage2_doc_submitted'
+  | 'stage2_reported'
+  // M3 round N+1 (Workstream 5) — admin publish gate
+  | 'stage2_doc_published'
+  | 'stage2_doc_rejected'
+  | 'control_resubmit_required'
+  | 'control_restored';
+
+export interface Notification {
+  notificationId: string;
+  recipientUid: string;
+  eventId: string;
+  versionId?: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  sourceActionId: string;
+  read: boolean;
+  createdAt: number;
+  readAt?: number;
+  /**
+   * FR-M3-08: rejection notifications must include the reason and
+   * suggestion as separate, structured fields (not just concatenated
+   * into the `message` string). Optional for legacy / non-rejection
+   * notifications — old docs without these fields degrade gracefully.
+   */
+  reason?: string;
+  suggestion?: string;
+}
+
+export type ControlVerificationStatus = 'verified' | 'rejected';
+
+// Q1 refactor: the old `ControlVerification` standalone verification record
+// is gone. Per-doc verification provenance now lives directly on the
+// Stage1Doc (status, verifiedBy, verifiedAt, rejectionReason, filePath).
 
 export interface AuditLog {
   id: string;
@@ -975,6 +1152,9 @@ export interface Venue {
   capacity: number;
   location: VenueLocation;
   jurisdiction?: string;
+  /** Malaysian state name (e.g. 'Selangor', 'Kuala Lumpur') for officer
+   *  scope matching. Optional for legacy venues. */
+  state?: string;
   usableAreaM2?: number;
   fixedSeats?: number;
   verifiedSafeCapacity?: number;
@@ -1084,12 +1264,28 @@ export const COLLECTIONS = {
   DECISIONS: 'decisions',
   DECISION_HISTORY: 'decision_history',
   RESOURCE_OVERRIDES: 'resource_overrides',
+  ASSESSMENT_REVIEWS: 'assessment_reviews',
   AUDIT_LOGS: 'audit_logs',
   VENUES: 'venues',
   INCIDENTS: 'incidents',
   HISTORICAL_EVENTS: 'historical_events',
   DATASET_MANIFESTS: 'dataset_manifests',
   PUBLIC_EVENTS: 'public_events',
+  NOTIFICATIONS: 'notifications',
+  EVENT_CONTROLS: 'event_controls',
+  // M3 round N+1 — workstream 1
+  OFFICERS: 'officers',
+  ASSIGNMENTS: 'assignments',
+  STAGE1_DOCS: 'stage1_docs',
+  STAGE2_DOCS: 'stage2_docs',
+  // M3 round N+1 (Workstream 4) — per-user rate-limit counters
+  // under each control. Server-only writes; client reads for the
+  // UI to show "You confirmed" / "You reported" states.
+  STAGE2_CONFIRMS: 'stage2_confirms',
+  STAGE2_REPORTS: 'stage2_reports',
+  PUBLIC_EVENT_CONTROLS: 'public_event_controls',
+  PUBLIC_EVENT_CONTROL_ITEMS: 'items',
+  PUBLIC_REPORTS: 'public_reports',
 } as const;
 
 export const CATEGORY_SCHEMA_VERSION = '2026-07-24-all-hazards-v2';
@@ -1108,4 +1304,194 @@ export function hirarcRiskLevelFor(matrixScore: number): RiskLevel {
   if (matrixScore >= 15) return 'High';
   if (matrixScore >= 5) return 'Medium';
   return 'Low';
+}
+
+// =====================================================================
+// M3 (Authority Approval and Notification) — round N+1
+// Officer profile + Event Control (Stage 1 / Stage 2) canonical shapes.
+// See docs/team-handoffs/M3_INTEGRATION_CONTRACT.md.
+// =====================================================================
+
+/** Officer profile — top-level `officers/{uid}` collection (parallel to
+ *  `users/{uid}`). Only users with `role: 'authority'` get one. The
+ *  existence of this doc signals "this user is a real authority officer
+ *  available for assignment". `workloadCount` is the live count of open
+ *  assignments; the default-check picks the lowest-workload officer
+ *  per `authorityType` (locked assumption A4). */
+export interface OfficerProfile {
+  uid: string;                 // = the auth UID, also the doc id
+  authorityType: AuthorityType;
+  /** Malaysian state (e.g. 'Selangor', 'Kuala Lumpur'). Used for
+   *  state-scoped officer matching against `eventDetails.venue.state`. */
+  state: string;
+  /** 'state' = only assigned when venue.state matches;
+   *  'federal' = always default-checked. */
+  scopeType: 'state' | 'federal';
+  /** Live count of open assignments. Updated by the assignment Cloud
+   *  Function. Sorted ascending by the default-check. */
+  workloadCount: number;
+  /** Soft cap. The default-check skips officers at or above this count
+   *  unless there's no other option. */
+  workloadLimit: number;
+  /** Last assignment timestamp (ms). Tiebreaker for the default-check. */
+  lastAssignedAt?: number;
+  active: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Stage 1 control documentation — sub-collection of a control item. */
+export interface Stage1Doc {
+  docId: string;
+  docType: 'receipt' | 'application' | 'floor_plan' | 'license' | 'insurance' | 'other';
+  label: string;
+  uploadedAt?: number;
+  uploadedBy?: string;
+  /** Storage path or external URL to the uploaded file. */
+  filePath?: string;
+  status: 'pending_submission' | 'pending_verification' | 'verified' | 'rejected' | 'use_previous';
+  /** If `status: 'use_previous'`, the source event this reuses from.
+   *  Per the locked decision, "Use Previous" is unconditional (no A26
+   *  gate). */
+  usePreviousSourceEventId?: string;
+  verifiedBy?: string;
+  verifiedAt?: number;
+  rejectionReason?: string;
+  rejectionSuggestion?: string;
+}
+
+/** Stage 2 control documentation (visual evidence). */
+export interface Stage2Doc {
+  docId: string;
+  imageUrl: string;
+  uploadedAt: number;
+  uploadedBy: string;
+  publicConfirmCount: number;
+  reportedAt?: number;
+  m4TicketId?: string;
+  published: boolean;
+  publishedAt?: number;
+  publishedBy?: string;
+  /** Workstream 5 — set when an admin rejects the image pre-publish. */
+  rejectionReason?: string;
+  rejectionAt?: number;
+  rejectedBy?: string;
+}
+
+/** Sanitised, server-written public projection of a published Stage 2 image.
+ * It contains no organiser identity, private evidence paths, review rationale,
+ * or M4 investigation details. */
+export interface PublicEventControl {
+  publicControlId: string;
+  eventId: string;
+  versionId: string;
+  controlId: string;
+  docId: string;
+  authority: AuthorityType;
+  controlName: string;
+  stage2Label: string;
+  imageUrl: string;
+  publicConfirmCount: number;
+  reported?: boolean;
+  publishedAt: number;
+  sanitized: true;
+  sanitizedAt: number;
+  sanitizedBy: string;
+}
+
+/** Full Event Control canonical shape — replaces the flat `event_controls`
+ *  doc with a sub-collection layout (FR-M3-22..29, Q1 refactor). */
+export interface EventControl {
+  controlId: string;
+  eventId: string;
+  versionId: string;
+  controlName: string;
+  authority: AuthorityType;
+  stageRequirement: 'stage1_only' | 'stage1_and_stage2';
+  /** Default Stage 1 requirements generated by M2's `proposeEventControlList`
+   *  (or the M3 stub). Organiser uploads or marks as Use Previous. */
+  stage1Requirements: Array<{ docType: Stage1Doc['docType']; label: string; required: boolean }>;
+  stage2Requirement: { kind: 'image'; label: string } | null;
+  /** Bumped on every resubmission so the audit trail is per-version. */
+  controlItemVersion: number;
+  /** Audit-only: if the last Stage 1 doc was a Use Previous, the event
+   *  id it reused from. */
+  usePreviousSourceEventId?: string;
+  /** Aggregate across the control's Stage 1 docs. */
+  label: 'approved' | 'pending' | 'reported_under_review' | 'resubmit_required';
+  /** Set by the withdrawal cleanup trigger; retained for audit/read models. */
+  activityClosed?: boolean;
+  labelAddedAt?: number;
+  labelRemovedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Outcome of a Stage 1 verification (officer's per-doc decision). */
+export interface Stage1Verification {
+  /** Composite ID = `${versionId}_${controlId}_${docId}_${authorityType}`. */
+  verificationId: string;
+  eventId: string;
+  versionId: string;
+  controlId: string;
+  docId: string;
+  authorityType: AuthorityType;
+  reviewerUid: string;
+  status: 'verified' | 'rejected';
+  rationale: string;
+  evidencePath?: string;
+  evidenceFile?: { name: string; sizeBytes: number; mimeType: string };
+  createdAt: number;
+}
+
+/** Officer assignment to an event version. Doc id = `${versionId}_${authorityType}`
+ *  (one assignment per authority per version). Created by `assignAuthorityOfficers`;
+ *  consumed by `recordOfficerProposal`. */
+export interface Assignment {
+  assignmentId: string;
+  eventId: string;
+  versionId: string;
+  authorityType: AuthorityType;
+  officerUid: string;
+  assignedBy: string;
+  assignedAt: number;
+  status: 'pending' | 'in_progress' | 'completed' | 'revoked';
+  decision?: DecisionValue;
+  reason?: string;
+  suggestion?: string;
+  decidedAt?: number;
+  revokedAt?: number;
+  revokedBy?: string;
+}
+
+/** Public report of an inaccurate Stage 2 image. M3 writes the doc when
+ *  a public viewer reports; M4 updates `outcome` after investigation.
+ *  M3 listens (Q4) and updates the control's `label` via the
+ *  `onM4ReportOutcome` trigger. */
+export interface PublicReport {
+  ticketId: string;
+  eventId: string;
+  controlId: string;
+  docId: string;
+  reporterUid: string;
+  category: string;
+  description: string;
+  evidencePaths?: string[];
+  outcome?: 'confirmed_true' | 'dismissed_fake' | 'under_review';
+  outcomeNotes?: string;
+  outcomeSetBy?: string;
+  outcomeSetAt?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Proposed event-control list shape — what M2's `proposeEventControlList`
+ *  callable returns. The M3 stub returns a hardcoded version of this
+ *  (one item per required authority). */
+export interface ProposedControlItem {
+  controlName: string;
+  authority: AuthorityType;
+  stageRequirement: 'stage1_only' | 'stage1_and_stage2';
+  stage1Requirements: Array<{ docType: Stage1Doc['docType']; label: string; required: boolean }>;
+  stage2Requirement: { kind: 'image'; label: string } | null;
 }

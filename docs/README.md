@@ -43,6 +43,7 @@ Replace “Module N teammate” with names after the team confirms assignments. 
 | `STERAS_DESIGN_GUIDELINES.md` | Shared visual and interaction rules |
 | `ASSET_GUIDE.md` | Asset usage and generation guidance |
 | `BACKUP_RESTORE.md` | Firebase backup and recovery operations |
+| `team-handoffs/M3_LEGACY_MIGRATION.md` | Linkos Module 3 legacy fixture migration, manifest, rollback and verification |
 | `steras-design-language.png` | Visual direction reference |
 
 ## Quality Gate
@@ -55,3 +56,18 @@ npm run test:rules
 ```
 
 The owner must also manually verify every route listed in their module document.
+
+## M3 deployment gate
+
+M3's deployed UAT must run against a dedicated staging Firebase project. The
+Playwright global setup refuses the configured development/production project
+and requires an explicit `STERAS_BASE_URL`, `STERAS_E2E_PROJECT_ID`, temporary
+UAT password, and `STERAS_E2E_ALLOW_RESET=true`. Use the example environment
+file at `frontend/.env.e2e.example` and the manual GitHub Actions workflow at
+`.github/workflows/release-staging.yml`.
+
+The release sequence is: deploy Functions, verify the required M3 function
+IDs, run `migrate:m3 --dry-run`, apply the migration, deploy Firestore/Storage
+rules, deploy Hosting, then run the smoke suite. The full suite is optional in
+the workflow but required before promotion. Rules tests require Java 21 or
+newer because Firebase CLI no longer supports the older local Java runtime.

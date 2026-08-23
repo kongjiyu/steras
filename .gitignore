@@ -7,6 +7,9 @@ node_modules/
 **/node_modules/
 jspm_packages/
 
+# ----- Project-local toolchains -----
+.tools/
+
 # ----- Build outputs -----
 dist/
 build/
@@ -104,8 +107,10 @@ ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 
-# ----- Cache / temp -----
-.cache/
+# ----- Playwright -----
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
 .playwright-cli/
 .parcel-cache/
 .eslintcache
@@ -116,6 +121,8 @@ $RECYCLE.BIN/
 .tsbuildinfo
 *.tmp
 *.temp
+artifacts/m3-migration/
+**/artifacts/m3-migration/
 
 # ----- OS -----
 ehthumbs.db

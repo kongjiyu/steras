@@ -15,7 +15,7 @@ export default function NewEvent() {
   const navigate = useNavigate();
   const { eventId } = useParams<{ eventId: string }>();
   const [draftId, setDraftId] = useState(eventId ?? '');
-  const [editableStatus, setEditableStatus] = useState<'Draft' | 'AmendmentRequested'>('Draft');
+  const [editableStatus, setEditableStatus] = useState<'Draft'>('Draft');
   const [currentVersionNumber, setCurrentVersionNumber] = useState(0);
   const [editableVersionId, setEditableVersionId] = useState('v1');
   const [documentPaths, setDocumentPaths] = useState<string[]>([]);
@@ -72,9 +72,9 @@ export default function NewEvent() {
     getDoc(doc(db, COLLECTIONS.EVENTS, eventId)).then((snapshot) => {
       if (!snapshot.exists()) throw new Error('Event draft not found.');
       const data = snapshot.data();
-      if (!['Draft', 'AmendmentRequested'].includes(data.status)) throw new Error('This application can no longer be edited.');
+      if (data.status !== 'Draft') throw new Error('Only draft applications can be edited. Rejected applications are final.');
       setForm({ ...(data.eventDetails as EventDetails), riskProfile: completeRiskProfile(data.eventDetails?.riskProfile) });
-      setEditableStatus(data.status as 'Draft' | 'AmendmentRequested');
+      setEditableStatus('Draft');
       setCurrentVersionNumber(data.currentVersionNumber ?? 0);
       setEditableVersionId(data.editableVersionId ?? `v${(data.currentVersionNumber ?? 0) + 1}`);
       setDocumentPaths(data.draftDocumentPaths ?? []);

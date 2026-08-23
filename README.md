@@ -23,8 +23,8 @@ Project references:
 | Role | What the role can do |
 |---|---|
 | Public visitor | Browse the sanitized register of approved tourism events. |
-| Organizer | Register, create and edit drafts, upload evidence, submit immutable versions, track assessment and decisions, respond to amendment requests, and withdraw eligible applications. |
-| Authority reviewer | View applications assigned to the reviewer’s agency, inspect evidence and assessment provenance, adjust recommended resources with a rationale, and approve, reject, or request amendments. |
+| Organizer | Register, create and edit drafts, upload evidence, submit immutable versions, track assessment and decisions, and withdraw eligible applications. Rejected applications are terminal; a materially changed event starts a new application. |
+| Authority reviewer | View applications assigned to the reviewer’s agency, inspect evidence and assessment provenance, adjust recommended resources with a rationale, and approve or reject applications. |
 
 Authority accounts are provisioned by an administrator. Public registration always creates an organizer account and cannot grant authority privileges.
 
@@ -43,8 +43,7 @@ Official score and Low/Medium/High risk level
 Indicative safety-resource recommendation
     ↓
 Assigned authority reviews and decisions
-    ├─ Amendment requested → organizer submits a new immutable version
-    ├─ Rejected → application remains private
+    ├─ Rejected → application remains private and terminal
     └─ Every required authority approves
                          ↓
               Sanitized public event listing
@@ -54,8 +53,7 @@ Application statuses are:
 
 ```text
 Draft → Pending → Under Review → Approved
-                    ├─ Amendment Requested → Pending (new version)
-                    └─ Rejected
+                    └─ Rejected (terminal)
 
 Draft or Pending → Withdrawn
 ```
@@ -69,8 +67,8 @@ Organizer-facing application management:
 - draft creation and editing;
 - event, venue, attendance, environment, emergency plan, and organizer details;
 - PDF/JPEG/PNG/WebP evidence uploads, limited to 10 MB per file;
-- server-validated submission and immutable `v1`, `v2`, ... versions;
-- amendment/resubmission and withdrawal;
+- server-validated submission and an immutable application version;
+- withdrawal of eligible applications;
 - real-time status, assessment, and resource tracking.
 
 Primary implementation:
@@ -134,7 +132,7 @@ Agency-specific operational workspace:
 - search, status filters, priority sorting, and pagination;
 - official category score/profile, source evidence, and clearly labelled M3 advisory analysis;
 - version history and decision history;
-- transactional Approve, Reject, and Amendment Requested decisions;
+- transactional Approve and Reject decisions;
 - concurrent multi-agency decision aggregation;
 - public publication only after unanimous approval of the same version.
 
@@ -180,7 +178,7 @@ Primary implementation:
 | `/organizer/events/new` | Organizer | New event application |
 | `/organizer/events` | Organizer | Organizer application list |
 | `/organizer/events/:eventId` | Organizer | Application result and status |
-| `/organizer/events/:eventId/edit` | Organizer | Draft or amendment editing |
+| `/organizer/events/:eventId/edit` | Organizer | Draft editing only |
 | `/authority` | Authority | Authority operations dashboard |
 | `/authority/applications` | Authority | Assigned review queue |
 | `/authority/risk` | Authority | Official category assessment and evidence portfolio |
@@ -252,7 +250,7 @@ steras/
 - Node.js 20 or newer. Cloud Functions deploy with Node.js 22.
 - npm.
 - Firebase CLI authenticated with access to a Firebase project.
-- Java for the local Firebase Emulator Suite.
+- Java 21 or newer for the local Firebase Emulator Suite and Firebase Rules tests.
 - Google Cloud CLI application-default credentials for admin seed scripts.
 
 Install and authenticate the CLIs if needed:
@@ -454,7 +452,7 @@ and is not suitable for real permit decisions or accuracy claims.
 5. Upload evidence files to the current editable version.
 6. Submit the application. Submission validates the data and freezes an immutable version.
 7. Open **My Events** to follow assessment and authority decisions.
-8. If an amendment is requested, edit the new version and resubmit it.
+8. A rejected application is final. Start a new application if the event proposal changes.
 9. Draft or Pending applications may be withdrawn.
 
 ### Authority workflow
@@ -464,7 +462,7 @@ and is not suitable for real permit decisions or accuracy claims.
 3. Inspect the official category score first, followed by category contributions, context evidence, advisory M3 explanation, documents, and resources.
 4. Download and inspect submitted evidence.
 5. Optionally adjust resources with a rationale of 10–1,000 characters.
-6. Enter a decision rationale and choose **Approve**, **Reject**, or **Request amendment**.
+6. Enter a decision rationale and choose **Approve** or **Reject**. A rejection also requires a corrective suggestion.
 7. Use **Reports** for assigned-agency analytics and PII-free CSV export.
 
 ### Public workflow
@@ -494,6 +492,19 @@ Run commands from the repository root unless stated otherwise.
 | `npm run seed:staging` | Seed stable venues and incidents using Admin credentials |
 | `npm run uat:staging` | Run the deployed staging golden-path scenario |
 | `npm run uat:fallback` | Verify deployed deterministic fallback behavior |
+| `npm run test:e2e:m3:smoke` | Run the staging-safe M3 Playwright smoke suite (requires explicit E2E env) |
+| `npm run test:e2e:m3:full` | Run the full M3 Playwright suite against the selected staging target |
+| `npm run test:e2e:m3:workstream1` | Run the officer-workstream Playwright suite against staging |
+| `npm --workspace functions run migrate:m3 -- --dry-run` | Inspect the M3 compatibility migration without writes |
+| `npm run migrate:m3:dry-run` | Dry-run the exact seven-event legacy manifest; no writes |
+| `npm run migrate:m3:verify` | Verify the exact legacy manifest is idempotent and excluded data is unchanged |
+| `npm --workspace functions run migrate:m3 -- --apply --manifest m3-legacy-migration-manifest.json` | Apply only the reviewed manifest; linkos requires both production confirmation guards |
+| `npm --workspace functions run migrate:m3 -- --rollback <snapshot.json>` | Restore the exact documents captured by a completed migration snapshot |
+| `npm run migrate:m3:decision-contract:dry-run` | Read-only check of the two exact legacy Application amendment records |
+| `npm run migrate:m3:decision-contract:snapshot` | Capture the exact pre-migration records required before decision-contract apply |
+| `npm run migrate:m3:decision-contract:apply` | Apply the guarded Application rejection migration using the captured snapshot |
+| `npm run migrate:m3:decision-contract:verify` | Verify both decision-contract migration targets are terminal Rejected records |
+| `npm run verify:deployment -- path/to/functions-list.json` | Verify required M3 functions are deployed |
 | `npm run deploy` | Build and deploy all Firebase services |
 | `npm run deploy:functions` | Build and deploy Functions only |
 | `npm run deploy:hosting` | Build and deploy Hosting only |
@@ -523,6 +534,14 @@ UAT_PASSWORD='use-a-strong-temporary-password' npm run uat:staging
 ```
 
 Do not use production user credentials with UAT scripts.
+
+For the complete M3 release sequence, use the manually triggered
+`.github/workflows/release-staging.yml` workflow. It requires a separate
+staging project, GitHub Workload Identity credentials, staging Firebase web
+configuration, a temporary UAT password, and `MINIMAX_API_KEY` in the staging
+project's Secret Manager. The Playwright suites intentionally refuse the
+currently configured `linkos-496505` project so a reset cannot mutate the
+legacy deployment.
 
 ## Build and deploy
 

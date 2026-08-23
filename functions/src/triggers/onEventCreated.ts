@@ -43,6 +43,7 @@ import { AI_RESPONSE_SCHEMA_VERSION, PROMPT_VERSION, analyseWithAI } from '../en
 import { validateAndCalculateProvisional } from '../engines/assessmentValidator';
 import { buildOfficialAssessmentResult } from '../engines/authorityFinalisation';
 import { buildManualOfficialAssessmentResult } from '../engines/manualFinalisation';
+import { M3_UAT_DATASET_ID, M3_UAT_EVENT_IDS } from '@shared/m3UatFixtures';
 import {
   computeResources,
   ResourceCalculationResult,
@@ -1502,7 +1503,21 @@ function organizerResourceRecommendation(resources: ResourceRecommendation): Org
 }
 
 export const onEventCreated = onDocumentCreated({ document: `${COLLECTIONS.EVENTS}/{eventId}`, region: FUNCTION_REGION, secrets: ASSESSMENT_SECRETS }, async (trigger) => {
-  try { await runRiskAndResourcePipeline(trigger.params.eventId); } catch (error) { logger.error('[onEventCreated] failed', error); }
+  const eventId = trigger.params.eventId;
+  const createdData = trigger.data?.data() as { m3Uat?: { datasetId?: string; managedBy?: string } } | undefined;
+  const legacyM3FixtureIds = new Set([
+    'evt-compliance-blocked',
+    'evt-provisional-readiness',
+    'evt-control-verification',
+  ]);
+  const isManagedUatFixture = (M3_UAT_EVENT_IDS as readonly string[]).includes(eventId)
+    && createdData?.m3Uat?.datasetId === M3_UAT_DATASET_ID
+    && createdData?.m3Uat?.managedBy === 'seed:m3:uat';
+  if (legacyM3FixtureIds.has(eventId) || isManagedUatFixture) {
+    logger.info(`[onEventCreated] skipped M3 test fixture: ${eventId}`);
+    return;
+  }
+  try { await runRiskAndResourcePipeline(eventId); } catch (error) { logger.error('[onEventCreated] failed', error); }
 });
 
 export const onEventUpdated = onDocumentUpdated({ document: `${COLLECTIONS.EVENTS}/{eventId}`, region: FUNCTION_REGION, secrets: ASSESSMENT_SECRETS }, async (trigger) => {

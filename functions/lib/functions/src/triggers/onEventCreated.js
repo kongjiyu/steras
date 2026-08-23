@@ -21,6 +21,7 @@ const aiPredictor_1 = require("../engines/aiPredictor");
 const assessmentValidator_1 = require("../engines/assessmentValidator");
 const authorityFinalisation_1 = require("../engines/authorityFinalisation");
 const manualFinalisation_1 = require("../engines/manualFinalisation");
+const m3UatFixtures_1 = require("../../../shared/m3UatFixtures");
 const resourceCalculator_1 = require("../engines/resourceCalculator");
 const resourceContract_1 = require("../engines/resourceContract");
 const ruleBased_1 = require("../engines/ruleBased");
@@ -1345,8 +1346,22 @@ function organizerResourceRecommendation(resources) {
     };
 }
 exports.onEventCreated = (0, firestore_1.onDocumentCreated)({ document: `${types_1.COLLECTIONS.EVENTS}/{eventId}`, region: runtime_1.FUNCTION_REGION, secrets: secrets_1.ASSESSMENT_SECRETS }, async (trigger) => {
+    const eventId = trigger.params.eventId;
+    const createdData = trigger.data?.data();
+    const legacyM3FixtureIds = new Set([
+        'evt-compliance-blocked',
+        'evt-provisional-readiness',
+        'evt-control-verification',
+    ]);
+    const isManagedUatFixture = m3UatFixtures_1.M3_UAT_EVENT_IDS.includes(eventId)
+        && createdData?.m3Uat?.datasetId === m3UatFixtures_1.M3_UAT_DATASET_ID
+        && createdData?.m3Uat?.managedBy === 'seed:m3:uat';
+    if (legacyM3FixtureIds.has(eventId) || isManagedUatFixture) {
+        firebase_functions_1.logger.info(`[onEventCreated] skipped M3 test fixture: ${eventId}`);
+        return;
+    }
     try {
-        await runRiskAndResourcePipeline(trigger.params.eventId);
+        await runRiskAndResourcePipeline(eventId);
     }
     catch (error) {
         firebase_functions_1.logger.error('[onEventCreated] failed', error);

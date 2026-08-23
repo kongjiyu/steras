@@ -64,7 +64,7 @@ const decisionsByEvent: Record<string, DecisionRecord[]> = {
       history: [] },
   ],
 
-  // E004 - AmendmentRequested v1
+  // E004 - Rejected v1
   [EVENT_IDS.E004]: [
     { current: mkDecision({ eventId: EVENT_IDS.E004, versionId: 'v1', authorityType: 'PDRM', decision: 'Approved', rationale: 'Traffic management plan approved.', reviewerId: USER_IDS.U_OFC_PDRM_KL_01, decidedAt: daysAgo(15), current: false }),
       history: [
@@ -74,9 +74,9 @@ const decisionsByEvent: Record<string, DecisionRecord[]> = {
       history: [
         mkDecision({ eventId: EVENT_IDS.E004, versionId: 'v1', authorityType: 'BOMBA', decision: 'Rejected', rationale: 'Insufficient medical plan for mass participation event. v1 had only 2 medical teams and 1 ambulance for 25,000 runners. KKM guideline requires minimum 5 teams and 3 ambulances.', reviewerId: USER_IDS.U_OFC_BOMBA_KL_01, decidedAt: daysAgo(12) }),
       ] },
-    { current: mkDecision({ eventId: EVENT_IDS.E004, versionId: 'v1', authorityType: 'KKM', decision: 'AmendmentRequested', rationale: 'Medical staffing plan needs revision. Request: increase medical teams to 5, ambulances to 3, and add 1 secondary triage station at the 21km mark.', reviewerId: USER_IDS.U_OFC_KKM_KL_01, decidedAt: daysAgo(11), current: false }),
+    { current: mkDecision({ eventId: EVENT_IDS.E004, versionId: 'v1', authorityType: 'KKM', decision: 'Rejected', rationale: 'Medical staffing plan is insufficient for mass participation. The application cannot proceed in its current form.', reviewerId: USER_IDS.U_OFC_KKM_KL_01, decidedAt: daysAgo(11), current: false }),
       history: [
-        mkDecision({ eventId: EVENT_IDS.E004, versionId: 'v1', authorityType: 'KKM', decision: 'AmendmentRequested', rationale: 'Medical staffing plan needs revision. Request: increase medical teams to 5, ambulances to 3, and add 1 secondary triage station at the 21km mark.', reviewerId: USER_IDS.U_OFC_KKM_KL_01, decidedAt: daysAgo(11) }),
+        mkDecision({ eventId: EVENT_IDS.E004, versionId: 'v1', authorityType: 'KKM', decision: 'Rejected', rationale: 'Medical staffing plan is insufficient for mass participation. The application cannot proceed in its current form.', reviewerId: USER_IDS.U_OFC_KKM_KL_01, decidedAt: daysAgo(11) }),
       ] },
   ],
 

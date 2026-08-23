@@ -4,7 +4,7 @@ rules_version = '2';
 // STERAS Firestore Security Rules
 // =====================================================================
 // Roles:
-//   - organizer:  self-signup; can edit own Draft or AmendmentRequested applications
+//   - organizer:  self-signup; can edit own Draft applications only
 //   - authority:  server-provisioned only; reviews applications assigned to their agency
 //   - public:     self-signup; reads public_events (same as logged-out users)
 //   - admin:      server-provisioned only; full read across users/events for ops
@@ -43,14 +43,15 @@ service cloud.firestore {
     }
 
     function isAssignedAuthority(eventId) {
+      let event = get(/databases/$(database)/documents/events/$(eventId)).data;
       return isAuthority()
-             && get(/databases/$(database)/documents/events/$(eventId)).data.requiredAuthorities.hasAny([
-               get(/databases/$(database)/documents/users/$(request.auth.uid)).data.authorityType
-             ]);
+             && (event.keys().hasAny(['assignedOfficerUids'])
+                 ? event.assignedOfficerUids.hasAny([request.auth.uid])
+                 : false);
     }
 
     function isEditable(status) {
-      return status == 'Draft' || status == 'AmendmentRequested';
+      return status == 'Draft';
     }
 
     // ---- users collection ----
@@ -82,17 +83,15 @@ service cloud.firestore {
     // ---- events collection ----
     match /events/{eventId} {
       // Organizer can read their own event.
-      // Assigned authorities can read applications for their agency.
+      // Only the named officer assigned to the active event version can read
+      // an application. Authority membership alone is not sufficient.
       // Admins can read all events (ops view).
       // Public viewers should query `public_events` instead — not `events`.
       allow read: if isAdmin()
-                  || (isSignedIn() && isAuthority()
-                       && resource.data.requiredAuthorities.hasAny([
-                         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.authorityType
-                       ]))
+                  || isAssignedAuthority(eventId)
                   || (isSignedIn() && isOwner(resource.data.organizerId));
 
-      // Drafts are client-created. Submission and resubmission are server-only.
+      // Drafts are client-created. Submission is server-only; Rejected applications cannot be resubmitted.
       allow create: if isOrganizer()
                     && request.resource.data.organizerId == request.auth.uid
                     && request.resource.data.status == 'Draft'
@@ -182,12 +181,136 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      // Authority score confirmations/overrides. Server-written and visible
+      // only to admins, the named authority, or the event owner.
+      match /assessment_reviews/{reviewId} {
+        allow read: if isAdmin()
+                    || (isSignedIn() && isAssignedAuthority(eventId))
+                    || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
+        allow write: if false;
+      }
+
+      // ---- Sub-collection: event_controls (Stage-1 controls, M3) ----
+      // Read by admin, assigned authority, event owner, OR any signed-in
+      // public viewer (the Workstream 4 public EventDetail page renders
+      // the per-control Stage 2 cards and needs the metadata).
+      // Writes server-only (organisers populate via Cloud Function;
+      // verifications via verifyStage1Doc).
+      match /event_controls/{controlId} {
+        allow read: if isAdmin()
+                    || (isSignedIn() && isAssignedAuthority(eventId))
+                    || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId))
+                    || isSignedIn();
+        allow write: if false; // server-only
+      }
+
+      // ---- Sub-collection: control_verifications (M3 verified-control workflow) ----
+      // Read by assigned authority + event owner + admin. Writes server-only
+      // (verifyEventControl Cloud Function is the only writer).
+      match /control_verifications/{verificationId} {
+        allow read: if isAdmin()
+                    || (isSignedIn() && isAssignedAuthority(eventId))
+                    || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
+        allow write: if false; // server-only
+      }
+
+      // ---- Sub-collection: assignments (M3 round N+1, Workstream 1) ----
+      // One doc per required authorityType per version. Created by
+      // `assignAuthorityOfficers`; read by the assigned officer, the
+      // admin, and the event owner. Writes server-only.
+      match /assignments/{assignmentId} {
+        allow read: if isAdmin()
+                    || (isSignedIn() && isAssignedAuthority(eventId))
+                    || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
+        allow write: if false; // server-only
+      }
+
+      // ---- Sub-collection: stage1_docs (M3 round N+1, Workstream 3) ----
+      // Per-doc Stage 1 evidence (application, license, insurance, ...).
+      // Read by assigned authority + event owner + admin. Writes server-only
+      // (verifyStage1Doc + submitStage1Doc Cloud Functions).
+      match /event_controls/{controlId}/stage1_docs/{docId} {
+        allow read: if isAdmin()
+                    || (isSignedIn() && isAssignedAuthority(eventId))
+                    || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
+        allow write: if false; // server-only
+      }
+
+      // ---- Sub-collection: stage2_docs (M3 round N+1, Workstream 5) ----
+      // Private organizer uploads and review state. Public viewers use the
+      // sanitised `public_event_controls/{eventId}/items` projection below.
+      // Writes are server-only (submitStage2Doc / publishStage2Doc /
+      // unpublishStage2Doc Cloud Functions).
+      match /event_controls/{controlId}/stage2_docs/{docId} {
+        allow read: if isAdmin()
+                    || (isSignedIn() && isAssignedAuthority(eventId))
+                    || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
+        allow write: if false; // server-only
+      }
+
+      // ---- Per-control rate-limit counters (M3 round N+1, Workstream 4) ----
+      // Server-only writes (confirmStage2Doc / reportStage2Doc). Client
+      // reads for the UI to show "You confirmed" / "You reported" states.
+      match /event_controls/{controlId}/stage2_confirms/{userId} {
+        allow read: if isAdmin()
+                    || (isSignedIn() && request.auth.uid == userId);
+        allow write: if false; // server-only
+      }
+      match /event_controls/{controlId}/stage2_reports/{userId} {
+        allow read: if isAdmin()
+                    || (isSignedIn() && request.auth.uid == userId);
+        allow write: if false; // server-only
+      }
+
       // ---- Sub-collection: audit_logs ----
       // Append-only. Read by authorities + admins. Never client-writable.
       match /audit_logs/{logId} {
         allow read: if isAdmin() || (isSignedIn() && isAssignedAuthority(eventId));
         allow write: if false; // server-only
       }
+    }
+
+    // ---- officers (M3 round N+1, Workstream 1) ----
+    // Top-level collection. Read by signed-in (the assignment checklist
+    // needs everyone to see the officer list). Writes are admin-only on
+    // the client; M3 server can write via Admin SDK.
+    match /officers/{officerId} {
+      allow read: if isSignedIn();
+      allow create, update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // ---- public_event_controls (M3 round N+1, Workstream 5) ----
+    // Sanitised public view of published Stage 1/2 documents. Read by
+    // anyone (public viewer). Writes server-only.
+    match /public_event_controls/{eventId}/{controlId}/{stage}/{docId} {
+      allow read: if true;
+      allow write: if false; // server-only
+    }
+
+    // Canonical sanitised projection used by the public event page.
+    // `items` is a sub-collection under the event document so a public
+    // viewer can subscribe to one event without querying private controls.
+    match /public_event_controls/{eventId}/items/{publicControlId} {
+      allow read: if true;
+      allow write: if false; // server-only
+    }
+
+    // ---- public_reports (M3 round N+1, Workstream 4 + 6) ----
+    // Public Stage 2 inaccurate reports. M3 writes when a public user
+    // reports; M4 updates `outcome` after investigation; M3 listens.
+    // Read scoped to: reporter, admin, assigned authority, event owner.
+    match /public_reports/{ticketId} {
+      allow read: if isAdmin()
+                  || (isSignedIn() && resource.data.reporterUid == request.auth.uid)
+                  || (isSignedIn() && resource.data.eventId != null
+                      && isAssignedAuthority(resource.data.eventId))
+                  || (isSignedIn() && resource.data.eventId != null
+                      && isOwner(get(/databases/$(database)/documents/events/$(resource.data.eventId)).data.organizerId));
+      // Reports must go through reportStage2Doc so the published projection,
+      // per-user rate limit, and M4 ticket are updated atomically. M4 writes
+      // outcomes with the Admin SDK and therefore bypasses these client rules.
+      allow create, update, delete: if false;
     }
 
     // ---- venues (read-only for all signed-in users, write = admin/seed) ----
@@ -219,6 +342,15 @@ service cloud.firestore {
     match /public_events/{eventId} {
       allow read: if true;
       allow write: if false; // server-only
+    }
+
+    // ---- notifications (durable in-app notifications, FR-M3-08) ----
+    // Users see only their own notifications. Admin can read all (for
+    // ops + audit). Writes are server-only (the Cloud Functions
+    // createNotification helper is the only writer).
+    match /notifications/{notificationId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.recipientUid == request.auth.uid);
+      allow write: if false; // server-only (Cloud Function)
     }
   }
 }

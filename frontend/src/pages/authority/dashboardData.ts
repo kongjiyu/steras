@@ -6,7 +6,7 @@ export interface DashboardRecord {
   assessment?: RiskAssessment;
 }
 
-const ACTIVE_STATUSES: EventStatus[] = ['Pending', 'UnderReview', 'AmendmentRequested'];
+const ACTIVE_STATUSES: EventStatus[] = ['Pending', 'UnderReview'];
 
 export function dashboardSummary(records: DashboardRecord[]) {
   const count = (status: EventStatus) => records.filter(({ event }) => event.status === status).length;
@@ -15,7 +15,6 @@ export function dashboardSummary(records: DashboardRecord[]) {
     active: records.filter(({ event }) => ACTIVE_STATUSES.includes(event.status)).length,
     pending: count('Pending'),
     underReview: count('UnderReview'),
-    amendments: count('AmendmentRequested'),
     approved: count('Approved'),
     highRisk: records.filter(({ assessment }) => assessmentRiskLevel(assessment) === 'High').length,
     unassessed: records.filter(({ assessment }) => !assessment).length,
@@ -25,7 +24,7 @@ export function dashboardSummary(records: DashboardRecord[]) {
 
 export function sortReviewPriority(records: DashboardRecord[]): DashboardRecord[] {
   const riskWeight: Record<RiskLevel, number> = { High: 3, Medium: 2, Low: 1 };
-  const statusWeight: Partial<Record<EventStatus, number>> = { AmendmentRequested: 3, Pending: 2, UnderReview: 1 };
+  const statusWeight: Partial<Record<EventStatus, number>> = { Pending: 2, UnderReview: 1 };
   return records
     .filter(({ event }) => ACTIVE_STATUSES.includes(event.status))
     .sort((left, right) => {
@@ -49,5 +48,5 @@ export function statusDistribution(records: DashboardRecord[]) {
   return records.reduce<Record<EventStatus, number>>((counts, { event }) => {
     counts[event.status] += 1;
     return counts;
-  }, { Draft: 0, Pending: 0, UnderReview: 0, AmendmentRequested: 0, Approved: 0, Rejected: 0, Withdrawn: 0 });
+    }, { Draft: 0, Pending: 0, UnderReview: 0, Approved: 0, Rejected: 0, Withdrawn: 0, 'Manual Review Required': 0 });
 }

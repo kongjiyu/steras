@@ -1,0 +1,73 @@
+/* =====================================================================
+ * STERAS — Admin workspace styles
+ * Reuses the .authority-* design tokens for visual consistency.
+ * ===================================================================== */
+
+/* ---------- Stat cards (dashboard overview) ---------- */
+.admin-stat__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 0.75rem;
+  flex-shrink: 0;
+  background: #f3f1e9;
+  color: #536648;
+}
+.admin-stat__icon--default { background: #eef0e6; color: #4d5d3f; }
+.admin-stat__icon--warn    { background: #fff4d6; color: #8e6918; }
+.admin-stat__icon--good    { background: #e3f1de; color: #3e6b3a; }
+.admin-stat__icon--bad     { background: #fde2e1; color: #a23b39; }
+
+.admin-recent__status {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.125rem 0.5rem;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+.admin-recent__status--default { background: #eef0e6; color: #4d5d3f; }
+.admin-recent__status--warn    { background: #fff4d6; color: #8e6918; }
+.admin-recent__status--good    { background: #e3f1de; color: #3e6b3a; }
+.admin-recent__status--bad     { background: #fde2e1; color: #a23b39; }
+
+/* ---------- Generic badges ---------- */
+.admin-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.125rem 0.625rem;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+.admin-badge--default { background: #eef0e6; color: #4d5d3f; }
+.admin-badge--warn    { background: #fff4d6; color: #8e6918; }
+.admin-badge--good    { background: #e3f1de; color: #3e6b3a; }
+.admin-badge--bad     { background: #fde2e1; color: #a23b39; }
+
+/* ---------- Queue list (AdminApplicationQueue) ---------- */
+.admin-queue-row { font-size: 14px; }
+
+/* ---------- Review page sections ---------- */
+.admin-section .rotate-180 { transform: rotate(180deg); }
+
+/* ---------- Report card (Analytics) ---------- */
+.admin-report-card {
+  cursor: pointer;
+}
+.admin-report-card:hover .text-brand-700 { color: #3a4a2c; }
+
+/* ---------- Section button keyboard focus ---------- */
+.admin-section > button:focus-visible {
+  outline: 2px solid #536648;
+  outline-offset: 2px;
+}

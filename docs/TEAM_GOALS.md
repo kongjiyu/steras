@@ -116,7 +116,7 @@ Stabilise the implemented v2 contract and support integration. Avoid introducing
 ### Current progress
 
 - Authority dashboard, scoped review queue, event review page, evidence download, decisions, decision history, resource override, and publication behavior exist.
-- Backend aggregation already supports required-authority scope and versioned approval/rejection/amendment decisions.
+- Backend aggregation supports required-authority scope and versioned approval/rejection decisions. Event application rejection is terminal; resubmission is limited to event control documents.
 - Audit records and sanitised approved-event publication are present.
 - Durable notification records, verified-control actions, and explicit blocking based on M2 compliance/readiness are not implemented.
 

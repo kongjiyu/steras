@@ -12,6 +12,7 @@ import { submitEventForUser } from '../src/http/submitEvent';
 import { withdrawEventForUser } from '../src/http/withdrawEvent';
 import { __testOnlyMarkFailed, __testOnlyPersistResourceCalculation, recomputeResourceForStoredAssessment, runRiskAndResourcePipeline } from '../src/triggers/onEventCreated';
 import { makeAuthorityDecisionForUser } from '../src/http/authorityDecision';
+import { makeInitialReviewDecisionForUser } from '../src/http/initialReview';
 import {
   submitScoreReviewForUser,
   resolveScoreConflictForAdmin,
@@ -117,7 +118,10 @@ async function seedProfilesAndEvent() {
     const db = context.firestore();
     await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer' });
     await setDoc(doc(db, 'users/authority-1'), { role: 'authority', authorityType: 'PDRM' });
-    await setDoc(doc(db, 'events/event-1'), { organizerId: 'organizer-1', status: 'Pending', requiredAuthorities: ['PDRM'] });
+    await setDoc(doc(db, 'events/event-1'), {
+      organizerId: 'organizer-1', status: 'Pending', requiredAuthorities: ['PDRM'],
+      assignedOfficerUids: ['authority-1'], assignedOfficerByAuthority: { PDRM: 'authority-1' },
+    });
     await setDoc(doc(db, 'events/event-1/assessments/v1'), { officialScore: 50 });
     await setDoc(doc(db, 'events/event-1/assessment_summaries/v1'), {
       assessmentId: 'v1', eventId: 'event-1', versionId: 'v1', status: 'provisional_ready',
@@ -167,16 +171,16 @@ describe('Firestore security rules', () => {
     const versionOne = versionSnapshot.data();
     const v2Evidence = await uploadTestEvidence('draft-1', 'v2');
     await environment.withSecurityRulesDisabled((context) => updateDoc(doc(context.firestore(), 'events/draft-1'), {
-      status: 'AmendmentRequested',
+      status: 'Rejected',
       editableVersionId: 'v2',
       draftDocumentPaths: [v2Evidence],
-      eventDetails: { ...validDetails, name: 'KL Cultural Festival - Revised' },
+      eventDetails: { ...validDetails, name: 'KL Cultural Festival - Rejected' },
     }));
-    await submitEventForUser('organizer-1', 'draft-1', 1_002);
+    await expect(submitEventForUser('organizer-1', 'draft-1', 1_002)).rejects.toMatchObject({ code: 'failed-precondition' });
     const versionOneAfter = await assertSucceeds(getDoc(doc(db, 'events/draft-1/versions/v1')));
     const versionTwo = await assertSucceeds(getDoc(doc(db, 'events/draft-1/versions/v2')));
-    if (JSON.stringify(versionOneAfter.data()) !== JSON.stringify(versionOne)) throw new Error('Version 1 changed during resubmission.');
-    if (versionTwo.data()?.versionNumber !== 2 || versionTwo.data()?.eventDetails.name !== 'KL Cultural Festival - Revised') throw new Error('Version 2 was not created from the amendment.');
+    if (JSON.stringify(versionOneAfter.data()) !== JSON.stringify(versionOne)) throw new Error('Version 1 changed after terminal rejection.');
+    if (versionTwo.exists()) throw new Error('A rejected application created a new version.');
   });
 
   it('rejects missing Storage evidence and spoofed registry venue identity before version creation', async () => {
@@ -408,7 +412,11 @@ describe('Firestore security rules', () => {
     await seedProfilesAndEvent();
     await environment.withSecurityRulesDisabled(async (context) => {
       await setDoc(doc(context.firestore(), 'users/bomba-1'), { role: 'authority', authorityType: 'BOMBA' });
-      await updateDoc(doc(context.firestore(), 'events/event-1'), { requiredAuthorities: ['PDRM', 'BOMBA'] });
+      await updateDoc(doc(context.firestore(), 'events/event-1'), {
+        requiredAuthorities: ['PDRM', 'BOMBA'],
+        assignedOfficerUids: ['authority-1', 'bomba-1'],
+        assignedOfficerByAuthority: { PDRM: 'authority-1', BOMBA: 'bomba-1' },
+      });
       await setDoc(doc(context.firestore(), 'events/event-1/assessments/v1/score_reviews/review-1'), { reviewId: 'review-1', reviewerId: 'authority-1', authorityType: 'PDRM' });
       await setDoc(doc(context.firestore(), 'events/event-1/assessments/v1/score_reviews/review-2'), { reviewId: 'review-2', reviewerId: 'bomba-1', authorityType: 'BOMBA' });
     });
@@ -422,6 +430,10 @@ describe('Firestore security rules', () => {
   it('keeps manual assessments server-only and readable only by Admin or assigned authorities', async () => {
     await seedManualReviewEvent();
     const adminDb = getFirestore(adminApp);
+    await adminDb.doc('events/manual-1').update({
+      assignedOfficerUids: ['pdrm-1'],
+      assignedOfficerByAuthority: { PDRM: 'pdrm-1' },
+    });
     await adminDb.doc('events/manual-1/assessments/v1/manual_assessments/manual-1').set({ manualAssessmentId: 'manual-1' });
     const path = 'events/manual-1/assessments/v1/manual_assessments/manual-1';
     await assertSucceeds(getDoc(doc(environment.authenticatedContext('admin-1').firestore(), path)));
@@ -470,6 +482,44 @@ describe('Firestore security rules', () => {
       .resolves.toMatchObject({ status: 'official_ready', idempotent: true });
     const decision = await makeAuthorityDecisionForUser('pdrm-1', { eventId: 'manual-1', decision: 'Approved', rationale: 'The manual official assessment and resources were reviewed.', materialsReviewed: true }, 110);
     expect(decision.decision).toBe('Approved');
+  });
+
+  it('releases a finalized Admin manual assessment through the pointer-driven initial review', async () => {
+    await seedManualReviewEvent();
+    const adminDb = getFirestore(adminApp);
+    await adminDb.doc('events/manual-1').update({ status: 'Manual Review Required', reviewStage: 'manual' });
+    await submitAdminManualAssessmentForUser('admin-1', manualRequest(), 115);
+    const result = await makeInitialReviewDecisionForUser('admin-1', {
+      eventId: 'manual-1',
+      decision: 'Approved',
+      reason: 'The finalized manual assessment and resource recommendation are ready for officer review.',
+    }, 116);
+    expect(result).toMatchObject({
+      status: 'UnderReview',
+      decision: 'Approved',
+      manualAssessmentRecorded: true,
+    });
+    expect((await adminDb.doc('events/manual-1').get()).data()).toMatchObject({
+      status: 'UnderReview',
+      reviewStage: 'initial',
+      initialReview: { manualAssessmentRecorded: true },
+    });
+  });
+
+  it('makes an initial-review rejection terminal and removes the editable pointer', async () => {
+    await seedManualReviewEvent();
+    const adminDb = getFirestore(adminApp);
+    await adminDb.doc('events/manual-1').update({ status: 'Manual Review Required', reviewStage: 'manual', editableVersionId: 'v2' });
+    await submitAdminManualAssessmentForUser('admin-1', manualRequest(), 117);
+    const result = await makeInitialReviewDecisionForUser('admin-1', {
+      eventId: 'manual-1',
+      decision: 'Rejected',
+      reason: 'The application cannot proceed because the submitted operating plan is incomplete.',
+      suggestion: 'Start a new application with a complete operating and emergency plan.',
+    }, 118);
+    expect(result).toMatchObject({ status: 'Rejected', decision: 'Rejected' });
+    expect((await adminDb.doc('events/manual-1').get()).data()).toMatchObject({ status: 'Rejected', reviewStage: 'closed', assignedOfficerUids: [], assignedOfficerByAuthority: {} });
+    expect((await adminDb.doc('events/manual-1').get()).data()).not.toHaveProperty('editableVersionId');
   });
 
   it('makes duplicate manual submission idempotent and rejects a second record or key collision', async () => {
@@ -644,6 +694,52 @@ describe('Firestore security rules', () => {
       .rejects.toMatchObject({ code: 'failed-precondition' });
     await expect(makeAuthorityDecisionForUser('pdrm-1', { eventId: 'manual-1', decision: 'Rejected', rationale: 'Blocked compliance prevents a positive recommendation.', suggestion: 'Resolve every blocked compliance check before resubmission.' }, 162))
       .resolves.toMatchObject({ decision: 'Rejected' });
+  });
+
+  it('keeps private Stage 2 data named-officer scoped and exposes only the public projection', async () => {
+    await seedProfilesAndEvent();
+    await environment.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, 'events/event-1/event_controls/control-1'), {
+        controlId: 'control-1', eventId: 'event-1', versionId: 'v1', authority: 'PDRM',
+        controlName: 'PDRM control', stageRequirement: 'stage1_and_stage2',
+        stage1Requirements: [], stage2Requirement: { kind: 'image', label: 'Venue photo' },
+        controlItemVersion: 1, label: 'pending', createdAt: 1, updatedAt: 1,
+      });
+      await setDoc(doc(db, 'events/event-1/event_controls/control-1/stage2_docs/control-1-s2'), {
+        docId: 'control-1-s2', imageUrl: 'data:image/png;base64,AA==', uploadedAt: 1,
+        uploadedBy: 'organizer-1', publicConfirmCount: 0, published: false,
+      });
+      await setDoc(doc(db, 'public_event_controls/event-1/items/control-1-stage2'), {
+        publicControlId: 'control-1-stage2', eventId: 'event-1', versionId: 'v1',
+        controlId: 'control-1', docId: 'control-1-s2', authority: 'PDRM',
+        controlName: 'PDRM control', stage2Label: 'Venue photo', imageUrl: 'https://example.test/photo.png',
+        publicConfirmCount: 0, publishedAt: 1, sanitized: true, sanitizedAt: 1, sanitizedBy: 'system',
+      });
+    });
+    await assertSucceeds(getDoc(doc(environment.authenticatedContext('authority-1').firestore(), 'events/event-1/event_controls/control-1/stage2_docs/control-1-s2')));
+    await assertFails(getDoc(doc(environment.authenticatedContext('authority-2').firestore(), 'events/event-1/event_controls/control-1/stage2_docs/control-1-s2')));
+    await assertSucceeds(getDoc(doc(environment.authenticatedContext('organizer-1').firestore(), 'events/event-1/event_controls/control-1/stage2_docs/control-1-s2')));
+    await assertSucceeds(getDoc(doc(environment.unauthenticatedContext().firestore(), 'public_event_controls/event-1/items/control-1-stage2')));
+    await assertFails(setDoc(doc(environment.unauthenticatedContext().firestore(), 'public_event_controls/event-1/items/attacker'), { sanitized: true }));
+  });
+
+  it('rejects direct public report creation and scopes confirmation markers to their owner', async () => {
+    await seedProfilesAndEvent();
+    await environment.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, 'events/event-1/event_controls/control-1/stage2_confirms/public-1'), { userId: 'public-1', confirmedAt: 1 });
+      await setDoc(doc(db, 'public_reports/ticket-1'), {
+        ticketId: 'ticket-1', eventId: 'event-1', controlId: 'control-1', docId: 'control-1-s2',
+        reporterUid: 'public-1', category: 'inaccurate', description: 'Report', createdAt: 1, updatedAt: 1,
+      });
+    });
+    await assertSucceeds(getDoc(doc(environment.authenticatedContext('public-1').firestore(), 'events/event-1/event_controls/control-1/stage2_confirms/public-1')));
+    await assertFails(getDoc(doc(environment.authenticatedContext('authority-1').firestore(), 'events/event-1/event_controls/control-1/stage2_confirms/public-1')));
+    await assertFails(setDoc(doc(environment.authenticatedContext('public-1').firestore(), 'public_reports/ticket-2'), {
+      ticketId: 'ticket-2', eventId: 'event-1', controlId: 'control-1', docId: 'control-1-s2',
+      reporterUid: 'public-1', category: 'inaccurate', description: 'Direct write', createdAt: 1, updatedAt: 1,
+    }));
   });
 
   it('prevents authorities from reading organizer profiles or provisioning roles', async () => {
@@ -907,64 +1003,59 @@ describe('Firestore security rules', () => {
       .rejects.toMatchObject({ code: 'failed-precondition' });
   });
 
-  it('does not carry authority approvals into a resubmitted version', async () => {
+  it('rejects the removed amendment decision and keeps a rejected application terminal', async () => {
     await seedReviewableEvent(['PDRM', 'BOMBA']);
-    await makeAuthorityDecisionForUser('pdrm-1', {
-      eventId: 'review-1', decision: 'Approved', rationale: 'PDRM approves the version one operating plan.', materialsReviewed: true,
-    }, 3_100);
-    await makeAuthorityDecisionForUser('bomba-1', {
-      eventId: 'review-1', decision: 'AmendmentRequested', rationale: 'Revise the version one emergency exit arrangement.', suggestion: 'Provide a verified revised emergency exit arrangement.',
-    }, 3_101);
+    const legacyDecision = {
+      eventId: 'review-1',
+      decision: 'AmendmentRequested' as unknown as 'Approved' | 'Rejected',
+      rationale: 'Legacy amendment decision must no longer be accepted.',
+      suggestion: 'Submit a new application if the event needs a different proposal.',
+    };
+    await expect(makeAuthorityDecisionForUser('bomba-1', legacyDecision, 3_101))
+      .rejects.toMatchObject({ code: 'invalid-argument' });
 
     const adminDb = getFirestore(adminApp);
     const v2Evidence = await uploadTestEvidence('review-1', 'v2');
-    const revisedDetails = {
-      ...validDetails,
-      startDatetime: 20_000,
-      endDatetime: 30_000,
-      emergencyPlanSummary: 'Revised emergency exits and fire assembly points.',
-    };
-    // PR3 officers only record recommendations. Simulate the later Admin workflow
-    // opening the amendment before the organizer submits a new immutable version.
     await adminDb.doc('events/review-1').update({
-      status: 'AmendmentRequested',
+      status: 'Rejected',
       editableVersionId: 'v2',
       draftDocumentPaths: [v2Evidence],
-      eventDetails: revisedDetails,
+      eventDetails: { ...validDetails, name: 'Terminally Rejected Event' },
     });
-    await submitEventForUser('organizer-1', 'review-1', 3_200);
-    await adminDb.doc('events/review-1').update({
-      currentAssessmentId: 'v2',
-      currentResourceId: officialResourceId('v2', revisedDetails),
-      requiredAuthorities: ['PDRM', 'BOMBA'],
-    });
-    await adminDb.doc(`events/review-1/resources/${officialResourceId('v2', revisedDetails)}`).set(officialResourceFixture('v2', 3_201, revisedDetails));
-    await adminDb.doc('events/review-1/assessments/v2').set(officialAssessmentFixture('v2', revisedDetails));
-    await adminDb.doc('events/review-1/assessments/v2/score_reviews/v2-PDRM-review').set(scoreReviewFixture('v2', 'PDRM'));
-    await adminDb.doc('events/review-1/assessments/v2/score_reviews/v2-BOMBA-review').set(scoreReviewFixture('v2', 'BOMBA'));
-
-    const result = await makeAuthorityDecisionForUser('bomba-1', {
-      eventId: 'review-1', decision: 'Approved', rationale: 'BOMBA approves the revised version two exit arrangement.', materialsReviewed: true,
-    }, 3_300);
-    expect(result).toMatchObject({ versionId: 'v2', status: 'UnderReview' });
-    expect((await adminDb.doc('events/review-1').get()).data()?.status).toBe('UnderReview');
-    expect((await adminDb.doc('events/review-1').get()).data()?.authorityReviewCompletedVersionId).toBeUndefined();
-    expect((await adminDb.doc('public_events/review-1').get()).exists).toBe(false);
-    expect((await adminDb.collection('events/review-1/decisions').get()).docs.map((item) => item.id).sort()).toEqual([
-      'v1_BOMBA', 'v1_PDRM', 'v2_BOMBA',
-    ]);
+    await expect(submitEventForUser('organizer-1', 'review-1', 3_200)).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect((await adminDb.doc('events/review-1').get()).data()?.status).toBe('Rejected');
+    expect((await adminDb.collection('events/review-1/versions').doc('v2').get()).exists).toBe(false);
   });
 
-  it('rejects resource overrides without mutating the immutable baseline', async () => {
+  it('allows an assigned authority to override resources with an audit record', async () => {
     await seedReviewableEvent(['PDRM', 'BOMBA']);
-    const quantities = { police: 12, medicalTeams: 3, ambulances: 2, toilets: 60, wasteBins: 20, security: 25, fireOfficers: 4 };
     const adminDb = getFirestore(adminApp);
+    await adminDb.doc('events/review-1').update({
+      assignedOfficerUids: ['pdrm-1', 'bomba-1'],
+      initialReview: { decision: 'Approved', reason: 'Initial review complete.', reviewerUid: 'admin-1', reviewedAt: 1 },
+    });
+    await adminDb.doc('events/review-1/assignments/v1_PDRM').set({
+      assignmentId: 'v1_PDRM', eventId: 'review-1', versionId: 'v1', authorityType: 'PDRM', officerUid: 'pdrm-1', assignedBy: 'admin-1', assignedAt: 1, status: 'pending',
+    });
+    const quantities = { police: 12, medicalTeams: 3, ambulances: 2, toilets: 60, wasteBins: 20, security: 25, fireOfficers: 4 };
     const baselineReference = adminDb.doc(`events/review-1/resources/${officialResourceId('v1')}`);
     const before = (await baselineReference.get()).data();
-    await expect(overrideResourcesForUser('pdrm-1', { eventId: 'review-1', quantities, rationale: 'Increased staffing for controlled entry and traffic management.' }))
-      .rejects.toMatchObject({ code: 'failed-precondition' });
+    const override = await overrideResourcesForUser('pdrm-1', {
+      eventId: 'review-1', quantities,
+      rationale: 'Increased staffing for controlled entry and traffic management.',
+      idempotencyKey: 'resource-override-test-1',
+    }, 4_000);
+    expect(override).toMatchObject({ eventId: 'review-1', baseResourceId: before?.resourceId, quantities, idempotent: false });
     expect((await baselineReference.get()).data()).toEqual(before);
-    expect((await adminDb.collection('events/review-1/resource_overrides').get()).size).toBe(0);
+    const replay = await overrideResourcesForUser('pdrm-1', {
+      eventId: 'review-1', quantities,
+      rationale: 'Increased staffing for controlled entry and traffic management.',
+      idempotencyKey: 'resource-override-test-1',
+    }, 4_001);
+    expect(replay).toMatchObject({ overrideId: override.overrideId, idempotent: true });
+    expect((await adminDb.collection('events/review-1/resource_overrides').get()).size).toBe(1);
+    expect((await adminDb.doc(`events/review-1/resource_overrides/${override.overrideId}`).get()).data())
+      .toMatchObject({ baseResourceId: before?.resourceId, resourceId: before?.resourceId, reviewerId: 'pdrm-1', quantities });
   });
 
   it('unpublishes a stale resource projection when resource-only recomputation fails', async () => {
@@ -1356,7 +1447,7 @@ describe('Firestore security rules', () => {
     const now = Date.now();
     const expiredStart = now - RESOURCE_CUTOVER_LEASE_MS - 10;
     await acquireResourceCutoverLock(adminDb, 'stale-owner', 'apply', undefined, expiredStart);
-    const backupPath = '/tmp/steras-stale-prepared/backup.json';
+    const backupPath = path.join(tmpdir(), 'steras-stale-prepared', 'backup.json');
     await createAndVerifyCutoverStartAudit(adminDb, {
       action: 'resource_cutover_start', sessionId: 'stale-owner', projectId: 'linkos-496505',
       backupId: 'steras-stale-prepared', backupPath, backupChecksum: 'a'.repeat(64),
@@ -1383,8 +1474,12 @@ describe('Firestore security rules', () => {
     const heartbeat = startResourceCutoverHeartbeat(adminDb, 'heartbeat-owner', 5);
     try {
       await adminDb.doc(RESOURCE_CUTOVER_LOCK_PATH).update({ sessionId: 'replacement-owner' });
-      await new Promise((resolve) => setTimeout(resolve, 25));
-      expect(() => heartbeat.assertHealthy()).toThrow(/lost ownership/);
+      let ownershipLost = false;
+      for (let attempt = 0; attempt < 30 && !ownershipLost; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        try { heartbeat.assertHealthy(); } catch { ownershipLost = true; }
+      }
+      expect(ownershipLost).toBe(true);
     } finally {
       heartbeat.stop();
       await adminDb.doc(RESOURCE_CUTOVER_LOCK_PATH).delete();

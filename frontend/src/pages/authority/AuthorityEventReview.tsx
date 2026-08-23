@@ -4,24 +4,30 @@ import { collection, doc, onSnapshot, query } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { getBlob, ref } from 'firebase/storage';
 import { format } from 'date-fns';
-import { Check, ChevronLeft, Download, FileText, RotateCcw, X } from 'lucide-react';
+import { Check, ChevronLeft, Download, FileText, Pencil, RotateCcw, Shield, ShieldCheck, ShieldX, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
   AssessmentRecord,
   AdminManualAssessment,
+  Assignment,
   AuthorityDecision,
   AuthorityScoreResolution,
   AuthorityType,
   CATEGORY_SCHEMA_VERSION,
   COLLECTIONS,
+  ControlVerificationStatus,
   DecisionValue,
+  EventControl,
   EventRecord,
   EventVersion,
   HARD_RULE_VERSION,
   MANUAL_ASSESSMENT_SCHEMA_VERSION,
   MANUAL_OFFICIAL_FORMULA_VERSION,
   ResourceRecommendation,
+  ResourceOverrideRecord,
+  ResourceQuantities,
   RiskAssessment,
+  Stage1Doc,
 } from '@shared/types';
 import { db, functions, isFirebaseConfigured, storage } from '../../config/firebase';
 import AIAdvisory from '../../components/m2/AIAdvisory';
@@ -31,6 +37,7 @@ import ResourceRecommendationView from '../../components/m2/ResourceRecommendati
 import AuthorityScoreReviewForm from '../../components/m2/AuthorityScoreReviewForm';
 import AuthorityAssessmentWarnings from '../../components/m2/AuthorityAssessmentWarnings';
 import { assessmentRiskLevel, isAuthorityScoreResolution, isCurrentAssessmentRecord, isCurrentAuthorityDecision, isCurrentEventRecord, isCurrentEventVersion, isCurrentResourceRecommendation, isCurrentRiskAssessment, isSafeManualAssessmentId } from '../../components/m2/m2Contract';
+import { RESOURCE_FIELDS, toResourceQuantities } from '../../components/m2/m2Presentation';
 import EmptyState from '../../components/ui/EmptyState';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { useAuth } from '../../contexts/AuthContext';
@@ -39,27 +46,56 @@ import { activeScoreResolutionId } from './authorityReviewPresentation';
 export default function AuthorityEventReview() {
   const { profile } = useAuth();
   const { eventId } = useParams<{ eventId: string }>();
+  const myAuthorityType = profile?.authorityType;
   const [event, setEvent] = useState<EventRecord | null>(null);
   const [assessment, setAssessment] = useState<RiskAssessment | null>(null);
   const [assessmentStatus, setAssessmentStatus] = useState<AssessmentRecord['status'] | null>(null);
   const [resources, setResources] = useState<ResourceRecommendation | null>(null);
+  const [resourceOverrides, setResourceOverrides] = useState<ResourceOverrideRecord[]>([]);
   const [scoreResolution, setScoreResolution] = useState<AuthorityScoreResolution | null>(null);
   const [manualAssessment, setManualAssessment] = useState<AdminManualAssessment | null>(null);
   const [legacyAssessment, setLegacyAssessment] = useState(false);
   const [legacyResources, setLegacyResources] = useState(false);
   const [decisions, setDecisions] = useState<AuthorityDecision[]>([]);
   const [decisionHistory, setDecisionHistory] = useState<AuthorityDecision[]>([]);
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [versions, setVersions] = useState<EventVersion[]>([]);
   const [historyView, setHistoryView] = useState<'decisions' | 'versions'>('decisions');
   const [downloadingPath, setDownloadingPath] = useState<string | null>(null);
   const [rationale, setRationale] = useState('');
+  // FR-M3-16: officer must tick a checkbox confirming review of all
+  // listed materials (assessment, advisory, evidence, resource ranges)
+  // before approving. The server-side Cloud Function (recordOfficerProposal
+  // + the legacy makeAuthorityDecision) refuses Approved without it.
+  const [confirmedReview, setConfirmedReview] = useState(false);
   const [suggestion, setSuggestion] = useState('');
   const [materialsReviewed, setMaterialsReviewed] = useState(false);
   const [submittingDecision, setSubmittingDecision] = useState<DecisionValue | null>(null);
+  const [editingResources, setEditingResources] = useState(false);
+  const [resourceDraft, setResourceDraft] = useState<ResourceQuantities | null>(null);
+  const [resourceRationale, setResourceRationale] = useState('');
+  const [resourceOverrideKey, setResourceOverrideKey] = useState(() => `resource-override-${crypto.randomUUID()}`);
+  const [savingResources, setSavingResources] = useState(false);
+  const [resourceConfirmed, setResourceConfirmed] = useState(false);
+  const [confirmingResources, setConfirmingResources] = useState(false);
+  const [scoreReviewRationale, setScoreReviewRationale] = useState('');
+  const [scoreOverrides, setScoreOverrides] = useState<Record<string, { likelihood: number; severity: number }>>({});
+  const [savingScoreReview, setSavingScoreReview] = useState(false);
+  const [scoreReviewRecorded, setScoreReviewRecorded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [supportingDataError, setSupportingDataError] = useState('');
   const [retryKey, setRetryKey] = useState(0);
+  // M3 control verification (FR-M3-22, FR-M3-23, Q1 refactor)
+  // Each control item has N Stage 1 docs; verification is per-doc.
+  // Stage 1 docs live at event_controls/{controlId}/stage1_docs/{docId}
+  // and carry the verification provenance directly on the doc.
+  const [eventControls, setEventControls] = useState<EventControl[]>([]);
+  const [stage1DocsByControl, setStage1DocsByControl] = useState<Record<string, Stage1Doc[]>>({});
+  // Per-doc form state, keyed by `${controlId}__${docId}`.
+  const [docRationale, setDocRationale] = useState<Record<string, string>>({});
+  const [docEvidencePath, setDocEvidencePath] = useState<Record<string, string>>({});
+  const [submittingDoc, setSubmittingDoc] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isFirebaseConfigured || !eventId) {
@@ -121,6 +157,19 @@ export default function AuthorityEventReview() {
           setLegacyResources(false);
           return () => undefined;
         })();
+    const unsubscribeResourceOverrides = resourceId
+      ? onSnapshot(query(collection(eventReference, COLLECTIONS.RESOURCE_OVERRIDES)), (snapshot) => {
+          setResourceOverrides(snapshot.docs
+            .map((item) => item.data() as ResourceOverrideRecord)
+            .filter((item) => item.eventId === eventId
+              && item.versionId === versionId
+              && item.baseResourceId === resourceId
+              && item.resourceId === resourceId
+              && item.quantities
+              && item.rationale)
+            .sort((left, right) => right.overriddenAt - left.overriddenAt));
+        }, supportingError)
+      : (() => { setResourceOverrides([]); return () => undefined; })();
     const unsubscribeDecisions = onSnapshot(query(collection(eventReference, COLLECTIONS.DECISIONS)), (snapshot) => {
       setDecisions(snapshot.docs
         .map((item) => isCurrentAuthorityDecision(item.data(), eventId, item.id) ? item.data() as AuthorityDecision : undefined)
@@ -132,18 +181,41 @@ export default function AuthorityEventReview() {
         .filter((item): item is AuthorityDecision => Boolean(item))
         .sort((a, b) => b.decidedAt - a.decidedAt));
     }, supportingError);
+    const unsubscribeAssignments = onSnapshot(query(collection(eventReference, COLLECTIONS.ASSIGNMENTS)), (snapshot) => {
+      setAssignments(snapshot.docs.map((item) => ({ ...(item.data() as Assignment), assignmentId: item.id })));
+    }, supportingError);
     const unsubscribeVersions = onSnapshot(query(collection(eventReference, COLLECTIONS.VERSIONS)), (snapshot) => {
       setVersions(snapshot.docs
         .map((item) => isCurrentEventVersion(item.data(), eventId, item.id) ? item.data() as EventVersion : undefined)
         .filter((item): item is EventVersion => Boolean(item))
         .sort((a, b) => b.versionNumber - a.versionNumber));
     }, supportingError);
+    const unsubscribeControls = onSnapshot(query(collection(eventReference, COLLECTIONS.EVENT_CONTROLS)), (snapshot) => {
+      const controls = snapshot.docs.map((item) => ({ ...(item.data() as EventControl), controlId: item.id }) as EventControl)
+        .sort((a, b) => a.controlId.localeCompare(b.controlId));
+      setEventControls(controls);
+      // Subscribe to each control's stage1_docs sub-collection.
+      // (We tear down previous subscriptions in the cleanup.)
+      const unsubscribes: Array<() => void> = [];
+      const next: Record<string, Stage1Doc[]> = {};
+      for (const control of controls) {
+        const ref = collection(eventReference, COLLECTIONS.EVENT_CONTROLS, control.controlId, COLLECTIONS.STAGE1_DOCS);
+        unsubscribes.push(onSnapshot(query(ref), (docsSnap) => {
+          next[control.controlId] = docsSnap.docs.map((d) => ({ ...(d.data() as Stage1Doc), docId: d.id }) as Stage1Doc);
+          setStage1DocsByControl((prev) => ({ ...prev, [control.controlId]: next[control.controlId] }));
+        }, supportingError));
+      }
+      return () => { for (const u of unsubscribes) u(); };
+    }, supportingError);
     return () => {
       unsubscribeAssessment();
       unsubscribeResources();
+      unsubscribeResourceOverrides();
       unsubscribeDecisions();
       unsubscribeDecisionHistory();
+      unsubscribeAssignments();
       unsubscribeVersions();
+      unsubscribeControls();
     };
   }, [event?.currentAssessmentId, event?.currentResourceId, event?.currentVersionId, eventId]);
 
@@ -153,6 +225,11 @@ export default function AuthorityEventReview() {
   const activeManualAssessmentId = assessment?.status === 'official_ready'
     && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual'
     ? assessment.activeManualAssessmentId : undefined;
+  const latestResourceOverride = resourceOverrides[0];
+  const effectiveResources = useMemo(
+    () => resources && latestResourceOverride ? applyResourceOverride(resources, latestResourceOverride) : resources,
+    [latestResourceOverride, resources],
+  );
   useEffect(() => {
     if (!isFirebaseConfigured || !eventId || !activeAssessmentId || !activeResolutionId) { setScoreResolution(null); return; }
     return onSnapshot(doc(db, COLLECTIONS.EVENTS, eventId, COLLECTIONS.ASSESSMENTS, activeAssessmentId, COLLECTIONS.SCORE_RESOLUTIONS, activeResolutionId), (snapshot) => {
@@ -183,41 +260,138 @@ export default function AuthorityEventReview() {
     );
   }, [activeAssessmentId, activeManualAssessmentId, assessment?.evidence, assessment?.inputHash, currentVersion?.inputHash, event?.currentVersionId, eventId]);
 
+  useEffect(() => {
+    if (effectiveResources && editingResources) setResourceDraft(toResourceQuantities(effectiveResources));
+  }, [effectiveResources, editingResources]);
+
+  useEffect(() => {
+    const hazards = getReviewHazards(assessment);
+    if (hazards.length === 0) return;
+    setScoreOverrides((current) => {
+      const next = { ...current };
+      for (const hazard of hazards) {
+        if (!next[hazard.hazardId]) next[hazard.hazardId] = { likelihood: hazard.residualLikelihood, severity: hazard.residualSeverity };
+      }
+      return next;
+    });
+  }, [assessment]);
+
   const currentDecisions = useMemo(() => new Map(
-    decisions
+    [
+      ...decisions,
+      ...assignments
+        .filter((assignment) => assignment.versionId === event?.currentVersionId && assignment.status === 'completed' && assignment.decision)
+        .map(assignmentToDecision),
+    ]
       .filter((decision) => decision.current && decision.versionId === event?.currentVersionId)
       .map((decision) => [decision.authorityType, decision]),
-  ), [decisions, event?.currentVersionId]);
+  ), [assignments, decisions, event?.currentVersionId]);
+  const visibleDecisionHistory = useMemo(() => [
+    ...decisionHistory,
+    ...assignments
+      .filter((assignment) => assignment.versionId === event?.currentVersionId && assignment.status === 'completed' && assignment.decision)
+      .map(assignmentToDecision),
+  ].sort((a, b) => b.decidedAt - a.decidedAt), [assignments, decisionHistory, event?.currentVersionId]);
   if (loading) return <div className="p-8 text-ink-500">Loading application...</div>;
   if (loadError) return <div className="p-8"><EmptyState title="Application unavailable" description={loadError}><button type="button" className="btn-secondary" onClick={() => { setLoading(true); setRetryKey((value) => value + 1); }}>Try again</button></EmptyState></div>;
   if (!event) return <div className="p-8"><EmptyState title="Event not found" description="It may have been removed or you do not have access." /></div>;
 
   const details = event.eventDetails;
   const reviewOpen = ['Pending', 'UnderReview'].includes(event.status);
+  const reviewHazards = getReviewHazards(assessment);
   const evidenceReady = Boolean(
-    assessment?.status === 'official_ready'
-    && resources?.stage === 'official'
-    && event.currentResourceId === resources.resourceId
-    && resources.versionId === event.currentVersionId,
+    assessment
+    && resources
+    && resources.versionId === event.currentVersionId
+    && (resources.stage !== 'official' || assessment.status === 'official_ready')
+    && (event.currentResourceId === undefined || event.currentResourceId === resources.resourceId),
   );
-  const canDecide = reviewOpen && evidenceReady && rationale.trim().length >= 10;
+  const isNamedOfficer = Boolean(profile?.uid && event.assignedOfficerUids?.includes(profile.uid));
+  // FR-M3-16: approval requires an explicit materials-review confirmation.
+  const canApprove = isNamedOfficer && reviewOpen && evidenceReady && rationale.trim().length >= 10
+    && confirmedReview && materialsReviewed && assessment?.complianceStatus !== 'blocked';
+  const canReject = isNamedOfficer && reviewOpen && evidenceReady && rationale.trim().length >= 10 && suggestion.trim().length > 0;
 
   const submitDecision = async (decision: DecisionValue) => {
     const isApproval = decision === 'Approved';
-    if (!eventId || !canDecide || (isApproval && (!materialsReviewed || assessment?.complianceStatus === 'blocked'))
-      || (!isApproval && suggestion.trim().length < 10)) return;
+    if (!eventId || (isApproval ? !canApprove : !canReject)) return;
     setSubmittingDecision(decision);
     try {
-      const command = httpsCallable(functions, 'makeAuthorityDecision');
-      await command({ eventId, decision, rationale: rationale.trim(), ...(isApproval ? { materialsReviewed: true } : { suggestion: suggestion.trim() }) });
-      toast.success(decision === 'Approved' ? 'Approval recorded.' : decision === 'Rejected' ? 'Rejection recorded.' : 'Amendment request recorded.');
+      const command = httpsCallable<{
+        eventId: string;
+        decision: DecisionValue;
+        reason: string;
+        suggestion?: string;
+        confirmedReview?: boolean;
+      }>(functions, 'recordOfficerProposal');
+      await command({
+        eventId,
+        decision,
+        reason: rationale.trim(),
+        ...(suggestion.trim() ? { suggestion: suggestion.trim() } : {}),
+        ...(isApproval ? { confirmedReview: true } : {}),
+      });
+      toast.success(decision === 'Approved' ? 'Approval proposal recorded.' : 'Rejection proposal recorded.');
       setRationale('');
+      setConfirmedReview(false);
       setSuggestion('');
       setMaterialsReviewed(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Unable to record decision.');
     } finally {
       setSubmittingDecision(null);
+    }
+  };
+
+  const saveResourceOverride = async () => {
+    if (!eventId || !resourceDraft || resourceRationale.trim().length < 10 || !isNamedOfficer) return;
+    setSavingResources(true);
+    try {
+      const command = httpsCallable<{ eventId: string; quantities: ResourceQuantities; rationale: string; idempotencyKey: string }>(functions, 'overrideResources');
+      await command({ eventId, quantities: resourceDraft, rationale: resourceRationale.trim(), idempotencyKey: resourceOverrideKey });
+      toast.success('Append-only resource adjustment recorded.');
+      setEditingResources(false);
+      setResourceRationale('');
+      setResourceOverrideKey(`resource-override-${crypto.randomUUID()}`);
+      setResourceConfirmed(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Unable to update resources.');
+    } finally {
+      setSavingResources(false);
+    }
+  };
+
+  const confirmResourceRecommendation = async () => {
+    if (!eventId || !resources || !isNamedOfficer || !reviewOpen) return;
+    setConfirmingResources(true);
+    try {
+      const command = httpsCallable<{ eventId: string; rationale: string; overrides: []; resourceConfirmed: true }, { resourceConfirmed: boolean }>(functions, 'reviewAssessmentScores');
+      await command({ eventId, rationale: 'I confirm the current safety-resource recommendation and planning ranges for this application.', overrides: [], resourceConfirmed: true });
+      setResourceConfirmed(true);
+      toast.success('Resource recommendation confirmed.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Unable to confirm resources.');
+    } finally {
+      setConfirmingResources(false);
+    }
+  };
+
+  const saveScoreReview = async () => {
+    const hazards = getReviewHazards(assessment);
+    if (!eventId || hazards.length === 0 || !isNamedOfficer || !reviewOpen || scoreReviewRationale.trim().length < 10) return;
+    setSavingScoreReview(true);
+    try {
+      const overrides = hazards
+        .map((hazard) => ({ hazardId: hazard.hazardId, residualLikelihood: scoreOverrides[hazard.hazardId]?.likelihood ?? hazard.residualLikelihood, residualSeverity: scoreOverrides[hazard.hazardId]?.severity ?? hazard.residualSeverity }))
+        .filter((item, index) => item.residualLikelihood !== hazards[index].residualLikelihood || item.residualSeverity !== hazards[index].residualSeverity);
+      const command = httpsCallable<{ eventId: string; rationale: string; overrides: Array<{ hazardId: string; residualLikelihood: number; residualSeverity: number }> }, { overrideCount: number }>(functions, 'reviewAssessmentScores');
+      const result = await command({ eventId, rationale: scoreReviewRationale.trim(), overrides });
+      setScoreReviewRecorded(true);
+      toast.success(result.data.overrideCount > 0 ? 'Score overrides recorded for M2 review.' : 'Assessment confirmation recorded.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Unable to record score review.');
+    } finally {
+      setSavingScoreReview(false);
     }
   };
 
@@ -235,6 +409,51 @@ export default function AuthorityEventReview() {
       toast.error(error instanceof Error ? error.message : 'Unable to download this evidence file.');
     } finally {
       setDownloadingPath(null);
+    }
+  };
+
+  const submitControlVerification = async (controlId: string, docId: string, status: ControlVerificationStatus) => {
+    if (!eventId) return;
+    const key = `${controlId}__${docId}`;
+    const rationale = (docRationale[key] ?? '').trim();
+    if (rationale.length < 10) {
+      toast.error('Verification rationale must be at least 10 characters.');
+      return;
+    }
+    setSubmittingDoc(key);
+    try {
+      const evidencePath = (docEvidencePath[key] ?? '').trim();
+      const command = httpsCallable<{
+        eventId: string;
+        controlId: string;
+        docId: string;
+        status: ControlVerificationStatus;
+        rationale: string;
+        evidencePath?: string;
+      }>(functions, 'verifyStage1Doc');
+      await command({
+        eventId,
+        controlId,
+        docId,
+        status,
+        rationale,
+        ...(evidencePath ? { evidencePath } : {}),
+      });
+      toast.success(status === 'verified' ? 'Stage 1 document approved.' : 'Stage 1 document rejected.');
+      setDocRationale((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+      setDocEvidencePath((current) => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Unable to record verification.');
+    } finally {
+      setSubmittingDoc(null);
     }
   };
 
@@ -262,6 +481,41 @@ export default function AuthorityEventReview() {
               {!assessment ? <p className="text-sm text-ink-500">{legacyAssessment ? 'Legacy assessment detected. Recompute this event version before recording a decision.' : assessmentStatus === 'failed' ? 'Assessment failed and requires a retry.' : 'Assessment is still processing.'}</p> : (
                 <div className="space-y-5">
                   <CategoryProfile assessment={assessment} />
+                  {isNamedOfficer && reviewHazards.length > 0 && (
+                    <div className="rounded-md border border-brand-200 bg-brand-50/40 p-4" data-testid="assessment-score-review">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <h3 className="font-semibold text-ink-800">Authority score confirmation / override</h3>
+                          <p className="mt-1 text-xs leading-5 text-ink-600">Confirm residual likelihood and severity for each hazard, or record a revised value with a reason. The official M2 score remains immutable.</p>
+                        </div>
+                        {scoreReviewRecorded && <span className="badge bg-green-100 text-status-approved">Recorded</span>}
+                      </div>
+                      <div className="mt-3 divide-y divide-brand-100 rounded border border-brand-100 bg-white">
+                        {reviewHazards.map((hazard) => {
+                          const selected = scoreOverrides[hazard.hazardId] ?? { likelihood: hazard.residualLikelihood, severity: hazard.residualSeverity };
+                          return (
+                            <div key={hazard.hazardId} className="grid gap-3 px-3 py-3 sm:grid-cols-[minmax(0,1fr)_8rem_8rem] sm:items-center">
+                              <div><p className="text-xs font-semibold text-ink-800">{hazard.hazardName}</p><p className="mt-0.5 text-[11px] text-ink-500">Official residual {hazard.residualLikelihood} × {hazard.residualSeverity}</p></div>
+                              <label className="text-[11px] font-semibold text-ink-600">Likelihood
+                                <select className="input mt-1 !h-9 !py-1 text-xs" disabled={!reviewOpen} value={selected.likelihood} onChange={(event) => setScoreOverrides((current) => ({ ...current, [hazard.hazardId]: { ...(current[hazard.hazardId] ?? selected), likelihood: Number(event.target.value) } }))}>
+                                  {[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value}</option>)}
+                                </select>
+                              </label>
+                              <label className="text-[11px] font-semibold text-ink-600">Severity
+                                <select className="input mt-1 !h-9 !py-1 text-xs" disabled={!reviewOpen} value={selected.severity} onChange={(event) => setScoreOverrides((current) => ({ ...current, [hazard.hazardId]: { ...(current[hazard.hazardId] ?? selected), severity: Number(event.target.value) } }))}>
+                                  {[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value}</option>)}
+                                </select>
+                              </label>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <label className="mt-3 block text-xs font-medium text-ink-600">Review reason
+                        <textarea className="input mt-1 resize-y" rows={3} maxLength={1000} disabled={!reviewOpen} value={scoreReviewRationale} onChange={(event) => setScoreReviewRationale(event.target.value)} placeholder="Explain why the official residual scores are confirmed or adjusted." />
+                      </label>
+                      <div className="mt-3 flex items-center justify-between gap-3"><span className="text-[11px] text-ink-500">{scoreReviewRationale.trim().length}/1000 · minimum 10</span><button type="button" className="btn-secondary !px-3 !py-1.5 text-xs" disabled={!reviewOpen || savingScoreReview || scoreReviewRationale.trim().length < 10} onClick={saveScoreReview}>{savingScoreReview ? 'Recording…' : 'Record score review'}</button></div>
+                    </div>
+                  )}
                   <AuthorityAssessmentWarnings warnings={assessment.warnings} />
                   {assessment.status === 'official_ready' && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual'
                     ? <><ManualOfficialProvenance assessment={assessment} />{manualAssessment && <ManualAssessmentDetails assessment={manualAssessment} />}</>
@@ -285,16 +539,34 @@ export default function AuthorityEventReview() {
                 <h2 className="font-semibold">Recommended resources</h2>
                 {resources?.confidenceLevel === 'authority_validated' && <p className="mt-0.5 text-xs text-status-approved">Official risk input · prototype resource ratios</p>}
               </div>
+              {resources && isNamedOfficer && reviewOpen && !editingResources && (
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" className={`btn-secondary !px-3 !py-1.5 ${resourceConfirmed ? 'border-status-approved text-status-approved' : ''}`} onClick={confirmResourceRecommendation} disabled={confirmingResources}>
+                    <ShieldCheck size={14} /> {confirmingResources ? 'Confirming…' : resourceConfirmed ? 'Resources confirmed' : 'Confirm recommendation'}
+                  </button>
+                  <button type="button" className="btn-secondary !px-3 !py-1.5" onClick={() => setEditingResources(true)}><Pencil size={14} /> Adjust</button>
+                </div>
+              )}
             </div>
             <div className="card-body">
-              {!resources
-                ? <p className="text-sm text-ink-500">{legacyResources ? 'Legacy resource record detected. Recompute this event version before review.' : 'No recommendation yet.'}</p>
-                : <>
-                    <p className="mb-4 rounded-md border border-gold-200 bg-gold-50 p-3 text-xs leading-5 text-gold-700">
-                      Resource adjustments remain frozen until the append-only resource override workflow is delivered.
-                    </p>
-                    <ResourceRecommendationView recommendation={resources} />
-                  </>}
+              {!effectiveResources || !resourceDraft ? <p className="text-sm text-ink-500">{legacyResources ? 'Legacy resource record detected. Recompute this event version before review.' : 'No recommendation yet.'}</p> : editingResources ? (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    {RESOURCE_FIELDS.map(({ key, label }) => (
+                      <label key={key} className="text-xs font-medium text-ink-600">{label}
+                        <input type="number" min={0} step={1} className="input mt-1" value={resourceDraft[key]} onChange={(e) => setResourceDraft({ ...resourceDraft, [key]: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} />
+                      </label>
+                    ))}
+                  </div>
+                  <label className="block text-xs font-medium text-ink-600">Reason for adjustment
+                    <textarea className="input mt-1 resize-y" rows={3} maxLength={1000} value={resourceRationale} onChange={(e) => setResourceRationale(e.target.value)} placeholder="Explain the operational basis for this change." />
+                  </label>
+                  <div className="flex justify-end gap-2">
+                    <button type="button" className="btn-secondary" onClick={() => { setEditingResources(false); setResourceDraft(toResourceQuantities(effectiveResources)); setResourceRationale(''); }}><RotateCcw size={15} /> Cancel</button>
+                    <button type="button" className="btn-primary" disabled={savingResources || resourceRationale.trim().length < 10} onClick={saveResourceOverride}>{savingResources ? 'Saving...' : 'Save adjustment'}</button>
+                  </div>
+                </div>
+              ) : <ResourceRecommendationView recommendation={effectiveResources} latestOverride={latestResourceOverride} showOverrideProvenance />}
             </div>
           </section>
 
@@ -322,6 +594,20 @@ export default function AuthorityEventReview() {
             </div>
           </section>
 
+          <ControlVerificationSection
+            eventControls={eventControls}
+            stage1DocsByControl={stage1DocsByControl}
+            myAuthorityType={myAuthorityType}
+            isNamedOfficer={isNamedOfficer}
+            reviewOpen={reviewOpen}
+            docRationale={docRationale}
+            docEvidencePath={docEvidencePath}
+            submittingDoc={submittingDoc}
+            onRationaleChange={(key, value) => setDocRationale((current) => ({ ...current, [key]: value }))}
+            onEvidencePathChange={(key, value) => setDocEvidencePath((current) => ({ ...current, [key]: value }))}
+            onSubmit={submitControlVerification}
+          />
+
           <section className="card">
             <div className="card-header flex-wrap gap-3">
               <h2 className="font-semibold">Application history</h2>
@@ -330,7 +616,7 @@ export default function AuthorityEventReview() {
               </div>
             </div>
             <div className="card-body">
-              {historyView === 'decisions' ? <DecisionHistory decisions={decisionHistory} /> : <VersionHistory versions={versions} currentVersionId={event.currentVersionId} />}
+              {historyView === 'decisions' ? <DecisionHistory decisions={visibleDecisionHistory} /> : <VersionHistory versions={versions} currentVersionId={event.currentVersionId} />}
             </div>
           </section>
         </div>
@@ -362,19 +648,33 @@ export default function AuthorityEventReview() {
             <div className="card-header"><h2 className="font-semibold">Your decision</h2></div>
             <div className="card-body space-y-3">
               {!reviewOpen && <p className="rounded-md bg-cream-50 p-3 text-sm text-ink-600">This review is closed with status {formatWorkflowValue(event.status)}.</p>}
-              {reviewOpen && !evidenceReady && <p className="rounded-md bg-gold-100 p-3 text-sm text-gold-600">Wait for the assessment and resource recommendation before deciding.</p>}
+              {reviewOpen && !isNamedOfficer && <p className="rounded-md bg-cream-50 p-3 text-sm text-ink-600">Read-only: this application is assigned to another officer.</p>}
+              {reviewOpen && isNamedOfficer && !evidenceReady && <p className="rounded-md bg-gold-100 p-3 text-sm text-gold-600">Wait for the assessment and resource recommendation before deciding.</p>}
               <label className="block text-xs font-medium text-ink-600">Decision rationale
-                <textarea className="input mt-1 resize-y" rows={4} maxLength={1000} disabled={!reviewOpen} value={rationale} onChange={(e) => setRationale(e.target.value)} placeholder="Record the evidence and reasoning behind your decision." />
+                <textarea className="input mt-1 resize-y" rows={4} maxLength={1000} disabled={!reviewOpen || !isNamedOfficer} value={rationale} onChange={(e) => setRationale(e.target.value)} placeholder="Record the evidence and reasoning behind your proposal." />
               </label>
               <p className="text-right text-xs text-ink-400">{rationale.trim().length}/1000 · minimum 10</p>
-              <label className="flex items-start gap-2 rounded-md border border-ink-100 p-3 text-xs leading-5 text-ink-600"><input type="checkbox" className="mt-1" checked={materialsReviewed} onChange={(event) => setMaterialsReviewed(event.target.checked)} disabled={!reviewOpen} /><span>I reviewed the application, supporting evidence, official assessment and resource recommendation.</span></label>
-              <label className="block text-xs font-medium text-ink-600">Suggestion for rejection or amendment
-                <textarea className="input mt-1 resize-y" rows={3} maxLength={1000} disabled={!reviewOpen} value={suggestion} onChange={(event) => setSuggestion(event.target.value)} placeholder="Describe the corrective action the organizer should take." />
+              <label className="block text-xs font-medium text-ink-600">Suggestion / corrective action <span className="font-normal text-ink-400">(required for rejection)</span>
+                <textarea className="input mt-1 resize-y" rows={3} maxLength={1000} disabled={!reviewOpen || !isNamedOfficer} value={suggestion} onChange={(e) => setSuggestion(e.target.value)} placeholder="Explain the action the organizer should take, if applicable." />
               </label>
-              {assessment?.complianceStatus === 'blocked' && <p className="rounded-md bg-red-50 p-3 text-xs leading-5 text-status-rejected">Approval is blocked by compliance. You may record a rejection or amendment recommendation.</p>}
-              <button className="btn-success w-full" disabled={!canDecide || !materialsReviewed || assessment?.complianceStatus === 'blocked' || submittingDecision !== null} onClick={() => submitDecision('Approved')}><Check size={16} />{submittingDecision === 'Approved' ? 'Recording...' : 'Recommend approval'}</button>
-              <button className="btn-secondary w-full" disabled={!canDecide || suggestion.trim().length < 10 || submittingDecision !== null} onClick={() => submitDecision('AmendmentRequested')}><RotateCcw size={16} />{submittingDecision === 'AmendmentRequested' ? 'Recording...' : 'Recommend amendment'}</button>
-              <button className="btn-danger w-full" disabled={!canDecide || suggestion.trim().length < 10 || submittingDecision !== null} onClick={() => submitDecision('Rejected')}><X size={16} />{submittingDecision === 'Rejected' ? 'Recording...' : 'Recommend rejection'}</button>
+              {suggestion.trim().length === 0 && <p className="text-right text-xs text-ink-400">Required when rejecting</p>}
+              <label className={`flex items-start gap-2 rounded-md border px-3 py-2 text-xs text-ink-600 ${confirmedReview ? 'border-brand-300 bg-brand-50/50' : 'border-ink-200 bg-white'}`}>
+                <input
+                  type="checkbox"
+                  checked={confirmedReview}
+                  onChange={(e) => { setConfirmedReview(e.target.checked); setMaterialsReviewed(e.target.checked); }}
+                  disabled={!reviewOpen || !isNamedOfficer}
+                  className="mt-0.5 h-4 w-4 accent-brand-600"
+                  data-testid="confirmed-review-checkbox"
+                />
+                <span>
+                  <span className="font-semibold text-ink-700">I confirm I have reviewed</span> the assessment, AI advisory, submitted evidence, and recommended resource ranges for this application.
+                  <span className="mt-0.5 block text-[11px] text-ink-500">Required to approve (FR-M3-16). Rejection requires a reason and suggestion.</span>
+                </span>
+              </label>
+              {assessment?.complianceStatus === 'blocked' && <p className="rounded-md bg-red-50 p-3 text-xs leading-5 text-status-rejected">Approval is blocked by compliance. You may record a rejection.</p>}
+              <button className="btn-success w-full" disabled={!canApprove || submittingDecision !== null} onClick={() => submitDecision('Approved')}><Check size={16} />{submittingDecision === 'Approved' ? 'Recording...' : 'Propose approval'}</button>
+              <button className="btn-danger w-full" disabled={!canReject || submittingDecision !== null} onClick={() => submitDecision('Rejected')}><X size={16} />{submittingDecision === 'Rejected' ? 'Recording...' : 'Propose rejection'}</button>
             </div>
           </section>
         </aside>
@@ -466,7 +766,7 @@ function isSafeManualAssessment(value: unknown, expectedId: string, identity: {
 }
 
 function AuthorityProgress({ authority, decision, scoreReviewed, manualOfficial }: { authority: AuthorityType; decision?: AuthorityDecision; scoreReviewed: boolean; manualOfficial: boolean }) {
-  const color = decision?.decision === 'Approved' ? 'bg-green-100 text-status-approved' : decision?.decision === 'Rejected' ? 'bg-red-100 text-status-rejected' : decision?.decision === 'AmendmentRequested' ? 'bg-orange-100 text-orange-700' : 'bg-ink-100 text-ink-500';
+  const color = decision?.decision === 'Approved' ? 'bg-green-100 text-status-approved' : decision?.decision === 'Rejected' ? 'bg-red-100 text-status-rejected' : 'bg-ink-100 text-ink-500';
   return <div className="flex items-center justify-between gap-3"><span className="text-sm font-semibold text-ink-700">{authority}</span><div className="flex flex-wrap justify-end gap-1"><span className={`badge ${scoreReviewed ? 'bg-green-100 text-status-approved' : 'bg-ink-100 text-ink-500'}`}>{manualOfficial ? 'Manual official ready' : scoreReviewed ? 'Scores reviewed' : 'Scores pending'}</span><span className={`badge ${color}`}>{decision ? formatWorkflowValue(decision.decision) : 'Decision pending'}</span></div></div>;
 }
 
@@ -479,9 +779,70 @@ function DecisionHistory({ decisions }: { decisions: AuthorityDecision[] }) {
   return <ol className="space-y-4">{decisions.map((decision) => <li key={decision.decisionId} className="border-l-2 border-[#c8d1a8] pl-4"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-semibold text-ink-800">{decision.authorityType} · {formatWorkflowValue(decision.decision)}</p><time className="text-xs text-ink-500">{format(new Date(decision.decidedAt), 'PPp')}</time></div><p className="mt-1 text-sm leading-6 text-ink-600">{decision.rationale}</p><p className="mt-1 text-xs text-ink-400">Version {decision.versionId.replace(/^v/, '')}</p></li>)}</ol>;
 }
 
+function assignmentToDecision(assignment: Assignment): AuthorityDecision {
+  return {
+    decisionId: assignment.assignmentId,
+    eventId: assignment.eventId,
+    versionId: assignment.versionId,
+    authorityType: assignment.authorityType,
+    decision: assignment.decision!,
+    rationale: assignment.reason ?? '',
+    reviewerId: assignment.officerUid,
+    decidedAt: assignment.decidedAt ?? assignment.assignedAt,
+    current: true,
+  };
+}
+
+interface ScoreReviewHazard {
+  hazardId: string;
+  hazardName: string;
+  residualLikelihood: number;
+  residualSeverity: number;
+}
+
+/**
+ * M3 fixtures carry the all-hazards residual matrix on the assessment record.
+ * The current M2 union deliberately keeps that legacy extension optional, so
+ * read it through a narrow runtime guard rather than widening the canonical
+ * assessment contract.
+ */
+function getReviewHazards(assessment: RiskAssessment | null): ScoreReviewHazard[] {
+  if (!assessment) return [];
+  const candidate = (assessment as RiskAssessment & { hazards?: unknown }).hazards;
+  if (!Array.isArray(candidate)) return [];
+  return candidate.filter((value): value is ScoreReviewHazard => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const record = value as Record<string, unknown>;
+    return typeof record.hazardId === 'string'
+      && typeof record.hazardName === 'string'
+      && Number.isInteger(record.residualLikelihood)
+      && Number.isInteger(record.residualSeverity)
+      && Number(record.residualLikelihood) >= 1
+      && Number(record.residualLikelihood) <= 5
+      && Number(record.residualSeverity) >= 1
+      && Number(record.residualSeverity) <= 5;
+  });
+}
+
 function VersionHistory({ versions, currentVersionId }: { versions: EventVersion[]; currentVersionId?: string }) {
   if (versions.length === 0) return <p className="text-sm text-ink-500">No submitted versions are available.</p>;
   return <ol className="divide-y divide-ink-100 border-y border-ink-100">{versions.map((version) => <li key={version.versionId} className="flex min-h-16 items-center justify-between gap-4 py-3"><div><p className="text-sm font-semibold text-ink-800">Version {version.versionNumber}{version.versionId === currentVersionId && <span className="ml-2 badge bg-green-100 text-status-approved">Current</span>}</p><p className="mt-1 text-xs text-ink-500">Submitted {format(new Date(version.submittedAt), 'PPp')}</p></div><span className="text-xs font-medium text-ink-500">{version.documentPaths.length} files</span></li>)}</ol>;
+}
+
+function applyResourceOverride(resource: ResourceRecommendation, override: ResourceOverrideRecord): ResourceRecommendation {
+  const items = Object.fromEntries(RESOURCE_FIELDS.map(({ key }) => {
+    const quantity = override.quantities[key];
+    const item = resource.items[key];
+    return [key, {
+      ...item,
+      baseline: quantity,
+      planningRange: {
+        min: quantity,
+        max: Math.max(item.planningRange.max, quantity),
+      },
+    }];
+  })) as ResourceRecommendation['items'];
+  return { ...resource, items };
 }
 
 function evidenceName(path: string): string {
@@ -492,4 +853,157 @@ function evidenceName(path: string): string {
 
 function Row({ label, value }: { label: string; value: string }) {
   return <div><div className="text-xs text-ink-500">{label}</div><div className="break-words text-ink-800">{value}</div></div>;
+}
+
+/**
+ * Stage-1 Control verification section (FR-M3-22, FR-M3-23, Q1 refactor).
+ *
+ * Each control item has N Stage 1 docs (e.g. an application letter, a
+ * licence, an insurance policy). The assigned authority verifies each doc
+ * independently via the per-doc form below. The control's aggregate
+ * `label` is recomputed by the cloud function from its stage1 docs.
+ *
+ * Only the officer whose authority type is in `event.requiredAuthorities`
+ * can act; other authorities see a read-only state.
+ */
+interface ControlVerificationSectionProps {
+  eventControls: EventControl[];
+  stage1DocsByControl: Record<string, Stage1Doc[]>;
+  myAuthorityType: AuthorityType | undefined;
+  isNamedOfficer: boolean;
+  reviewOpen: boolean;
+  docRationale: Record<string, string>;
+  docEvidencePath: Record<string, string>;
+  submittingDoc: string | null;
+  onRationaleChange: (key: string, value: string) => void;
+  onEvidencePathChange: (key: string, value: string) => void;
+  onSubmit: (controlId: string, docId: string, status: ControlVerificationStatus) => Promise<void>;
+}
+
+function ControlVerificationSection(props: ControlVerificationSectionProps) {
+  const {
+    eventControls, stage1DocsByControl, myAuthorityType, isNamedOfficer, reviewOpen,
+    docRationale, docEvidencePath, submittingDoc,
+    onRationaleChange, onEvidencePathChange, onSubmit,
+  } = props;
+  if (eventControls.length === 0) {
+    return null;
+  }
+  const canAct = reviewOpen && isNamedOfficer;
+  return (
+    <section className="card">
+      <div className="card-header">
+        <div>
+          <h2 className="font-semibold">Stage-1 control verification</h2>
+          <p className="mt-0.5 text-xs text-ink-500">
+            {canAct
+              ? `You are reviewing as ${myAuthorityType}. Verify or reject each Stage 1 document with a recorded rationale.`
+              : 'Read-only view — your account is not assigned to this application.'}
+          </p>
+        </div>
+        <span className="text-sm font-semibold text-ink-500">{eventControls.length}</span>
+      </div>
+      <div className="card-body space-y-4">
+        {eventControls.map((control) => {
+          const docs = stage1DocsByControl[control.controlId] ?? [];
+          const controlCanAct = canAct && control.authority === myAuthorityType;
+          return (
+            <div key={control.controlId} className="rounded-md border border-ink-100 p-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <Shield size={16} className="shrink-0 text-brand-700" />
+                    <p className="text-sm font-semibold text-ink-800">{control.controlName}</p>
+                  </div>
+                  <p className="mt-1 text-xs text-ink-400">Stage: {control.stageRequirement} · Authority: {control.authority} · {docs.length} doc(s)</p>
+                </div>
+                <ControlLabelBadge label={control.label} />
+              </div>
+              <div className="mt-3 space-y-3">
+                {docs.map((doc) => {
+                  const key = `${control.controlId}__${doc.docId}`;
+                  const rationale = docRationale[key] ?? '';
+                  const evidence = docEvidencePath[key] ?? '';
+                  const isFinal = doc.status === 'verified' || doc.status === 'rejected' || doc.status === 'use_previous';
+                  const canSubmitDoc = controlCanAct && doc.status === 'pending_verification' && rationale.trim().length >= 10 && submittingDoc === null;
+                  return (
+                    <div key={doc.docId} className="rounded-md bg-cream-50 p-3">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-ink-800">{doc.label}</p>
+                          <p className="mt-1 text-xs text-ink-500">docType: {doc.docType} · id: <span className="font-mono">{doc.docId}</span></p>
+                        </div>
+                        <DocStatusBadge status={doc.status} />
+                      </div>
+                      {isFinal && (
+                        <div className="mt-2 text-xs text-ink-600">
+                          <p>
+                            <span className="font-semibold">{doc.status}</span>
+                            {doc.verifiedAt && <> on {format(new Date(doc.verifiedAt), 'PPp')} by <span className="font-mono">{doc.verifiedBy}</span></>}
+                          </p>
+                          {doc.rejectionReason && <p className="mt-1 whitespace-pre-line">{doc.rejectionReason}</p>}
+                        </div>
+                      )}
+                      {controlCanAct && doc.status === 'pending_verification' && (
+                        <div className="mt-2 space-y-2">
+                          <label className="block text-xs font-medium text-ink-600">
+                            Verification rationale
+                            <textarea
+                              className="input mt-1 resize-y"
+                              rows={2}
+                              maxLength={1000}
+                              value={rationale}
+                              onChange={(e) => onRationaleChange(key, e.target.value)}
+                              placeholder="Explain the basis for your verification (10–1000 chars)."
+                            />
+                          </label>
+                          <label className="block text-xs font-medium text-ink-600">
+                            Evidence path (optional)
+                            <input
+                              className="input mt-1"
+                              type="text"
+                              value={evidence}
+                              onChange={(e) => onEvidencePathChange(key, e.target.value)}
+                              placeholder="evidence/control-evacuation-plan.pdf"
+                            />
+                          </label>
+                          <p className="text-right text-xs text-ink-400">{rationale.trim().length}/1000 · minimum 10</p>
+                          <div className="flex justify-end gap-2">
+                            <button type="button" className="btn-secondary" disabled={!canSubmitDoc} onClick={() => onSubmit(control.controlId, doc.docId, 'rejected')}>
+                              <X size={15} />{submittingDoc === key ? 'Recording...' : 'Reject'}
+                            </button>
+                            <button type="button" className="btn-success" disabled={!canSubmitDoc} onClick={() => onSubmit(control.controlId, doc.docId, 'verified')}>
+                              <Check size={15} />{submittingDoc === key ? 'Recording...' : 'Verify'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {docs.length === 0 && (
+                  <p className="text-xs text-ink-500">No Stage 1 documents have been uploaded for this control yet.</p>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function ControlLabelBadge({ label }: { label: EventControl['label'] }) {
+  if (label === 'approved') return <span className="badge bg-green-100 text-status-approved"><ShieldCheck size={12} className="mr-1 inline" />Approved</span>;
+  if (label === 'resubmit_required') return <span className="badge bg-red-100 text-status-rejected"><ShieldX size={12} className="mr-1 inline" />Resubmit required</span>;
+  if (label === 'reported_under_review') return <span className="badge bg-amber-100 text-amber-700">Under review</span>;
+  return <span className="badge bg-ink-100 text-ink-500">Pending</span>;
+}
+
+function DocStatusBadge({ status }: { status: Stage1Doc['status'] }) {
+  if (status === 'verified') return <span className="badge bg-green-100 text-status-approved">Verified</span>;
+  if (status === 'rejected') return <span className="badge bg-red-100 text-status-rejected">Rejected</span>;
+  if (status === 'use_previous') return <span className="badge bg-blue-100 text-brand-700">Use previous</span>;
+  if (status === 'pending_submission') return <span className="badge bg-ink-100 text-ink-500">Awaiting upload</span>;
+  return <span className="badge bg-amber-100 text-amber-700">Awaiting verification</span>;
 }

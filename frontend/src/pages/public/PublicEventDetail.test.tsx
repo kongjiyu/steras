@@ -5,10 +5,22 @@ import PublicEventDetail from './PublicEventDetail';
 
 const { listener } = vi.hoisted(() => ({ listener: { mode: 'success' as 'success' | 'missing' | 'error' } }));
 
-vi.mock('../../config/firebase', () => ({ db: {}, isFirebaseConfigured: true }));
+vi.mock('../../config/firebase', () => ({ auth: {}, db: {}, functions: {}, isFirebaseConfigured: true }));
+vi.mock('firebase/auth', () => ({
+  onAuthStateChanged: vi.fn((_auth: unknown, callback: (value: null) => void) => {
+    callback(null);
+    return vi.fn();
+  }),
+}));
 vi.mock('firebase/firestore', () => ({
-  doc: vi.fn(),
-  onSnapshot: vi.fn((_reference, onNext: (value: unknown) => void, onError: () => void) => {
+  doc: vi.fn((...args: unknown[]) => ({ kind: 'doc', args })),
+  collection: vi.fn((...args: unknown[]) => ({ kind: 'collection', args })),
+  query: vi.fn((reference: unknown) => ({ kind: 'query', reference })),
+  onSnapshot: vi.fn((reference: { kind?: string }, onNext: (value: unknown) => void, onError: () => void) => {
+    if (reference?.kind !== 'doc') {
+      onNext({ docs: [] });
+      return vi.fn();
+    }
     if (listener.mode === 'error') onError();
     else onNext({
       exists: () => listener.mode === 'success',

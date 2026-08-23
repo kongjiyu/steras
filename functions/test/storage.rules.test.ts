@@ -54,7 +54,7 @@ describe('Storage security rules', () => {
     await environment.withSecurityRulesDisabled(async (context) => {
       await setDoc(doc(context.firestore(), 'users/pdrm-1'), { role: 'authority', authorityType: 'PDRM' });
       await setDoc(doc(context.firestore(), 'users/kkm-1'), { role: 'authority', authorityType: 'KKM' });
-      await updateDoc(doc(context.firestore(), 'events/event-1'), { status: 'Pending', editableVersionId: null, requiredAuthorities: ['PDRM'] });
+      await updateDoc(doc(context.firestore(), 'events/event-1'), { status: 'Pending', editableVersionId: null, requiredAuthorities: ['PDRM'], assignedOfficerUids: ['pdrm-1'] });
     });
 
     await assertSucceeds(getBytes(ref(organizer.storage(), filePath)));
@@ -70,5 +70,15 @@ describe('Storage security rules', () => {
     await assertSucceeds(uploadBytes(fileReference, new Uint8Array([1]), { contentType: 'application/pdf' }));
     await environment.withSecurityRulesDisabled((context) => updateDoc(doc(context.firestore(), 'events/event-1'), { status: 'Pending', editableVersionId: null }));
     await assertFails(deleteObject(fileReference));
+  });
+
+  it('rejects evidence replacement after an application is rejected', async () => {
+    await seedEditableEvent();
+    await environment.withSecurityRulesDisabled((context) => updateDoc(doc(context.firestore(), 'events/event-1'), {
+      status: 'Rejected',
+      editableVersionId: 'v1',
+    }));
+    const organizer = environment.authenticatedContext('organizer-1').storage();
+    await assertFails(uploadBytes(ref(organizer, 'event_documents/event-1/v1/revised.pdf'), new Uint8Array([4, 5]), { contentType: 'application/pdf' }));
   });
 });

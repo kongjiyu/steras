@@ -41,7 +41,7 @@ function record(id: string, status: EventRecord['status'], risk?: RiskLevel, upd
 
 describe('dashboardData', () => {
   const records = [
-    record('medium amendment', 'AmendmentRequested', 'Medium', 4),
+    record('medium review', 'UnderReview', 'Medium', 4),
     record('high pending', 'Pending', 'High', 2),
     record('low review', 'UnderReview', 'Low', 8),
     record('approved', 'Approved', 'Low', 10),
@@ -49,14 +49,14 @@ describe('dashboardData', () => {
   ];
 
   it('summarizes assigned authority work from live records', () => {
-    expect(dashboardSummary(records)).toMatchObject({ total: 5, active: 4, pending: 2, amendments: 1, approved: 1, highRisk: 1, unassessed: 1, resolved: 1 });
+    expect(dashboardSummary(records)).toMatchObject({ total: 5, active: 4, pending: 2, underReview: 2, approved: 1, highRisk: 1, unassessed: 1, resolved: 1 });
     expect(riskDistribution(records)).toEqual({ Low: 2, Medium: 1, High: 1, Unassessed: 1 });
   });
 
   it('orders active work by final risk before workflow status', () => {
     expect(sortReviewPriority(records).map(({ event }) => event.eventId)).toEqual([
       'high pending',
-      'medium amendment',
+      'medium review',
       'pending assessment',
       'low review',
     ]);

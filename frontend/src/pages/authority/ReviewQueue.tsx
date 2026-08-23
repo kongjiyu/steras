@@ -12,7 +12,7 @@ import StatusBadge from '../../components/ui/StatusBadge';
 import { filterAndSortQueue, pageCount, QueueSort } from './reviewQueueData';
 
 const PAGE_SIZE = 10;
-const ACTIVE_STATUSES = ['Pending', 'UnderReview', 'AmendmentRequested'] as const;
+const ACTIVE_STATUSES = ['Pending', 'UnderReview'] as const;
 
 export default function ReviewQueue() {
   const { profile } = useAuth();
@@ -26,13 +26,13 @@ export default function ReviewQueue() {
   const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
-    if (!isFirebaseConfigured || !profile?.authorityType) {
+    if (!isFirebaseConfigured || !profile?.uid || !profile.authorityType) {
       setLoading(false);
       return;
     }
     const eventsQuery = query(
       collection(db, COLLECTIONS.EVENTS),
-      where('requiredAuthorities', 'array-contains', profile.authorityType),
+      where('assignedOfficerUids', 'array-contains', profile.uid),
       where('status', 'in', ACTIVE_STATUSES),
       orderBy('createdAt', 'desc'),
       limit(100),
@@ -45,7 +45,7 @@ export default function ReviewQueue() {
       setError('The review queue could not be loaded.');
       setLoading(false);
     });
-  }, [profile?.authorityType, retryKey]);
+  }, [profile?.uid, profile?.authorityType, retryKey]);
 
   const filtered = useMemo(() => filterAndSortQueue(events, filter, search, sort), [events, filter, search, sort]);
   const totalPages = pageCount(filtered.length, PAGE_SIZE);

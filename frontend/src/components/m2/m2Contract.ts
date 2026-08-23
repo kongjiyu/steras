@@ -69,7 +69,7 @@ export function isCurrentEventRecord(value: unknown, expectedEventId?: string): 
     || typeof value.eventId !== 'string' || !value.eventId.trim()
     || (expectedEventId !== undefined && value.eventId !== expectedEventId)
     || typeof value.organizerId !== 'string' || !value.organizerId.trim()
-    || !['Draft', 'Pending', 'UnderReview', 'AmendmentRequested', 'Approved', 'Rejected', 'Withdrawn'].includes(String(value.status))
+    || !['Draft', 'Pending', 'UnderReview', 'Approved', 'Rejected', 'Withdrawn', 'Manual Review Required'].includes(String(value.status))
     || !Number.isSafeInteger(value.currentVersionNumber) || Number(value.currentVersionNumber) < 0
     || !Array.isArray(value.draftDocumentPaths)
     || !value.draftDocumentPaths.every((path) => typeof path === 'string')
@@ -106,7 +106,7 @@ export function isCurrentAuthorityDecision(value: unknown, expectedEventId?: str
     && (expectedEventId === undefined || value.eventId === expectedEventId)
     && isSafeDocumentId(value.versionId)
     && AUTHORITY_TYPES.has(String(value.authorityType))
-    && ['Approved', 'Rejected', 'AmendmentRequested'].includes(String(value.decision))
+    && ['Approved', 'Rejected'].includes(String(value.decision))
     && typeof value.rationale === 'string' && value.rationale.trim().length >= 10
     && (value.suggestion === undefined || (typeof value.suggestion === 'string' && value.suggestion.trim().length >= 10))
     && (value.materialsReviewed === undefined || typeof value.materialsReviewed === 'boolean')

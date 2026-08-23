@@ -1,0 +1,161 @@
+import { test as base, type Page, expect } from '@playwright/test';
+import { M3_UAT_ACCOUNT_EMAILS, M3_UAT_EVENTS } from '../../../shared/m3UatFixtures';
+
+/** Credentials are supplied by the isolated staging environment/CI secrets. */
+const E2E_PASSWORD = process.env.STERAS_E2E_PASSWORD ?? '';
+export const ACCOUNTS = {
+  admin: { email: process.env.STERAS_E2E_ADMIN_EMAIL ?? M3_UAT_ACCOUNT_EMAILS.admin, password: E2E_PASSWORD },
+  organizer: { email: process.env.STERAS_E2E_ORGANIZER_EMAIL ?? M3_UAT_ACCOUNT_EMAILS.organizer, password: E2E_PASSWORD },
+  pdrm: { email: process.env.STERAS_E2E_PDRM_EMAIL ?? M3_UAT_ACCOUNT_EMAILS.PDRM, password: E2E_PASSWORD },
+  bomba: { email: process.env.STERAS_E2E_BOMBA_EMAIL ?? M3_UAT_ACCOUNT_EMAILS.BOMBA, password: E2E_PASSWORD },
+  kkm: { email: process.env.STERAS_E2E_KKM_EMAIL ?? M3_UAT_ACCOUNT_EMAILS.KKM, password: E2E_PASSWORD },
+  dbkl: { email: process.env.STERAS_E2E_DBKL_EMAIL ?? M3_UAT_ACCOUNT_EMAILS.DBKL, password: E2E_PASSWORD },
+  public: { email: process.env.STERAS_E2E_PUBLIC_EMAIL ?? M3_UAT_ACCOUNT_EMAILS.public, password: E2E_PASSWORD },
+} as const;
+
+export type AccountKey = keyof typeof ACCOUNTS;
+
+/** UAT event IDs seeded by the mock seeder. */
+export const EVENTS = {
+  musicFestival: M3_UAT_EVENTS.controlVerification,
+  foodFair: M3_UAT_EVENTS.authorityPartial,
+  mountainRun: M3_UAT_EVENTS.initialReady,
+  marathon: M3_UAT_EVENTS.awaitingAssignment,
+  complianceBlocked: M3_UAT_EVENTS.complianceBlocked,
+  provisionalReview: M3_UAT_EVENTS.provisionalReview,
+  controlVerification: M3_UAT_EVENTS.controlVerification,
+  publicStage2: M3_UAT_EVENTS.publicStage2,
+} as const;
+
+export type EventKey = keyof typeof EVENTS;
+
+/**
+ * Thin API helper that runs JS in the page context so it inherits the
+ * currently signed-in Firebase Auth session. Uses the `__sterasFirebase`
+ * global exposed by the deployed app (see src/config/firebase.ts).
+ */
+export interface ApiHelper {
+  /** Get a Cloud Function callable result using the current page's auth. */
+  callFunction<TReq = unknown, TRes = unknown>(name: string, data?: TReq): Promise<TRes>;
+  /** Get a Firestore doc snapshot (server-time read, bypasses cache). */
+  getDoc<T = Record<string, unknown>>(path: string): Promise<T | null>;
+  /** Update a Firestore doc (defaults to merge). */
+  setDoc(path: string, data: Record<string, unknown>, opts?: { merge?: boolean }): Promise<void>;
+  /** Delete a Firestore doc. */
+  deleteDoc(path: string): Promise<void>;
+  /** Read a subcollection as an array of {id, ...data}. */
+  getCollection<T = Record<string, unknown>>(path: string): Promise<Array<{ id: string } & T>>;
+  /** Get the signed-in user's UID. */
+  currentUid(): Promise<string | null>;
+  /** Sign out. */
+  signOut(): Promise<void>;
+  /** Wait until the app's __sterasFirebase global is present. */
+  waitForFirebase(): Promise<void>;
+}
+
+function makeApiHelper(page: Page): ApiHelper {
+  return {
+    callFunction: <TReq, TRes>(name: string, data?: TReq) =>
+      page.evaluate(async ({ fnName, payload }: { fnName: string; payload: unknown }) => {
+        const fb = (window as any).__sterasFirebase;
+        if (!fb) throw new Error('__sterasFirebase not present — waitForFirebase() first');
+        return fb.callable(fnName, payload ?? {});
+      }, { fnName: name, payload: data ?? {} }) as unknown as Promise<TRes>,
+    getDoc: <T,>(path: string) =>
+      page.evaluate(async (p: string) => {
+        const fb = (window as any).__sterasFirebase;
+        if (!fb) throw new Error('__sterasFirebase not present');
+        return fb.getDoc(p);
+      }, path) as unknown as Promise<T | null>,
+    setDoc: (path: string, data: Record<string, unknown>, opts = { merge: true }) =>
+      page.evaluate(async (args: { path: string; data: Record<string, unknown>; merge: boolean }) => {
+        const fb = (window as any).__sterasFirebase;
+        await fb.setDoc(args.path, args.data, { merge: args.merge });
+      }, { path, data, merge: opts.merge ?? true }),
+    deleteDoc: (path: string) =>
+      page.evaluate(async (p: string) => {
+        const fb = (window as any).__sterasFirebase;
+        await fb.deleteDoc(p);
+      }, path),
+    getCollection: <T,>(path: string) =>
+      page.evaluate(async (p: string) => {
+        const fb = (window as any).__sterasFirebase;
+        return fb.getCollection(p);
+      }, path) as unknown as Promise<Array<{ id: string } & T>>,
+    currentUid: () =>
+      page.evaluate(async () => {
+        const fb = (window as any).__sterasFirebase;
+        const user = fb?.auth?.currentUser;
+        return user ? user.uid : null;
+      }),
+    signOut: () =>
+      page.evaluate(async () => {
+        const fb = (window as any).__sterasFirebase;
+        await fb?.auth?.signOut();
+      }),
+    waitForFirebase: () =>
+      page.waitForFunction(() => !!(window as any).__sterasFirebase, undefined, { timeout: 20_000 }),
+  };
+}
+
+/**
+ * Custom test fixture exposing `api` (Firebase helper) and `loginAs(key)`.
+ *
+ * Each test starts logged out. Call `await loginAs('pdrm')` to sign in.
+ */
+type Fixtures = {
+  api: ApiHelper;
+  loginAs: (key: AccountKey) => Promise<void>;
+};
+
+export const test = base.extend<Fixtures>({
+  api: async ({ page }, use) => {
+    const helper = makeApiHelper(page);
+    // Make sure the app has loaded + the global is set
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+    await helper.waitForFirebase();
+    await use(helper);
+  },
+  loginAs: async ({ page }, use) => {
+    const fn = async (key: AccountKey) => {
+      const a = ACCOUNTS[key];
+      if (!a.password) throw new Error('Set STERAS_E2E_PASSWORD for the isolated staging accounts.');
+      // Sign in via the firebase SDK directly. This is much faster than
+      // navigating to /login + filling the form + submitting (which can
+      // take 30-60s on Firebase Hosting when the test suite has already
+      // hammered the auth endpoint). A single signInWithEmailAndPassword
+      // network call replaces 4-5 page interactions.
+      await page.goto('/', { waitUntil: 'domcontentloaded' });
+      await page.waitForFunction(() => !!(window as any).__sterasFirebase, undefined, { timeout: 15_000 });
+      // Sign out any previous user (in case the page is cached with a
+      // different auth state).
+      await page.evaluate(async () => {
+        const fb = (window as any).__sterasFirebase;
+        await fb.signOutCurrent();
+      });
+      // Sign in via SDK. Returns the new uid so we can confirm auth
+      // state settled on the correct user.
+      const { uid } = await page.evaluate(
+        async ({ email, password }) => {
+          const fb = (window as any).__sterasFirebase;
+          return await fb.signInWithEmail(email, password);
+        },
+        { email: a.email, password: a.password },
+      );
+      // Wait for auth state to reflect the new uid (handles race where
+      // signOut is still propagating when signIn lands).
+      await page.waitForFunction(
+        (expectedUid: string) => (window as any).__sterasFirebase?.auth?.currentUser?.uid === expectedUid,
+        uid,
+        { timeout: 30_000 },
+      );
+    };
+    await use(fn);
+  },
+});
+
+export { expect };
+
+// Make the helper available globally so any test file can import without
+// needing the fixture (e.g. for one-off API calls in beforeAll).
+export { makeApiHelper };

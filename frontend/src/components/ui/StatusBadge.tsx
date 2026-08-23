@@ -5,20 +5,20 @@ const STATUS_COLOR: Record<EventStatus, 'amber' | 'blue' | 'orange' | 'green' | 
   Draft: 'gray',
   Pending: 'amber',
   UnderReview: 'blue',
-  AmendmentRequested: 'orange',
   Approved: 'green',
   Rejected: 'red',
   Withdrawn: 'gray',
+  'Manual Review Required': 'orange',
 };
 
 const STATUS_LABEL: Record<EventStatus, string> = {
   Draft: 'Draft',
   Pending: 'Pending',
   UnderReview: 'Under Review',
-  AmendmentRequested: 'Amendment Requested',
   Approved: 'Approved',
   Rejected: 'Rejected',
   Withdrawn: 'Withdrawn',
+  'Manual Review Required': 'Manual review required',
 };
 
 export default function StatusBadge({ status }: { status: EventStatus }) {

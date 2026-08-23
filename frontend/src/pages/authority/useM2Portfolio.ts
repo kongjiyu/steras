@@ -24,7 +24,7 @@ export function useM2Portfolio(previewRecords?: M2PortfolioRecord[]) {
       setLoading(false);
       return;
     }
-    if (!isFirebaseConfigured || !profile?.authorityType) {
+    if (!isFirebaseConfigured || !profile?.uid || !profile.authorityType) {
       setLoading(false);
       return;
     }
@@ -33,7 +33,7 @@ export function useM2Portfolio(previewRecords?: M2PortfolioRecord[]) {
     let active = true;
     const eventsQuery = query(
       collection(db, COLLECTIONS.EVENTS),
-      where('requiredAuthorities', 'array-contains', profile.authorityType),
+      where('assignedOfficerUids', 'array-contains', profile.uid),
       limit(100),
     );
 
@@ -89,7 +89,7 @@ export function useM2Portfolio(previewRecords?: M2PortfolioRecord[]) {
       active = false;
       unsubscribe();
     };
-  }, [previewRecords, profile?.authorityType, retryKey]);
+  }, [previewRecords, profile?.uid, profile?.authorityType, retryKey]);
 
   return {
     records,

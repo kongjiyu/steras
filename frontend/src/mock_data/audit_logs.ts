@@ -66,7 +66,7 @@ const auditByEvent: Record<string, AuditOverrides[]> = {
     { eventId: EVENT_IDS.E003, action: 'event_submitted', actorId: USER_IDS.U_ORG_003, actorRole: 'organizer', timestamp: hoursAgo(6), versionId: 'v1', newStatus: 'Pending' },
   ],
 
-  // E004 - AmendmentRequested
+  // E004 - Rejected (terminal application decision)
   [EVENT_IDS.E004]: [
     { eventId: EVENT_IDS.E004, action: 'event_created', actorId: USER_IDS.U_ORG_004, actorRole: 'organizer', timestamp: daysAgo(21) },
     { eventId: EVENT_IDS.E004, action: 'event_submitted', actorId: USER_IDS.U_ORG_004, actorRole: 'organizer', timestamp: daysAgo(18), versionId: 'v1', newStatus: 'Pending' },
@@ -74,9 +74,8 @@ const auditByEvent: Record<string, AuditOverrides[]> = {
     { eventId: EVENT_IDS.E004, action: 'resource_recommended', actorId: 'system', actorRole: 'system', timestamp: daysAgo(18), versionId: 'v1' },
     { eventId: EVENT_IDS.E004, action: 'decision_made', actorId: USER_IDS.U_OFC_PDRM_KL_01, actorRole: 'authority', timestamp: daysAgo(15), versionId: 'v1', notes: 'Traffic plan approved.', metadata: { authorityType: 'PDRM', decision: 'Approved' } },
     { eventId: EVENT_IDS.E004, action: 'decision_made', actorId: USER_IDS.U_OFC_BOMBA_KL_01, actorRole: 'authority', timestamp: daysAgo(12), versionId: 'v1', notes: 'Insufficient medical plan.', metadata: { authorityType: 'BOMBA', decision: 'Rejected' } },
-    { eventId: EVENT_IDS.E004, action: 'decision_made', actorId: USER_IDS.U_OFC_KKM_KL_01, actorRole: 'authority', timestamp: daysAgo(11), versionId: 'v1', notes: 'Medical staffing needs revision.', metadata: { authorityType: 'KKM', decision: 'AmendmentRequested' } },
-    { eventId: EVENT_IDS.E004, action: 'status_changed', actorId: 'system', actorRole: 'system', timestamp: daysAgo(11), versionId: 'v1', previousStatus: 'UnderReview', newStatus: 'AmendmentRequested' },
-    { eventId: EVENT_IDS.E004, action: 'amendment_requested', actorId: USER_IDS.U_ORG_004, actorRole: 'organizer', timestamp: daysAgo(2), versionId: 'v1', notes: 'Organiser submitted v2 draft.' },
+    { eventId: EVENT_IDS.E004, action: 'decision_made', actorId: USER_IDS.U_OFC_KKM_KL_01, actorRole: 'authority', timestamp: daysAgo(11), versionId: 'v1', notes: 'Medical staffing plan is insufficient for this event scale.', metadata: { authorityType: 'KKM', decision: 'Rejected' } },
+    { eventId: EVENT_IDS.E004, action: 'status_changed', actorId: 'system', actorRole: 'system', timestamp: daysAgo(11), versionId: 'v1', previousStatus: 'UnderReview', newStatus: 'Rejected', notes: 'Application decisions are terminal; organiser must submit a new application if needed.' },
   ],
 
   // E005 - Rejected
@@ -107,7 +106,7 @@ const auditByEvent: Record<string, AuditOverrides[]> = {
     { eventId: EVENT_IDS.E010, action: 'decision_made', actorId: USER_IDS.U_OFC_BOMBA_KL_01, actorRole: 'authority', timestamp: daysAgo(15), versionId: 'v1', metadata: { authorityType: 'BOMBA', decision: 'Approved' } },
     { eventId: EVENT_IDS.E010, action: 'decision_made', actorId: USER_IDS.U_OFC_DBKL_KL_01, actorRole: 'authority', timestamp: daysAgo(14), versionId: 'v1', metadata: { authorityType: 'DBKL', decision: 'Approved' } },
     { eventId: EVENT_IDS.E010, action: 'status_changed', actorId: 'system', actorRole: 'system', timestamp: daysAgo(18), versionId: 'v1', previousStatus: 'UnderReview', newStatus: 'Rejected' },
-    { eventId: EVENT_IDS.E010, action: 'amendment_requested', actorId: USER_IDS.U_ORG_005, actorRole: 'organizer', timestamp: daysAgo(2), versionId: 'v1', notes: 'Organiser re-submitted as v2.' },
+    { eventId: EVENT_IDS.E010, action: 'event_updated', actorId: USER_IDS.U_ORG_005, actorRole: 'organizer', timestamp: daysAgo(2), versionId: 'v1', notes: 'Legacy version history retained for audit; new rejected applications cannot be edited.' },
     { eventId: EVENT_IDS.E010, action: 'event_submitted', actorId: USER_IDS.U_ORG_005, actorRole: 'organizer', timestamp: daysAgo(2), versionId: 'v2', newStatus: 'Pending' },
     { eventId: EVENT_IDS.E010, action: 'risk_score_computed', actorId: 'system', actorRole: 'system', timestamp: daysAgo(2), versionId: 'v2', metadata: { officialScore: 45, officialRiskLevel: 'Medium' } },
     { eventId: EVENT_IDS.E010, action: 'decision_made', actorId: USER_IDS.U_OFC_PDRM_KL_02, actorRole: 'authority', timestamp: daysAgo(1), versionId: 'v2', notes: 'v2 crowd flow plan acceptable.', metadata: { authorityType: 'PDRM', decision: 'Approved' } },

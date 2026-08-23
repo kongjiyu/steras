@@ -37,7 +37,7 @@ Authority workspaces use the **Civic Observatory** expression of this language: 
 | `ink-500` | `#5B6473` | Secondary text |
 | `info` | `#287C8E` | Source and evidence information |
 | `status-approved` | `#2DA44E` | Approved workflow state |
-| `status-review` | `#F59E0B` | Under review and amendments |
+| `status-review` | `#F59E0B` | Under review |
 | `status-rejected` | `#E63946` | Rejected state and destructive action |
 
 Use warm white as the dominant surface. Olive and gold provide identity; semantic colors must remain sparse. Do not create full-page gradients or monochrome olive screens.
@@ -101,7 +101,7 @@ Cards frame individual tools such as an assessment, evidence list, or decision p
 
 Workflow status and assessed risk are related but not interchangeable:
 
-- `StatusBadge` is the canonical workflow-state component for Pending, Under Review, Approved, Amendment Requested, Rejected, Withdrawn, and Draft.
+- `StatusBadge` is the canonical workflow-state component for Pending, Under Review, Approved, Rejected, Withdrawn, and Draft.
 - `RiskMeter` is the canonical assessed-risk component everywhere. Low activates one ascending tick, Medium two, and High three; inactive ticks stay visible so the scale remains legible.
 - Every RiskMeter includes visible `Low Risk`, `Medium Risk`, or `High Risk` text. Never rely on color or tick count alone.
 - Use `size="compact"` in dense tables and hero lockups. Use the default size on review and detail screens.

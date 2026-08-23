@@ -14,7 +14,7 @@ M3 never changes the official M2 score or represents AI as the decision-maker.
 
 - Authority dashboard, assigned review queue, event review, evidence download, versioned authority decisions, decision history, resource override, audit writes, multi-authority aggregation, and approved-event publication are implemented.
 - The current backend already scopes actions by `authorityType` and required authority membership.
-- Durable notifications, verified-control actions, explicit M2 readiness/compliance decision gates, and complete browser/emulator branch coverage remain incomplete.
+- Durable notifications, verified-control actions, explicit M2 readiness/compliance gates, named-officer assignment, Stage 1/2 evidence and public reporting are implemented. The remaining release task is deployed Linkos UAT against the current merged commit.
 
 ## Current Delivery Goal
 
@@ -62,7 +62,7 @@ This multi-authority aggregate is the prototype final-authority mechanism. Do no
 
 ## Locked Decision Contract
 
-- Decisions are Approved, Rejected, or Amendment Requested.
+- Event application decisions are Approved or Rejected. Rejected applications are terminal; control-document resubmission is a separate workflow.
 - Every action requires 10–1,000 characters of human rationale.
 - Reviewer UID, authority type, application version, timestamp, and current/history state are mandatory.
 - An authority may act only when its type appears in `requiredAuthorities`.
@@ -101,14 +101,13 @@ Push notification is optional until FCM configuration exists. A push failure mus
 
 ## Remaining Work
 
-- Define which assigned authority may verify each declared M2 control and persist reviewer, timestamp, evidence path, and `verifiedControlIds`; declarations alone cannot receive mitigation credit.
-- Block a final approval when M2 compliance is `blocked`, and require an explicit reviewer rationale when readiness is `provisional` or `insufficient_data`.
-
-- Implement durable in-app notifications and optional FCM delivery.
+- Keep the Linkos `m3-linkos-v1` fixture set and the three single-worker Playwright suites green after cross-module merges.
+- Preserve pointer-driven compatibility with M2 assessment/resource revisions and keep resource adjustments append-only.
+- Optional FCM delivery remains an enhancement; durable in-app notifications are already implemented.
 - Add editable AI-assisted rejection/revision wording only after the human-edit boundary is tested.
 - Decide whether `/authority/audit` needs a standalone page or remains part of event review.
 - Add M4 incident navigation when the triage and investigation queue exists.
-- Add browser and emulator tests for each aggregate decision branch and resubmission.
+- Retain deployment reports, Playwright traces and fixture verification output for each Linkos UAT release.
 
 ## Definition of Done
 

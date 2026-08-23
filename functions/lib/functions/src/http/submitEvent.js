@@ -1,0 +1,304 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.submitEvent = exports.isValidEvidenceMetadata = void 0;
+exports.submitEventForUser = submitEventForUser;
+exports.validateEventDetails = validateEventDetails;
+exports.validateEvidencePaths = validateEvidencePaths;
+exports.validateCanonicalVenueRecord = validateCanonicalVenueRecord;
+exports.requiredAuthoritiesFor = requiredAuthoritiesFor;
+const node_crypto_1 = require("node:crypto");
+const firestore_1 = require("firebase-admin/firestore");
+const https_1 = require("firebase-functions/v2/https");
+const types_1 = require("../../../shared/types");
+const runtime_1 = require("../config/runtime");
+const resourceCutoverLock_1 = require("../config/resourceCutoverLock");
+const storageEvidence_1 = require("../utils/storageEvidence");
+var storageEvidence_2 = require("../utils/storageEvidence");
+Object.defineProperty(exports, "isValidEvidenceMetadata", { enumerable: true, get: function () { return storageEvidence_2.isValidEvidenceMetadata; } });
+exports.submitEvent = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
+    if (!request.auth)
+        throw new https_1.HttpsError('unauthenticated', 'Sign in before submitting an event.');
+    const eventId = request.data.eventId?.trim();
+    if (!eventId)
+        throw new https_1.HttpsError('invalid-argument', 'eventId is required.');
+    return submitEventForUser(request.auth.uid, eventId);
+});
+async function submitEventForUser(uid, eventId, now = Date.now()) {
+    const db = (0, firestore_1.getFirestore)();
+    const eventReference = db.collection(types_1.COLLECTIONS.EVENTS).doc(eventId);
+    const userReference = db.collection(types_1.COLLECTIONS.USERS).doc(uid);
+    const [preflightUser, preflightEvent, preflightLock] = await db.getAll(userReference, eventReference, db.doc(resourceCutoverLock_1.RESOURCE_CUTOVER_LOCK_PATH));
+    if (preflightLock.exists)
+        throw new https_1.HttpsError('unavailable', 'Resource migration is in progress. Retry the submission shortly.');
+    if (!preflightUser.exists || preflightUser.data()?.role !== 'organizer')
+        throw new https_1.HttpsError('permission-denied', 'Only organizer accounts can submit applications.');
+    if (!preflightEvent.exists)
+        throw new https_1.HttpsError('not-found', 'Event draft was not found.');
+    const preflight = { eventId, ...preflightEvent.data() };
+    if (preflight.organizerId !== uid)
+        throw new https_1.HttpsError('permission-denied', 'You do not own this event.');
+    const preflightVersionId = `v${(preflight.currentVersionNumber ?? 0) + 1}`;
+    await validateSubmissionAssets(eventId, preflightVersionId, preflight.draftDocumentPaths ?? []);
+    await validateCanonicalVenue(preflight.eventDetails);
+    const preflightFingerprint = submissionFingerprint(preflight);
+    const venueReference = preflight.eventDetails.venueId
+        ? db.collection(types_1.COLLECTIONS.VENUES).doc(preflight.eventDetails.venueId)
+        : undefined;
+    return db.runTransaction(async (transaction) => {
+        const [userSnapshot, eventSnapshot, cutoverLockSnapshot, venueSnapshot] = await Promise.all([
+            transaction.get(userReference),
+            transaction.get(eventReference),
+            transaction.get(db.doc(resourceCutoverLock_1.RESOURCE_CUTOVER_LOCK_PATH)),
+            venueReference ? transaction.get(venueReference) : Promise.resolve(undefined),
+        ]);
+        if (cutoverLockSnapshot.exists) {
+            throw new https_1.HttpsError('unavailable', 'Resource migration is in progress. Retry the submission shortly.');
+        }
+        if (!userSnapshot.exists || userSnapshot.data()?.role !== 'organizer') {
+            throw new https_1.HttpsError('permission-denied', 'Only organizer accounts can submit applications.');
+        }
+        if (!eventSnapshot.exists)
+            throw new https_1.HttpsError('not-found', 'Event draft was not found.');
+        const event = { eventId, ...eventSnapshot.data() };
+        if (submissionFingerprint(event) !== preflightFingerprint)
+            throw new https_1.HttpsError('aborted', 'The draft changed during submission. Review it and retry.');
+        if (event.organizerId !== uid)
+            throw new https_1.HttpsError('permission-denied', 'You do not own this event.');
+        if (event.status !== 'Draft') {
+            throw new https_1.HttpsError('failed-precondition', 'Only draft applications can be submitted. Rejected applications are final.');
+        }
+        if (event.eventDetails.venueId && (!venueSnapshot?.exists
+            || validateCanonicalVenueRecord(event.eventDetails, venueSnapshot.data()).length > 0)) {
+            throw new https_1.HttpsError('failed-precondition', 'The selected venue changed during submission. Review the verified venue and retry.');
+        }
+        const errors = validateEventDetails(event.eventDetails, now);
+        if (errors.length > 0)
+            throw new https_1.HttpsError('invalid-argument', errors.join(' '));
+        const versionNumber = (event.currentVersionNumber ?? 0) + 1;
+        const versionId = `v${versionNumber}`;
+        if (event.editableVersionId !== versionId) {
+            throw new https_1.HttpsError('failed-precondition', 'The editable document version does not match the next submission version.');
+        }
+        const documentPaths = event.draftDocumentPaths ?? [];
+        const allowedPrefix = `event_documents/${eventId}/${versionId}/`;
+        if (documentPaths.some((path) => !path.startsWith(allowedPrefix))) {
+            throw new https_1.HttpsError('invalid-argument', 'One or more uploaded document paths do not belong to this application version.');
+        }
+        const inputHash = (0, node_crypto_1.createHash)('sha256').update(JSON.stringify({ eventDetails: event.eventDetails, documentPaths })).digest('hex');
+        const version = {
+            versionId,
+            eventId,
+            versionNumber,
+            eventDetails: event.eventDetails,
+            documentPaths,
+            submittedBy: uid,
+            submittedAt: now,
+            inputHash,
+        };
+        const versionReference = eventReference.collection(types_1.COLLECTIONS.VERSIONS).doc(versionId);
+        const versionSnapshot = await transaction.get(versionReference);
+        if (versionSnapshot.exists)
+            throw new https_1.HttpsError('already-exists', 'This application version has already been submitted.');
+        const requiredAuthorities = requiredAuthoritiesFor(event.eventDetails);
+        transaction.create(versionReference, version);
+        transaction.update(eventReference, {
+            status: 'Pending',
+            currentVersionId: versionId,
+            currentVersionNumber: versionNumber,
+            currentAssessmentId: firestore_1.FieldValue.delete(),
+            currentResourceId: firestore_1.FieldValue.delete(),
+            authorityReviewCompletedAt: firestore_1.FieldValue.delete(),
+            authorityReviewCompletedVersionId: firestore_1.FieldValue.delete(),
+            editableVersionId: null,
+            requiredAuthorities,
+            assignedOfficerUids: [],
+            assignedOfficerByAuthority: {},
+            reviewStage: 'initial',
+            initialReview: firestore_1.FieldValue.delete(),
+            manualAssessment: firestore_1.FieldValue.delete(),
+            verifiedControlIds: [],
+            submittedAt: now,
+            updatedAt: now,
+        });
+        const auditReference = eventReference.collection(types_1.COLLECTIONS.AUDIT_LOGS).doc(`${now}-submitted-${versionId}`);
+        transaction.create(auditReference, {
+            id: auditReference.id,
+            eventId,
+            versionId,
+            action: 'event_submitted',
+            actorId: uid,
+            actorRole: 'organizer',
+            timestamp: now,
+            previousStatus: event.status,
+            newStatus: 'Pending',
+            metadata: { inputHash, documentCount: documentPaths.length, requiredAuthorities },
+        });
+        return { eventId, versionId, versionNumber, status: 'Pending' };
+    });
+}
+function validateEventDetails(value, now = Date.now()) {
+    if (!isRecord(value))
+        return ['Event details are required.'];
+    const errors = [];
+    requiredText(value.name, 'Event name', 200, errors);
+    requiredText(value.venueName, 'Venue name', 200, errors);
+    requiredText(value.venueAddress, 'Venue address', 500, errors);
+    requiredText(value.organizerName, 'Organizer name', 200, errors);
+    requiredText(value.organizerEmail, 'Organizer email', 320, errors);
+    if (typeof value.organizerEmail === 'string' && value.organizerEmail.trim() && !isEmail(value.organizerEmail)) {
+        errors.push('Organizer email is invalid.');
+    }
+    requiredText(value.organizerPhone, 'Organizer phone', 50, errors);
+    requiredText(value.emergencyPlanSummary, 'Emergency-plan summary', 2_000, errors);
+    optionalText(value.description, 'Description', 2_000, errors);
+    if (!EVENT_TYPES.has(value.type))
+        errors.push('Event type is invalid.');
+    if (!ENVIRONMENTS.has(value.environment))
+        errors.push('Environment is invalid.');
+    if (!COVERAGE.has(value.coverage))
+        errors.push('Coverage is invalid.');
+    if (!SEATING.has(value.seating))
+        errors.push('Seating is invalid.');
+    positiveInteger(value.venueCapacity, 'Venue capacity', errors);
+    positiveInteger(value.expectedAttendance, 'Expected attendance', errors);
+    if (Number.isInteger(value.venueCapacity) && Number.isInteger(value.expectedAttendance)
+        && value.expectedAttendance > value.venueCapacity) {
+        errors.push('Expected attendance cannot exceed venue capacity.');
+    }
+    if (!isRecord(value.venueLocation) || !validCoordinate(value.venueLocation.lat, -90, 90) || !validCoordinate(value.venueLocation.lng, -180, 180)) {
+        errors.push('Valid venue coordinates are required.');
+    }
+    if (typeof value.startDatetime !== 'number' || !Number.isFinite(value.startDatetime) || value.startDatetime <= now)
+        errors.push('Start datetime must be in the future.');
+    if (typeof value.endDatetime !== 'number' || !Number.isFinite(value.endDatetime)
+        || typeof value.startDatetime !== 'number' || !Number.isFinite(value.startDatetime)
+        || value.endDatetime <= value.startDatetime) {
+        errors.push('End datetime must be after the start datetime.');
+    }
+    validateRiskProfile(value.riskProfile, errors);
+    return errors;
+}
+const RISK_BOOLEAN_FIELDS = [
+    'internationalAttendees', 'alcoholServed', 'foodServed', 'freeDrinkingWater', 'ticketedEntry',
+    'overnightAccommodation', 'pyrotechnics', 'temporaryStructures', 'rivalryOrTensionExpected',
+    'crowdManagementPlan', 'trafficManagementPlan', 'severeWeatherPlan', 'medicalPlan',
+    'evacuationPlanTested', 'authorityCoordinationConfirmed',
+];
+const RISK_PROFILE_FIELDS = new Set([
+    'vulnerableAttendeesPercent', 'standingAttendeesPercent', 'nearestHospitalTravelMinutes', ...RISK_BOOLEAN_FIELDS,
+]);
+function validateRiskProfile(value, errors) {
+    if (!isRecord(value)) {
+        errors.push('A complete all-hazards profile is required.');
+        return;
+    }
+    const unknown = Object.keys(value).filter((key) => !RISK_PROFILE_FIELDS.has(key));
+    if (unknown.length)
+        errors.push(`All-hazards profile contains unsupported fields: ${unknown.join(', ')}.`);
+    for (const key of RISK_BOOLEAN_FIELDS)
+        if (typeof value[key] !== 'boolean')
+            errors.push(`${key} must be answered true or false.`);
+    boundedNumber(value.vulnerableAttendeesPercent, 'Vulnerable attendees percent', 0, 100, errors);
+    boundedNumber(value.standingAttendeesPercent, 'Standing attendees percent', 0, 100, errors);
+    if (value.nearestHospitalTravelMinutes !== undefined)
+        boundedNumber(value.nearestHospitalTravelMinutes, 'Nearest hospital travel time', 0, 240, errors);
+}
+async function validateSubmissionAssets(eventId, versionId, paths) {
+    const pathErrors = validateEvidencePaths(eventId, versionId, paths);
+    if (pathErrors.length > 0)
+        throw new https_1.HttpsError('invalid-argument', pathErrors.join(' '));
+    const inspections = await (0, storageEvidence_1.inspectStorageEvidence)(paths);
+    const missing = inspections.find((item) => item.status === 'missing');
+    if (missing)
+        throw new https_1.HttpsError('failed-precondition', `Supporting evidence is missing from Storage: ${missing.path}.`);
+    if (inspections.some((item) => item.status !== 'eligible')) {
+        throw new https_1.HttpsError('invalid-argument', 'Supporting evidence must be a non-empty PDF, JPEG, PNG, or WebP file no larger than 10 MB.');
+    }
+}
+async function validateCanonicalVenue(details) {
+    if (!details.venueId)
+        return;
+    const snapshot = await (0, firestore_1.getFirestore)().collection(types_1.COLLECTIONS.VENUES).doc(details.venueId).get();
+    if (!snapshot.exists || snapshot.data()?.active !== true || snapshot.data()?.deactivatedAt !== undefined) {
+        throw new https_1.HttpsError('failed-precondition', 'The selected venue is not an active verified registry venue.');
+    }
+    if (validateCanonicalVenueRecord(details, snapshot.data()).length > 0) {
+        throw new https_1.HttpsError('failed-precondition', 'The submitted venue identity does not match the verified registry record.');
+    }
+}
+function validateEvidencePaths(eventId, versionId, paths) {
+    if (!Array.isArray(paths) || paths.length < 1 || paths.length > 20 || new Set(paths).size !== paths.length) {
+        return ['Submit between 1 and 20 unique supporting evidence files.'];
+    }
+    const prefix = `event_documents/${eventId}/${versionId}/`;
+    return paths.some((path) => typeof path !== 'string' || !path.startsWith(prefix) || path.length > 1_024)
+        ? ['One or more uploaded document paths do not belong to this application version.']
+        : [];
+}
+function validateCanonicalVenueRecord(details, value) {
+    if (!isRecord(value) || value.active !== true || value.deactivatedAt !== undefined) {
+        return ['The selected venue is not an active verified registry venue.'];
+    }
+    const location = isRecord(value.location) ? value.location : {};
+    const canonicalCapacity = value.verifiedSafeCapacity ?? value.capacity;
+    return normalizeText(details.venueName) !== normalizeText(value.name)
+        || normalizeText(details.venueAddress) !== normalizeText(value.address)
+        || details.venueCapacity !== canonicalCapacity
+        || !sameCoordinate(details.venueLocation?.lat, location.lat)
+        || !sameCoordinate(details.venueLocation?.lng, location.lng)
+        ? ['The submitted venue identity does not match the verified registry record.']
+        : [];
+}
+function submissionFingerprint(event) {
+    return (0, node_crypto_1.createHash)('sha256').update(JSON.stringify({
+        status: event.status,
+        currentVersionNumber: event.currentVersionNumber,
+        editableVersionId: event.editableVersionId,
+        eventDetails: event.eventDetails,
+        documentPaths: event.draftDocumentPaths,
+    })).digest('hex');
+}
+function normalizeText(value) {
+    return typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').toLowerCase() : '';
+}
+function sameCoordinate(left, right) {
+    return typeof left === 'number' && Number.isFinite(left) && typeof right === 'number' && Number.isFinite(right) && Math.abs(left - right) <= 0.00001;
+}
+function boundedNumber(value, label, min, max, errors) {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max)
+        errors.push(`${label} must be between ${min} and ${max}.`);
+}
+function requiredAuthoritiesFor(details) {
+    const authorities = new Set(['PDRM', 'BOMBA', 'KKM']);
+    if (['festival', 'cultural', 'religious'].includes(details.type))
+        authorities.add('MOTAC');
+    if (/kuala lumpur|\bkl\b/i.test(details.venueAddress))
+        authorities.add('DBKL');
+    return [...authorities];
+}
+const EVENT_TYPES = new Set(['concert', 'festival', 'sports', 'cultural', 'religious', 'exhibition', 'fair', 'conference', 'other']);
+const ENVIRONMENTS = new Set(['indoor', 'outdoor', 'mixed']);
+const COVERAGE = new Set(['covered', 'partially_covered', 'uncovered']);
+const SEATING = new Set(['seated', 'standing', 'mixed']);
+function requiredText(value, label, max, errors) {
+    if (typeof value !== 'string' || value.trim().length === 0 || value.length > max)
+        errors.push(`${label} is required and must be at most ${max} characters.`);
+}
+function optionalText(value, label, max, errors) {
+    if (value !== undefined && (typeof value !== 'string' || value.length > max))
+        errors.push(`${label} must be at most ${max} characters.`);
+}
+function positiveInteger(value, label, errors) {
+    if (!Number.isInteger(value) || value <= 0)
+        errors.push(`${label} must be a positive integer.`);
+}
+function validCoordinate(value, min, max) {
+    return typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max;
+}
+function isEmail(value) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+function isRecord(value) {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+//# sourceMappingURL=submitEvent.js.map

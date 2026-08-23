@@ -19,10 +19,10 @@ exports.EVENT_STATUSES = [
     { value: 'Draft', label: 'Draft', color: 'gray' },
     { value: 'Pending', label: 'Pending', color: 'amber' },
     { value: 'UnderReview', label: 'Under Review', color: 'blue' },
-    { value: 'AmendmentRequested', label: 'Amendment Requested', color: 'orange' },
     { value: 'Approved', label: 'Approved', color: 'green' },
     { value: 'Rejected', label: 'Rejected', color: 'red' },
     { value: 'Withdrawn', label: 'Withdrawn', color: 'gray' },
+    { value: 'Manual Review Required', label: 'Manual Review Required', color: 'purple' },
 ];
 exports.ASSESSMENT_SCHEMA_VERSION = '2026-08-21-prd-v5-hardening-v1';
 exports.CONTEXT_EVIDENCE_SCHEMA_VERSION = '2026-08-21-context-evidence-v1';
@@ -60,12 +60,28 @@ exports.COLLECTIONS = {
     DECISIONS: 'decisions',
     DECISION_HISTORY: 'decision_history',
     RESOURCE_OVERRIDES: 'resource_overrides',
+    ASSESSMENT_REVIEWS: 'assessment_reviews',
     AUDIT_LOGS: 'audit_logs',
     VENUES: 'venues',
     INCIDENTS: 'incidents',
     HISTORICAL_EVENTS: 'historical_events',
     DATASET_MANIFESTS: 'dataset_manifests',
     PUBLIC_EVENTS: 'public_events',
+    NOTIFICATIONS: 'notifications',
+    EVENT_CONTROLS: 'event_controls',
+    // M3 round N+1 — workstream 1
+    OFFICERS: 'officers',
+    ASSIGNMENTS: 'assignments',
+    STAGE1_DOCS: 'stage1_docs',
+    STAGE2_DOCS: 'stage2_docs',
+    // M3 round N+1 (Workstream 4) — per-user rate-limit counters
+    // under each control. Server-only writes; client reads for the
+    // UI to show "You confirmed" / "You reported" states.
+    STAGE2_CONFIRMS: 'stage2_confirms',
+    STAGE2_REPORTS: 'stage2_reports',
+    PUBLIC_EVENT_CONTROLS: 'public_event_controls',
+    PUBLIC_EVENT_CONTROL_ITEMS: 'items',
+    PUBLIC_REPORTS: 'public_reports',
 };
 exports.CATEGORY_SCHEMA_VERSION = '2026-07-24-all-hazards-v2';
 exports.SCORING_LOGIC_VERSION = '2026-07-24-hirarc-residual-v2';

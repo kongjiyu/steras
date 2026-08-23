@@ -208,7 +208,7 @@ export const mockEventDocumentSets: EventDocumentSet[] = [
     ],
   },
 
-  // E004 - v1 AmendmentRequested, with one rejected doc (rejection on BOMBA feedback)
+  // E004 - v1 Rejected, with one rejected doc (rejection on BOMBA feedback)
   {
     eventId: EVENT_IDS.E004, versionId: 'v1',
     documents: [

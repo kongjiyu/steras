@@ -1,0 +1,76 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.DOMAIN_REVIEW_AUTHORITY = exports.GUIDELINES = void 0;
+exports.GUIDELINES = {
+    'my.dosh.hirarc.2008': {
+        id: 'my.dosh.hirarc.2008',
+        title: 'Guidelines for Hazard Identification, Risk Assessment and Risk Control (HIRARC)',
+        issuer: 'Malaysia Department of Occupational Safety and Health',
+        kind: 'official-guidance',
+        jurisdiction: 'Malaysia',
+        url: 'https://dosh.gov.my/wp-content/uploads/2026/05/Guidelines-for-Hazard-Identification-Risk-Assessment-and-Risk-Control-HIRARC-2008.pdf',
+        appliesTo: ['crowd', 'venue_fire', 'weather_environment', 'public_health', 'food_water_sanitation', 'medical_capacity', 'security_cbrn', 'transport_accessibility'],
+        note: 'Methodology anchor for the prototype 5x5 likelihood-severity matrix; it is not an event-specific statutory score.',
+    },
+    'who.mass-gathering.all-hazards.2023': {
+        id: 'who.mass-gathering.all-hazards.2023',
+        title: 'Generic All-Hazards Risk Assessment Tool for Mass Gathering Events',
+        issuer: 'World Health Organization',
+        kind: 'official-guidance',
+        jurisdiction: 'International',
+        url: 'https://www.who.int/publications/i/item/WHO-2023-Generic-Mass-gatherings-All-Hazards-RAtool-2023-1',
+        appliesTo: ['crowd', 'weather_environment', 'public_health', 'food_water_sanitation', 'medical_capacity', 'security_cbrn', 'transport_accessibility'],
+        note: 'Hazard, mitigation, host-capacity, communication and reassessment reference.',
+    },
+    'my.fire-services-act.1988': {
+        id: 'my.fire-services-act.1988',
+        title: 'Fire Services Act 1988 (Act 341)',
+        issuer: 'Malaysia',
+        kind: 'law',
+        jurisdiction: 'Malaysia',
+        url: 'https://www.bomba.gov.my/wp-content/uploads/2021/07/Act_341_Fire_services_act_1988.pdf',
+        appliesTo: ['venue_fire'],
+        note: 'Fire Certificate checks apply only where the premises is legally designated.',
+    },
+    'my.ubbl.state-specific': {
+        id: 'my.ubbl.state-specific',
+        title: 'Uniform Building By-Laws — state gazetted versions',
+        issuer: 'Malaysia local/state authorities',
+        kind: 'law',
+        jurisdiction: 'State/PBT specific',
+        url: 'https://jkt.kpkt.gov.my/uniform-building-by-law-1984-ubbl-1984-amendments-which-is-gazzetted-according-to-the-state-authority',
+        appliesTo: ['crowd', 'venue_fire', 'transport_accessibility'],
+        note: 'The federal model is not itself the enforceable nationwide version; competent-person verification is required.',
+    },
+    'my.met.warning-criteria': {
+        id: 'my.met.warning-criteria',
+        title: 'MET Malaysia warning criteria',
+        issuer: 'Malaysian Meteorological Department',
+        kind: 'official-guidance',
+        jurisdiction: 'Malaysia',
+        url: 'https://www.met.gov.my/en/ramalan/ribut-petir/',
+        appliesTo: ['weather_environment'],
+        note: 'Official warnings take precedence over supplemental commercial forecasts.',
+    },
+    'internal.resource-baseline.v3': {
+        id: 'internal.resource-baseline.v3',
+        title: 'STERAS internal resource baseline assumptions',
+        issuer: 'STERAS',
+        kind: 'internal-prototype',
+        jurisdiction: 'Academic prototype',
+        url: '',
+        appliesTo: ['medical_capacity', 'security_cbrn', 'food_water_sanitation', 'venue_fire'],
+        note: 'Not an authority minimum and always requires authority review.',
+    },
+};
+exports.DOMAIN_REVIEW_AUTHORITY = {
+    crowd: 'PDRM',
+    venue_fire: 'BOMBA',
+    weather_environment: 'BOMBA',
+    public_health: 'KKM',
+    food_water_sanitation: 'KKM',
+    medical_capacity: 'KKM',
+    security_cbrn: 'PDRM',
+    transport_accessibility: 'DBKL',
+};
+//# sourceMappingURL=standardsRegistry.js.map

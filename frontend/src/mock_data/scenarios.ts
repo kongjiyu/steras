@@ -73,7 +73,7 @@ export const scenarioMultiVersion = (): EventRecord[] =>
 export const dashboardSnapshot = (authorityType: AuthorityType) => {
   const events = mockEvents.filter(
     (e) => e.requiredAuthorities.includes(authorityType)
-      && ['Pending', 'UnderReview', 'AmendmentRequested'].includes(e.status),
+      && ['Pending', 'UnderReview'].includes(e.status),
   );
   return {
     events,
@@ -106,7 +106,7 @@ export const eventReviewSnapshot = (eventId: string) => {
 export const riskPortfolioSnapshot = (authorityType: AuthorityType) => {
   const events = mockEvents.filter(
     (e) => e.requiredAuthorities.includes(authorityType)
-      && ['Pending', 'UnderReview', 'AmendmentRequested', 'Approved', 'Rejected', 'Withdrawn'].includes(e.status),
+      && ['Pending', 'UnderReview', 'Approved', 'Rejected', 'Withdrawn'].includes(e.status),
   );
   return events.map((e) => ({
     event: e,
