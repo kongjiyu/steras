@@ -85,17 +85,18 @@ test.describe('@M3 negative decision gates', () => {
   });
 
   test('non-assigned authority cannot act on an event that does not require them', async ({ api, loginAs }) => {
-    // The compliance-blocked fixture requires only PDRM + BOMBA. DBKL is
-    // not assigned. Sign in as DBKL and call the current officer-proposal
+    // The provisional-review fixture is released to PDRM + BOMBA only. DBKL
+    // is not assigned. Sign in as DBKL and call the current officer-proposal
     // Cloud Function directly —
     // the form is hidden for non-assigned authorities so we bypass the UI.
     await loginAs('dbkl');
     let callError: string | null = null;
     try {
       await api.callFunction('recordOfficerProposal', {
-        eventId: EVENTS.complianceBlocked,
+        eventId: EVENTS.provisionalReview,
         decision: 'Approved',
-        reason: 'DBKL attempting to act on an event it is not assigned to — should be rejected.',
+        reason: 'DBKL attempting to act on an event it is not assigned to. This valid-length reason should still be rejected by assignment authorization.',
+        confirmedReview: true,
       });
     } catch (err) {
       callError = err instanceof Error ? err.message : String(err);
@@ -107,7 +108,7 @@ test.describe('@M3 negative decision gates', () => {
     // We can't read this as DBKL because they're not assigned to the event.
     await api.signOut();
     await loginAs('admin');
-    const dec = await api.getDoc(`events/${EVENTS.complianceBlocked}/assignments/v1_DBKL`);
+    const dec = await api.getDoc(`events/${EVENTS.provisionalReview}/assignments/v1_DBKL`);
     expect(dec).toBeNull();
   });
 });
