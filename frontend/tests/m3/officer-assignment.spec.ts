@@ -44,12 +44,21 @@ test.describe('@M3 Workstream 1: officer assignment + second review', () => {
     );
     expect(dryRun.checklist.length).toBe(4);
     expect(dryRun.venueState).toBe('Selangor');
-    // Default-check matches our expected officer pool.
-    const byAuth = Object.fromEntries(dryRun.checklist.map((c) => [c.authorityType, c.defaultOfficerUid]));
-    expect(byAuth.PDRM).toBe(OFFICERS.pdrm);
-    expect(byAuth.BOMBA).toBe(OFFICERS.bomba);
-    expect(byAuth.KKM).toBe(OFFICERS.kkm);
-    expect(byAuth.DBKL).toBe(OFFICERS.dbkl);
+    // The shared Linkos project also contains non-UAT backup officers. The
+    // production function correctly picks the lowest-workload eligible
+    // officer, so the default may be one of those backups rather than the
+    // dedicated UAT identity. Verify the UAT officers are eligible candidates
+    // and explicitly choose them below to keep the rest of this flow isolated.
+    const expectedUatByAuth = {
+      PDRM: OFFICERS.pdrm,
+      BOMBA: OFFICERS.bomba,
+      KKM: OFFICERS.kkm,
+      DBKL: OFFICERS.dbkl,
+    } as const;
+    for (const item of dryRun.checklist) {
+      expect(item.defaultOfficerUid).toBeTruthy();
+      expect(item.candidates.map((candidate) => candidate.officerUid)).toContain(expectedUatByAuth[item.authorityType as keyof typeof expectedUatByAuth]);
+    }
 
     const assignmentMap = {
       PDRM: OFFICERS.pdrm,
