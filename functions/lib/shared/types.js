@@ -19,7 +19,6 @@ exports.EVENT_STATUSES = [
     { value: 'Draft', label: 'Draft', color: 'gray' },
     { value: 'Pending', label: 'Pending', color: 'amber' },
     { value: 'UnderReview', label: 'Under Review', color: 'blue' },
-    { value: 'AmendmentRequested', label: 'Amendment Requested', color: 'orange' },
     { value: 'Approved', label: 'Approved', color: 'green' },
     { value: 'Rejected', label: 'Rejected', color: 'red' },
     { value: 'Withdrawn', label: 'Withdrawn', color: 'gray' },

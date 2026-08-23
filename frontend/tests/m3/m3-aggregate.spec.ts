@@ -3,7 +3,7 @@
  *
  * Tests the multi-authority aggregate behaviour:
  *   - rejection-precedence.spec.ts: a single Rejected decision → aggregate Rejected
- *   - amendment-precedence.spec.ts: a single AmendmentRequested (no Reject) → AmendmentRequested
+ *   - removed amendment decisions are rejected; applications expose only Approve/Reject
  *   - unanimous-publish.spec.ts: all required authorities Approved (same version) → Approved
  *     + public_events/{id} created + organiser notification written
  */
@@ -58,7 +58,12 @@ test.describe('@M3 aggregate decision flows', () => {
     }
     await api.signOut();
     await loginAs('admin');
-    await api.callFunction('makeSecondReviewDecision', { eventId: EVENTS.foodFair, finalDecision: 'Rejected', adminNote: 'Admin confirms rejection after reviewing the officer proposals.' });
+    await api.callFunction('makeSecondReviewDecision', {
+      eventId: EVENTS.foodFair,
+      finalDecision: 'Rejected',
+      reason: 'The final application does not satisfy the required inter-agency safety conditions.',
+      suggestion: 'Submit a new application with a complete and verified safety plan.',
+    });
 
     const event = await api.getDoc(`events/${EVENTS.foodFair}`);
     expect(event!.status).toBe('Rejected');
@@ -85,47 +90,21 @@ test.describe('@M3 aggregate decision flows', () => {
     expect(eventAfter!.status).toBe('Rejected');
   });
 
-  test('amendment precedence: AmendmentRequested (no Reject) → AmendmentRequested', async ({ page, api, loginAs }) => {
-    // evt-004 marathon: already AmendmentRequested. Use evt-002 for a clean test.
+  test('removed amendment decisions are rejected by the officer endpoint', async ({ api, loginAs }) => {
     await loginAs('pdrm');
-    await page.goto(`/authority/events/${EVENTS.foodFair}`, { waitUntil: 'domcontentloaded' });
-    // Make sure decisions are cleared
-    const existing = await api.getCollection(`events/${EVENTS.foodFair}/decisions`);
-    if (existing.length > 0) {
-      // Clean decisions via Admin SDK path — but rules block client delete.
-      // The global-setup already cleared; if not, this test would have failed
-      // earlier in the suite. Best-effort assertion.
+    let callError: string | null = null;
+    try {
+      await api.callFunction('recordOfficerProposal', {
+        eventId: EVENTS.foodFair,
+        decision: 'AmendmentRequested',
+        reason: 'Legacy amendment decision must not be accepted.',
+        confirmedReview: true,
+      });
+    } catch (error) {
+      callError = error instanceof Error ? error.message : String(error);
     }
-    // Scope to the "Your decision" section for rationale + buttons
-    // (Stage-1 section also has buttons/textareas).
-    const decisionSection = page.locator('section', { has: page.getByRole('heading', { name: /your decision/i }) });
-    await decisionSection.getByLabel(/decision rationale/i).fill('PDRM E2E — requesting amendment to medical plan and traffic TMP.');
-    const amendBtn = decisionSection.getByRole('button', { name: /propose amendment/i });
-    await amendBtn.scrollIntoViewIfNeeded();
-    await expect(amendBtn).toBeEnabled();
-    await amendBtn.click();
-    await expect.poll(async () => {
-      const d = await api.getDoc(`events/${EVENTS.foodFair}/assignments/v1_PDRM`);
-      return d?.decision === 'AmendmentRequested' ? true : null;
-    }, { timeout: 10_000 }).toBe(true);
-
-    for (const [key, reason] of [
-      ['bomba', BOMBA_RATIONALE],
-      ['kkm', KKM_RATIONALE],
-      ['dbkl', DBKL_RATIONALE],
-    ] as const) {
-      await api.signOut();
-      await loginAs(key);
-      await api.callFunction('recordOfficerProposal', { eventId: EVENTS.foodFair, decision: 'Approved', reason, confirmedReview: true });
-    }
-    await api.signOut();
-    await loginAs('admin');
-    await api.callFunction('makeSecondReviewDecision', { eventId: EVENTS.foodFair, finalDecision: 'AmendmentRequested', adminNote: 'Admin requests the documented amendment.' });
-
-    const event = await api.getDoc(`events/${EVENTS.foodFair}`);
-    expect(event!.status).toBe('AmendmentRequested');
-    const publicEvent = await api.getDoc(`public_events/${EVENTS.foodFair}`);
-    expect(publicEvent).toBeNull();
+    expect(callError).toMatch(/invalid|decision|approved|rejected/i);
+    expect((await api.getDoc(`events/${EVENTS.foodFair}`))?.status).toBe('UnderReview');
   });
 
   test('unanimous publish: all required Approved (same version) → Approved + public_events + notification', async ({ page, api, loginAs }) => {

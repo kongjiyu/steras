@@ -7,7 +7,7 @@
  *     eventId: string          — related event (if any)
  *     versionId?: string       — versioned with the event
  *     type: 'decision_made' | 'application_approved' | 'application_rejected'
- *         | 'amendment_requested' | 'control_verified' | 'control_rejected'
+ *         | 'control_verified' | 'control_rejected'
  *     title: string            — short, present-tense
  *     message: string          — privacy-safe, no PII beyond event name
  *     sourceActionId: string   — for idempotency (decision history id, etc.)

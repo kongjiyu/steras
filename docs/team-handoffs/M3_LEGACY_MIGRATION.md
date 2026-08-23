@@ -70,3 +70,31 @@ npm --workspace functions run migrate:m3 -- --rollback artifacts/m3-migration/ev
 
 If the dry-run proposes any field outside the manifest, any projection change,
 or any inferred `initialReview`, stop and review the report before applying.
+
+## Application decision-contract migration
+
+This is a separate, narrower migration for the old Application
+`AmendmentRequested` workflow. It is not the seven-event compatibility
+migration above and must not be combined with a broad event scan.
+
+It is locked to exactly `evt-004-kl-marathon` and `m3-uat-08-amendment` on
+`linkos-496505`. The safe order is:
+
+```powershell
+$env:GOOGLE_APPLICATION_CREDENTIALS='C:\path\to\linkos-496505-firebase-adminsdk.json'
+$env:FIREBASE_PROJECT_ID='linkos-496505'
+$env:M3_DECISION_MIGRATION_PROJECT_ID='linkos-496505'
+$env:M3_DECISION_MIGRATION_ALLOW_SHARED_PROJECT='true'
+$env:M3_DECISION_MIGRATION_CONFIRM='REJECT_APPLICATION_AMENDMENTS'
+npm run migrate:m3:decision-contract:dry-run
+npm run migrate:m3:decision-contract:snapshot
+npm run migrate:m3:decision-contract:apply
+npm run migrate:m3:decision-contract:verify
+```
+
+The snapshot command writes only the two target event trees, assignments,
+officer workload documents, audit logs, and public projections to
+`artifacts/m3-migration/decision-contract-snapshot.json`. Apply refuses to
+start unless that exact snapshot exists and matches the migration identity and
+allowlist. Keep the snapshot outside Git and retain it with the deployment
+evidence for emergency manual recovery.

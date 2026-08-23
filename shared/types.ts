@@ -42,7 +42,6 @@ export type EventStatus =
   | 'Draft'
   | 'Pending'
   | 'UnderReview'
-  | 'AmendmentRequested'
   | 'Approved'
   | 'Rejected'
   | 'Withdrawn'
@@ -52,7 +51,6 @@ export const EVENT_STATUSES: { value: EventStatus; label: string; color: string 
   { value: 'Draft', label: 'Draft', color: 'gray' },
   { value: 'Pending', label: 'Pending', color: 'amber' },
   { value: 'UnderReview', label: 'Under Review', color: 'blue' },
-  { value: 'AmendmentRequested', label: 'Amendment Requested', color: 'orange' },
   { value: 'Approved', label: 'Approved', color: 'green' },
   { value: 'Rejected', label: 'Rejected', color: 'red' },
   { value: 'Withdrawn', label: 'Withdrawn', color: 'gray' },
@@ -1019,7 +1017,11 @@ export interface AuthorityAssessmentReview {
   }>;
 }
 
-export type DecisionValue = 'Approved' | 'Rejected' | 'AmendmentRequested';
+/** Decisions that can be recorded for an event application. */
+export type ApplicationDecision = 'Approved' | 'Rejected';
+
+/** @deprecated Use ApplicationDecision. Kept as a narrow alias for existing callers. */
+export type DecisionValue = ApplicationDecision;
 
 export interface AuthorityDecision {
   decisionId: string;
@@ -1046,7 +1048,6 @@ export type AuditAction =
   | 'resource_schema_cutover'
   | 'resource_recommended'
   | 'resource_overridden'
-  | 'amendment_requested'
   | 'assignment_created'
   | 'authority_reviewed'
   | 'authority_score_reviewed'
@@ -1084,7 +1085,6 @@ export type NotificationType =
   | 'decision_made'
   | 'application_approved'
   | 'application_rejected'
-  | 'amendment_requested'
   | 'control_verified'
   | 'control_rejected'
   | 'control_list_published'

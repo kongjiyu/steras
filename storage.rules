@@ -38,7 +38,7 @@ service firebase.storage {
     }
 
     function isEditableVersion(eventId, versionId) {
-      return eventRecord(eventId).status in ['Draft', 'Rejected', 'AmendmentRequested']
+      return eventRecord(eventId).status == 'Draft'
              && eventRecord(eventId).editableVersionId == versionId;
     }
 

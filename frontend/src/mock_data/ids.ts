@@ -11,7 +11,7 @@ export const EVENT_IDS = {
   E001: 'evt-001-kl-music-festival',           // Approved + published
   E002: 'evt-002-pj-food-fair',                // UnderReview, mid (provisional)
   E003: 'evt-003-kl-mountain-run',             // Pending (M2 processing)
-  E004: 'evt-004-kl-marathon',                 // AmendmentRequested, v2 draft
+  E004: 'evt-004-kl-marathon',                 // Rejected (terminal application decision)
   E005: 'evt-005-shah-alam-beach-carnival',    // Rejected (final)
   E006: 'evt-006-kl-tech-conference',          // Withdrawn
   E007: 'evt-007-kl-cultural-night',            // Pending, manual review required

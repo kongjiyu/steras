@@ -54,7 +54,7 @@ Cross-module contracts (don't break these):
 - Authority dashboard, assigned review queue, event review page.
 - Evidence download.
 - Authority-scoped decision Cloud Function with versioned history.
-- Multi-authority aggregation (`Approved` requires unanimous same-version; any `Rejected` wins; otherwise `AmendmentRequested`).
+- Multi-authority aggregation (`Approved` requires unanimous same-version; any `Rejected` wins).
 - Resource override with provenance.
 - Audit writes.
 - Approved-event publication to `public_events/{eventId}`.
@@ -126,7 +126,7 @@ Cross-module contracts (don't break these):
 | `fixtures.ts` | **new** | Shared `api` helper (Firestore + Cloud Functions via `__sterasFirebase`), `loginAs` (SDK-based, 3x faster than UI), `ACCOUNTS`, `EVENTS`. |
 | `pdrm-decision.spec.ts` | **new** | Happy path: PDRM Approve on assigned event. |
 | `m3-negative-gates.spec.ts` | **new** | 4 specs: compliance-blocked, short-rationale, long-rationale, non-assigned authority. |
-| `m3-aggregate.spec.ts` | **new** | 3 specs: rejection-precedence, amendment-precedence, unanimous-publish. |
+| `m3-aggregate.spec.ts` | **new** | 3 specs: rejection-precedence, removed-legacy-decision, unanimous-publish. |
 | `m3-controls-notifications.spec.ts` | **new** (Q1 refactor) | 4 specs: KKM-cannot-verify, PDRM-verifies (per-doc), organiser-receives, markNotificationRead. |
 | `control-verification-ui.spec.ts` | **new** (Q1 refactor) | 2 UI smoke specs for the per-doc Stage-1 control verification form. |
 | `officer-assignment.spec.ts` | **new** (Workstream 1) | 2 specs: full flow (assign → 4 officers propose → admin confirms aggregate), PDRM-cannot-record-if-not-assigned. |
@@ -161,7 +161,7 @@ You can verify everything in the live app without running tests. Use the seeded 
    - The "Recommended resources" card.
    - The "Submitted evidence" card.
    - The new **"Stage-1 control verification"** card (this event has no controls — the section is hidden for events without controls, see `ControlVerificationSection` returns `null`).
-   - The "Your decision" card with the 3 buttons (Approve / Request amendment / Reject).
+   - The "Your decision" card with the 2 buttons (Approve / Reject).
 4. Type ≥10 chars of rationale, click **Approve**. Toast: "Approval recorded." Status pill moves to "Under Review" (still waiting on the other 3 authorities).
 5. Sign out, sign in as **BOMBA**, **KKM**, **DBKL** in turn, repeat. After the 4th approval, the event becomes `Approved` and a public projection is written.
 6. Sign in as the **organizer**. The bell (top-right) shows an unread count. Open it — you see 4 notifications:
@@ -173,7 +173,7 @@ You can verify everything in the live app without running tests. Use the seeded 
 1. Sign in as **PDRM**, open **`evt-compliance-blocked`**.
 2. The Approve button is enabled (UI doesn't pre-block; the gate is server-side). Type any rationale, click **Approve**.
 3. Toast: an error message — *"This application cannot be approved while M2 compliance status is "blocked"…"* (thrown by the Cloud Function as `failed-precondition`).
-4. The decision is **not** recorded; the event stays `UnderReview`. The Reject / Amendment Requested buttons still work.
+4. The decision is **not** recorded; the event stays `UnderReview`. The Reject button still works.
 
 ### Smoke test — readiness rationale gate
 1. Sign in as **PDRM**, open **`evt-provisional-readiness`**.
@@ -220,7 +220,7 @@ npx playwright test tests/m3/pdrm-decision.spec.ts
 | `m3-negative-gates` › ≥80 char rationale accepted | Same event + 100-char rationale is accepted. |
 | `m3-negative-gates` › non-assigned authority | A KKM officer acting on a `[PDRM, BOMBA]` event is rejected (`permission-denied`, "not assigned"). |
 | `m3-aggregate` › rejection precedence | One Reject → aggregate `Rejected`; no `public_events`; subsequent BOMBA Approve is rejected; aggregate stays `Rejected`. |
-| `m3-aggregate` › amendment precedence | One `AmendmentRequested` → aggregate `AmendmentRequested`; no public event. |
+| `m3-aggregate` › removed legacy decision | A legacy `AmendmentRequested` payload is rejected; the event remains `UnderReview`. |
 | `m3-aggregate` › unanimous publish | All 4 authorities Approve on the same version → `Approved`; `public_events` row exists; `publicStatus='approved'`; `approvedBy` contains all 4. |
 | `m3-controls-notifications` › KKM cannot verify | KKM on a non-KKM event → `permission-denied` from `verifyEventControl`. |
 | `m3-controls-notifications` › PDRM verifies | PDRM verifies a declared control → `result.status === 'verified'`. |
@@ -248,7 +248,7 @@ The Stage-1 control verification flow used to operate on a single flat `event_co
 - `shared/types.ts`: dropped `ControlVerification` interface and `COLLECTIONS.CONTROL_VERIFICATIONS`. Added `stage1_doc_approved` / `stage1_doc_rejected` to `NotificationType`. `Stage1Doc` now owns its own status fields.
 - `frontend/src/pages/authority/AuthorityEventReview.tsx`: the Stage-1 control verification section now subscribes to each control's `stage1_docs` sub-collection and renders a per-doc form. `ControlLabelBadge` (per control) + `DocStatusBadge` (per doc) make the aggregate vs individual state visible at a glance.
 - `frontend/tests/m3/global-setup.ts`: added a `seedEventControls` helper that seeds one control per `requiredAuthority` with 3 stage1_docs each (application / licence / insurance) in `pending_verification`. Called from **both** the existing-event path and the negative-test-fixture path (was the root cause of one flake: the existing-event path wasn't re-seeding after the pre-cleanup wipe).
-- Test selectors: scoped the `Approve` / `Reject` / `Request amendment` / `decision rationale` locators to the "Your decision" section to avoid strict-mode collisions with the new per-doc forms.
+- Test selectors: scoped the `Approve` / `Reject` / `decision rationale` locators to the "Your decision" section to avoid strict-mode collisions with the new per-doc forms.
 
 **Migration status:** Round 1 (rename + types + UI + tests) and Round 2 (delete the old flat `verifiedControlIds` logic) shipped in `ab8b33d`. Round 3 (post-merge legacy-data cleanup via Admin SDK) not blocking — only matters once we cut a release with prior data.
 
@@ -264,7 +264,7 @@ The plan for this round lived in `docs/team-handoffs/M3_WORKSTREAM1_POLISH_PLAN.
 
 **#3 Audit log for assignment actions (FR-M3-09..12)** — `assignAuthorityOfficers` now writes one `assignment_created` audit log per assigned officer in the same transaction as the assignment (atomic — no consistency window). Captures `actorId`, `actorRole`, `notes`, and `metadata` (authorityType, officerUid, venueState, previous/new workloadCount). `unassignAuthorityOfficers` writes `assignment_revoked` audit logs. New `AuditAction` values: `'assignment_created'`, `'assignment_revoked'`.
 
-**#5 FR-M3-16 officer approval checkbox** — `recordOfficerProposal` and the legacy `makeAuthorityDecision` both refuse `Approve` unless `confirmedReview: true`. `AuthorityEventReview.tsx` renders a "I have reviewed the assessment, AI advisory, submitted evidence, and recommended resource ranges" checkbox above the Approve button. The Approve button is disabled without it. Reject and AmendmentRequested don't require the checkbox (per the PRD's "I have reviewed everything before I bless this" intent).
+**#5 FR-M3-16 officer approval checkbox** — `recordOfficerProposal` and the legacy `makeAuthorityDecision` both refuse `Approve` unless `confirmedReview: true`. `AuthorityEventReview.tsx` renders a "I have reviewed the assessment, AI advisory, submitted evidence, and recommended resource ranges" checkbox above the Approve button. The Approve button is disabled without it.
 
 **#6 FR-M3-08 reason + suggestion split fields in notifications** — `Notification` interface gains optional `reason?: string` and `suggestion?: string`. `createNotification` helper accepts and writes them. The two callers that have reason + suggestion (`recordOfficerProposal` on Reject/Amend, `makeSecondReviewDecision` on the featured officer) now pass them as separate fields. `NotificationBell.tsx` renders them on separate lines under the message. Legacy notifications without these fields degrade gracefully.
 

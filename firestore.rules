@@ -4,7 +4,7 @@ rules_version = '2';
 // STERAS Firestore Security Rules
 // =====================================================================
 // Roles:
-//   - organizer:  self-signup; can edit own Draft or AmendmentRequested applications
+//   - organizer:  self-signup; can edit own Draft applications only
 //   - authority:  server-provisioned only; reviews applications assigned to their agency
 //   - public:     self-signup; reads public_events (same as logged-out users)
 //   - admin:      server-provisioned only; full read across users/events for ops
@@ -51,7 +51,7 @@ service cloud.firestore {
     }
 
     function isEditable(status) {
-      return status == 'Draft' || status == 'AmendmentRequested' || status == 'Rejected';
+      return status == 'Draft';
     }
 
     // ---- users collection ----
@@ -91,7 +91,7 @@ service cloud.firestore {
                   || isAssignedAuthority(eventId)
                   || (isSignedIn() && isOwner(resource.data.organizerId));
 
-      // Drafts are client-created. Submission and resubmission are server-only.
+      // Drafts are client-created. Submission is server-only; Rejected applications cannot be resubmitted.
       allow create: if isOrganizer()
                     && request.resource.data.organizerId == request.auth.uid
                     && request.resource.data.status == 'Draft'

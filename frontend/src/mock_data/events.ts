@@ -170,18 +170,17 @@ export const mockEvents: EventRecord[] = [
   }),
 
   // =======================================================================
-  // E004 - KL Marathon - AmendmentRequested (v1 rejected, v2 in draft)
+  // E004 - KL Marathon - Rejected (terminal application decision)
   // =======================================================================
   mkEvent({
     eventId: EVENT_IDS.E004,
     organiserUid: USER_IDS.U_ORG_004,
-    status: 'AmendmentRequested',
+    status: 'Rejected',
     requiredAuthorities: ['PDRM', 'BOMBA', 'KKM', 'DBKL'],
     currentVersionId: 'v1',        // v1 is the last submitted + reviewed version
     currentVersionNumber: 1,
     currentAssessmentId: 'v1',
     currentResourceId: 'v1',
-    editableVersionId: 'v2',       // organiser is editing v2
     draftDocumentPaths: [],
     eventDetails: mkEventDetails({
       name: 'Bukit Jalil International Marathon 2026',
@@ -618,7 +617,7 @@ export const mockEventsById: Record<string, EventRecord> = Object.fromEntries(
 export const findActiveEventsForAuthority = (authorityType: AuthorityType): EventRecord[] =>
   mockEvents.filter(
     (e) => e.requiredAuthorities.includes(authorityType)
-      && ['Pending', 'UnderReview', 'AmendmentRequested'].includes(e.status),
+      && ['Pending', 'UnderReview'].includes(e.status),
   );
 
 /** Events that have been fully approved and published. */

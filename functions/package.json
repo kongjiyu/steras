@@ -20,6 +20,8 @@
     "seed:m3:uat": "npm run build && node lib/functions/src/seed/seedM3Uat.js",
     "seed:venues:staging": "npm run build && node lib/functions/src/seed/seedVenues.js",
     "migrate:m3": "npm run build && node lib/functions/src/scripts/migrateM3Deployment.js",
+    "migrate:m3:decision-contract": "npm run build && node lib/functions/src/scripts/migrateM3DecisionContract.js",
+    "migrate:m3:decision-contract:snapshot": "npm run build && node lib/functions/src/scripts/migrateM3DecisionContract.js --snapshot",
     "verify:minimax": "npm run build && node --env-file=.env --env-file=.secret.local lib/functions/src/scripts/verifyMiniMaxModel.js",
     "verify:external": "npm run build && node --env-file=.env --env-file=.secret.local lib/functions/src/scripts/verifyExternalServices.js",
     "uat:staging": "npm run build && node --env-file=../frontend/.env lib/functions/src/scripts/runStagingUat.js",

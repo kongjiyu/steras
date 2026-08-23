@@ -11,12 +11,15 @@ export const M3_UAT_EVENTS = {
   authorityPartial: 'm3-uat-05-authority-partial',
   secondReview: 'm3-uat-06-second-review',
   rejected: 'm3-uat-07-rejected',
-  amendment: 'm3-uat-08-amendment',
+  secondReviewRejected: 'm3-uat-08-second-review-rejected',
   controlVerification: 'm3-uat-09-control-verification',
   publicStage2: 'm3-uat-10-public-stage2',
 } as const;
 
 export const M3_UAT_EVENT_IDS = Object.freeze(Object.values(M3_UAT_EVENTS));
+
+/** Legacy fixture ID retired when the application AmendmentRequested flow was removed. */
+export const M3_UAT_RETIRED_EVENT_IDS = Object.freeze(['m3-uat-08-amendment'] as const);
 
 export type M3UatEventId = (typeof M3_UAT_EVENT_IDS)[number];
 

@@ -72,13 +72,13 @@ describe('Storage security rules', () => {
     await assertFails(deleteObject(fileReference));
   });
 
-  it('allows a rejected application to replace evidence in its editable version', async () => {
+  it('rejects evidence replacement after an application is rejected', async () => {
     await seedEditableEvent();
     await environment.withSecurityRulesDisabled((context) => updateDoc(doc(context.firestore(), 'events/event-1'), {
       status: 'Rejected',
       editableVersionId: 'v1',
     }));
     const organizer = environment.authenticatedContext('organizer-1').storage();
-    await assertSucceeds(uploadBytes(ref(organizer, 'event_documents/event-1/v1/revised.pdf'), new Uint8Array([4, 5]), { contentType: 'application/pdf' }));
+    await assertFails(uploadBytes(ref(organizer, 'event_documents/event-1/v1/revised.pdf'), new Uint8Array([4, 5]), { contentType: 'application/pdf' }));
   });
 });

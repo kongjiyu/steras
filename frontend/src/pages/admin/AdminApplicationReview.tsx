@@ -44,7 +44,6 @@ const STATUS_TONE: Record<EventStatus, string> = {
   Draft: 'admin-badge admin-badge--default',
   Pending: 'admin-badge admin-badge--warn',
   UnderReview: 'admin-badge admin-badge--warn',
-  AmendmentRequested: 'admin-badge admin-badge--bad',
   Approved: 'admin-badge admin-badge--good',
   Rejected: 'admin-badge admin-badge--bad',
   Withdrawn: 'admin-badge admin-badge--default',
@@ -237,7 +236,7 @@ export default function AdminApplicationReview() {
     return m;
   }, [officers]);
 
-  const canReview = event && (event.status === 'Pending' || event.status === 'UnderReview' || event.status === 'AmendmentRequested' || event.status === 'Manual Review Required');
+  const canReview = event && (event.status === 'Pending' || event.status === 'UnderReview' || event.status === 'Manual Review Required');
   const manualOfficialReady = assessment?.status === 'official_ready'
     && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual';
   const initialReviewOpen = Boolean(canReview

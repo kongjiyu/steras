@@ -123,7 +123,7 @@ Legend: ✅ implemented · ⚠️ partial · ❌ missing
 | UC-17 | Confirm Resource Recommendation | FR-M3-14 | ⚠️ | Resource panel is visible, but the "confirm" action is implicit (the override form is the only way to interact). No explicit "I confirm" button. |
 | UC-18 | Override Resource Recommendation | FR-M3-24 | ✅ | "Adjust" button + override form. |
 | UC-19 | Record Override Details and Reason | FR-M3-24 | ✅ | `overrideResources` Cloud Function persists original/revised/UID/authority/timestamp + audit. |
-| UC-20 | Approve Assigned Application | FR-M3-16 | ✅ | **`recordOfficerProposal` + `AuthorityEventReview.tsx` checkbox** (`7bd47f1`). Approve requires `confirmedReview: true` (UI checkbox). Reject and AmendmentRequested don't require the checkbox (per the PRD's "I have reviewed everything before I bless this" intent). |
+| UC-20 | Approve Assigned Application | FR-M3-16 | ✅ | **`recordOfficerProposal` + `AuthorityEventReview.tsx` checkbox**. Approve requires `confirmedReview: true` (UI checkbox). |
 | UC-21 | Reject Assigned Application | FR-M3-15 | ✅ | Reject button + `recordOfficerProposal` (separated `reason` + `suggestion` fields per FR-M3-05). |
 | UC-22 | Review Stage 1 Event Control Document | FR-M3-22 | ✅ | **Q1 refactor** (`ab8b33d`): `event_controls/{controlId}/stage1_docs/{docId}` is the per-doc sub-collection. `AuthorityEventReview.tsx` renders per-doc cards with status badges and provenance. |
 | UC-23 | Verify Stage 1 Documentation | FR-M3-22 | ✅ | **`verifyStage1Doc` Cloud Function** (`ab8b33d`). Officer verifies a single Stage 1 doc (application, licence, insurance, …); the parent control's aggregate `label` is recomputed by the function. |
@@ -167,7 +167,7 @@ Legend: ✅ implemented · ⚠️ partial · ❌ missing
 
 | UC | Title | FR | Status | Where / why |
 |---|---|---|---|---|
-| UC-39 | Record Rejection Reason and Suggestion | FR-M3-05 | ✅ | **`recordOfficerProposal` Cloud Function** (`44a7840`) requires both fields. Reject path requires non-empty `suggestion`. The featured officer's `reason` + `suggestion` are surfaced in the `application_rejected` / `amendment_requested` notification. |
+| UC-39 | Record Rejection Reason and Suggestion | FR-M3-05 | ✅ | **`recordOfficerProposal` and `makeSecondReviewDecision`** require structured rejection reason + suggestion. They are surfaced in the `application_rejected` notification. |
 | UC-40 | Attach Authority Officer Feedback | FR-M3-06 | ❌ | When admin rejects at initial review, the officer's per-authority feedback isn't attached. (Officer decisions *are* written to `decisions/{authType}`, but they're not surfaced as feedback the admin attaches to the rejection.) |
 
 ---

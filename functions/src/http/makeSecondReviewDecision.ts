@@ -8,7 +8,6 @@
  *   1. Reads all `assignments/{versionId}_{auth}` for the current version.
  *   2. Aggregates the decisions per the prototype rules (A8):
  *        - any Rejected -> aggregate Rejected
- *        - any AmendmentRequested -> aggregate AmendmentRequested
  *        - all Approved -> aggregate Approved
  *   3. Writes the final `events.status` + `events.secondReview` + audit.
  *   4. Notifies the organiser (FR-M3-08) with the officer's reason +
@@ -41,11 +40,18 @@ interface MakeSecondReviewDecisionRequest {
   finalDecision?: DecisionValue;
   /** Backwards-compatible alias used by the first admin UI revision. */
   confirmedDecision?: DecisionValue;
-  /** Optional reason from the admin (for the audit log). */
+  /** Required reason when the admin rejects the application. */
+  reason?: string;
+  /** Required suggestion when the admin rejects the application. */
+  suggestion?: string;
+  /** Optional note retained for approval context and backwards compatibility. */
   adminNote?: string;
 }
 
 const ADMIN_NOTE_MAX = 1000;
+const REASON_MIN = 10;
+const REASON_MAX = 1000;
+const SUGGESTION_MAX = 1000;
 
 export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>({ region: FUNCTION_REGION }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in before confirming a second review.');
@@ -60,7 +66,18 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
   if (!isDecision(finalDecision)) {
     throw new HttpsError('invalid-argument', 'finalDecision is required.');
   }
+  const reason = (request.data?.reason ?? '').trim();
+  const suggestion = (request.data?.suggestion ?? '').trim();
   const adminNote = (request.data?.adminNote ?? '').trim();
+  if (reason.length > REASON_MAX || (reason.length > 0 && reason.length < REASON_MIN)) {
+    throw new HttpsError('invalid-argument', `reason must be ${REASON_MIN}-${REASON_MAX} characters when provided.`);
+  }
+  if (suggestion.length > SUGGESTION_MAX) {
+    throw new HttpsError('invalid-argument', `suggestion must be at most ${SUGGESTION_MAX} characters.`);
+  }
+  if (finalDecision === 'Rejected' && (reason.length < REASON_MIN || suggestion.length === 0)) {
+    throw new HttpsError('invalid-argument', 'A rejection requires both a reason and a suggestion.');
+  }
   if (adminNote.length > ADMIN_NOTE_MAX) {
     throw new HttpsError('invalid-argument', `adminNote must be at most ${ADMIN_NOTE_MAX} characters.`);
   }
@@ -103,25 +120,26 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
   const aggregate = aggregateFromAssignments(assignments, required);
   const now = Date.now();
   // Pick the most informative officer reason+suggestion for the
-  // organiser notification (priority: Rejected > AmendmentRequested > Approved).
+  // organiser notification when the admin did not provide a rejection detail.
   const reasonOfficer = pickFeaturedOfficer(assignments, finalDecision);
   const notifType: NotificationType =
     finalDecision === 'Approved' ? 'application_approved'
-    : finalDecision === 'Rejected' ? 'application_rejected'
-    : 'amendment_requested';
+    : 'application_rejected';
 
   return db.runTransaction(async (tx) => {
     tx.update(eventRef, {
       status: finalDecision,
-      reviewStage: null,
-      ...(finalDecision === 'Rejected' || finalDecision === 'AmendmentRequested'
-        ? { editableVersionId: `v${event.currentVersionNumber + 1}`, draftDocumentPaths: [] }
+      reviewStage: finalDecision === 'Rejected' ? 'closed' : null,
+      ...(finalDecision === 'Rejected'
+        ? { assignedOfficerUids: [], assignedOfficerByAuthority: {}, editableVersionId: FieldValue.delete() }
         : {}),
       secondReview: {
         reviewerUid: request.auth!.uid,
         decidedAt: now,
         confirmedDecision: finalDecision,
         aggregateDecision: aggregate,
+        reason: reason || null,
+        suggestion: suggestion || null,
         adminNote: adminNote || null,
         featuredOfficerUid: reasonOfficer?.officerUid ?? null,
       },
@@ -140,7 +158,7 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
       timestamp: now,
       previousStatus: event.status,
       newStatus: finalDecision,
-      notes: adminNote || null,
+      notes: reason || adminNote || null,
       metadata: {
         reviewStage: 'second',
         aggregate,
@@ -148,6 +166,8 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
         featuredOfficerUid: reasonOfficer?.officerUid ?? null,
         featuredReason: reasonOfficer?.reason ?? null,
         featuredSuggestion: reasonOfficer?.suggestion ?? null,
+        reason: reason || null,
+        suggestion: suggestion || null,
       },
     });
 
@@ -200,12 +220,9 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
       try {
         const recipientUid = await resolveAuthUid(event.organizerId);
         if (recipientUid) {
-          const title =
-            result.finalDecision === 'Approved' ? 'Application approved'
-            : result.finalDecision === 'Rejected' ? 'Application rejected'
-            : 'Amendment requested';
-          const message = adminNote
-            ? adminNote
+          const title = result.finalDecision === 'Approved' ? 'Application approved' : 'Application rejected';
+          const message = reason || adminNote
+            ? (reason || adminNote)
             : result.reasonOfficer
               ? `${result.reasonOfficer.authorityType} ${result.reasonOfficer.reason}${result.reasonOfficer.suggestion ? '. ' + result.reasonOfficer.suggestion : ''}`
               : `The admin recorded ${result.finalDecision} after second review.`;
@@ -220,8 +237,8 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
             title,
             message,
             sourceActionId: `second_review_${versionId}`,
-            ...(result.reasonOfficer?.reason ? { reason: result.reasonOfficer.reason } : adminNote ? { reason: adminNote } : {}),
-            ...(result.reasonOfficer?.suggestion ? { suggestion: result.reasonOfficer.suggestion } : {}),
+            ...(reason ? { reason } : result.reasonOfficer?.reason ? { reason: result.reasonOfficer.reason } : adminNote ? { reason: adminNote } : {}),
+            ...(suggestion ? { suggestion } : result.reasonOfficer?.suggestion ? { suggestion: result.reasonOfficer.suggestion } : {}),
           });
         }
       } catch (err) {
@@ -240,9 +257,6 @@ function aggregateFromAssignments(assignments: Assignment[], required: Authority
   for (const auth of required) {
     if (byAuthority.get(auth) === 'Rejected') return 'Rejected';
   }
-  for (const auth of required) {
-    if (byAuthority.get(auth) === 'AmendmentRequested') return 'AmendmentRequested';
-  }
   if (required.length > 0 && required.every((auth) => byAuthority.get(auth) === 'Approved')) {
     return 'Approved';
   }
@@ -256,12 +270,9 @@ function pickFeaturedOfficer(assignments: Assignment[], decision: DecisionValue)
   if (decision === 'Rejected') {
     return assignments.find((a) => a.decision === 'Rejected' && a.reason);
   }
-  if (decision === 'AmendmentRequested') {
-    return assignments.find((a) => a.decision === 'AmendmentRequested' && a.reason);
-  }
   return undefined;
 }
 
 function isDecision(v: unknown): v is DecisionValue {
-  return v === 'Approved' || v === 'Rejected' || v === 'AmendmentRequested';
+  return v === 'Approved' || v === 'Rejected';
 }

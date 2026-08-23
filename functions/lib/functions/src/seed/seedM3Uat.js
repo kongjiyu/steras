@@ -35,7 +35,7 @@ const SCENARIOS = [
     { id: m3UatFixtures_1.M3_UAT_EVENTS.authorityPartial, name: 'Authority Review In Progress', status: 'UnderReview', requiredAuthorities: REQUIRED_AUTHORITIES, reviewStage: 'authority', assignments: 'partial' },
     { id: m3UatFixtures_1.M3_UAT_EVENTS.secondReview, name: 'Second Review Ready', status: 'UnderReview', requiredAuthorities: REQUIRED_AUTHORITIES, reviewStage: 'second', assignments: 'complete' },
     { id: m3UatFixtures_1.M3_UAT_EVENTS.rejected, name: 'Rejected Application', status: 'Rejected', requiredAuthorities: REQUIRED_AUTHORITIES, reviewStage: 'closed', assignments: 'complete', finalDecision: 'Rejected' },
-    { id: m3UatFixtures_1.M3_UAT_EVENTS.amendment, name: 'Amendment Requested', status: 'AmendmentRequested', requiredAuthorities: REQUIRED_AUTHORITIES, reviewStage: 'closed', assignments: 'complete', finalDecision: 'AmendmentRequested' },
+    { id: m3UatFixtures_1.M3_UAT_EVENTS.secondReviewRejected, name: 'Second Review Rejected', status: 'Rejected', requiredAuthorities: REQUIRED_AUTHORITIES, reviewStage: 'closed', assignments: 'complete', finalDecision: 'Rejected' },
     { id: m3UatFixtures_1.M3_UAT_EVENTS.controlVerification, name: 'Stage 1 Control Verification', status: 'Approved', requiredAuthorities: REQUIRED_AUTHORITIES, reviewStage: null, controls: 'stage1' },
     { id: m3UatFixtures_1.M3_UAT_EVENTS.publicStage2, name: 'Published Stage 2 Evidence', status: 'Approved', requiredAuthorities: REQUIRED_AUTHORITIES, reviewStage: null, controls: 'stage2' },
 ];
@@ -127,7 +127,7 @@ async function withTransientAuthRetry(operation) {
     throw lastError;
 }
 async function assertNoCollisions(ctx) {
-    for (const eventId of m3UatFixtures_1.M3_UAT_EVENT_IDS) {
+    for (const eventId of [...m3UatFixtures_1.M3_UAT_EVENT_IDS, ...m3UatFixtures_1.M3_UAT_RETIRED_EVENT_IDS]) {
         const snap = await ctx.db.collection('events').doc(eventId).get();
         if (snap.exists && !isManaged(snap.data(), eventId)) {
             throw new Error(`Collision at events/${eventId}: existing document is not owned by ${m3UatFixtures_1.M3_UAT_DATASET_ID}.`);
@@ -433,8 +433,6 @@ function assignmentDecision(authority, scenario) {
     if (scenario.assignments === 'complete') {
         if (scenario.finalDecision === 'Rejected' && authority === 'PDRM')
             return 'Rejected';
-        if (scenario.finalDecision === 'AmendmentRequested' && authority === 'PDRM')
-            return 'AmendmentRequested';
         return 'Approved';
     }
     if (scenario.assignments === 'partial' && authority === 'PDRM')
@@ -456,7 +454,7 @@ async function writeScenario(ctx, scenario, uids) {
         status: scenario.status,
         currentVersionId: VERSION_ID,
         currentVersionNumber: 1,
-        editableVersionId: scenario.status === 'AmendmentRequested' ? 'v2' : null,
+        editableVersionId: null,
         draftDocumentPaths: [],
         requiredAuthorities: scenario.requiredAuthorities,
         assignedOfficerUids: assigned.map((authority) => uids[authority]),
@@ -592,7 +590,7 @@ async function deleteQuery(db, query) {
     return snap.size;
 }
 async function clearManagedDataset(ctx, includeIdentities) {
-    for (const eventId of m3UatFixtures_1.M3_UAT_EVENT_IDS) {
+    for (const eventId of [...m3UatFixtures_1.M3_UAT_EVENT_IDS, ...m3UatFixtures_1.M3_UAT_RETIRED_EVENT_IDS]) {
         const eventRef = ctx.db.collection('events').doc(eventId);
         const eventSnap = await eventRef.get();
         const managedParent = eventSnap.exists && isManaged(eventSnap.data(), eventId);
@@ -705,6 +703,10 @@ async function verifyM3UatDataset(ctx) {
                 failures.push(`Profile missing or marker invalid: ${identity.email}`);
         }
     }
+    for (const eventId of m3UatFixtures_1.M3_UAT_RETIRED_EVENT_IDS) {
+        if ((await ctx.db.collection('events').doc(eventId).get()).exists)
+            failures.push(`${eventId}: retired fixture still exists`);
+    }
     if (failures.length > 0)
         throw new Error(`M3 UAT verification failed:\n- ${failures.join('\n- ')}`);
 }
@@ -802,7 +804,7 @@ async function runM3UatAction(action, ctx = initializeM3UatContext()) {
     assertSharedProjectAuthorization(ctx.projectId, action);
     if (action === 'dry-run') {
         await assertNoCollisions(ctx);
-        console.info(JSON.stringify({ projectId: ctx.projectId, action, datasetId: m3UatFixtures_1.M3_UAT_DATASET_ID, events: SCENARIOS.map(({ id, name, status }) => ({ id, name, status })), accounts: IDENTITIES.map(({ email, role, authorityType }) => ({ email, role, authorityType })), storagePrefixes: m3UatFixtures_1.M3_UAT_EVENT_IDS.map((id) => `events/${id}/`) }, null, 2));
+        console.info(JSON.stringify({ projectId: ctx.projectId, action, datasetId: m3UatFixtures_1.M3_UAT_DATASET_ID, events: SCENARIOS.map(({ id, name, status }) => ({ id, name, status })), retiredEventIds: m3UatFixtures_1.M3_UAT_RETIRED_EVENT_IDS, accounts: IDENTITIES.map(({ email, role, authorityType }) => ({ email, role, authorityType })), storagePrefixes: [...m3UatFixtures_1.M3_UAT_EVENT_IDS, ...m3UatFixtures_1.M3_UAT_RETIRED_EVENT_IDS].map((id) => `events/${id}/`) }, null, 2));
         return;
     }
     if (action === 'apply')

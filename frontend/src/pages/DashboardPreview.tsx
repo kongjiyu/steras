@@ -81,7 +81,7 @@ function previewRecord(
 
 const PREVIEW_RECORDS = [
   previewRecord('merdeka-festival', 'Merdeka Cultural Festival', 'Dataran Merdeka', 'Pending', 'High', 18_000, 21, 2),
-  previewRecord('river-lights', 'River of Life Night Market', 'Masjid Jamek Precinct', 'AmendmentRequested', 'Medium', 7_500, 12, 5),
+  previewRecord('river-lights', 'River of Life Night Market', 'Masjid Jamek Precinct', 'Rejected', 'Medium', 7_500, 12, 5),
   previewRecord('heritage-run', 'KL Heritage Run 2026', 'Padang Merbok', 'UnderReview', 'Medium', 10_000, 32, 9),
   previewRecord('craft-week', 'Malaysian Craft Week', 'Kompleks Kraf Kuala Lumpur', 'Pending', undefined, 3_200, 45, 12),
   previewRecord('food-festival', 'Flavours of Malaysia Festival', 'Titiwangsa Lake Gardens', 'UnderReview', 'Low', 5_500, 54, 26),

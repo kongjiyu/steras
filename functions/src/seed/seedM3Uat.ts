@@ -7,6 +7,7 @@ import {
   M3_UAT_ACCOUNT_EMAILS,
   M3_UAT_DATASET_ID,
   M3_UAT_EVENT_IDS,
+  M3_UAT_RETIRED_EVENT_IDS,
   M3_UAT_EVENTS,
   M3_UAT_SHARED_PROJECT_ID,
   type M3UatEventId,
@@ -76,7 +77,7 @@ interface Scenario {
   assessmentReadiness?: 'complete' | 'provisional' | 'insufficient_data';
   assignments?: 'none' | 'pending' | 'partial' | 'complete';
   controls?: 'none' | 'stage1' | 'stage2';
-  finalDecision?: 'Rejected' | 'AmendmentRequested';
+  finalDecision?: 'Rejected';
 }
 
 const SCENARIOS: Scenario[] = [
@@ -87,7 +88,7 @@ const SCENARIOS: Scenario[] = [
   { id: M3_UAT_EVENTS.authorityPartial, name: 'Authority Review In Progress', status: 'UnderReview', requiredAuthorities: REQUIRED_AUTHORITIES, reviewStage: 'authority', assignments: 'partial' },
   { id: M3_UAT_EVENTS.secondReview, name: 'Second Review Ready', status: 'UnderReview', requiredAuthorities: REQUIRED_AUTHORITIES, reviewStage: 'second', assignments: 'complete' },
   { id: M3_UAT_EVENTS.rejected, name: 'Rejected Application', status: 'Rejected', requiredAuthorities: REQUIRED_AUTHORITIES, reviewStage: 'closed', assignments: 'complete', finalDecision: 'Rejected' },
-  { id: M3_UAT_EVENTS.amendment, name: 'Amendment Requested', status: 'AmendmentRequested', requiredAuthorities: REQUIRED_AUTHORITIES, reviewStage: 'closed', assignments: 'complete', finalDecision: 'AmendmentRequested' },
+  { id: M3_UAT_EVENTS.secondReviewRejected, name: 'Second Review Rejected', status: 'Rejected', requiredAuthorities: REQUIRED_AUTHORITIES, reviewStage: 'closed', assignments: 'complete', finalDecision: 'Rejected' },
   { id: M3_UAT_EVENTS.controlVerification, name: 'Stage 1 Control Verification', status: 'Approved', requiredAuthorities: REQUIRED_AUTHORITIES, reviewStage: null, controls: 'stage1' },
   { id: M3_UAT_EVENTS.publicStage2, name: 'Published Stage 2 Evidence', status: 'Approved', requiredAuthorities: REQUIRED_AUTHORITIES, reviewStage: null, controls: 'stage2' },
 ];
@@ -190,7 +191,7 @@ async function withTransientAuthRetry<T>(operation: () => Promise<T>): Promise<T
 }
 
 async function assertNoCollisions(ctx: M3UatContext): Promise<void> {
-  for (const eventId of M3_UAT_EVENT_IDS) {
+  for (const eventId of [...M3_UAT_EVENT_IDS, ...M3_UAT_RETIRED_EVENT_IDS]) {
     const snap = await ctx.db.collection('events').doc(eventId).get();
     if (snap.exists && !isManaged(snap.data(), eventId)) {
       throw new Error(`Collision at events/${eventId}: existing document is not owned by ${M3_UAT_DATASET_ID}.`);
@@ -504,7 +505,6 @@ function officialResource(scenario: Scenario, assessmentId: string, calculation:
 function assignmentDecision(authority: AuthorityType, scenario: Scenario) {
   if (scenario.assignments === 'complete') {
     if (scenario.finalDecision === 'Rejected' && authority === 'PDRM') return 'Rejected';
-    if (scenario.finalDecision === 'AmendmentRequested' && authority === 'PDRM') return 'AmendmentRequested';
     return 'Approved';
   }
   if (scenario.assignments === 'partial' && authority === 'PDRM') return 'Approved';
@@ -526,7 +526,7 @@ async function writeScenario(ctx: M3UatContext, scenario: Scenario, uids: Identi
     status: scenario.status,
     currentVersionId: VERSION_ID,
     currentVersionNumber: 1,
-    editableVersionId: scenario.status === 'AmendmentRequested' ? 'v2' : null,
+    editableVersionId: null,
     draftDocumentPaths: [],
     requiredAuthorities: scenario.requiredAuthorities,
     assignedOfficerUids: assigned.map((authority) => uids[authority]),
@@ -663,7 +663,7 @@ async function deleteQuery(db: Firestore, query: FirebaseFirestore.Query): Promi
 }
 
 async function clearManagedDataset(ctx: M3UatContext, includeIdentities: boolean): Promise<void> {
-  for (const eventId of M3_UAT_EVENT_IDS) {
+  for (const eventId of [...M3_UAT_EVENT_IDS, ...M3_UAT_RETIRED_EVENT_IDS]) {
     const eventRef = ctx.db.collection('events').doc(eventId);
     const eventSnap = await eventRef.get();
     const managedParent = eventSnap.exists && isManaged(eventSnap.data(), eventId);
@@ -764,6 +764,9 @@ export async function verifyM3UatDataset(ctx: M3UatContext): Promise<void> {
       if (!profile.exists || !isManaged(profile.data(), identity.email)) failures.push(`Profile missing or marker invalid: ${identity.email}`);
     }
   }
+  for (const eventId of M3_UAT_RETIRED_EVENT_IDS) {
+    if ((await ctx.db.collection('events').doc(eventId).get()).exists) failures.push(`${eventId}: retired fixture still exists`);
+  }
   if (failures.length > 0) throw new Error(`M3 UAT verification failed:\n- ${failures.join('\n- ')}`);
 }
 
@@ -861,7 +864,7 @@ export async function runM3UatAction(action: M3UatAction, ctx = initializeM3UatC
   assertSharedProjectAuthorization(ctx.projectId, action);
   if (action === 'dry-run') {
     await assertNoCollisions(ctx);
-    console.info(JSON.stringify({ projectId: ctx.projectId, action, datasetId: M3_UAT_DATASET_ID, events: SCENARIOS.map(({ id, name, status }) => ({ id, name, status })), accounts: IDENTITIES.map(({ email, role, authorityType }) => ({ email, role, authorityType })), storagePrefixes: M3_UAT_EVENT_IDS.map((id) => `events/${id}/`) }, null, 2));
+    console.info(JSON.stringify({ projectId: ctx.projectId, action, datasetId: M3_UAT_DATASET_ID, events: SCENARIOS.map(({ id, name, status }) => ({ id, name, status })), retiredEventIds: M3_UAT_RETIRED_EVENT_IDS, accounts: IDENTITIES.map(({ email, role, authorityType }) => ({ email, role, authorityType })), storagePrefixes: [...M3_UAT_EVENT_IDS, ...M3_UAT_RETIRED_EVENT_IDS].map((id) => `events/${id}/`) }, null, 2));
     return;
   }
   if (action === 'apply') await applyM3UatDataset(ctx);

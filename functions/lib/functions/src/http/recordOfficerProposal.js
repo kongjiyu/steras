@@ -203,7 +203,7 @@ exports.recordOfficerProposal = (0, https_1.onCall)({ region: runtime_1.FUNCTION
     });
 });
 function isDecision(v) {
-    return v === 'Approved' || v === 'Rejected' || v === 'AmendmentRequested';
+    return v === 'Approved' || v === 'Rejected';
 }
 function safeDocumentId(value) {
     return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);

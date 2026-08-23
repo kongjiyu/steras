@@ -11,7 +11,7 @@
  *   6. Event status is updated and the assignment workload is decremented.
  *
  * Uses evt-004-kl-marathon (requires PDRM, BOMBA, KKM, DBKL; status
- * AmendmentRequested) so we can run a fresh flow without disturbing the
+ * rejected application) so we can run a fresh flow without disturbing the
  * other test events.
  */
 import { test, expect, EVENTS } from './fixtures';

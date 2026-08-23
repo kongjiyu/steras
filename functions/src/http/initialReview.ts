@@ -6,11 +6,12 @@
  *   - Approved means the application is released to officer assignment and
  *     the event remains `UnderReview`.
  *   - Rejected is a terminal result for the current version and carries the
- *     reason + corrective suggestion needed by the organiser for resubmission.
+ *     reason + corrective suggestion needed if the organiser starts a new application.
  *   - `Manual Review Required` applications must include a recorded manual
  *     assessment before they can be released to authority review.
  */
 import { firestore } from 'firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import {
   COLLECTIONS,
@@ -90,7 +91,7 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
     || (resourceId !== undefined && !safeDocumentId(resourceId))) {
     throw new HttpsError('failed-precondition', 'The application current-generation pointers are invalid.');
   }
-  if (!['Pending', 'UnderReview', 'Manual Review Required', 'AmendmentRequested'].includes(event.status)) {
+  if (!['Pending', 'UnderReview', 'Manual Review Required'].includes(event.status)) {
     throw new HttpsError('failed-precondition', 'This application is not available for initial review.');
   }
   if (event.reviewStage === 'authority' || event.reviewStage === 'second') {
@@ -174,9 +175,9 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
       updatedAt: now,
     };
     if (decision === 'Rejected') {
-      eventUpdate.reviewStage = 'closed';
-      eventUpdate.editableVersionId = `v${event.currentVersionNumber + 1}`;
-      eventUpdate.draftDocumentPaths = [];
+      eventUpdate.assignedOfficerUids = [];
+      eventUpdate.assignedOfficerByAuthority = {};
+      eventUpdate.editableVersionId = FieldValue.delete();
     }
     tx.update(eventRef, eventUpdate);
 

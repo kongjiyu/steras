@@ -171,16 +171,16 @@ describe('Firestore security rules', () => {
     const versionOne = versionSnapshot.data();
     const v2Evidence = await uploadTestEvidence('draft-1', 'v2');
     await environment.withSecurityRulesDisabled((context) => updateDoc(doc(context.firestore(), 'events/draft-1'), {
-      status: 'AmendmentRequested',
+      status: 'Rejected',
       editableVersionId: 'v2',
       draftDocumentPaths: [v2Evidence],
-      eventDetails: { ...validDetails, name: 'KL Cultural Festival - Revised' },
+      eventDetails: { ...validDetails, name: 'KL Cultural Festival - Rejected' },
     }));
-    await submitEventForUser('organizer-1', 'draft-1', 1_002);
+    await expect(submitEventForUser('organizer-1', 'draft-1', 1_002)).rejects.toMatchObject({ code: 'failed-precondition' });
     const versionOneAfter = await assertSucceeds(getDoc(doc(db, 'events/draft-1/versions/v1')));
     const versionTwo = await assertSucceeds(getDoc(doc(db, 'events/draft-1/versions/v2')));
-    if (JSON.stringify(versionOneAfter.data()) !== JSON.stringify(versionOne)) throw new Error('Version 1 changed during resubmission.');
-    if (versionTwo.data()?.versionNumber !== 2 || versionTwo.data()?.eventDetails.name !== 'KL Cultural Festival - Revised') throw new Error('Version 2 was not created from the amendment.');
+    if (JSON.stringify(versionOneAfter.data()) !== JSON.stringify(versionOne)) throw new Error('Version 1 changed after terminal rejection.');
+    if (versionTwo.exists()) throw new Error('A rejected application created a new version.');
   });
 
   it('rejects missing Storage evidence and spoofed registry venue identity before version creation', async () => {
@@ -504,6 +504,22 @@ describe('Firestore security rules', () => {
       reviewStage: 'initial',
       initialReview: { manualAssessmentRecorded: true },
     });
+  });
+
+  it('makes an initial-review rejection terminal and removes the editable pointer', async () => {
+    await seedManualReviewEvent();
+    const adminDb = getFirestore(adminApp);
+    await adminDb.doc('events/manual-1').update({ status: 'Manual Review Required', reviewStage: 'manual', editableVersionId: 'v2' });
+    await submitAdminManualAssessmentForUser('admin-1', manualRequest(), 117);
+    const result = await makeInitialReviewDecisionForUser('admin-1', {
+      eventId: 'manual-1',
+      decision: 'Rejected',
+      reason: 'The application cannot proceed because the submitted operating plan is incomplete.',
+      suggestion: 'Start a new application with a complete operating and emergency plan.',
+    }, 118);
+    expect(result).toMatchObject({ status: 'Rejected', decision: 'Rejected' });
+    expect((await adminDb.doc('events/manual-1').get()).data()).toMatchObject({ status: 'Rejected', reviewStage: 'closed', assignedOfficerUids: [], assignedOfficerByAuthority: {} });
+    expect((await adminDb.doc('events/manual-1').get()).data()).not.toHaveProperty('editableVersionId');
   });
 
   it('makes duplicate manual submission idempotent and rejects a second record or key collision', async () => {
@@ -987,52 +1003,28 @@ describe('Firestore security rules', () => {
       .rejects.toMatchObject({ code: 'failed-precondition' });
   });
 
-  it('does not carry authority approvals into a resubmitted version', async () => {
+  it('rejects the removed amendment decision and keeps a rejected application terminal', async () => {
     await seedReviewableEvent(['PDRM', 'BOMBA']);
-    await makeAuthorityDecisionForUser('pdrm-1', {
-      eventId: 'review-1', decision: 'Approved', rationale: 'PDRM approves the version one operating plan.', materialsReviewed: true,
-    }, 3_100);
-    await makeAuthorityDecisionForUser('bomba-1', {
-      eventId: 'review-1', decision: 'AmendmentRequested', rationale: 'Revise the version one emergency exit arrangement.', suggestion: 'Provide a verified revised emergency exit arrangement.',
-    }, 3_101);
+    const legacyDecision = {
+      eventId: 'review-1',
+      decision: 'AmendmentRequested' as unknown as 'Approved' | 'Rejected',
+      rationale: 'Legacy amendment decision must no longer be accepted.',
+      suggestion: 'Submit a new application if the event needs a different proposal.',
+    };
+    await expect(makeAuthorityDecisionForUser('bomba-1', legacyDecision, 3_101))
+      .rejects.toMatchObject({ code: 'invalid-argument' });
 
     const adminDb = getFirestore(adminApp);
     const v2Evidence = await uploadTestEvidence('review-1', 'v2');
-    const revisedDetails = {
-      ...validDetails,
-      startDatetime: 20_000,
-      endDatetime: 30_000,
-      emergencyPlanSummary: 'Revised emergency exits and fire assembly points.',
-    };
-    // PR3 officers only record recommendations. Simulate the later Admin workflow
-    // opening the amendment before the organizer submits a new immutable version.
     await adminDb.doc('events/review-1').update({
-      status: 'AmendmentRequested',
+      status: 'Rejected',
       editableVersionId: 'v2',
       draftDocumentPaths: [v2Evidence],
-      eventDetails: revisedDetails,
+      eventDetails: { ...validDetails, name: 'Terminally Rejected Event' },
     });
-    await submitEventForUser('organizer-1', 'review-1', 3_200);
-    await adminDb.doc('events/review-1').update({
-      currentAssessmentId: 'v2',
-      currentResourceId: officialResourceId('v2', revisedDetails),
-      requiredAuthorities: ['PDRM', 'BOMBA'],
-    });
-    await adminDb.doc(`events/review-1/resources/${officialResourceId('v2', revisedDetails)}`).set(officialResourceFixture('v2', 3_201, revisedDetails));
-    await adminDb.doc('events/review-1/assessments/v2').set(officialAssessmentFixture('v2', revisedDetails));
-    await adminDb.doc('events/review-1/assessments/v2/score_reviews/v2-PDRM-review').set(scoreReviewFixture('v2', 'PDRM'));
-    await adminDb.doc('events/review-1/assessments/v2/score_reviews/v2-BOMBA-review').set(scoreReviewFixture('v2', 'BOMBA'));
-
-    const result = await makeAuthorityDecisionForUser('bomba-1', {
-      eventId: 'review-1', decision: 'Approved', rationale: 'BOMBA approves the revised version two exit arrangement.', materialsReviewed: true,
-    }, 3_300);
-    expect(result).toMatchObject({ versionId: 'v2', status: 'UnderReview' });
-    expect((await adminDb.doc('events/review-1').get()).data()?.status).toBe('UnderReview');
-    expect((await adminDb.doc('events/review-1').get()).data()?.authorityReviewCompletedVersionId).toBeUndefined();
-    expect((await adminDb.doc('public_events/review-1').get()).exists).toBe(false);
-    expect((await adminDb.collection('events/review-1/decisions').get()).docs.map((item) => item.id).sort()).toEqual([
-      'v1_BOMBA', 'v1_PDRM', 'v2_BOMBA',
-    ]);
+    await expect(submitEventForUser('organizer-1', 'review-1', 3_200)).rejects.toMatchObject({ code: 'failed-precondition' });
+    expect((await adminDb.doc('events/review-1').get()).data()?.status).toBe('Rejected');
+    expect((await adminDb.collection('events/review-1/versions').doc('v2').get()).exists).toBe(false);
   });
 
   it('allows an assigned authority to override resources with an audit record', async () => {

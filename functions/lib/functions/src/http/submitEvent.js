@@ -64,8 +64,8 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
             throw new https_1.HttpsError('aborted', 'The draft changed during submission. Review it and retry.');
         if (event.organizerId !== uid)
             throw new https_1.HttpsError('permission-denied', 'You do not own this event.');
-        if (!['Draft', 'AmendmentRequested', 'Rejected'].includes(event.status)) {
-            throw new https_1.HttpsError('failed-precondition', 'Only drafts, rejected applications, or amendment requests can be submitted.');
+        if (event.status !== 'Draft') {
+            throw new https_1.HttpsError('failed-precondition', 'Only draft applications can be submitted. Rejected applications are final.');
         }
         if (event.eventDetails.venueId && (!venueSnapshot?.exists
             || validateCanonicalVenueRecord(event.eventDetails, venueSnapshot.data()).length > 0)) {

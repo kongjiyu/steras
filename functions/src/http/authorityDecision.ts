@@ -183,7 +183,7 @@ export async function makeAuthorityDecisionForUser(
     );
     const currentAssessment = assessmentSnapshot.data() as AssessmentRecord | undefined;
     if (decision === 'Approved' && currentAssessment && 'complianceStatus' in currentAssessment && currentAssessment.complianceStatus === 'blocked') {
-      throw new HttpsError('failed-precondition', 'Blocked compliance prevents approval. Record a rejection or amendment recommendation instead.');
+      throw new HttpsError('failed-precondition', 'Blocked compliance prevents approval. Record a rejection instead.');
     }
     if (current && current.decision === decision && current.rationale === rationale
       && current.suggestion === suggestion && current.materialsReviewed === materialsReviewed && current.reviewerId === uid) {
@@ -200,7 +200,7 @@ export async function makeAuthorityDecisionForUser(
       throw new HttpsError(
         'failed-precondition',
         'This application cannot be approved while M2 compliance status is "blocked". ' +
-        'Resolve the blocking compliance checks first or choose Reject / AmendmentRequested.',
+        'Resolve the blocking compliance checks first or choose Reject.',
       );
     }
     const readiness = assessment?.assessmentReadiness;
@@ -327,12 +327,10 @@ export async function makeAuthorityDecisionForUser(
       const notifType =
         notif.aggregateStatus === 'Approved' ? 'application_approved'
         : notif.aggregateStatus === 'Rejected' ? 'application_rejected'
-        : notif.aggregateStatus === 'AmendmentRequested' ? 'amendment_requested'
         : 'decision_made';
       const notifTitle =
         notif.aggregateStatus === 'Approved' ? 'Application approved'
         : notif.aggregateStatus === 'Rejected' ? 'Application rejected'
-        : notif.aggregateStatus === 'AmendmentRequested' ? 'Amendment requested'
         : 'Decision recorded';
       await createNotification({
         recipientUid,
@@ -640,7 +638,7 @@ function currentDecisionId(versionId: string, authorityType: AuthorityType): str
 }
 
 function isDecision(value: unknown): value is DecisionValue {
-  return value === 'Approved' || value === 'Rejected' || value === 'AmendmentRequested';
+  return value === 'Approved' || value === 'Rejected';
 }
 
 function validRequiredAuthorities(value: unknown): value is AuthorityType[] {

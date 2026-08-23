@@ -12,7 +12,7 @@ import StatusBadge from '../../components/ui/StatusBadge';
 import { filterAndSortQueue, pageCount, QueueSort } from './reviewQueueData';
 
 const PAGE_SIZE = 10;
-const ACTIVE_STATUSES = ['Pending', 'UnderReview', 'AmendmentRequested'] as const;
+const ACTIVE_STATUSES = ['Pending', 'UnderReview'] as const;
 
 export default function ReviewQueue() {
   const { profile } = useAuth();

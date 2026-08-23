@@ -11,7 +11,7 @@ import { defineConfig, devices } from '@playwright/test';
  *   m3-smoke  — 12 critical specs that prove the M3 contract:
  *               - pdrm-decision (happy path)
  *               - m3-negative-gates (compliance + readiness gates)
- *               - m3-aggregate (rejection / amendment / unanimous)
+ *               - m3-aggregate (rejection / invalid legacy decision / unanimous)
  *               - m3-controls-notifications (verified control +
  *                 organiser notification)
  *               ~2-3 min. Default for developer feedback. Fastest path

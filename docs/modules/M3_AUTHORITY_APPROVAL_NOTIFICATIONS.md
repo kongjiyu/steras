@@ -62,7 +62,7 @@ This multi-authority aggregate is the prototype final-authority mechanism. Do no
 
 ## Locked Decision Contract
 
-- Decisions are Approved, Rejected, or Amendment Requested.
+- Event application decisions are Approved or Rejected. Rejected applications are terminal; control-document resubmission is a separate workflow.
 - Every action requires 10–1,000 characters of human rationale.
 - Reviewer UID, authority type, application version, timestamp, and current/history state are mandatory.
 - An authority may act only when its type appears in `requiredAuthorities`.

@@ -34,6 +34,10 @@
     "cutover:resource-v3": "npm --workspace functions run cutover:resource-v3",
     "migrate:m3:dry-run": "npm --workspace functions run migrate:m3 -- --dry-run --manifest m3-legacy-migration-manifest.json",
     "migrate:m3:verify": "npm --workspace functions run migrate:m3 -- --verify --manifest m3-legacy-migration-manifest.json",
+    "migrate:m3:decision-contract:dry-run": "npm --workspace functions run migrate:m3:decision-contract -- --dry-run",
+    "migrate:m3:decision-contract:snapshot": "npm --workspace functions run migrate:m3:decision-contract:snapshot -- --report artifacts/m3-migration/decision-contract-snapshot.json",
+    "migrate:m3:decision-contract:apply": "npm --workspace functions run migrate:m3:decision-contract -- --apply --snapshot-file artifacts/m3-migration/decision-contract-snapshot.json",
+    "migrate:m3:decision-contract:verify": "npm --workspace functions run migrate:m3:decision-contract -- --verify",
     "deploy:hosting": "npm --workspace frontend run build && firebase deploy --only hosting",
     "lint": "npm --workspace frontend run lint && npm --workspace functions run lint",
     "check": "npm run typecheck && npm run lint && npm run test && npm run build"

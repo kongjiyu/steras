@@ -122,6 +122,7 @@ frontend/blob-report/
 *.tmp
 *.temp
 artifacts/m3-migration/
+**/artifacts/m3-migration/
 
 # ----- OS -----
 ehthumbs.db

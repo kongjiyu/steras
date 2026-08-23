@@ -161,7 +161,7 @@ export default function AuthorityDashboard({ previewRecords }: AuthorityDashboar
                   </div>
                   <div className="portfolio-heading__context">
                     <span className="portfolio-heading__rule" />
-                    <p>Final risk sets the pace. Amendments and recent activity break the tie.</p>
+                    <p>Final risk sets the pace. Recent activity breaks the tie.</p>
                   </div>
                 </section>
 
@@ -255,8 +255,8 @@ function OperationalBrief({
         <dl className="ops-metric-rail" aria-label="Current workload summary">
           <HeroMetric label="Active review" value={summary.active} detail={`${summary.pending} new`} order={1} />
           <HeroMetric label="High risk" value={activeHighRisk} detail="Final level" danger order={2} />
-          <HeroMetric label="Amendments" value={summary.amendments} detail="Returned" order={3} />
-          <HeroMetric label="Resolved" value={summary.resolved} detail={`${summary.total} assigned`} order={4} />
+          <HeroMetric label="Resolved" value={summary.resolved} detail="Closed decisions" order={3} />
+          <HeroMetric label="Assigned" value={summary.total} detail="Total portfolio" order={4} />
         </dl>
       </div>
 
@@ -532,7 +532,6 @@ function StatusLedger({ statuses, total }: { statuses: ReturnType<typeof statusD
   const rows = [
     { label: 'Pending', value: statuses.Pending, color: 'is-pending' },
     { label: 'Under review', value: statuses.UnderReview, color: 'is-review' },
-    { label: 'Amendment', value: statuses.AmendmentRequested, color: 'is-amendment' },
     { label: 'Approved', value: statuses.Approved, color: 'is-approved' },
     { label: 'Rejected', value: statuses.Rejected, color: 'is-rejected' },
   ];

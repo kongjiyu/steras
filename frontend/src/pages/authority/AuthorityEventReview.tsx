@@ -310,12 +310,11 @@ export default function AuthorityEventReview() {
   // FR-M3-16: approval requires an explicit materials-review confirmation.
   const canApprove = isNamedOfficer && reviewOpen && evidenceReady && rationale.trim().length >= 10
     && confirmedReview && materialsReviewed && assessment?.complianceStatus !== 'blocked';
-  const canAmend = isNamedOfficer && reviewOpen && evidenceReady && rationale.trim().length >= 10;
-  const canReject = canAmend && suggestion.trim().length > 0;
+  const canReject = isNamedOfficer && reviewOpen && evidenceReady && rationale.trim().length >= 10 && suggestion.trim().length > 0;
 
   const submitDecision = async (decision: DecisionValue) => {
     const isApproval = decision === 'Approved';
-    if (!eventId || (isApproval ? !canApprove : decision === 'AmendmentRequested' ? !canAmend : !canReject)) return;
+    if (!eventId || (isApproval ? !canApprove : !canReject)) return;
     setSubmittingDecision(decision);
     try {
       const command = httpsCallable<{
@@ -332,7 +331,7 @@ export default function AuthorityEventReview() {
         ...(suggestion.trim() ? { suggestion: suggestion.trim() } : {}),
         ...(isApproval ? { confirmedReview: true } : {}),
       });
-      toast.success(decision === 'Approved' ? 'Approval proposal recorded.' : decision === 'Rejected' ? 'Rejection proposal recorded.' : 'Amendment proposal recorded.');
+      toast.success(decision === 'Approved' ? 'Approval proposal recorded.' : 'Rejection proposal recorded.');
       setRationale('');
       setConfirmedReview(false);
       setSuggestion('');
@@ -670,12 +669,11 @@ export default function AuthorityEventReview() {
                 />
                 <span>
                   <span className="font-semibold text-ink-700">I confirm I have reviewed</span> the assessment, AI advisory, submitted evidence, and recommended resource ranges for this application.
-                  <span className="mt-0.5 block text-[11px] text-ink-500">Required to approve (FR-M3-16). Not required to reject or request amendment.</span>
+                  <span className="mt-0.5 block text-[11px] text-ink-500">Required to approve (FR-M3-16). Rejection requires a reason and suggestion.</span>
                 </span>
               </label>
-              {assessment?.complianceStatus === 'blocked' && <p className="rounded-md bg-red-50 p-3 text-xs leading-5 text-status-rejected">Approval is blocked by compliance. You may record a rejection or amendment recommendation.</p>}
+              {assessment?.complianceStatus === 'blocked' && <p className="rounded-md bg-red-50 p-3 text-xs leading-5 text-status-rejected">Approval is blocked by compliance. You may record a rejection.</p>}
               <button className="btn-success w-full" disabled={!canApprove || submittingDecision !== null} onClick={() => submitDecision('Approved')}><Check size={16} />{submittingDecision === 'Approved' ? 'Recording...' : 'Propose approval'}</button>
-              <button className="btn-secondary w-full" disabled={!canAmend || submittingDecision !== null} onClick={() => submitDecision('AmendmentRequested')}><RotateCcw size={16} />{submittingDecision === 'AmendmentRequested' ? 'Recording...' : 'Propose amendment'}</button>
               <button className="btn-danger w-full" disabled={!canReject || submittingDecision !== null} onClick={() => submitDecision('Rejected')}><X size={16} />{submittingDecision === 'Rejected' ? 'Recording...' : 'Propose rejection'}</button>
             </div>
           </section>
@@ -768,7 +766,7 @@ function isSafeManualAssessment(value: unknown, expectedId: string, identity: {
 }
 
 function AuthorityProgress({ authority, decision, scoreReviewed, manualOfficial }: { authority: AuthorityType; decision?: AuthorityDecision; scoreReviewed: boolean; manualOfficial: boolean }) {
-  const color = decision?.decision === 'Approved' ? 'bg-green-100 text-status-approved' : decision?.decision === 'Rejected' ? 'bg-red-100 text-status-rejected' : decision?.decision === 'AmendmentRequested' ? 'bg-orange-100 text-orange-700' : 'bg-ink-100 text-ink-500';
+  const color = decision?.decision === 'Approved' ? 'bg-green-100 text-status-approved' : decision?.decision === 'Rejected' ? 'bg-red-100 text-status-rejected' : 'bg-ink-100 text-ink-500';
   return <div className="flex items-center justify-between gap-3"><span className="text-sm font-semibold text-ink-700">{authority}</span><div className="flex flex-wrap justify-end gap-1"><span className={`badge ${scoreReviewed ? 'bg-green-100 text-status-approved' : 'bg-ink-100 text-ink-500'}`}>{manualOfficial ? 'Manual official ready' : scoreReviewed ? 'Scores reviewed' : 'Scores pending'}</span><span className={`badge ${color}`}>{decision ? formatWorkflowValue(decision.decision) : 'Decision pending'}</span></div></div>;
 }
 

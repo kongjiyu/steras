@@ -230,7 +230,7 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
 });
 
 function isDecision(v: unknown): v is DecisionValue {
-  return v === 'Approved' || v === 'Rejected' || v === 'AmendmentRequested';
+  return v === 'Approved' || v === 'Rejected';
 }
 
 function safeDocumentId(value: unknown): value is string {

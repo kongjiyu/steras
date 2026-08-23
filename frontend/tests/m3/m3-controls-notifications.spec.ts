@@ -105,7 +105,7 @@ test.describe('@M3 organiser notifications', () => {
   // FR-M3-08: rejection / second-review notifications must carry
   // reason + suggestion as separate, structured fields. The
   // featured officer's reason + suggestion are surfaced on the
-  // application_approved / application_rejected / amendment_requested
+  // application_approved / application_rejected
   // notification written by makeSecondReviewDecision.
   test('second-review notification carries the featured officer reason + suggestion as separate fields', async ({ api, loginAs }) => {
     // Reuse the reset state from beforeEach (UnderReview, no decisions).

@@ -154,7 +154,7 @@ generateEventControlList: httpsCallable<{
 - **M1 dependency:** none. We only read `event.requiredAuthorities` + `event.currentVersionId`, both already written.
 - **No Stage 1 docs yet:** Workstream 2 just creates the container. The organizer's upload UI (Workstream 3) is what fills the per-doc slots. Don't try to also do Stage 1 upload in this round.
 - **No Stage 2 docs yet:** same.
-- **Resubmission flow:** when a new version is approved (FR-M3-19 amendment), the old control list is archived (read-only, kept for audit) and a new one is created. For this round, we just append `.v{n}` to the controlId namespace so old and new can coexist. Workstream 3 can handle the UI for "this is the new version, the old is read-only".
+- **Request resubmission flow:** when an event control document needs correction (FR-M3-19), the old control list is archived (read-only, kept for audit) and a new one is created. For this round, we just append `.v{n}` to the controlId namespace so old and new can coexist. Workstream 3 can handle the UI for "this is the new version, the old is read-only". This applies to control documents only, not the event application decision.
 
 ---
 

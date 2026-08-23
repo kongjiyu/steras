@@ -118,7 +118,7 @@ Read-by-rules is already configured. Writes are server-only.
   eventId: string,
   versionId?: string,
   type: 'decision_made' | 'application_approved' | 'application_rejected'
-      | 'amendment_requested' | 'control_verified' | 'control_rejected'
+      | 'control_verified' | 'control_rejected'
       | 'stage1_doc_approved' | 'stage1_doc_rejected'        // Q1 refactor
       | 'stage1_doc_submitted'                                 // SHIPPED `ddf22d7` (Workstream 3)
       | 'control_list_published'                                 // SHIPPED `af9805f` (Workstream 2)
@@ -438,7 +438,7 @@ M3 owns `notifications/{id}` writes. Other modules don't need to write here.
 | `makeAuthorityDecision` records (any decision) | `decision_made` | organiser |
 | All required authorities approved (aggregate) | `application_approved` | organiser |
 | Any authority rejected (aggregate) | `application_rejected` | organiser |
-| Any authority requested amendment (aggregate) | `amendment_requested` | organiser |
+| Any authority rejected (aggregate) | `application_rejected` | organiser |
 | `verifyStage1Doc` verified | `stage1_doc_approved` | organiser |
 | `verifyStage1Doc` rejected | `stage1_doc_rejected` | organiser |
 | `submitStage1Doc` (upload or use_previous) | `stage1_doc_submitted` | assigned officer (looked up from `events/{id}/assignments/{versionId}_{auth}`) + all admins |
@@ -465,16 +465,12 @@ The event lifecycle now has a longer state machine. **M1 owner: do not write to 
 Draft (M1)                ← organiser creates
   └─→ Pending              ← M1.submitEvent
         └─→ UnderReview     ← first authority action (existing) or admin approval
-              ├─→ AmendmentRequested  ← any officer amendment
-              │     └─→ (organiser revises → Pending v2)
-              ├─→ Rejected            ← any officer rejection
-              │     └─→ (organiser revises → Pending v2)
+              ├─→ Rejected            ← any officer rejection (terminal)
               └─→ UnderSecondReview   ← admin opens second review (NEW, this round)
                     ├─→ Approved       ← admin final approval (NEW)
                     │     └─→ Stage 1/2 workflow (UC-22..38) — admin opens /admin/applications/:id/controls
                     │           and clicks "Generate proposal" then "Commit changes" (no trigger, see §10)
-                    └─→ Rejected       ← admin second-review reject (NEW)
-                          └─→ (organiser revises → Pending v2)
+                    └─→ Rejected       ← admin second-review reject (NEW, terminal)
 Withdrawn                 ← M1.withdrawEvent (anytime post-Pending)
   └─→ onEventStatusChanged trigger → FR-M3-01 cleanup
 ```

@@ -53,6 +53,8 @@ export default function AdminAssignment() {
   const [unassigning, setUnassigning] = useState<AuthorityType | null>(null);
   const [unassigningAll, setUnassigningAll] = useState(false);
   const [adminNote, setAdminNote] = useState('');
+  const [adminReason, setAdminReason] = useState('');
+  const [adminSuggestion, setAdminSuggestion] = useState('');
   const [finalDecision, setFinalDecision] = useState<DecisionValue | ''>('');
 
   // Live event doc.
@@ -138,11 +140,23 @@ export default function AdminAssignment() {
     if (!eventId || !finalDecision) return;
     setConfirming(true);
     try {
-      const command = httpsCallable<{ eventId: string; finalDecision: DecisionValue; adminNote?: string }, { status: DecisionValue; aggregate?: EventRecord['status'] }>(
+      const command = httpsCallable<{
+        eventId: string;
+        finalDecision: DecisionValue;
+        reason?: string;
+        suggestion?: string;
+        adminNote?: string;
+      }, { status: DecisionValue; aggregate?: EventRecord['status'] }>(
         functions,
         'makeSecondReviewDecision',
       );
-      await command({ eventId, finalDecision, adminNote: adminNote.trim() || undefined });
+      await command({
+        eventId,
+        finalDecision,
+        ...(finalDecision === 'Rejected'
+          ? { reason: adminReason.trim(), suggestion: adminSuggestion.trim() }
+          : { adminNote: adminNote.trim() || undefined }),
+      });
       toast.success(`Final decision recorded: ${finalDecision}.`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Unable to confirm second review.');
@@ -322,15 +336,23 @@ export default function AdminAssignment() {
                   <select className="input mt-1" value={finalDecision} onChange={(e) => setFinalDecision(e.target.value as DecisionValue)}>
                     <option value="">Select final decision</option>
                     <option value="Approved">Approved</option>
-                    <option value="AmendmentRequested">Amendment requested</option>
                     <option value="Rejected">Rejected</option>
                   </select>
                 </label>
-                <label className="block text-xs font-medium text-ink-600">
+                {finalDecision === 'Rejected' ? <>
+                  <label className="block text-xs font-medium text-ink-600">
+                    Rejection reason
+                    <textarea className="input mt-1 resize-y" rows={2} maxLength={1000} value={adminReason} onChange={(e) => setAdminReason(e.target.value)} placeholder="Explain why the application cannot proceed." />
+                  </label>
+                  <label className="block text-xs font-medium text-ink-600">
+                    Suggestion for the organiser
+                    <textarea className="input mt-1 resize-y" rows={2} maxLength={1000} value={adminSuggestion} onChange={(e) => setAdminSuggestion(e.target.value)} placeholder="Provide the required corrective direction." />
+                  </label>
+                </> : <label className="block text-xs font-medium text-ink-600">
                   Admin note (optional, for audit)
                   <textarea className="input mt-1 resize-y" rows={2} maxLength={1000} value={adminNote} onChange={(e) => setAdminNote(e.target.value)} placeholder="Any context for the audit log." />
-                </label>
-                <button type="button" className="btn-success w-full" disabled={confirming || !finalDecision} onClick={confirmSecondReview}>
+                </label>}
+                <button type="button" className="btn-success w-full" disabled={confirming || !finalDecision || (finalDecision === 'Rejected' && (adminReason.trim().length < 10 || adminSuggestion.trim().length === 0))} onClick={confirmSecondReview}>
                   {confirming ? 'Recording...' : `Record final decision${finalDecision ? ` (${finalDecision})` : ''}`}
                 </button>
               </div>
@@ -350,9 +372,6 @@ function computeAggregate(assignments: Assignment[], required: AuthorityType[]):
   }
   for (const auth of required) {
     if (byAuthority.get(auth) === 'Rejected') return 'Rejected';
-  }
-  for (const auth of required) {
-    if (byAuthority.get(auth) === 'AmendmentRequested') return 'AmendmentRequested';
   }
   if (required.every((auth) => byAuthority.get(auth) === 'Approved')) return 'Approved';
   return null;

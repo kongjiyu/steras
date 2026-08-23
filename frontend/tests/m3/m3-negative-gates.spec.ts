@@ -94,7 +94,7 @@ test.describe('@M3 negative decision gates', () => {
     try {
       await api.callFunction('recordOfficerProposal', {
         eventId: EVENTS.complianceBlocked,
-        decision: 'AmendmentRequested',
+        decision: 'Approved',
         reason: 'DBKL attempting to act on an event it is not assigned to — should be rejected.',
       });
     } catch (err) {

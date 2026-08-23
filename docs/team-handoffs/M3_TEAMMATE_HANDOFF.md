@@ -56,7 +56,7 @@
 - Blocked compliance 无法 Approved。
 - Provisional/insufficient data decision 保存 explicit rationale。
 - 只有所有 required authorities 对同一个 version Approved 才公开活动。
-- Rejected/Amendment Requested precedence 正确。
+- Rejected precedence 正确；Event Application 没有 AmendmentRequested 状态，控制文件另有独立的 Request resubmission 流程。
 - Decisions、overrides、control verification 和 notifications 全部可审计。
 - 新 version 不删除旧 decision history。
 
