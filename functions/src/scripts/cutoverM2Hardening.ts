@@ -35,6 +35,7 @@ import { fetchVenueContext } from '../engines/ruleBased';
 import { inspectStorageEvidence } from '../utils/storageEvidence';
 
 export const HARDENING_CUTOVER_PROJECT = 'linkos-496505';
+export const HARDENING_CUTOVER_BUCKET = `${HARDENING_CUTOVER_PROJECT}.firebasestorage.app`;
 export const HARDENING_CUTOVER_ANCHORS = 'system_controls/m2_resource_v3_cutover/hardening_anchors';
 
 interface BackupDocument { path: string; data: EncodedFirestoreValue }
@@ -628,7 +629,11 @@ async function verifyRollbackState(
 async function main(): Promise<void> {
   const options = parseHardeningCutoverArguments(process.argv.slice(2));
   validateHardeningCutoverOptions(options);
-  initializeApp({ credential: applicationDefault(), projectId: options.projectId });
+  initializeApp({
+    credential: applicationDefault(),
+    projectId: options.projectId,
+    storageBucket: HARDENING_CUTOVER_BUCKET,
+  });
   const db = getFirestore();
   if (options.mode === 'plan') {
     const state = await inventory(db, 'dry-run');
