@@ -54,23 +54,6 @@ describe('AuthProvider sign-up consistency', () => {
     expect(write?.role).toBe('organizer');
   });
 
-  it('creates a public viewer profile when signUp is called with role: public', async () => {
-    mocks.setDoc.mockResolvedValue(undefined);
-    render(<AuthProvider><Probe /></AuthProvider>);
-    await act(() => authApi.signUp({ email: 'viewer@example.com', password: 'password123', name: 'Public Viewer', role: 'public' }));
-    const write = mocks.setDoc.mock.calls[0]?.[1] as Record<string, unknown> | undefined;
-    expect(write?.role).toBe('public');
-    expect(write?.authorityType).toBeUndefined();
-  });
-
-  it('creates an organizer profile when signUp is called with role: organizer', async () => {
-    mocks.setDoc.mockResolvedValue(undefined);
-    render(<AuthProvider><Probe /></AuthProvider>);
-    await act(() => authApi.signUp({ email: 'org@example.com', password: 'password123', name: 'Org', role: 'organizer' }));
-    const write = mocks.setDoc.mock.calls[0]?.[1] as Record<string, unknown> | undefined;
-    expect(write?.role).toBe('organizer');
-  });
-
   it('deletes the new Authentication user when profile creation fails', async () => {
     const firestoreError = new Error('Firestore unavailable');
     mocks.setDoc.mockRejectedValue(firestoreError);

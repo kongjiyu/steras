@@ -10,7 +10,7 @@ import {
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db, isFirebaseConfigured } from '../config/firebase';
 import { COLLECTIONS, UserProfile } from '@shared/types';
-import { buildProfile } from './authProfile';
+import { buildOrganizerProfile } from './authProfile';
 
 interface AuthContextValue {
   user: FirebaseUser | null;
@@ -23,7 +23,6 @@ interface AuthContextValue {
     password: string;
     name: string;
     phone?: string;
-    role?: 'organizer' | 'public';
   }) => Promise<void>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -78,12 +77,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signUp: AuthContextValue['signUp'] = async (params) => {
-    const { email, password, name, phone, role = 'organizer' } = params;
+    const { email, password, name, phone } = params;
     const cred = await createUserWithEmailAndPassword(auth, email, password);
     const uid = cred.user.uid;
     const now = Date.now();
 
-    const newProfile = buildProfile(role, {
+    const newProfile = buildOrganizerProfile({
       uid,
       name,
       email,

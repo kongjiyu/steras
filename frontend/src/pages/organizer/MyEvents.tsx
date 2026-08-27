@@ -2,24 +2,31 @@ import { useEffect, useState } from 'react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { Link } from 'react-router-dom';
 import { db, isFirebaseConfigured } from '../../config/firebase';
-import { COLLECTIONS, EventRecord, EventStatus } from '@shared/types';
+import { COLLECTIONS, EventRecord } from '@shared/types';
 import { useAuth } from '../../contexts/AuthContext';
 import PageHeader from '../../components/ui/PageHeader';
-import StatusBadge from '../../components/ui/StatusBadge';
 import EmptyState from '../../components/ui/EmptyState';
 import { format } from 'date-fns';
 import { ArrowRight, CalendarPlus, MapPin } from 'lucide-react';
+import OrganizerStatusBadge from './OrganizerStatusBadge';
+import { applicationStatusLabel, isEditableApplicationStatus, ORGANIZER_STATUS_FILTERS, OrganizerStatusFilter } from './organizerApplication';
+import { mockEvents } from '../../mock_data/events';
 
 export default function MyEvents() {
   const { user } = useAuth();
   const [events, setEvents] = useState<EventRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<EventStatus | 'all'>('all');
+  const [filter, setFilter] = useState<OrganizerStatusFilter>('all');
   const [error, setError] = useState('');
   const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
     if (!isFirebaseConfigured || !user) {
+      if (!isFirebaseConfigured && user) {
+        setEvents(mockEvents
+          .filter((event) => event.organizerId === user.uid)
+          .sort((a, b) => b.createdAt - a.createdAt));
+      }
       setLoading(false);
       return;
     }
@@ -45,7 +52,7 @@ export default function MyEvents() {
     return () => unsub();
   }, [user, retryKey]);
 
-  const filtered = filter === 'all' ? events : events.filter((e) => e.status === filter);
+  const filtered = filter === 'all' ? events : events.filter((e) => String(e.status) === filter);
 
   return (
     <div>
@@ -58,7 +65,7 @@ export default function MyEvents() {
       />
 
       <div className="mb-6 flex gap-2 overflow-x-auto border-b border-[#ded5c5] pb-3" aria-label="Filter applications by status">
-        {(['all', 'Draft', 'Pending', 'UnderReview', 'Approved', 'Rejected', 'Withdrawn', 'Manual Review Required'] as const).map((f) => (
+        {ORGANIZER_STATUS_FILTERS.map((f) => (
           <button
             key={f}
             onClick={() => setFilter(f)}
@@ -68,7 +75,7 @@ export default function MyEvents() {
               (filter === f ? 'bg-brand-700 text-cream-50' : 'border border-[#d8cebd] bg-[#fffdf8] text-ink-600 hover:bg-cream-100')
             }
           >
-            {f === 'all' ? 'All' : f.replace(/([A-Z])/g, ' $1').trim()}
+            {f === 'all' ? 'All' : applicationStatusLabel(f)}
           </button>
         ))}
       </div>
@@ -79,7 +86,7 @@ export default function MyEvents() {
         <EmptyState title="Applications unavailable" description={error}><button type="button" className="btn-secondary" onClick={() => { setLoading(true); setRetryKey((value) => value + 1); }}>Try again</button></EmptyState>
       ) : filtered.length === 0 ? (
         <EmptyState
-          title={filter === 'all' ? 'No events yet' : `No events with status "${filter}"`}
+          title={filter === 'all' ? 'No events yet' : `No events with status "${applicationStatusLabel(filter)}"`}
           description={filter === 'all' ? 'Submit your first event application to get started.' : 'Choose another status to view your other applications.'}
           children={<Link to="/organizer/events/new" className="btn-primary"><CalendarPlus size={17} />New event</Link>}
         />
@@ -90,7 +97,8 @@ export default function MyEvents() {
             <thead className="bg-cream-100/70 text-left">
               <tr>
                 <th className="px-4 py-3 font-semibold text-ink-600">Event</th>
-                <th className="px-4 py-3 font-semibold text-ink-600">Type</th>
+                <th className="px-4 py-3 font-semibold text-ink-600">Version</th>
+                <th className="px-4 py-3 font-semibold text-ink-600">Review</th>
                 <th className="px-4 py-3 font-semibold text-ink-600">Date</th>
                 <th className="px-4 py-3 font-semibold text-ink-600">Status</th>
                 <th className="px-4 py-3"></th>
@@ -101,16 +109,20 @@ export default function MyEvents() {
                 <tr key={e.eventId} className="transition-colors hover:bg-cream-50">
                   <td className="px-4 py-3">
                     <div className="font-semibold text-ink-800">{e.eventDetails.name || 'Untitled event'}</div>
-                    <div className="mt-0.5 text-xs text-ink-500">{e.eventDetails.venueName || 'Venue not set'}</div>
+                    <div className="mt-0.5 text-xs text-ink-500">{e.eventDetails.venueName || 'Venue not set'} - {e.eventDetails.type}</div>
                   </td>
-                  <td className="px-4 py-3 capitalize text-ink-600">{e.eventDetails.type}</td>
+                  <td className="px-4 py-3 text-ink-600">{versionLabel(e)}</td>
+                  <td className="px-4 py-3 text-ink-600">
+                    <div>{assessmentLabel(e)}</div>
+                    <div className="mt-0.5 text-xs text-ink-500">{decisionLabel(e)} - {publicationLabel(e)}</div>
+                  </td>
                   <td className="px-4 py-3 tabular-nums text-ink-600">
                     {e.eventDetails.startDatetime ? format(new Date(e.eventDetails.startDatetime), 'PP') : 'Not scheduled'}
                   </td>
-                  <td className="px-4 py-3"><StatusBadge status={e.status} /></td>
+                  <td className="px-4 py-3"><OrganizerStatusBadge status={String(e.status)} /></td>
                   <td className="px-4 py-3 text-right">
-                    <Link to={e.status === 'Draft' ? `/organizer/events/${e.eventId}/edit` : `/organizer/events/${e.eventId}`} className="text-brand-600 hover:text-brand-700 text-sm font-medium">
-                      {e.status === 'Draft' ? 'Edit' : 'View'}
+                    <Link to={isEditableApplicationStatus(String(e.status)) ? `/organizer/events/${e.eventId}/edit` : `/organizer/events/${e.eventId}`} className="text-brand-600 hover:text-brand-700 text-sm font-medium">
+                      {isEditableApplicationStatus(String(e.status)) ? 'Edit' : 'View'}
                     </Link>
                   </td>
                 </tr>
@@ -121,10 +133,10 @@ export default function MyEvents() {
 
           <ul className="space-y-3 md:hidden">
             {filtered.map((e) => {
-              const editable = e.status === 'Draft';
+              const editable = isEditableApplicationStatus(String(e.status));
               return <li key={e.eventId}><Link to={editable ? `/organizer/events/${e.eventId}/edit` : `/organizer/events/${e.eventId}`} className="block rounded-lg border border-[#ded5c5] bg-[#fffdf8] p-4 active:bg-cream-100">
-                <div className="flex items-start justify-between gap-3"><h2 className="font-display text-base font-bold leading-snug text-ink-800">{e.eventDetails.name || 'Untitled event'}</h2><StatusBadge status={e.status} /></div>
-                <div className="mt-3 space-y-1 text-sm text-ink-500"><p className="flex items-center gap-2"><MapPin size={14} />{e.eventDetails.venueName || 'Venue not set'}</p><p className="tabular-nums">{e.eventDetails.startDatetime ? format(new Date(e.eventDetails.startDatetime), 'PP') : 'Not scheduled'}</p></div>
+                <div className="flex items-start justify-between gap-3"><h2 className="font-display text-base font-bold leading-snug text-ink-800">{e.eventDetails.name || 'Untitled event'}</h2><OrganizerStatusBadge status={String(e.status)} /></div>
+                <div className="mt-3 space-y-1 text-sm text-ink-500"><p className="flex items-center gap-2"><MapPin size={14} />{e.eventDetails.venueName || 'Venue not set'}</p><p className="tabular-nums">{e.eventDetails.startDatetime ? format(new Date(e.eventDetails.startDatetime), 'PP') : 'Not scheduled'}</p><p>{versionLabel(e)} - {assessmentLabel(e)}</p><p>{decisionLabel(e)} - {publicationLabel(e)}</p></div>
                 <div className="mt-4 flex items-center justify-between border-t border-[#e3dacb] pt-3 text-sm font-semibold text-brand-700"><span>{editable ? 'Continue application' : 'View application'}</span><ArrowRight size={16} /></div>
               </Link></li>;
             })}
@@ -133,4 +145,36 @@ export default function MyEvents() {
       )}
     </div>
   );
+}
+
+function versionLabel(event: EventRecord): string {
+  const status = String(event.status);
+  if (isEditableApplicationStatus(status)) {
+    return `${status === 'Draft' ? 'Draft' : 'Revision'} ${event.editableVersionId ?? `v${(event.currentVersionNumber ?? 0) + 1}`}`;
+  }
+  return event.currentVersionId ? `Submitted ${event.currentVersionId}` : 'No submitted version';
+}
+
+function assessmentLabel(event: EventRecord): string {
+  if (event.currentAssessmentId) return 'Assessment available';
+  if (event.status === 'Pending') return 'Assessment processing';
+  if (isEditableApplicationStatus(String(event.status))) return 'Not submitted';
+  if (event.status === 'Manual Review Required') return 'Manual assessment required';
+  return 'Assessment unavailable';
+}
+
+function decisionLabel(event: EventRecord): string {
+  if (event.status === 'Approved') return 'Approved by authorities';
+  if (event.status === 'Rejected') return 'Rejected by authority';
+  if (event.status === 'Withdrawn') return 'Withdrawn by organiser';
+  if (event.initialReview?.decision === 'Rejected') return 'Correction details recorded';
+  if (event.status === 'UnderReview') return 'Authority review in progress';
+  if (event.status === 'Pending') return 'Awaiting review';
+  if (event.status === 'Manual Review Required') return 'Awaiting manual review';
+  return 'No decision yet';
+}
+
+function publicationLabel(event: EventRecord): string {
+  if (event.status === 'Approved') return 'Public listing eligible';
+  return 'Not public';
 }
