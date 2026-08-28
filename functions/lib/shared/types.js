@@ -88,6 +88,8 @@ exports.COLLECTIONS = {
     PUBLIC_EVENT_CONTROLS: 'public_event_controls',
     PUBLIC_EVENT_CONTROL_ITEMS: 'items',
     PUBLIC_REPORTS: 'public_reports',
+    ADMIN_OPERATIONS: 'admin_operations',
+    ADMIN_AUDIT_LOGS: 'admin_audit_logs',
 };
 exports.CATEGORY_SCHEMA_VERSION = '2026-07-24-all-hazards-v2';
 exports.SCORING_LOGIC_VERSION = '2026-07-24-hirarc-residual-v2';

@@ -10,7 +10,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import OrganizerStatusBadge from './OrganizerStatusBadge';
-import { applyM1ExtractedFields, completeRiskProfile, createInitialEventDetails, createM1DraftRecord, extractionMatchesDraftDocuments, isEditableApplicationStatus, nextVersionId, reconcileM1EvidenceManifest, validateEventApplication, validateTemplateCompatibility } from './organizerApplication';
+import { applyM1ExtractedFields, completeRiskProfile, createInitialEventDetails, createM1DraftRecord, extractionMatchesDraftDocuments, isEditableApplicationStatus, isSelectableRegistryVenue, nextVersionId, reconcileM1EvidenceManifest, validateEventApplication, validateTemplateCompatibility } from './organizerApplication';
 import { mockVenues } from '../../mock_data/venues';
 import { findEventById } from '../../mock_data/events';
 import { isValidTemplateSelection, M1_CORE_TEMPLATE, scenarioTemplateFor } from '../../features/m1/templateRegistry';
@@ -75,13 +75,13 @@ export default function NewEvent() {
 
   useEffect(() => {
     if (!isFirebaseConfigured) {
-      setVenues(mockVenues.filter((venue) => venue.active === true).sort((left, right) => left.name.localeCompare(right.name)));
+      setVenues(mockVenues.filter(isSelectableRegistryVenue).sort((left, right) => left.name.localeCompare(right.name)));
       return;
     }
     getDocs(collection(db, COLLECTIONS.VENUES))
       .then((snapshot) => setVenues(snapshot.docs
         .map((document) => ({ venueId: document.id, ...document.data() }) as Venue)
-        .filter((venue) => venue.active === true)
+        .filter(isSelectableRegistryVenue)
         .sort((left, right) => left.name.localeCompare(right.name))))
       .catch(() => setVenues([]));
   }, []);

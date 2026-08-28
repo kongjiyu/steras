@@ -14,7 +14,7 @@
  *   - overrideResources     — validates and audits resource adjustments
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.unpublishStage2Doc = exports.publishStage2Doc = exports.reportStage2Doc = exports.confirmStage2Doc = exports.submitStage2Doc = exports.submitStage1Doc = exports.editEventControlList = exports.generateEventControlList = exports.unassignAuthorityOfficers = exports.makeSecondReviewDecision = exports.recordOfficerProposal = exports.assignAuthorityOfficers = exports.proposeEventControlList = exports.listMyNotifications = exports.markNotificationRead = exports.verifyStage1Doc = exports.reviewAssessmentScores = exports.overrideResources = exports.makeInitialReviewDecision = exports.retryManualOfficialFinalisation = exports.submitAdminManualAssessment = exports.retryOfficialFinalisation = exports.resolveAuthorityScoreConflict = exports.submitAuthorityScoreReview = exports.makeAuthorityDecision = exports.cancelEvent = exports.prepareApplicationRevision = exports.withdrawEvent = exports.extractApplicationDocuments = exports.submitEvent = exports.manualRecompute = exports.onEventStatusChanged = exports.onM4ReportOutcome = exports.recomputeRiskAndResources = exports.refreshAssessmentContext = exports.onEventUpdated = exports.onEventCreated = void 0;
+exports.unpublishStage2Doc = exports.publishStage2Doc = exports.reportStage2Doc = exports.confirmStage2Doc = exports.submitStage2Doc = exports.submitStage1Doc = exports.editEventControlList = exports.generateEventControlList = exports.unassignAuthorityOfficers = exports.makeSecondReviewDecision = exports.recordOfficerProposal = exports.assignAuthorityOfficers = exports.proposeEventControlList = exports.listMyNotifications = exports.markNotificationRead = exports.verifyStage1Doc = exports.reviewAssessmentScores = exports.overrideResources = exports.makeInitialReviewDecision = exports.retryManualOfficialFinalisation = exports.submitAdminManualAssessment = exports.retryOfficialFinalisation = exports.resolveAuthorityScoreConflict = exports.submitAuthorityScoreReview = exports.makeAuthorityDecision = exports.deactivateVenue = exports.verifyVenue = exports.saveVenue = exports.createPrivilegedAccount = exports.cancelEvent = exports.prepareApplicationRevision = exports.withdrawEvent = exports.extractApplicationDocuments = exports.submitEvent = exports.manualRecompute = exports.onEventStatusChanged = exports.onM4ReportOutcome = exports.recomputeRiskAndResources = exports.refreshAssessmentContext = exports.onEventUpdated = exports.onEventCreated = void 0;
 const app_1 = require("firebase-admin/app");
 // Initialize firebase-admin before any function code runs.
 (0, app_1.initializeApp)();
@@ -41,6 +41,12 @@ Object.defineProperty(exports, "withdrawEvent", { enumerable: true, get: functio
 var applicationLifecycle_1 = require("./http/applicationLifecycle");
 Object.defineProperty(exports, "prepareApplicationRevision", { enumerable: true, get: function () { return applicationLifecycle_1.prepareApplicationRevision; } });
 Object.defineProperty(exports, "cancelEvent", { enumerable: true, get: function () { return applicationLifecycle_1.cancelEvent; } });
+var adminUserManagement_1 = require("./http/adminUserManagement");
+Object.defineProperty(exports, "createPrivilegedAccount", { enumerable: true, get: function () { return adminUserManagement_1.createPrivilegedAccount; } });
+var adminVenueManagement_1 = require("./http/adminVenueManagement");
+Object.defineProperty(exports, "saveVenue", { enumerable: true, get: function () { return adminVenueManagement_1.saveVenue; } });
+Object.defineProperty(exports, "verifyVenue", { enumerable: true, get: function () { return adminVenueManagement_1.verifyVenue; } });
+Object.defineProperty(exports, "deactivateVenue", { enumerable: true, get: function () { return adminVenueManagement_1.deactivateVenue; } });
 var authorityDecision_1 = require("./http/authorityDecision");
 Object.defineProperty(exports, "makeAuthorityDecision", { enumerable: true, get: function () { return authorityDecision_1.makeAuthorityDecision; } });
 var authorityScoreReview_1 = require("./http/authorityScoreReview");

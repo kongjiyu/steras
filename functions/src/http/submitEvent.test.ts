@@ -107,7 +107,7 @@ describe('submission evidence and registry venue integrity', () => {
   });
 
   it('requires exact identity binding to an active canonical venue', () => {
-    const venue = { active: true, name: validDetails.venueName, address: validDetails.venueAddress, capacity: 2_000, location: validDetails.venueLocation };
+    const venue = { active: true, verificationStatus: 'verified', name: validDetails.venueName, address: validDetails.venueAddress, capacity: 2_000, location: validDetails.venueLocation };
     expect(validateCanonicalVenueRecord(validDetails, venue)).toEqual([]);
     expect(validateCanonicalVenueRecord(validDetails, { ...venue, active: false })).not.toEqual([]);
     expect(validateCanonicalVenueRecord(validDetails, { ...venue, capacity: 2_001 })).not.toEqual([]);

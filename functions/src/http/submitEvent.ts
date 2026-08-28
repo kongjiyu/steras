@@ -265,7 +265,7 @@ async function validateSubmissionAssets(eventId: string, versionId: string, path
 async function validateCanonicalVenue(details: EventDetails): Promise<void> {
   if (!details.venueId) return;
   const snapshot = await getFirestore().collection(COLLECTIONS.VENUES).doc(details.venueId).get();
-  if (!snapshot.exists || snapshot.data()?.active !== true || snapshot.data()?.deactivatedAt !== undefined) {
+  if (!snapshot.exists || snapshot.data()?.active !== true || snapshot.data()?.verificationStatus !== 'verified' || snapshot.data()?.deactivatedAt !== undefined) {
     throw new HttpsError('failed-precondition', 'The selected venue is not an active verified registry venue.');
   }
   if (validateCanonicalVenueRecord(details, snapshot.data()).length > 0) {
@@ -284,7 +284,7 @@ export function validateEvidencePaths(eventId: string, versionId: string, paths:
 }
 
 export function validateCanonicalVenueRecord(details: EventDetails, value: unknown): string[] {
-  if (!isRecord(value) || value.active !== true || value.deactivatedAt !== undefined) {
+  if (!isRecord(value) || value.active !== true || value.verificationStatus !== 'verified' || value.deactivatedAt !== undefined) {
     return ['The selected venue is not an active verified registry venue.'];
   }
   const location = isRecord(value.location) ? value.location : {};

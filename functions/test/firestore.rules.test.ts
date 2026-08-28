@@ -157,6 +157,26 @@ async function seedProfilesAndEvent() {
 }
 
 describe('Firestore security rules', () => {
+  it('keeps privileged accounts, venue mutations, and admin operation records backend-only', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, 'users/admin-1'), { uid: 'admin-1', role: 'admin' });
+      await setDoc(doc(db, 'users/organizer-1'), { uid: 'organizer-1', role: 'organizer' });
+      await setDoc(doc(db, 'venues/venue-1'), { venueId: 'venue-1', active: true, verificationStatus: 'verified', name: 'Venue', address: 'Address', capacity: 100, location: { lat: 1, lng: 1 } });
+      await setDoc(doc(db, 'venues/venue-1/audit_logs/1-created'), { action: 'venue_created' });
+      await setDoc(doc(db, 'admin_audit_logs/account-1'), { action: 'privileged_account_created' });
+    });
+    const adminDb = environment.authenticatedContext('admin-1').firestore();
+    const organizerDb = environment.authenticatedContext('organizer-1').firestore();
+    await assertFails(setDoc(doc(adminDb, 'users/authority-forged'), { uid: 'authority-forged', role: 'authority', authorityType: 'PDRM' }));
+    await assertFails(updateDoc(doc(adminDb, 'venues/venue-1'), { active: false }));
+    await assertFails(setDoc(doc(adminDb, 'admin_operations/op-1'), { kind: 'save_venue' }));
+    await assertSucceeds(getDoc(doc(adminDb, 'venues/venue-1/audit_logs/1-created')));
+    await assertFails(getDoc(doc(organizerDb, 'venues/venue-1/audit_logs/1-created')));
+    await assertSucceeds(getDoc(doc(adminDb, 'admin_audit_logs/account-1')));
+    await assertFails(getDoc(doc(organizerDb, 'admin_audit_logs/account-1')));
+  });
+
   it('prepares Pending edits and rejected revisions without mutating submitted versions', async () => {
     const adminDb = getFirestore(adminApp);
     await adminDb.doc('users/organizer-1').set({ role: 'organizer' });
