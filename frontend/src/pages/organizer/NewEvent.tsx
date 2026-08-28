@@ -1,20 +1,21 @@
 import PageHeader from '../../components/ui/PageHeader';
-import { EVENT_TYPES, EventType, EventDetails, EventRiskProfile, M1_DOCUMENT_SCHEMA_VERSION, M1DocumentExtraction, M1DocumentRole, M1DraftDocument, M1TemplateSelection, Venue } from '@shared/types';
+import { EVENT_TYPES, EventType, EventDetails, EventRiskProfile, M1_DOCUMENT_SCHEMA_VERSION, M1_EVIDENCE_MANIFEST_SCHEMA_VERSION, M1DocumentExtraction, M1DocumentRole, M1DraftDocument, M1EvidenceRequirementResponse, M1TemplateSelection, Venue } from '@shared/types';
 import { useEffect, useState, FormEvent, ChangeEvent } from 'react';
 import { collection, addDoc, doc, getDoc, getDocs, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { ref, uploadBytesResumable } from 'firebase/storage';
+import { getBlob, ref, uploadBytesResumable } from 'firebase/storage';
 import { db, functions, isFirebaseConfigured, storage } from '../../config/firebase';
 import { COLLECTIONS } from '@shared/types';
 import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import OrganizerStatusBadge from './OrganizerStatusBadge';
-import { applyM1ExtractedFields, completeRiskProfile, createInitialEventDetails, createM1DraftRecord, extractionMatchesDraftDocuments, isEditableApplicationStatus, nextVersionId, validateEventApplication, validateTemplateCompatibility } from './organizerApplication';
+import { applyM1ExtractedFields, completeRiskProfile, createInitialEventDetails, createM1DraftRecord, extractionMatchesDraftDocuments, isEditableApplicationStatus, nextVersionId, reconcileM1EvidenceManifest, validateEventApplication, validateTemplateCompatibility } from './organizerApplication';
 import { mockVenues } from '../../mock_data/venues';
 import { findEventById } from '../../mock_data/events';
 import { isValidTemplateSelection, M1_CORE_TEMPLATE, scenarioTemplateFor } from '../../features/m1/templateRegistry';
 import { FileCheck2, FileText, RotateCcw, Sparkles } from 'lucide-react';
+import { isM1EvidenceForcedRequired, m1EvidenceRequirementsFor } from '@shared/m1EvidenceContract';
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
@@ -50,6 +51,9 @@ export default function NewEvent() {
       ? { ...(initial as EventDetails), riskProfile: completeRiskProfile((initial as EventDetails).riskProfile) }
       : createInitialEventDetails(profile ?? undefined);
   });
+  const [evidenceManifest, setEvidenceManifest] = useState<M1EvidenceRequirementResponse[]>(() => templateSelection
+    ? reconcileM1EvidenceManifest(templateSelection, form, [])
+    : []);
 
   const update = <K extends keyof EventDetails>(key: K, value: EventDetails[K]) => {
     setValidationErrors([]);
@@ -63,6 +67,11 @@ export default function NewEvent() {
       riskProfile: { ...previous.riskProfile, [key]: value },
     }));
   };
+
+  useEffect(() => {
+    if (!templateSelection) return;
+    setEvidenceManifest((current) => reconcileM1EvidenceManifest(templateSelection, form, current));
+  }, [form, templateSelection]);
 
   useEffect(() => {
     if (!isFirebaseConfigured) {
@@ -98,6 +107,13 @@ export default function NewEvent() {
       setDocumentPaths(event.draftDocumentPaths ?? []);
       setDraftDocuments(event.draftDocuments ?? []);
       setCurrentExtractionId(event.currentExtractionId ?? '');
+      if (isValidTemplateSelection(event.templateSelection)) {
+        setEvidenceManifest(reconcileM1EvidenceManifest(
+          event.templateSelection,
+          event.eventDetails,
+          event.draftEvidenceManifest ?? [],
+        ));
+      }
       setTemplateSelection(isValidTemplateSelection(event.templateSelection) ? event.templateSelection : undefined);
       setLoading(false);
       return;
@@ -136,6 +152,13 @@ export default function NewEvent() {
         }
       }
       setTemplateSelection(isValidTemplateSelection(data.templateSelection) ? data.templateSelection : undefined);
+      if (isValidTemplateSelection(data.templateSelection)) {
+        setEvidenceManifest(reconcileM1EvidenceManifest(
+          data.templateSelection,
+          data.eventDetails as EventDetails,
+          Array.isArray(data.draftEvidenceManifest) ? data.draftEvidenceManifest as M1EvidenceRequirementResponse[] : [],
+        ));
+      }
     }).catch((error) => {
       toast.error(error instanceof Error ? error.message : 'Unable to load draft.');
       navigate('/organizer/events');
@@ -155,6 +178,8 @@ export default function NewEvent() {
         eventDetails: form,
         draftDocumentPaths: documentPaths,
         draftDocuments,
+        draftEvidenceManifest: evidenceManifest,
+        evidenceManifestSchemaVersion: M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
         ...(templateSelection ? { templateSelection } : {}),
         updatedAt: now,
       });
@@ -187,7 +212,7 @@ export default function NewEvent() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!user) return;
-    const errors = validateEventApplication(form, documentPaths, templateSelection, draftDocuments, currentExtractionId);
+    const errors = validateEventApplication(form, documentPaths, templateSelection, draftDocuments, currentExtractionId, evidenceManifest);
     if (errors.length > 0) {
       setValidationErrors(errors);
       toast.error(errors[0]);
@@ -227,10 +252,11 @@ export default function NewEvent() {
     }
   };
 
-  const handleFiles = async (event: ChangeEvent<HTMLInputElement>, role: M1DocumentRole = 'supporting_evidence') => {
+  const handleFiles = async (event: ChangeEvent<HTMLInputElement>, role: M1DocumentRole, requirementId?: string) => {
     const files = [...(event.target.files ?? [])];
     if (files.length === 0) return;
-    if (role !== 'supporting_evidence' && files.length !== 1) return toast.error('Choose exactly one completed DOCX template.');
+    if (files.length !== 1) return toast.error('Choose exactly one file.');
+    if (role === 'supporting_evidence' && !requirementId) return toast.error('Choose the checklist requirement for this evidence file.');
     const retained = role === 'supporting_evidence' ? draftDocuments : draftDocuments.filter((document) => document.role !== role);
     if (retained.length + files.length > 20) return toast.error('Submit no more than 20 application documents.');
     const allowedEvidenceTypes = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
@@ -266,15 +292,33 @@ export default function NewEvent() {
           schemaVersion: M1_DOCUMENT_SCHEMA_VERSION,
         });
       }
-      const nextDocuments = [...retained, ...uploaded];
+      let nextManifest = evidenceManifest;
+      let nextDocuments = [...retained, ...uploaded];
+      if (role === 'supporting_evidence' && requirementId) {
+        const replacementPath = uploaded[0].path;
+        nextManifest = evidenceManifest.map((response) => response.requirementId === requirementId
+          ? { requirementId, applicability: 'required', documentPath: replacementPath }
+          : response);
+        const referencedPaths = new Set(nextManifest.flatMap((response) => response.documentPath ? [response.documentPath] : []));
+        nextDocuments = nextDocuments.filter((document) => document.role !== 'supporting_evidence' || referencedPaths.has(document.path));
+      }
       const structuredPaths = new Set(draftDocuments.map((document) => document.path));
       const unstructuredLegacyPaths = documentPaths.filter((path) => !structuredPaths.has(path));
       const nextPaths = [...unstructuredLegacyPaths, ...nextDocuments.map((document) => document.path)];
-      await updateDoc(doc(db, COLLECTIONS.EVENTS, id), { draftDocumentPaths: nextPaths, draftDocuments: nextDocuments, updatedAt: Date.now() });
+      await updateDoc(doc(db, COLLECTIONS.EVENTS, id), {
+        draftDocumentPaths: nextPaths,
+        draftDocuments: nextDocuments,
+        draftEvidenceManifest: nextManifest,
+        evidenceManifestSchemaVersion: M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
+        updatedAt: Date.now(),
+      });
       setDraftDocuments(nextDocuments);
       setDocumentPaths(nextPaths);
-      setExtraction(null);
-      setCurrentExtractionId('');
+      setEvidenceManifest(nextManifest);
+      if (role !== 'supporting_evidence') {
+        setExtraction(null);
+        setCurrentExtractionId('');
+      }
       setValidationErrors([]);
       toast.success(`${uploaded.length} document${uploaded.length === 1 ? '' : 's'} uploaded.`);
     } catch (error) {
@@ -291,14 +335,50 @@ export default function NewEvent() {
     try {
       const nextDocuments = draftDocuments.filter((document) => document.path !== path);
       const nextPaths = documentPaths.filter((item) => item !== path);
-      await updateDoc(doc(db, COLLECTIONS.EVENTS, draftId), { draftDocumentPaths: nextPaths, draftDocuments: nextDocuments, updatedAt: Date.now() });
+      const nextManifest = evidenceManifest.map((response) => response.documentPath === path
+        ? { requirementId: response.requirementId, applicability: 'required' as const }
+        : response);
+      await updateDoc(doc(db, COLLECTIONS.EVENTS, draftId), {
+        draftDocumentPaths: nextPaths,
+        draftDocuments: nextDocuments,
+        draftEvidenceManifest: nextManifest,
+        evidenceManifestSchemaVersion: M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
+        updatedAt: Date.now(),
+      });
       setValidationErrors([]);
       setDraftDocuments(nextDocuments);
       setDocumentPaths(nextPaths);
-      setExtraction(null);
-      setCurrentExtractionId('');
+      setEvidenceManifest(nextManifest);
+      if (draftDocuments.find((document) => document.path === path)?.role !== 'supporting_evidence') {
+        setExtraction(null);
+        setCurrentExtractionId('');
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Unable to remove document.');
+    }
+  };
+
+  const updateEvidenceResponse = (requirementId: string, response: M1EvidenceRequirementResponse) => {
+    const nextManifest = evidenceManifest.map((item) => item.requirementId === requirementId ? response : item);
+    const referencedPaths = new Set(nextManifest.flatMap((item) => item.documentPath ? [item.documentPath] : []));
+    const nextDocuments = draftDocuments.filter((document) => document.role !== 'supporting_evidence' || referencedPaths.has(document.path));
+    setEvidenceManifest(nextManifest);
+    setDraftDocuments(nextDocuments);
+    setDocumentPaths((current) => {
+      const removed = new Set(draftDocuments.filter((document) => !nextDocuments.includes(document)).map((document) => document.path));
+      return current.filter((path) => !removed.has(path));
+    });
+    setValidationErrors([]);
+  };
+
+  const viewDocument = async (path: string) => {
+    try {
+      const blob = await getBlob(ref(storage, path), 10 * 1024 * 1024);
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank', 'noopener,noreferrer');
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Unable to open the evidence file.');
     }
   };
 
@@ -345,6 +425,17 @@ export default function NewEvent() {
   const supportingUploads = draftDocuments.filter((document) => document.role === 'supporting_evidence');
   const structuredUploadPaths = new Set(draftDocuments.map((document) => document.path));
   const legacySupportingPaths = documentPaths.filter((path) => !structuredUploadPaths.has(path));
+  const evidenceDefinitions = templateSelection ? m1EvidenceRequirementsFor(templateSelection.scenarioTemplateId) : [];
+  const evidenceGuidance = new Map([
+    ...M1_CORE_TEMPLATE.supportingDocuments,
+    ...(selectedScenario?.supportingDocuments ?? []),
+  ].map((guidance) => [guidance.id, guidance]));
+  const completeEvidenceCount = evidenceDefinitions.filter((definition) => {
+    const response = evidenceManifest.find((item) => item.requirementId === definition.id);
+    return response?.applicability === 'required'
+      ? supportingUploads.some((document) => document.path === response.documentPath)
+      : response?.applicability === 'not_applicable' && (response.notApplicableReason?.trim().length ?? 0) >= 10;
+  }).length;
 
   return (
     <div>
@@ -597,16 +688,37 @@ export default function NewEvent() {
 
           <fieldset className="space-y-4 border-t border-[#e3dacb] pt-8">
             <legend className="section-title mb-2 pr-4">Supporting evidence</legend>
-            <p className="text-sm leading-6 text-ink-500">Upload PDF, JPEG, PNG, or WebP files up to 10 MB each. Requirement-by-requirement completeness is checked in the next step.</p>
-            <label className="flex min-h-24 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-[#b9ad97] bg-cream-50 px-4 py-5 text-center text-sm font-semibold text-brand-700 hover:bg-cream-100">
-              <span>{uploading ? `Uploading ${uploadProgress}%` : 'Choose supporting files'}</span>
-              <span className="mt-1 text-xs font-normal text-ink-500">Multiple files are supported</span>
-              <input type="file" multiple accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => handleFiles(event, 'supporting_evidence')} disabled={uploading} className="sr-only" />
-            </label>
-            {supportingUploads.length > 0 && <ul className="divide-y divide-[#e3dacb] rounded-md border border-[#ded5c5]">{supportingUploads.map((document) => (
-              <li key={document.path} className="flex items-center justify-between gap-3 px-3 py-2 text-sm"><span className="min-w-0 truncate">{document.originalName}</span><button type="button" onClick={() => removeDocument(document.path)} className="min-h-11 px-2 font-semibold text-red-700 hover:text-red-800">Remove</button></li>
-            ))}</ul>}
-            {legacySupportingPaths.length > 0 && <div className="rounded-md border border-gold-200 bg-gold-50 p-3"><p className="text-xs font-semibold text-gold-700">Files uploaded before structured document roles were introduced</p><ul className="mt-2 divide-y divide-gold-200">{legacySupportingPaths.map((path) => <li key={path} className="flex items-center justify-between gap-3 py-2 text-sm"><span className="min-w-0 truncate">{legacyDocumentName(path)}</span><button type="button" onClick={() => removeDocument(path)} className="min-h-11 px-2 font-semibold text-red-700">Remove</button></li>)}</ul></div>}
+            <p className="text-sm leading-6 text-ink-500">Complete every Core and scenario checklist item. A current PDF or image can support more than one requirement; conditional items need either evidence or a clear not-applicable reason.</p>
+            <div className="rounded-lg border border-brand-200 bg-brand-50 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2"><p className="font-semibold text-ink-900">Evidence completeness</p><span className="badge bg-white text-brand-700">{completeEvidenceCount} / {evidenceDefinitions.length} complete</span></div>
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-white"><div className="h-full rounded-full bg-brand-600" style={{ width: `${evidenceDefinitions.length ? Math.round((completeEvidenceCount / evidenceDefinitions.length) * 100) : 0}%` }} /></div>
+            </div>
+            <div className="space-y-4">
+              {evidenceDefinitions.map((definition) => {
+                const guidance = evidenceGuidance.get(definition.id);
+                const response = evidenceManifest.find((item) => item.requirementId === definition.id)
+                  ?? { requirementId: definition.id, applicability: 'not_applicable' as const, notApplicableReason: '' };
+                const forcedRequired = isM1EvidenceForcedRequired(definition, form.riskProfile);
+                const assigned = supportingUploads.find((document) => document.path === response.documentPath);
+                return <article key={definition.id} className="rounded-lg border border-[#ded5c5] bg-cream-50 p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div><div className="flex flex-wrap items-center gap-2"><span className="text-xs font-bold text-brand-700">{definition.id}</span><span className="badge bg-white text-ink-600">{definition.source === 'core' ? 'Core' : 'Scenario'}</span>{forcedRequired && <span className="badge bg-red-50 text-red-700">Required</span>}</div><h3 className="mt-2 font-semibold text-ink-900">{guidance?.title ?? definition.id}</h3><p className="mt-1 text-sm leading-5 text-ink-500">{guidance?.condition ?? 'Review whether this evidence applies to the event.'}</p></div>
+                    {!forcedRequired && <select aria-label={`${definition.id} applicability`} className="input w-full sm:w-48" value={response.applicability} onChange={(event) => updateEvidenceResponse(definition.id, event.target.value === 'required'
+                      ? { requirementId: definition.id, applicability: 'required', ...(response.documentPath ? { documentPath: response.documentPath } : {}) }
+                      : { requirementId: definition.id, applicability: 'not_applicable', notApplicableReason: '' })}><option value="required">Applies — evidence required</option><option value="not_applicable">Not applicable</option></select>}
+                  </div>
+                  {response.applicability === 'not_applicable' && !forcedRequired ? <div className="mt-4"><label className="field-label" htmlFor={`reason-${definition.id}`}>Why this does not apply *</label><textarea id={`reason-${definition.id}`} className="input mt-1 min-h-20" maxLength={500} value={response.notApplicableReason ?? ''} onChange={(event) => updateEvidenceResponse(definition.id, { requirementId: definition.id, applicability: 'not_applicable', notApplicableReason: event.target.value })} /></div> : <div className="mt-4 space-y-3">
+                    {assigned ? <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-brand-200 bg-white px-3 py-2 text-sm"><span className="min-w-0 truncate font-medium text-ink-800">{assigned.originalName}</span><div className="flex gap-1"><button type="button" className="min-h-11 px-3 font-semibold text-brand-700" onClick={() => viewDocument(assigned.path)}>View</button><button type="button" className="min-h-11 px-3 font-semibold text-red-700" onClick={() => updateEvidenceResponse(definition.id, { requirementId: definition.id, applicability: 'required' })}>Remove</button></div></div> : <p className="text-sm font-medium text-red-700">No evidence file linked.</p>}
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      {supportingUploads.length > 0 && <select aria-label={`${definition.id} existing evidence`} className="input min-w-0 flex-1" value={response.documentPath ?? ''} onChange={(event) => updateEvidenceResponse(definition.id, { requirementId: definition.id, applicability: 'required', ...(event.target.value ? { documentPath: event.target.value } : {}) })}><option value="">Choose an uploaded file</option>{supportingUploads.map((document) => <option key={document.path} value={document.path}>{document.originalName}</option>)}</select>}
+                      <label className="btn-secondary cursor-pointer justify-center"><span>{assigned ? 'Replace file' : 'Upload file'}</span><input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" disabled={uploading} onChange={(event) => handleFiles(event, 'supporting_evidence', definition.id)} className="sr-only" /></label>
+                    </div>
+                  </div>}
+                </article>;
+              })}
+            </div>
+            {uploading && <div className="h-1.5 overflow-hidden rounded bg-cream-200"><div className="h-full bg-brand-600 transition-transform" style={{ transform: `scaleX(${uploadProgress / 100})`, transformOrigin: 'left' }} /></div>}
+            {legacySupportingPaths.length > 0 && <div className="rounded-md border border-gold-200 bg-gold-50 p-3"><p className="text-xs font-semibold text-gold-700">Files uploaded before structured document roles were introduced</p><ul className="mt-2 divide-y divide-gold-200">{legacySupportingPaths.map((path) => <li key={path} className="flex items-center justify-between gap-3 py-2 text-sm"><span className="min-w-0 truncate">{legacyDocumentName(path)}</span><div className="flex"><button type="button" onClick={() => viewDocument(path)} className="min-h-11 px-2 font-semibold text-brand-700">View</button><button type="button" onClick={() => removeDocument(path)} className="min-h-11 px-2 font-semibold text-red-700">Remove</button></div></li>)}</ul></div>}
           </fieldset>
 
           <fieldset className="space-y-4 border-t border-[#e3dacb] pt-8">

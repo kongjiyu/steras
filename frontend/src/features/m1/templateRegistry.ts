@@ -5,6 +5,7 @@ import {
   M1_TEMPLATE_REGISTRY_VERSION,
 } from '@shared/types';
 import { isValidM1TemplateSelection } from '@shared/m1TemplateContract';
+import { m1EvidenceRequirementsFor } from '@shared/m1EvidenceContract';
 
 export interface SupportingDocumentGuidance {
   id: string;
@@ -321,6 +322,11 @@ function scenario(
   supportingDocuments: SupportingDocumentGuidance[],
 ): M1TemplateDefinition {
   const fileName = sourcePath.split('/').at(-1) ?? `${title}.docx`;
+  const canonicalRequirements = new Map(
+    m1EvidenceRequirementsFor(templateId)
+      .filter((definition) => definition.source === 'scenario')
+      .map((definition) => [definition.id, definition]),
+  );
   return {
     templateId,
     version,
@@ -333,6 +339,9 @@ function scenario(
     previewFileName: fileName.replace(/\.docx$/i, '.pdf'),
     sha256,
     pageCount,
-    supportingDocuments,
+    supportingDocuments: supportingDocuments.map((document) => ({
+      ...document,
+      requirement: canonicalRequirements.get(document.id)?.requirement ?? document.requirement,
+    })),
   };
 }

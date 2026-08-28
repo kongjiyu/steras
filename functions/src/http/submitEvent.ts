@@ -10,7 +10,9 @@ import {
   EventType,
   EventVersion,
   M1_DOCUMENT_SCHEMA_VERSION,
+  M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
   M1DocumentExtraction,
+  M1DraftDocument,
   M1_EXTRACTION_SCHEMA_VERSION,
 } from '@shared/types';
 import { isValidM1TemplateSelection, m1CategoryForEventType, m1VenueSettingMatchesEnvironment } from '@shared/m1TemplateContract';
@@ -18,6 +20,7 @@ import { FUNCTION_REGION } from '../config/runtime';
 import { RESOURCE_CUTOVER_LOCK_PATH } from '../config/resourceCutoverLock';
 import { inspectStorageEvidence } from '../utils/storageEvidence';
 import { validateDraftDocuments } from './extractApplicationDocuments';
+import { validateM1EvidenceManifest } from '../engines/m1EvidenceManifest';
 
 export { isValidEvidenceMetadata } from '../utils/storageEvidence';
 
@@ -59,6 +62,9 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
     : undefined;
   const preflightExtraction = preflightDocuments
     ? await loadCurrentExtraction(preflight, eventReference)
+    : undefined;
+  const preflightEvidenceManifest = preflightDocuments
+    ? validateCurrentEvidenceManifest(preflight, preflightDocuments)
     : undefined;
   await validateSubmissionAssets(eventId, preflightVersionId, preflight.draftDocumentPaths ?? []);
   await validateCanonicalVenue(preflight.eventDetails);
@@ -118,6 +124,8 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
       documentPaths,
       documentUploads: preflightDocuments,
       extractionId: preflightExtraction?.extractionId,
+      evidenceManifest: preflightEvidenceManifest,
+      evidenceManifestSchemaVersion: preflight.evidenceManifestSchemaVersion,
     })).digest('hex');
     const version: EventVersion = {
       versionId,
@@ -128,6 +136,10 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
       documentPaths,
       ...(preflightDocuments ? { documentUploads: preflightDocuments } : {}),
       ...(preflightExtraction ? { extractionId: preflightExtraction.extractionId } : {}),
+      ...(preflightEvidenceManifest ? {
+        evidenceManifest: preflightEvidenceManifest,
+        evidenceManifestSchemaVersion: M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
+      } : {}),
       submittedBy: uid,
       submittedAt: now,
       inputHash,
@@ -289,7 +301,18 @@ function submissionFingerprint(event: EventRecord): string {
     documentUploads: event.draftDocuments,
     documentSchemaVersion: event.documentSchemaVersion,
     currentExtractionId: event.currentExtractionId,
+    evidenceManifest: event.draftEvidenceManifest,
+    evidenceManifestSchemaVersion: event.evidenceManifestSchemaVersion,
   })).digest('hex');
+}
+
+function validateCurrentEvidenceManifest(event: EventRecord, documents: M1DraftDocument[]) {
+  if (event.evidenceManifestSchemaVersion !== M1_EVIDENCE_MANIFEST_SCHEMA_VERSION || !event.templateSelection) {
+    throw new HttpsError('failed-precondition', 'Complete the current supporting-evidence checklist before submission.');
+  }
+  const result = validateM1EvidenceManifest(event.eventDetails, event.templateSelection, documents, event.draftEvidenceManifest);
+  if (result.errors.length > 0) throw new HttpsError('failed-precondition', result.errors.join(' '));
+  return result.manifest;
 }
 
 async function loadCurrentExtraction(
