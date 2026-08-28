@@ -49,4 +49,10 @@ describe('TemplateRecommendationPage', () => {
     fireEvent.click(screen.getByRole('checkbox'));
     expect(start).toBeEnabled();
   });
+
+  it('ignores malformed draft and recommendation query parameters without crashing', () => {
+    render(<MemoryRouter initialEntries={['/organizer/events/new?draft=a%2Fb&category=unknown&venue=indoor']}><TemplateRecommendationPage /></MemoryRouter>);
+    expect(screen.getByText('Find the right application templates')).toBeInTheDocument();
+    expect(screen.getByText('Your recommendation will appear here')).toBeInTheDocument();
+  });
 });

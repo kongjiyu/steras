@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { addDoc, collection, doc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { ArrowRight, CircleHelp, Download, FileText, MapPin, ShieldCheck } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -24,7 +24,8 @@ export default function TemplateRecommendationPage() {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const editingDraftId = searchParams.get('draft')?.trim() || undefined;
+  const requestedDraftId = searchParams.get('draft')?.trim();
+  const editingDraftId = requestedDraftId && isSafeDraftId(requestedDraftId) ? requestedDraftId : undefined;
   const initialCategory = M1_EVENT_CATEGORIES.find((item) => item.value === searchParams.get('category'))?.value;
   const initialVenue = M1_VENUE_SETTINGS.find((item) => item.value === searchParams.get('venue'))?.value;
   const [category, setCategory] = useState<M1EventCategory | undefined>(initialCategory);
@@ -34,6 +35,7 @@ export default function TemplateRecommendationPage() {
   const [starting, setStarting] = useState(false);
   const [selectionLocked, setSelectionLocked] = useState(false);
   const [checkingSelectionLock, setCheckingSelectionLock] = useState(Boolean(editingDraftId && isFirebaseConfigured));
+  const startLockRef = useRef(false);
   const scenario = useMemo(() => category && venue ? scenarioTemplateFor(category, venue) : undefined, [category, venue]);
 
   useEffect(() => {
@@ -58,6 +60,8 @@ export default function TemplateRecommendationPage() {
 
   const startApplication = async () => {
     if (!user || !category || !venue || !scenario || !confirmed || selectionLocked || checkingSelectionLock) return;
+    if (startLockRef.current) return;
+    startLockRef.current = true;
     const selection = createTemplateSelection(category, venue);
     const details = createInitialEventDetails(profile ?? undefined);
     details.type = DEFAULT_EVENT_TYPES[category];
@@ -96,6 +100,7 @@ export default function TemplateRecommendationPage() {
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Unable to start the application.');
     } finally {
+      startLockRef.current = false;
       setStarting(false);
     }
   };
@@ -252,3 +257,7 @@ const DEFAULT_EVENT_TYPES: Record<M1EventCategory, EventType> = {
   exhibition_convention_promotional: 'exhibition',
   carnival_public_celebration: 'fair',
 };
+
+function isSafeDraftId(value: string): boolean {
+  return value.length <= 256 && !value.includes('/') && value !== '.' && value !== '..' && !/^__.*__$/.test(value);
+}

@@ -10,7 +10,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import OrganizerStatusBadge from './OrganizerStatusBadge';
-import { completeRiskProfile, createInitialEventDetails, isEditableApplicationStatus, nextVersionId, validateEventApplication } from './organizerApplication';
+import { completeRiskProfile, createInitialEventDetails, isEditableApplicationStatus, nextVersionId, validateEventApplication, validateTemplateCompatibility } from './organizerApplication';
 import { mockVenues } from '../../mock_data/venues';
 import { findEventById } from '../../mock_data/events';
 import { isValidTemplateSelection, M1_CORE_TEMPLATE, scenarioTemplateFor } from '../../features/m1/templateRegistry';
@@ -113,6 +113,10 @@ export default function NewEvent() {
   const ensureDraft = async () => {
     if (!user) throw new Error('Sign in before saving a draft.');
     if (!templateSelection && !draftId) throw new Error('Choose the Core and scenario templates before creating a Draft.');
+    if (templateSelection) {
+      const [templateError] = validateTemplateCompatibility(form, templateSelection);
+      if (templateError) throw new Error(templateError);
+    }
     const now = Date.now();
     if (draftId) {
       await updateDoc(doc(db, COLLECTIONS.EVENTS, draftId), {
@@ -259,6 +263,9 @@ export default function NewEvent() {
   const selectedScenario = templateSelection
     ? scenarioTemplateFor(templateSelection.eventCategory, templateSelection.venueSetting)
     : undefined;
+  const [templateCompatibilityError] = templateSelection
+    ? validateTemplateCompatibility(form, templateSelection)
+    : [];
   const recommendationUrl = draftId
     ? `/organizer/events/new?draft=${encodeURIComponent(draftId)}${templateSelection ? `&category=${templateSelection.eventCategory}&venue=${templateSelection.venueSetting}` : ''}`
     : '/organizer/events/new';
@@ -270,13 +277,15 @@ export default function NewEvent() {
         description="Complete the operational details and supporting evidence used for the official category assessment and advisory M3 explanation."
       />
 
-      <section className={`mb-6 border ${templateSelection ? 'border-brand-200 bg-brand-50' : 'border-gold-300 bg-gold-50'} p-4 sm:p-5`} aria-labelledby="template-choice-heading">
+      <section className={`mb-6 border ${templateSelection && !templateCompatibilityError ? 'border-brand-200 bg-brand-50' : 'border-gold-300 bg-gold-50'} p-4 sm:p-5`} aria-labelledby="template-choice-heading">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-3">
-            <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-full ${templateSelection ? 'bg-brand-700 text-cream-50' : 'bg-gold-300 text-brand-950'}`}><FileText size={18} /></span>
+            <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-full ${templateSelection && !templateCompatibilityError ? 'bg-brand-700 text-cream-50' : 'bg-gold-300 text-brand-950'}`}><FileText size={18} /></span>
             <div>
-              <h2 id="template-choice-heading" className="font-bold text-ink-800">{selectedScenario ? 'Two application templates selected' : 'Template recommendation required'}</h2>
-              {selectedScenario ? (
+              <h2 id="template-choice-heading" className="font-bold text-ink-800">{templateCompatibilityError ? 'Template recommendation needs attention' : selectedScenario ? 'Two application templates selected' : 'Template recommendation required'}</h2>
+              {templateCompatibilityError ? (
+                <p className="mt-1 text-sm leading-5 text-ink-600">{templateCompatibilityError}</p>
+              ) : selectedScenario ? (
                 <p className="mt-1 text-sm leading-5 text-ink-600">{M1_CORE_TEMPLATE.title} + {selectedScenario.title}</p>
               ) : (
                 <p className="mt-1 text-sm leading-5 text-ink-600">This legacy Draft is safe to edit, but you must choose a Core and scenario template before submission.</p>

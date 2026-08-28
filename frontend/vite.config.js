@@ -68,7 +68,13 @@ function m1TemplateAssets() {
             server.middlewares.use(function (request, response, next) {
                 if (!request.url)
                     return next();
-                var pathname = decodeURIComponent(request.url.split('?')[0]);
+                var pathname;
+                try {
+                    pathname = decodeURIComponent(request.url.split('?')[0]);
+                }
+                catch (_a) {
+                    return next();
+                }
                 var sourcePath = assets.get(pathname);
                 if (!sourcePath)
                     return next();

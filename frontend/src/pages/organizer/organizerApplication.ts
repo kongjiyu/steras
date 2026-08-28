@@ -1,5 +1,5 @@
 import { EventDetails, EventRiskProfile, EventStatus, EventType, M1TemplateSelection } from '@shared/types';
-import { m1CategoryForEventType, m1VenueSettingMatchesEnvironment } from '@shared/m1TemplateContract';
+import { isValidM1TemplateSelection, m1CategoryForEventType, m1VenueSettingMatchesEnvironment } from '@shared/m1TemplateContract';
 
 export type RevisionRequestedStatus = 'Revision Requested';
 export type OrganizerApplicationStatus = EventStatus | RevisionRequestedStatus;
@@ -41,15 +41,7 @@ export function validateEventApplication(
   now = Date.now(),
 ): string[] {
   const errors: string[] = [];
-  if (!templateSelection) errors.push('Select the Core and scenario templates before submitting.');
-  else {
-    if (m1CategoryForEventType(details.type) !== templateSelection.eventCategory) {
-      errors.push('Event type does not match the selected scenario template. Change the template recommendation or event type.');
-    }
-    if (!m1VenueSettingMatchesEnvironment(templateSelection.venueSetting, details.environment)) {
-      errors.push('Event environment does not match the selected venue-setting template.');
-    }
-  }
+  errors.push(...validateTemplateCompatibility(details, templateSelection));
   requiredText(details.name, 'Event name', 200, errors);
   requiredText(details.venueName, 'Venue name', 200, errors);
   requiredText(details.venueAddress, 'Venue address', 500, errors);
@@ -91,6 +83,21 @@ export function validateEventApplication(
     errors.push('Submit between 1 and 20 unique supporting evidence files.');
   }
 
+  return errors;
+}
+
+export function validateTemplateCompatibility(details: EventDetails, templateSelection?: M1TemplateSelection): string[] {
+  if (!templateSelection) return ['Select the Core and scenario templates before submitting.'];
+  if (!isValidM1TemplateSelection(templateSelection)) {
+    return ['The selected template recommendation is invalid or out of date. Choose the templates again.'];
+  }
+  const errors: string[] = [];
+  if (m1CategoryForEventType(details.type) !== templateSelection.eventCategory) {
+    errors.push('Event type does not match the selected scenario template. Change the template recommendation or event type.');
+  }
+  if (!m1VenueSettingMatchesEnvironment(templateSelection.venueSetting, details.environment)) {
+    errors.push('Event environment does not match the selected venue-setting template.');
+  }
   return errors;
 }
 

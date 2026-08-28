@@ -32,6 +32,8 @@ describe('M1 template registry', () => {
       expect(template.previewFileName).toMatch(/\.pdf$/);
       expect(template.sha256).toMatch(/^[a-f0-9]{64}$/);
       expect(template.pageCount).toBeGreaterThan(0);
+      expect(new Set(template.supportingDocuments.map((item) => item.id)).size).toBe(template.supportingDocuments.length);
+      expect(template.supportingDocuments.every((item) => item.title.trim() && item.condition.trim())).toBe(true);
     }
   });
 
@@ -49,5 +51,22 @@ describe('M1 template registry', () => {
     expect(isValidTemplateSelection({ ...selection, scenarioTemplateId: 'STERAS-T01-ENT-IN-v2.0' })).toBe(false);
     expect(isValidTemplateSelection({ ...selection, unknown: true })).toBe(false);
     expect(isValidTemplateSelection({ ...selection, selectedAt: Number.NaN })).toBe(false);
+    expect(isValidTemplateSelection({ ...selection, selectedAt: 1.5 })).toBe(false);
+    expect(isValidTemplateSelection({ ...selection, selectedAt: 0 })).toBe(false);
+    expect(isValidTemplateSelection({ ...selection, templateRegistryVersion: 'stale-version' })).toBe(false);
+    expect(isValidTemplateSelection({ ...selection, eventCategory: 'unknown' })).toBe(false);
+    expect(isValidTemplateSelection(null)).toBe(false);
+    expect(isValidTemplateSelection([])).toBe(false);
+  });
+
+  it('rejects every cross-scenario substitution across the complete matrix', () => {
+    for (const category of M1_EVENT_CATEGORIES) {
+      for (const venue of M1_VENUE_SETTINGS) {
+        const selection = createTemplateSelection(category.value, venue.value, 1);
+        for (const other of M1_SCENARIO_TEMPLATES.filter((item) => item.templateId !== selection.scenarioTemplateId)) {
+          expect(isValidTemplateSelection({ ...selection, scenarioTemplateId: other.templateId })).toBe(false);
+        }
+      }
+    }
   });
 });

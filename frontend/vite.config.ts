@@ -64,7 +64,12 @@ function m1TemplateAssets(): Plugin {
     configureServer(server) {
       server.middlewares.use((request, response, next) => {
         if (!request.url) return next();
-        const pathname = decodeURIComponent(request.url.split('?')[0]);
+        let pathname: string;
+        try {
+          pathname = decodeURIComponent(request.url.split('?')[0]);
+        } catch {
+          return next();
+        }
         const sourcePath = assets.get(pathname);
         if (!sourcePath) return next();
         response.statusCode = 200;

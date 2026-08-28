@@ -26,7 +26,7 @@ export default function TemplatePreview({ core, scenario }: TemplatePreviewProps
   useEffect(() => {
     setPage(1);
     setReportedPages(undefined);
-  }, [selectedId]);
+  }, [template.templateId]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -87,7 +87,10 @@ export default function TemplatePreview({ core, scenario }: TemplatePreviewProps
         <div ref={containerRef} className="min-w-0 overflow-auto p-4 sm:p-6" aria-live="polite">
           <Document
             file={templatePreviewUrl(template)}
-            onLoadSuccess={({ numPages }) => setReportedPages(numPages)}
+            onLoadSuccess={({ numPages }) => {
+              setReportedPages(numPages);
+              setPage((current) => Math.min(current, numPages));
+            }}
             loading={<PreviewMessage title="Opening document" detail="Preparing the page preview…" />}
             error={<PreviewMessage title="Preview unavailable" detail="Download the Word template to continue." />}
           >

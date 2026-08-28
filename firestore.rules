@@ -64,6 +64,19 @@ service cloud.firestore {
         && data.templateSelection.templateRegistryVersion == '2026-08-28-v1'
         && data.templateSelection.selectedAt is int
         && data.templateSelection.selectedAt > 0
+        && (data.eventDetails.type + '|' + data.templateSelection.eventCategory) in [
+          'concert|entertainment_performance',
+          'festival|cultural_heritage_festival',
+          'sports|sports_recreational',
+          'cultural|cultural_heritage_festival',
+          'religious|cultural_heritage_festival',
+          'exhibition|exhibition_convention_promotional',
+          'fair|carnival_public_celebration',
+          'conference|exhibition_convention_promotional',
+          'other|carnival_public_celebration'
+        ]
+        && ((data.templateSelection.venueSetting == 'indoor' && data.eventDetails.environment == 'indoor')
+          || (data.templateSelection.venueSetting != 'indoor' && data.eventDetails.environment in ['outdoor', 'mixed']))
         && (data.templateSelection.eventCategory + '|' + data.templateSelection.venueSetting + '|' + data.templateSelection.scenarioTemplateId) in [
           'entertainment_performance|indoor|STERAS-T01-ENT-IN-v2.0',
           'entertainment_performance|outdoor_fixed_site|STERAS-T02-ENT-OF-v1.0',
@@ -142,9 +155,14 @@ service cloud.firestore {
                       'requiredAuthorities', 'currentVersionNumber', 'editableVersionId',
                       'submittedAt'
                     ])
-                    && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['templateSelection'])
-                        || (resource.data.draftDocumentPaths.size() == 0
-                            && validM1TemplateSelection(request.resource.data)));
+                    && (
+                      !request.resource.data.diff(resource.data).affectedKeys().hasAny(['templateSelection'])
+                        ? (!resource.data.keys().hasAny(['templateSelection'])
+                            || validM1TemplateSelection(request.resource.data))
+                        : (resource.data.draftDocumentPaths.size() == 0
+                            && request.resource.data.draftDocumentPaths.size() == 0
+                            && validM1TemplateSelection(request.resource.data))
+                    );
 
       // Status transitions to Approved/Rejected/UnderReview are server-only (Cloud Functions).
       allow delete: if false;

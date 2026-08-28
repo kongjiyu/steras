@@ -1,9 +1,54 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+const node_crypto_1 = require("node:crypto");
 const vitest_1 = require("vitest");
 const onEventCreated_1 = require("./onEventCreated");
 const manualFinalisation_1 = require("../engines/manualFinalisation");
 const types_1 = require("../../../shared/types");
+(0, vitest_1.describe)('M1-submitted assessment input integrity', () => {
+    (0, vitest_1.it)('binds the exact template selection into the immutable version hash', () => {
+        const templateSelection = {
+            eventCategory: 'cultural_heritage_festival',
+            venueSetting: 'outdoor_fixed_site',
+            coreTemplateId: 'STERAS-CORE',
+            scenarioTemplateId: 'STERAS-T08-CUL-OF-v1.0',
+            templateRegistryVersion: '2026-08-28-v1',
+            selectedAt: 1,
+        };
+        const eventDetails = {
+            name: 'KL Cultural Festival', type: 'cultural',
+            venueName: 'Central Venue', venueAddress: 'Kuala Lumpur', venueLocation: { lat: 3.139, lng: 101.687 },
+            venueCapacity: 2_000, expectedAttendance: 1_500, environment: 'outdoor',
+            coverage: 'partially_covered', seating: 'mixed',
+            startDatetime: 2_000, endDatetime: 3_000,
+            emergencyPlanSummary: 'Emergency exits and first-aid posts are documented.',
+            organizerName: 'Organizer', organizerEmail: 'organizer@example.com', organizerPhone: '+60123456789',
+            riskProfile: {
+                internationalAttendees: false, alcoholServed: false, foodServed: true, freeDrinkingWater: true,
+                ticketedEntry: true, overnightAccommodation: false, pyrotechnics: false, temporaryStructures: false,
+                rivalryOrTensionExpected: false, crowdManagementPlan: true, trafficManagementPlan: true,
+                severeWeatherPlan: true, medicalPlan: true, evacuationPlanTested: true, authorityCoordinationConfirmed: true,
+                vulnerableAttendeesPercent: 10, standingAttendeesPercent: 20, nearestHospitalTravelMinutes: 15,
+            },
+        };
+        const documentPaths = ['event_documents/event-1/v1/evidence.pdf'];
+        const inputHash = (0, node_crypto_1.createHash)('sha256').update(JSON.stringify({ eventDetails, templateSelection, documentPaths })).digest('hex');
+        const version = {
+            eventId: 'event-1', versionId: 'v1', versionNumber: 1, eventDetails, templateSelection,
+            documentPaths, submittedBy: 'organizer-1', submittedAt: 1_000, inputHash,
+        };
+        (0, vitest_1.expect)((0, onEventCreated_1.isPipelineEventVersion)(version, 'event-1', 'v1')).toBe(true);
+        (0, vitest_1.expect)((0, onEventCreated_1.isPipelineEventVersion)({ ...version, templateSelection: undefined }, 'event-1', 'v1')).toBe(false);
+        (0, vitest_1.expect)((0, onEventCreated_1.isPipelineEventVersion)({
+            ...version,
+            templateSelection: { ...templateSelection, scenarioTemplateId: 'STERAS-T01-ENT-IN-v2.0' },
+        }, 'event-1', 'v1')).toBe(false);
+        (0, vitest_1.expect)((0, onEventCreated_1.isPipelineEventVersion)({
+            ...version,
+            templateSelection: { ...templateSelection, selectedAt: 2 },
+        }, 'event-1', 'v1')).toBe(false);
+    });
+});
 (0, vitest_1.describe)('resource pipeline identity and revision helpers', () => {
     (0, vitest_1.it)('uses stage, version and the complete input hash in deterministic IDs', () => {
         const hash = 'a'.repeat(64);
