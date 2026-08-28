@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { EventDetails } from '@shared/types';
 import { isEditableApplicationStatus, validateEventApplication } from './organizerApplication';
+import { createTemplateSelection } from '../../features/m1/templateRegistry';
 
 const future = Date.now() + 7 * 24 * 60 * 60 * 1000;
+const templateSelection = createTemplateSelection('exhibition_convention_promotional', 'indoor', 1);
 
 function validDetails(overrides: Partial<EventDetails> = {}): EventDetails {
   return {
@@ -53,13 +55,19 @@ describe('organizer application lifecycle helpers', () => {
   });
 
   it('accepts a complete application with version-scoped evidence', () => {
-    expect(validateEventApplication(validDetails(), ['event_documents/event-1/v1/plan.pdf'])).toEqual([]);
+    expect(validateEventApplication(validDetails(), ['event_documents/event-1/v1/plan.pdf'], templateSelection)).toEqual([]);
   });
 
   it('blocks attendance above capacity and missing evidence before submit', () => {
-    expect(validateEventApplication(validDetails({ expectedAttendance: 1200 }), [])).toEqual(expect.arrayContaining([
+    expect(validateEventApplication(validDetails({ expectedAttendance: 1200 }), [], templateSelection)).toEqual(expect.arrayContaining([
       'Expected attendance cannot exceed venue capacity.',
       'Submit between 1 and 20 unique supporting evidence files.',
     ]));
+  });
+
+  it('requires a template recommendation before submission', () => {
+    expect(validateEventApplication(validDetails(), ['event_documents/event-1/v1/plan.pdf'])).toContain(
+      'Select the Core and scenario templates before submitting.',
+    );
   });
 });

@@ -33,6 +33,7 @@ const resourceCutoverLock_1 = require("../config/resourceCutoverLock");
 const submitEvent_1 = require("../http/submitEvent");
 const storageEvidence_1 = require("../utils/storageEvidence");
 const proposalContract_1 = require("../engines/proposalContract");
+const m1TemplateContract_1 = require("../../../shared/m1TemplateContract");
 const CLAIM_LEASE_MS = 2 * 60 * 1000;
 async function runRiskAndResourcePipeline(eventId, now = Date.now(), retryManual = false, retryAuthorization, options = {}) {
     const db = (0, firebase_admin_1.firestore)();
@@ -405,6 +406,7 @@ function isPipelineEventVersion(value, eventId, versionId) {
         || !details || typeof details !== 'object' || Array.isArray(details))
         return false;
     const eventDetails = details;
+    const templateSelection = version.templateSelection;
     const contractValid = typeof eventDetails.name === 'string' && Boolean(eventDetails.name.trim())
         && typeof eventDetails.type === 'string' && Boolean(eventDetails.type.trim())
         && typeof eventDetails.venueName === 'string' && Boolean(eventDetails.venueName.trim())
@@ -417,11 +419,16 @@ function isPipelineEventVersion(value, eventId, versionId) {
         && Number.isFinite(eventDetails.startDatetime) && Number.isFinite(eventDetails.endDatetime)
         && Number(eventDetails.endDatetime) >= Number(eventDetails.startDatetime)
         && typeof eventDetails.emergencyPlanSummary === 'string';
-    if (!contractValid || (0, submitEvent_1.validateEventDetails)(eventDetails, Number(version.submittedAt) - 1).length > 0
+    if (!contractValid
+        || !(0, m1TemplateContract_1.isValidM1TemplateSelection)(templateSelection)
+        || (0, m1TemplateContract_1.m1CategoryForEventType)(eventDetails.type) !== templateSelection.eventCategory
+        || !(0, m1TemplateContract_1.m1VenueSettingMatchesEnvironment)(templateSelection.venueSetting, eventDetails.environment)
+        || (0, submitEvent_1.validateEventDetails)(eventDetails, Number(version.submittedAt) - 1).length > 0
         || (0, submitEvent_1.validateEvidencePaths)(eventId, versionId, version.documentPaths).length > 0)
         return false;
     const expectedInputHash = (0, node_crypto_1.createHash)('sha256').update(JSON.stringify({
         eventDetails,
+        templateSelection,
         documentPaths: version.documentPaths,
     })).digest('hex');
     return version.inputHash === expectedInputHash;

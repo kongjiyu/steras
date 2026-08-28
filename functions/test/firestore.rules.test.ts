@@ -104,6 +104,15 @@ const validDetails = {
   },
 };
 
+const validTemplateSelection = {
+  eventCategory: 'cultural_heritage_festival',
+  venueSetting: 'outdoor_fixed_site',
+  coreTemplateId: 'STERAS-CORE',
+  scenarioTemplateId: 'STERAS-T08-CUL-OF-v1.0',
+  templateRegistryVersion: '2026-08-28-v1',
+  selectedAt: 1,
+};
+
 async function uploadTestEvidence(eventId: string, versionId: string): Promise<string> {
   const evidencePath = `event_documents/${eventId}/${versionId}/evidence.pdf`;
   await getStorage(adminApp).bucket().file(evidencePath).save(Buffer.from('%PDF-1.4\ntest\n%%EOF\n'), {
@@ -139,12 +148,32 @@ describe('Firestore security rules', () => {
     await environment.withSecurityRulesDisabled((context) => setDoc(doc(context.firestore(), 'users/organizer-1'), { role: 'organizer' }));
     const db = environment.authenticatedContext('organizer-1').firestore();
     const draft = {
-      organizerId: 'organizer-1', eventDetails: validDetails, status: 'Draft', currentVersionNumber: 0,
+      organizerId: 'organizer-1', eventDetails: validDetails, templateSelection: validTemplateSelection, status: 'Draft', currentVersionNumber: 0,
       editableVersionId: 'v1', draftDocumentPaths: [], requiredAuthorities: [], createdAt: 1, updatedAt: 1,
     };
     await assertSucceeds(setDoc(doc(db, 'events/draft-1'), draft));
+    await assertFails(setDoc(doc(db, 'events/invalid-template-draft'), {
+      ...draft,
+      templateSelection: { ...validTemplateSelection, scenarioTemplateId: 'STERAS-T01-ENT-IN-v2.0' },
+    }));
     await assertFails(setDoc(doc(db, 'events/pending-1'), { ...draft, status: 'Pending' }));
     await assertFails(updateDoc(doc(db, 'events/draft-1'), { currentVersionNumber: 1 }));
+    await assertFails(updateDoc(doc(db, 'events/draft-1'), {
+      templateSelection: { ...validTemplateSelection, venueSetting: 'indoor' },
+    }));
+    await assertSucceeds(updateDoc(doc(db, 'events/draft-1'), {
+      templateSelection: {
+        ...validTemplateSelection,
+        venueSetting: 'indoor',
+        scenarioTemplateId: 'STERAS-T07-CUL-IN-v1.0',
+      },
+    }));
+    await assertSucceeds(updateDoc(doc(db, 'events/draft-1'), {
+      draftDocumentPaths: ['event_documents/draft-1/v1/completed-template.docx'],
+    }));
+    await assertFails(updateDoc(doc(db, 'events/draft-1'), {
+      templateSelection: validTemplateSelection,
+    }));
   });
 
   it('submits exactly one immutable version through the server transaction', async () => {
@@ -153,7 +182,7 @@ describe('Firestore security rules', () => {
       const db = context.firestore();
       await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer' });
       await setDoc(doc(db, 'events/draft-1'), {
-        organizerId: 'organizer-1', eventDetails: validDetails, status: 'Draft', currentVersionNumber: 0,
+        organizerId: 'organizer-1', eventDetails: validDetails, templateSelection: validTemplateSelection, status: 'Draft', currentVersionNumber: 0,
         editableVersionId: 'v1', draftDocumentPaths: [v1Evidence], requiredAuthorities: [], createdAt: 1, updatedAt: 1,
       });
     });
@@ -193,11 +222,12 @@ describe('Firestore security rules', () => {
         capacity: 2_000, location: { lat: 3.139, lng: 101.687 },
       }),
       adminDb.doc('events/missing-evidence').set({
-        organizerId: 'organizer-1', eventDetails: validDetails, status: 'Draft', currentVersionNumber: 0,
+        organizerId: 'organizer-1', eventDetails: validDetails, templateSelection: validTemplateSelection, status: 'Draft', currentVersionNumber: 0,
         editableVersionId: 'v1', draftDocumentPaths: ['event_documents/missing-evidence/v1/missing.pdf'], requiredAuthorities: [], createdAt: 1, updatedAt: 1,
       }),
       adminDb.doc('events/integrity-draft').set({
         organizerId: 'organizer-1', eventDetails: { ...validDetails, venueId: 'venue-1', venueName: 'Spoofed Hall' },
+        templateSelection: validTemplateSelection,
         status: 'Draft', currentVersionNumber: 0, editableVersionId: 'v1', draftDocumentPaths: [evidencePath],
         requiredAuthorities: [], createdAt: 1, updatedAt: 1,
       }),
@@ -212,7 +242,7 @@ describe('Firestore security rules', () => {
       const db = context.firestore();
       await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer' });
       await setDoc(doc(db, 'events/draft-1'), {
-        organizerId: 'organizer-1', eventDetails: validDetails, status: 'Draft', currentVersionNumber: 0,
+        organizerId: 'organizer-1', eventDetails: validDetails, templateSelection: validTemplateSelection, status: 'Draft', currentVersionNumber: 0,
         editableVersionId: 'v1', draftDocumentPaths: [], requiredAuthorities: [], createdAt: 1, updatedAt: 1,
       });
     });
@@ -231,7 +261,7 @@ describe('Firestore security rules', () => {
       const db = context.firestore();
       await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer' });
       await setDoc(doc(db, 'events/draft-1'), {
-        organizerId: 'organizer-1', eventDetails: validDetails, status: 'Draft', currentVersionNumber: 0,
+        organizerId: 'organizer-1', eventDetails: validDetails, templateSelection: validTemplateSelection, status: 'Draft', currentVersionNumber: 0,
         editableVersionId: 'v1', draftDocumentPaths: [evidencePath], requiredAuthorities: [], createdAt: 1, updatedAt: 1,
       });
     });

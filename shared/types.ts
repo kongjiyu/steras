@@ -66,6 +66,27 @@ export type EventEnvironment = 'indoor' | 'outdoor' | 'mixed';
 export type VenueCoverage = 'covered' | 'partially_covered' | 'uncovered';
 export type SeatingType = 'seated' | 'standing' | 'mixed';
 
+export const M1_TEMPLATE_REGISTRY_VERSION = '2026-08-28-v1';
+
+export type M1EventCategory =
+  | 'entertainment_performance'
+  | 'sports_recreational'
+  | 'cultural_heritage_festival'
+  | 'exhibition_convention_promotional'
+  | 'carnival_public_celebration';
+
+export type M1VenueSetting = 'indoor' | 'outdoor_fixed_site' | 'outdoor_route_based';
+
+/** Organizer-owned snapshot of the two-template recommendation used by a Draft. */
+export interface M1TemplateSelection {
+  eventCategory: M1EventCategory;
+  venueSetting: M1VenueSetting;
+  coreTemplateId: 'STERAS-CORE';
+  scenarioTemplateId: string;
+  templateRegistryVersion: typeof M1_TEMPLATE_REGISTRY_VERSION;
+  selectedAt: number;
+}
+
 export interface EventRiskProfile {
   vulnerableAttendeesPercent?: number;
   standingAttendeesPercent?: number;
@@ -113,6 +134,8 @@ export interface EventRecord {
   eventId: string;
   organizerId: string;
   eventDetails: EventDetails;
+  /** Absent only on legacy records created before the M1 recommendation flow. */
+  templateSelection?: M1TemplateSelection;
   status: EventStatus;
   currentVersionId?: string;
   currentVersionNumber: number;
@@ -193,6 +216,8 @@ export interface EventVersion {
   eventId: string;
   versionNumber: number;
   eventDetails: EventDetails;
+  /** Required for new submissions; optional only for immutable legacy versions. */
+  templateSelection?: M1TemplateSelection;
   documentPaths: string[];
   submittedBy: string;
   submittedAt: number;

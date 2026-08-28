@@ -16,7 +16,9 @@ import {
   AuthorityScoreReview,
   CATEGORY_SCHEMA_VERSION,
   COLLECTIONS,
+  EventEnvironment,
   EventRecord,
+  EventType,
   EventVersion,
   HARD_RULE_VERSION,
   ManualReviewRiskAssessment,
@@ -63,6 +65,11 @@ import { createResourceCutoverQueueToken, RESOURCE_CUTOVER_LOCK_PATH } from '../
 import { validateEventDetails, validateEvidencePaths } from '../http/submitEvent';
 import { inspectStorageEvidence } from '../utils/storageEvidence';
 import { CANONICAL_EVIDENCE_KEYS } from '../engines/proposalContract';
+import {
+  isValidM1TemplateSelection,
+  m1CategoryForEventType,
+  m1VenueSettingMatchesEnvironment,
+} from '@shared/m1TemplateContract';
 
 const CLAIM_LEASE_MS = 2 * 60 * 1000;
 
@@ -467,6 +474,7 @@ export function isPipelineEventVersion(value: unknown, eventId: string, versionI
     || typeof version.inputHash !== 'string' || !/^[a-f0-9]{64}$/.test(version.inputHash)
     || !details || typeof details !== 'object' || Array.isArray(details)) return false;
   const eventDetails = details as Record<string, unknown>;
+  const templateSelection = version.templateSelection;
   const contractValid = typeof eventDetails.name === 'string' && Boolean(eventDetails.name.trim())
     && typeof eventDetails.type === 'string' && Boolean(eventDetails.type.trim())
     && typeof eventDetails.venueName === 'string' && Boolean(eventDetails.venueName.trim())
@@ -479,10 +487,15 @@ export function isPipelineEventVersion(value: unknown, eventId: string, versionI
     && Number.isFinite(eventDetails.startDatetime) && Number.isFinite(eventDetails.endDatetime)
     && Number(eventDetails.endDatetime) >= Number(eventDetails.startDatetime)
     && typeof eventDetails.emergencyPlanSummary === 'string';
-  if (!contractValid || validateEventDetails(eventDetails, Number(version.submittedAt) - 1).length > 0
+  if (!contractValid
+    || !isValidM1TemplateSelection(templateSelection)
+    || m1CategoryForEventType(eventDetails.type as EventType) !== templateSelection.eventCategory
+    || !m1VenueSettingMatchesEnvironment(templateSelection.venueSetting, eventDetails.environment as EventEnvironment)
+    || validateEventDetails(eventDetails, Number(version.submittedAt) - 1).length > 0
     || validateEvidencePaths(eventId, versionId, version.documentPaths).length > 0) return false;
   const expectedInputHash = createHash('sha256').update(JSON.stringify({
     eventDetails,
+    templateSelection,
     documentPaths: version.documentPaths,
   })).digest('hex');
   return version.inputHash === expectedInputHash;
