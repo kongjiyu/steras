@@ -10,6 +10,7 @@ import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
 import { submitEventForUser } from '../src/http/submitEvent';
 import { withdrawEventForUser } from '../src/http/withdrawEvent';
+import { cancelEventForUser, prepareApplicationRevisionForUser } from '../src/http/applicationLifecycle';
 import { __testOnlyMarkFailed, __testOnlyPersistResourceCalculation, recomputeResourceForStoredAssessment, runRiskAndResourcePipeline } from '../src/triggers/onEventCreated';
 import { makeAuthorityDecisionForUser } from '../src/http/authorityDecision';
 import { makeInitialReviewDecisionForUser } from '../src/http/initialReview';
@@ -156,6 +157,76 @@ async function seedProfilesAndEvent() {
 }
 
 describe('Firestore security rules', () => {
+  it('prepares Pending edits and rejected revisions without mutating submitted versions', async () => {
+    const adminDb = getFirestore(adminApp);
+    await adminDb.doc('users/organizer-1').set({ role: 'organizer' });
+    await adminDb.doc('events/lifecycle-1').set({
+      organizerId: 'organizer-1', eventDetails: validDetails, templateSelection: validTemplateSelection,
+      status: 'Pending', currentVersionId: 'v1', currentVersionNumber: 1, editableVersionId: null,
+      draftDocumentPaths: ['event_documents/lifecycle-1/v1/original.pdf'], requiredAuthorities: ['PDRM'],
+      assignedOfficerUids: [], assignedOfficerByAuthority: {}, reviewStage: 'initial', createdAt: 1, updatedAt: 1,
+    });
+    const lifecycleV1 = { eventId: 'lifecycle-1', versionId: 'v1', versionNumber: 1, marker: 'immutable-original' };
+    await adminDb.doc('events/lifecycle-1/versions/v1').set(lifecycleV1);
+
+    await expect(prepareApplicationRevisionForUser('organizer-1', 'lifecycle-1', 10)).resolves.toMatchObject({
+      status: 'Draft', editableVersionId: 'v2', revisionKind: 'pending_edit',
+    });
+    await expect(prepareApplicationRevisionForUser('organizer-1', 'lifecycle-1', 11)).resolves.toMatchObject({ status: 'Draft', editableVersionId: 'v2' });
+    const pendingEdit = (await adminDb.doc('events/lifecycle-1').get()).data()!;
+    expect(pendingEdit).toMatchObject({ status: 'Draft', editableVersionId: 'v2', draftDocumentPaths: [], draftDocuments: [] });
+    expect(pendingEdit.activeRevision).toEqual({ kind: 'pending_edit', sourceVersionId: 'v1', startedAt: 10 });
+    expect(pendingEdit.draftEvidenceManifest).toHaveLength(17);
+    expect((await adminDb.doc('events/lifecycle-1/versions/v1').get()).data()).toEqual(lifecycleV1);
+
+    await adminDb.doc('events/lifecycle-2').set({
+      organizerId: 'organizer-1', eventDetails: validDetails, templateSelection: validTemplateSelection,
+      status: 'Rejected', currentVersionId: 'v1', currentVersionNumber: 1, editableVersionId: null,
+      draftDocumentPaths: [], requiredAuthorities: [], reviewStage: 'closed', createdAt: 1, updatedAt: 1,
+      initialReview: { decision: 'Rejected', reason: 'Missing signed route plan.', suggestion: 'Attach the signed route plan.', reviewerUid: 'admin-1', reviewedAt: 5 },
+    });
+    await adminDb.doc('events/lifecycle-2/versions/v1').set({ eventId: 'lifecycle-2', versionId: 'v1', versionNumber: 1 });
+    await prepareApplicationRevisionForUser('organizer-1', 'lifecycle-2', 20);
+    expect((await adminDb.doc('events/lifecycle-2').get()).data()?.activeRevision).toEqual({
+      kind: 'rejected_revision', sourceVersionId: 'v1', startedAt: 20,
+      rejectionReason: 'Missing signed route plan.', rejectionSuggestion: 'Attach the signed route plan.',
+    });
+  });
+
+  it('cancels only pre-review Pending applications and withdraws eligible records atomically from public view', async () => {
+    const adminDb = getFirestore(adminApp);
+    await adminDb.doc('users/organizer-1').set({ role: 'organizer' });
+    const base = {
+      organizerId: 'organizer-1', eventDetails: validDetails, status: 'Pending', currentVersionId: 'v1', currentVersionNumber: 1,
+      editableVersionId: null, draftDocumentPaths: [], requiredAuthorities: [], assignedOfficerUids: [], assignedOfficerByAuthority: {}, reviewStage: 'initial', createdAt: 1, updatedAt: 1,
+    };
+    await adminDb.doc('events/cancel-1').set(base);
+    await adminDb.doc('events/cancel-1/versions/v1').set({ eventId: 'cancel-1', versionId: 'v1', versionNumber: 1 });
+    await expect(cancelEventForUser('organizer-1', 'cancel-1', 30)).resolves.toEqual({ eventId: 'cancel-1', status: 'Cancelled' });
+    expect((await adminDb.doc('events/cancel-1').get()).data()).toMatchObject({ status: 'Cancelled', cancelledAt: 30, cancelledFromVersionId: 'v1' });
+    await expect(cancelEventForUser('organizer-1', 'cancel-1', 31)).resolves.toEqual({ eventId: 'cancel-1', status: 'Cancelled' });
+
+    await adminDb.doc('events/cancel-locked').set({ ...base, assignedOfficerUids: ['officer-1'], assignedOfficerByAuthority: { PDRM: 'officer-1' } });
+    await adminDb.doc('events/cancel-locked/versions/v1').set({ eventId: 'cancel-locked', versionId: 'v1', versionNumber: 1 });
+    await expect(cancelEventForUser('organizer-1', 'cancel-locked', 32)).rejects.toThrow('before Admin review begins');
+
+    await adminDb.doc('events/missing-history').set(base);
+    await expect(prepareApplicationRevisionForUser('organizer-1', 'missing-history', 33)).rejects.toThrow('immutable submitted application version');
+    await expect(cancelEventForUser('organizer-1', 'missing-history', 34)).rejects.toThrow('immutable submitted application version');
+
+    await adminDb.doc('events/withdraw-1').set({ ...base, status: 'Approved', reviewStage: 'closed' });
+    await adminDb.doc('events/withdraw-1/versions/v1').set({ eventId: 'withdraw-1', versionId: 'v1', versionNumber: 1 });
+    await adminDb.doc('public_events/withdraw-1').set({ eventName: 'Public event' });
+    await withdrawEventForUser('organizer-1', 'withdraw-1', 'The venue is no longer available.', 40);
+    expect((await adminDb.doc('events/withdraw-1').get()).data()).toMatchObject({
+      status: 'Withdrawn', withdrawnAt: 40, withdrawnFromStatus: 'Approved', withdrawalRationale: 'The venue is no longer available.',
+    });
+    expect((await adminDb.doc('public_events/withdraw-1').get()).exists).toBe(false);
+    await adminDb.doc('events/withdraw-missing-history').set({ ...base, status: 'Approved', reviewStage: 'closed' });
+    await expect(withdrawEventForUser('organizer-1', 'withdraw-missing-history', 'The venue is no longer available.', 41))
+      .rejects.toThrow('immutable submitted application version');
+  });
+
   it('allows organizer drafts but rejects direct Pending creation and generated-field changes', async () => {
     await environment.withSecurityRulesDisabled((context) => setDoc(doc(context.firestore(), 'users/organizer-1'), { role: 'organizer' }));
     const db = environment.authenticatedContext('organizer-1').firestore();
@@ -180,10 +251,19 @@ describe('Firestore security rules', () => {
     }));
     await assertFails(setDoc(doc(db, 'events/pending-1'), { ...draft, status: 'Pending' }));
     await assertFails(setDoc(doc(db, 'events/spoofed-id-draft'), { ...draft, eventId: 'different-event' }));
+    await assertFails(setDoc(doc(db, 'events/spoofed-revision-draft'), {
+      ...draft, activeRevision: { kind: 'rejected_revision', sourceVersionId: 'v0', startedAt: 1 },
+    }));
+    await assertFails(setDoc(doc(db, 'events/spoofed-withdrawal-draft'), {
+      ...draft, withdrawnAt: 1, withdrawnFromStatus: 'Approved', withdrawalRationale: 'Forged withdrawal.',
+    }));
     await assertFails(updateDoc(doc(db, 'events/draft-1'), { currentVersionNumber: 1 }));
     await assertFails(updateDoc(doc(db, 'events/draft-1'), { currentExtractionId: 'attacker-controlled' }));
     await assertFails(updateDoc(doc(db, 'events/draft-1'), { documentSchemaVersion: 'legacy-bypass' }));
     await assertFails(updateDoc(doc(db, 'events/draft-1'), { evidenceManifestSchemaVersion: 'legacy-bypass' }));
+    await assertFails(updateDoc(doc(db, 'events/draft-1'), { activeRevision: { kind: 'pending_edit', sourceVersionId: 'v0', startedAt: 1 } }));
+    await assertFails(updateDoc(doc(db, 'events/draft-1'), { cancelledAt: 1, cancelledFromVersionId: 'v0' }));
+    await assertFails(updateDoc(doc(db, 'events/draft-1'), { withdrawnAt: 1, withdrawnFromStatus: 'Draft', withdrawalRationale: 'Forged withdrawal.' }));
     await assertFails(updateDoc(doc(db, 'events/draft-1'), { eventId: 'different-event' }));
     await assertFails(updateDoc(doc(db, 'events/draft-1'), {
       templateSelection: { ...validTemplateSelection, venueSetting: 'indoor' },
@@ -240,19 +320,6 @@ describe('Firestore security rules', () => {
       () => { throw new Error('Duplicate submission unexpectedly succeeded.'); },
       () => undefined,
     );
-    const versionOne = versionSnapshot.data();
-    const v2Evidence = await uploadTestEvidence('draft-1', 'v2');
-    await environment.withSecurityRulesDisabled((context) => updateDoc(doc(context.firestore(), 'events/draft-1'), {
-      status: 'Rejected',
-      editableVersionId: 'v2',
-      draftDocumentPaths: [v2Evidence],
-      eventDetails: { ...validDetails, name: 'KL Cultural Festival - Rejected' },
-    }));
-    await expect(submitEventForUser('organizer-1', 'draft-1', 1_002)).rejects.toMatchObject({ code: 'failed-precondition' });
-    const versionOneAfter = await assertSucceeds(getDoc(doc(db, 'events/draft-1/versions/v1')));
-    const versionTwo = await assertSucceeds(getDoc(doc(db, 'events/draft-1/versions/v2')));
-    if (JSON.stringify(versionOneAfter.data()) !== JSON.stringify(versionOne)) throw new Error('Version 1 changed after terminal rejection.');
-    if (versionTwo.exists()) throw new Error('A rejected application created a new version.');
   });
 
   it('binds a current structured DOCX extraction into the immutable submitted version', async () => {
@@ -286,6 +353,63 @@ describe('Firestore security rules', () => {
     expect(submitted.data()?.extractionId).toBe(extractionId);
     expect(submitted.data()?.documentUploads).toHaveLength(3);
     expect(submitted.data()?.evidenceManifest).toHaveLength(17);
+  });
+
+  it('resubmits a rejected application as v2 while preserving v1 and rejection provenance', async () => {
+    const eventId = 'revision-submit';
+    const adminDb = getFirestore(adminApp);
+    await adminDb.doc('users/organizer-1').set({ role: 'organizer' });
+    await adminDb.doc(`events/${eventId}`).set({
+      organizerId: 'organizer-1', eventDetails: validDetails, templateSelection: validTemplateSelection,
+      status: 'Rejected', currentVersionId: 'v1', currentVersionNumber: 1, editableVersionId: null,
+      draftDocumentPaths: [], requiredAuthorities: ['PDRM'], reviewStage: 'closed', createdAt: 1, updatedAt: 1,
+      initialReview: {
+        decision: 'Rejected', reason: 'The signed traffic route plan is missing.',
+        suggestion: 'Attach the signed route plan and update emergency access.', reviewerUid: 'admin-1', reviewedAt: 900,
+      },
+    });
+    const immutableV1 = { versionId: 'v1', eventId, versionNumber: 1, marker: 'must-not-change' };
+    await adminDb.doc(`events/${eventId}/versions/v1`).set(immutableV1);
+    await prepareApplicationRevisionForUser('organizer-1', eventId, 1_000);
+
+    const core = await uploadTestDocx(eventId, 'v2', 'core_template', '../docs/templates/m1/core/Core Event Application Template.docx');
+    const scenario = await uploadTestDocx(eventId, 'v2', 'scenario_template', '../docs/templates/m1/cultural-heritage-festival/Cultural, Heritage and Festival Event - Outdoor Fixed-Site.docx');
+    const support = await uploadTestEvidence(eventId, 'v2');
+    const supportDocument = {
+      path: support, role: 'supporting_evidence' as const, originalName: 'evidence.pdf', mimeType: 'application/pdf',
+      sizeBytes: Buffer.byteLength('%PDF-1.4\ntest\n%%EOF\n'), uploadedAt: 1, schemaVersion: '2026-08-28-document-v1' as const,
+    };
+    const evidenceManifest = m1EvidenceRequirementsFor(validTemplateSelection.scenarioTemplateId)
+      .map((definition) => ({ requirementId: definition.id, applicability: 'required' as const, documentPath: support }));
+    const extractionId = 'extract_revision_v2';
+    await adminDb.doc(`events/${eventId}`).update({
+      draftDocumentPaths: [core.path, scenario.path, support], draftDocuments: [core, scenario, supportDocument],
+      currentExtractionId: extractionId, draftEvidenceManifest: evidenceManifest,
+    });
+    await adminDb.doc(`events/${eventId}/document_extractions/${extractionId}`).set({
+      extractionId, eventId, editableVersionId: 'v2', status: 'needs_review',
+      schemaVersion: '2026-08-28-docx-fields-v1', templateRegistryVersion: '2026-08-28-v1',
+      coreTemplateId: 'STERAS-CORE', scenarioTemplateId: validTemplateSelection.scenarioTemplateId,
+      sourceDocuments: [core, scenario].map((document) => ({
+        path: document.path, role: document.role, originalName: document.originalName,
+        mimeType: document.mimeType, sizeBytes: document.sizeBytes, sha256: document.role,
+      })),
+      extractedFields: [], rawFieldIds: [], warnings: ['manual review'], completionPercent: 0, createdAt: 1_001, createdBy: 'organizer-1',
+    });
+
+    await submitEventForUser('organizer-1', eventId, 1_100);
+    expect((await adminDb.doc(`events/${eventId}/versions/v1`).get()).data()).toEqual(immutableV1);
+    const v2 = (await adminDb.doc(`events/${eventId}/versions/v2`).get()).data();
+    expect(v2?.revisionSource).toEqual({
+      kind: 'rejected_revision', sourceVersionId: 'v1', startedAt: 1_000,
+      rejectionReason: 'The signed traffic route plan is missing.',
+      rejectionSuggestion: 'Attach the signed route plan and update emergency access.',
+    });
+    expect((await adminDb.doc(`events/${eventId}`).get()).data()).toMatchObject({
+      status: 'Pending', currentVersionId: 'v2', currentVersionNumber: 2, editableVersionId: null,
+    });
+    expect((await adminDb.doc(`events/${eventId}`).get()).data()?.activeRevision).toBeUndefined();
+    expect((await adminDb.doc(`events/${eventId}`).get()).data()?.initialReview).toBeUndefined();
   });
 
   it('rejects missing evidence, tampered templates, and spoofed venue identity before version creation', async () => {
@@ -326,16 +450,18 @@ describe('Firestore security rules', () => {
     await environment.withSecurityRulesDisabled(async (context) => {
       const db = context.firestore();
       await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer' });
+      await setDoc(doc(db, 'users/organizer-2'), { role: 'organizer' });
       await setDoc(doc(db, 'events/draft-1'), {
-        organizerId: 'organizer-1', eventDetails: validDetails, templateSelection: validTemplateSelection, status: 'Draft', currentVersionNumber: 0,
-        editableVersionId: 'v1', draftDocumentPaths: [], requiredAuthorities: [], createdAt: 1, updatedAt: 1,
+        organizerId: 'organizer-1', eventDetails: validDetails, templateSelection: validTemplateSelection, status: 'Approved', currentVersionId: 'v1', currentVersionNumber: 1,
+        editableVersionId: null, draftDocumentPaths: [], requiredAuthorities: [], createdAt: 1, updatedAt: 1,
       });
+      await setDoc(doc(db, 'events/draft-1/versions/v1'), { eventId: 'draft-1', versionId: 'v1', versionNumber: 1 });
     });
-    await withdrawEventForUser('organizer-2', 'draft-1', undefined, 1_000).then(
+    await withdrawEventForUser('organizer-2', 'draft-1', 'The venue is no longer available.', 1_000).then(
       () => { throw new Error('Non-owner withdrawal unexpectedly succeeded.'); },
       () => undefined,
     );
-    await withdrawEventForUser('organizer-1', 'draft-1', 'Cancelled by organizer', 1_001);
+    await withdrawEventForUser('organizer-1', 'draft-1', 'The venue is no longer available.', 1_001);
     const snapshot = await assertSucceeds(getDoc(doc(environment.authenticatedContext('organizer-1').firestore(), 'events/draft-1')));
     if (snapshot.data()?.status !== 'Withdrawn') throw new Error('Event was not withdrawn.');
   });

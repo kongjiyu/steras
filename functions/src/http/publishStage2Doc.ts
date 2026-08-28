@@ -22,6 +22,7 @@
  *   `stage2_doc_rejected` audit + organizer notification).
  */
 import { firestore } from 'firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import {
   AuthorityType,
@@ -146,9 +147,9 @@ export async function publishStage2DocForUser(
       publishedAt: now,
       publishedBy: uid,
       // Clear rejection fields so the organizer + admin UI sees a clean slate.
-      rejectionReason: firestore.FieldValue.delete(),
-      rejectionAt: firestore.FieldValue.delete(),
-      rejectedBy: firestore.FieldValue.delete(),
+      rejectionReason: FieldValue.delete(),
+      rejectionAt: FieldValue.delete(),
+      rejectedBy: FieldValue.delete(),
     });
 
     // Public viewers read this sanitised projection, never the private

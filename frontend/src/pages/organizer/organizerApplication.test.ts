@@ -48,9 +48,9 @@ function validDetails(overrides: Partial<EventDetails> = {}): EventDetails {
 }
 
 describe('organizer application lifecycle helpers', () => {
-  it('treats draft and revision-requested applications as editable', () => {
+  it('treats only server-prepared Draft applications as editable', () => {
     expect(isEditableApplicationStatus('Draft')).toBe(true);
-    expect(isEditableApplicationStatus('Revision Requested')).toBe(true);
+    expect(isEditableApplicationStatus('Revision Requested')).toBe(false);
     expect(isEditableApplicationStatus('Pending')).toBe(false);
   });
 

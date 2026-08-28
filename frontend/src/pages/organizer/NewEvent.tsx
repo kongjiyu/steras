@@ -1,5 +1,5 @@
 import PageHeader from '../../components/ui/PageHeader';
-import { EVENT_TYPES, EventType, EventDetails, EventRiskProfile, M1_DOCUMENT_SCHEMA_VERSION, M1_EVIDENCE_MANIFEST_SCHEMA_VERSION, M1DocumentExtraction, M1DocumentRole, M1DraftDocument, M1EvidenceRequirementResponse, M1TemplateSelection, Venue } from '@shared/types';
+import { EVENT_TYPES, EventType, EventDetails, EventRiskProfile, M1_DOCUMENT_SCHEMA_VERSION, M1_EVIDENCE_MANIFEST_SCHEMA_VERSION, M1ApplicationRevisionSource, M1DocumentExtraction, M1DocumentRole, M1DraftDocument, M1EvidenceRequirementResponse, M1TemplateSelection, Venue } from '@shared/types';
 import { useEffect, useState, FormEvent, ChangeEvent } from 'react';
 import { collection, addDoc, doc, getDoc, getDocs, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
@@ -25,7 +25,7 @@ export default function NewEvent() {
   const location = useLocation();
   const { eventId } = useParams<{ eventId: string }>();
   const [draftId, setDraftId] = useState(eventId ?? '');
-  const [editableStatus, setEditableStatus] = useState<'Draft' | 'Revision Requested'>('Draft');
+  const [activeRevision, setActiveRevision] = useState<M1ApplicationRevisionSource>();
   const [currentVersionNumber, setCurrentVersionNumber] = useState(0);
   const [editableVersionId, setEditableVersionId] = useState('v1');
   const [documentPaths, setDocumentPaths] = useState<string[]>([]);
@@ -101,7 +101,7 @@ export default function NewEvent() {
         return;
       }
       setForm({ ...event.eventDetails, riskProfile: completeRiskProfile(event.eventDetails.riskProfile) });
-      setEditableStatus(event.status);
+      setActiveRevision(event.activeRevision);
       setCurrentVersionNumber(event.currentVersionNumber ?? 0);
       setEditableVersionId(event.editableVersionId ?? nextVersionId(event.currentVersionNumber ?? 0));
       setDocumentPaths(event.draftDocumentPaths ?? []);
@@ -121,9 +121,9 @@ export default function NewEvent() {
     getDoc(doc(db, COLLECTIONS.EVENTS, eventId)).then(async (snapshot) => {
       if (!snapshot.exists()) throw new Error('Event draft not found.');
       const data = snapshot.data();
-      if (!isEditableApplicationStatus(data.status)) throw new Error('Only draft or revision-requested applications can be edited.');
+      if (!isEditableApplicationStatus(data.status)) throw new Error('Only Draft applications can be edited.');
       setForm({ ...(data.eventDetails as EventDetails), riskProfile: completeRiskProfile(data.eventDetails?.riskProfile) });
-      setEditableStatus(data.status);
+      setActiveRevision(data.activeRevision as M1ApplicationRevisionSource | undefined);
       setCurrentVersionNumber(data.currentVersionNumber ?? 0);
       setEditableVersionId(data.editableVersionId ?? nextVersionId(data.currentVersionNumber ?? 0));
       setDocumentPaths(data.draftDocumentPaths ?? []);
@@ -227,26 +227,11 @@ export default function NewEvent() {
       const id = await ensureDraft();
       const submit = httpsCallable<{ eventId: string }, { versionId: string }>(functions, 'submitEvent');
       await submit({ eventId: id });
-      toast.success(editableStatus === 'Revision Requested' ? 'Revised application submitted.' : 'Event submitted. The risk assessment will run shortly.');
+      toast.success(activeRevision ? 'Revised application submitted.' : 'Event submitted. The risk assessment will run shortly.');
       navigate(`/organizer/events/${id}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Submission failed';
       toast.error(msg);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleWithdraw = async () => {
-    if (!draftId || !window.confirm('Withdraw this draft?')) return;
-    setSubmitting(true);
-    try {
-      const command = httpsCallable<{ eventId: string }>(functions, 'withdrawEvent');
-      await command({ eventId: draftId });
-      toast.success('Draft withdrawn.');
-      navigate('/organizer/events');
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Withdrawal failed.');
     } finally {
       setSubmitting(false);
     }
@@ -476,7 +461,7 @@ export default function NewEvent() {
           <p className="text-xs font-bold uppercase tracking-[0.07em] text-brand-700">Application {editableVersionId}</p>
           <p className="mt-1 text-sm text-ink-500">
             Fields marked * are required. Save a draft at any time before submission.
-            {editableStatus === 'Revision Requested' ? ' This edit creates a new immutable version when resubmitted.' : ''}
+            {activeRevision ? ' This edit creates a new immutable version when resubmitted.' : ''}
           </p>
         </div>
         <div className="space-y-8 p-4 sm:p-6 lg:p-8">
@@ -489,13 +474,15 @@ export default function NewEvent() {
             </div>
           )}
 
-          {editableStatus === 'Revision Requested' && (
+          {activeRevision && (
             <div className="flex flex-col gap-3 rounded-lg border border-gold-200 bg-gold-50 p-4 text-sm text-gold-700 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="font-semibold text-gold-700">Revision requested</p>
-                <p className="mt-1 leading-6">Update this draft version and resubmit it for authority review. Previously submitted versions remain locked.</p>
+                <p className="font-semibold text-gold-700">{activeRevision.kind === 'rejected_revision' ? 'Correct a rejected application' : 'Editing a submitted application'}</p>
+                <p className="mt-1 leading-6">Update this Draft and resubmit it as a new immutable version. Version {activeRevision.sourceVersionId} remains locked.</p>
+                {activeRevision.rejectionReason && <p className="mt-2 font-medium">Reason: {activeRevision.rejectionReason}</p>}
+                {activeRevision.rejectionSuggestion && <p className="mt-1">Suggested correction: {activeRevision.rejectionSuggestion}</p>}
               </div>
-              <OrganizerStatusBadge status={editableStatus} />
+              <OrganizerStatusBadge status="Draft" />
             </div>
           )}
 
@@ -740,11 +727,10 @@ export default function NewEvent() {
           </fieldset>
 
           <div className="sticky bottom-20 z-10 -mx-4 flex flex-wrap justify-end gap-2 border-t border-[#d8cebd] bg-[#fffdf8]/95 px-4 pb-1 pt-4 backdrop-blur-sm sm:static sm:mx-0 sm:px-0 md:bottom-0">
-            {draftId && editableStatus === 'Draft' && <button type="button" disabled={submitting || saving || uploading} className="mr-auto min-h-11 rounded-md border border-red-200 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50" onClick={handleWithdraw}>Withdraw draft</button>}
             <button type="button" className="btn-secondary" onClick={() => navigate(-1)}>Cancel</button>
             <button type="button" disabled={saving || submitting || uploading} className="btn-secondary" onClick={handleSaveDraft}>{saving ? 'Saving...' : 'Save draft'}</button>
             <button type="submit" disabled={submitting || saving || uploading} className="btn-primary">
-              {submitting ? 'Submitting…' : editableStatus === 'Revision Requested' ? 'Submit revision' : 'Submit application'}
+              {submitting ? 'Submitting…' : activeRevision ? 'Submit new version' : 'Submit application'}
             </button>
           </div>
         </div>

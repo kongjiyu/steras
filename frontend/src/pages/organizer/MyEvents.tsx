@@ -150,7 +150,7 @@ export default function MyEvents() {
 function versionLabel(event: EventRecord): string {
   const status = String(event.status);
   if (isEditableApplicationStatus(status)) {
-    return `${status === 'Draft' ? 'Draft' : 'Revision'} ${event.editableVersionId ?? `v${(event.currentVersionNumber ?? 0) + 1}`}`;
+    return `${event.activeRevision ? 'Revision' : 'Draft'} ${event.editableVersionId ?? `v${(event.currentVersionNumber ?? 0) + 1}`}`;
   }
   return event.currentVersionId ? `Submitted ${event.currentVersionId}` : 'No submitted version';
 }
@@ -166,6 +166,7 @@ function assessmentLabel(event: EventRecord): string {
 function decisionLabel(event: EventRecord): string {
   if (event.status === 'Approved') return 'Approved by authorities';
   if (event.status === 'Rejected') return 'Rejected by authority';
+  if (event.status === 'Cancelled') return 'Cancelled before review';
   if (event.status === 'Withdrawn') return 'Withdrawn by organiser';
   if (event.initialReview?.decision === 'Rejected') return 'Correction details recorded';
   if (event.status === 'UnderReview') return 'Authority review in progress';

@@ -144,7 +144,11 @@ service cloud.firestore {
                     && request.resource.data.draftEvidenceManifest is list
                     && request.resource.data.draftEvidenceManifest.size() >= 13
                     && request.resource.data.draftEvidenceManifest.size() <= 19
-                    && !request.resource.data.keys().hasAny(['eventId', 'currentExtractionId'])
+                    && !request.resource.data.keys().hasAny([
+                      'eventId', 'currentExtractionId', 'activeRevision',
+                      'cancelledAt', 'cancelledFromVersionId',
+                      'withdrawnAt', 'withdrawnFromStatus', 'withdrawalRationale'
+                    ])
                     && validM1TemplateSelection(request.resource.data)
                     && request.resource.data.draftDocumentPaths.size() == 0
                     && (!request.resource.data.keys().hasAny(['draftDocuments'])
@@ -163,6 +167,9 @@ service cloud.firestore {
                       'currentExtractionId',
                       'documentSchemaVersion',
                       'evidenceManifestSchemaVersion',
+                      'activeRevision',
+                      'cancelledAt', 'cancelledFromVersionId',
+                      'withdrawnAt', 'withdrawnFromStatus', 'withdrawalRationale',
                       'eventId',
                       'requiredAuthorities', 'currentVersionNumber', 'editableVersionId',
                       'submittedAt'

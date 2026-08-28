@@ -21,6 +21,7 @@ exports.EVENT_STATUSES = [
     { value: 'UnderReview', label: 'Under Review', color: 'blue' },
     { value: 'Approved', label: 'Approved', color: 'green' },
     { value: 'Rejected', label: 'Rejected', color: 'red' },
+    { value: 'Cancelled', label: 'Cancelled', color: 'gray' },
     { value: 'Withdrawn', label: 'Withdrawn', color: 'gray' },
     { value: 'Manual Review Required', label: 'Manual Review Required', color: 'purple' },
 ];

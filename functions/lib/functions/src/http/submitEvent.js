@@ -16,6 +16,7 @@ const resourceCutoverLock_1 = require("../config/resourceCutoverLock");
 const storageEvidence_1 = require("../utils/storageEvidence");
 const extractApplicationDocuments_1 = require("./extractApplicationDocuments");
 const m1EvidenceManifest_1 = require("../engines/m1EvidenceManifest");
+const applicationLifecycle_1 = require("./applicationLifecycle");
 var storageEvidence_2 = require("../utils/storageEvidence");
 Object.defineProperty(exports, "isValidEvidenceMetadata", { enumerable: true, get: function () { return storageEvidence_2.isValidEvidenceMetadata; } });
 exports.submitEvent = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
@@ -40,6 +41,10 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
     const preflight = { ...preflightEvent.data(), eventId };
     if (preflight.organizerId !== uid)
         throw new https_1.HttpsError('permission-denied', 'You do not own this event.');
+    if ((preflight.currentVersionNumber > 0 && !preflight.activeRevision)
+        || (preflight.activeRevision && !(0, applicationLifecycle_1.hasValidActiveRevision)(preflight))) {
+        throw new https_1.HttpsError('failed-precondition', 'The application revision provenance is invalid.');
+    }
     if (!(0, m1TemplateContract_1.isValidM1TemplateSelection)(preflight.templateSelection)) {
         throw new https_1.HttpsError('failed-precondition', 'Choose a valid Core and scenario template before submitting.');
     }
@@ -118,6 +123,7 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
             extractionId: preflightExtraction?.extractionId,
             evidenceManifest: preflightEvidenceManifest,
             evidenceManifestSchemaVersion: preflight.evidenceManifestSchemaVersion,
+            revisionSource: preflight.activeRevision,
         })).digest('hex');
         const version = {
             versionId,
@@ -132,6 +138,7 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
                 evidenceManifest: preflightEvidenceManifest,
                 evidenceManifestSchemaVersion: types_1.M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
             } : {}),
+            ...(preflight.activeRevision ? { revisionSource: preflight.activeRevision } : {}),
             submittedBy: uid,
             submittedAt: now,
             inputHash,
@@ -156,6 +163,7 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
             assignedOfficerByAuthority: {},
             reviewStage: 'initial',
             initialReview: firestore_1.FieldValue.delete(),
+            activeRevision: firestore_1.FieldValue.delete(),
             manualAssessment: firestore_1.FieldValue.delete(),
             verifiedControlIds: [],
             submittedAt: now,
@@ -303,6 +311,7 @@ function submissionFingerprint(event) {
         currentExtractionId: event.currentExtractionId,
         evidenceManifest: event.draftEvidenceManifest,
         evidenceManifestSchemaVersion: event.evidenceManifestSchemaVersion,
+        activeRevision: event.activeRevision,
     })).digest('hex');
 }
 function validateCurrentEvidenceManifest(event, documents) {

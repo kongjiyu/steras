@@ -7,9 +7,9 @@ const STATUS_COLOR: Record<string, BadgeColor> = {
   Draft: 'gray',
   Pending: 'amber',
   UnderReview: 'blue',
-  'Revision Requested': 'orange',
   Approved: 'green',
   Rejected: 'red',
+  Cancelled: 'gray',
   Withdrawn: 'gray',
   'Manual Review Required': 'orange',
 };

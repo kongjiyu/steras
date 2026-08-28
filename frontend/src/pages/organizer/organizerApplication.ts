@@ -2,8 +2,7 @@ import { EventDetails, EventRiskProfile, EventStatus, EventType, M1_DOCUMENT_SCH
 import { isValidM1TemplateSelection, m1CategoryForEventType, m1VenueSettingMatchesEnvironment } from '@shared/m1TemplateContract';
 import { isM1EvidenceForcedRequired, m1EvidenceRequirementsFor } from '@shared/m1EvidenceContract';
 
-export type RevisionRequestedStatus = 'Revision Requested';
-export type OrganizerApplicationStatus = EventStatus | RevisionRequestedStatus;
+export type OrganizerApplicationStatus = EventStatus;
 export type OrganizerStatusFilter = OrganizerApplicationStatus | 'all';
 
 export const ORGANIZER_STATUS_FILTERS: OrganizerStatusFilter[] = [
@@ -11,19 +10,19 @@ export const ORGANIZER_STATUS_FILTERS: OrganizerStatusFilter[] = [
   'Draft',
   'Pending',
   'UnderReview',
-  'Revision Requested',
   'Approved',
   'Rejected',
+  'Cancelled',
   'Withdrawn',
   'Manual Review Required',
 ];
 
-export function isEditableApplicationStatus(status: unknown): status is 'Draft' | RevisionRequestedStatus {
-  return status === 'Draft' || status === 'Revision Requested';
+export function isEditableApplicationStatus(status: unknown): status is 'Draft' {
+  return status === 'Draft';
 }
 
-export function isWithdrawableApplicationStatus(status: unknown): status is 'Draft' | 'Pending' {
-  return status === 'Draft' || status === 'Pending';
+export function isWithdrawableApplicationStatus(status: unknown): status is 'UnderReview' | 'Approved' | 'Manual Review Required' {
+  return status === 'UnderReview' || status === 'Approved' || status === 'Manual Review Required';
 }
 
 export function applicationStatusLabel(status: string): string {
