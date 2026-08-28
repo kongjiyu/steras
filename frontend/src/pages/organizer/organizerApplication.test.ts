@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EventDetails } from '@shared/types';
-import { applyM1ExtractedFields, createM1DraftRecord, extractionMatchesDraftDocuments, isEditableApplicationStatus, isSelectableRegistryVenue, reconcileM1EvidenceManifest, validateEventApplication, validateM1EvidenceChecklist, validateTemplateCompatibility } from './organizerApplication';
+import { applyM1ExtractedFields, createM1DraftRecord, extractionMatchesDraftDocuments, isEditableApplicationStatus, isSelectableRegistryVenue, organizerAdminDecisionLabel, organizerPublicationLabel, organizerPublicationStateFromProjection, reconcileM1EvidenceManifest, validateEventApplication, validateM1EvidenceChecklist, validateTemplateCompatibility } from './organizerApplication';
 import { createTemplateSelection } from '../../features/m1/templateRegistry';
 
 const future = Date.now() + 7 * 24 * 60 * 60 * 1000;
@@ -60,6 +60,32 @@ describe('organizer application lifecycle helpers', () => {
     expect(isSelectableRegistryVenue({ ...venue, verificationStatus: 'unverified' })).toBe(false);
     expect(isSelectableRegistryVenue({ ...venue, active: false })).toBe(false);
     expect(isSelectableRegistryVenue({ ...venue, deactivatedAt: 1 })).toBe(false);
+  });
+
+  it('reports the actual Admin review stage without conflating authority progress', () => {
+    const initialApproved = { decision: 'Approved' as const, reason: 'Complete', reviewerUid: 'admin-1', reviewedAt: 1 };
+    expect(organizerAdminDecisionLabel({ status: 'Pending' })).toBe('No Admin decision recorded');
+    expect(organizerAdminDecisionLabel({ status: 'UnderReview', initialReview: initialApproved })).toBe('Initial Admin review approved');
+    expect(organizerAdminDecisionLabel({ status: 'Approved', initialReview: initialApproved })).toBe('Final Admin review approved');
+    expect(organizerAdminDecisionLabel({ status: 'Rejected', initialReview: initialApproved })).toBe('Final Admin review rejected');
+    expect(organizerAdminDecisionLabel({
+      status: 'Rejected',
+      initialReview: { decision: 'Rejected', reason: 'Incomplete', suggestion: 'Attach evidence', reviewerUid: 'admin-1', reviewedAt: 1 },
+    })).toBe('Initial Admin review rejected');
+  });
+
+  it('reports projection-backed publication states without inferring from approval', () => {
+    expect(organizerPublicationLabel('loading')).toBe('Checking public listing');
+    expect(organizerPublicationLabel('published')).toBe('Published in public calendar');
+    expect(organizerPublicationLabel('not_published')).toBe('Not published');
+    expect(organizerPublicationLabel('stale')).toBe('Previous version remains published');
+    expect(organizerPublicationLabel('unavailable')).toBe('Publication state unavailable');
+    const projection = { eventId: 'event-1', versionId: 'v2', publicStatus: 'approved' };
+    expect(organizerPublicationStateFromProjection(projection, 'event-1', 'v2')).toBe('published');
+    expect(organizerPublicationStateFromProjection(projection, 'event-1', 'v3')).toBe('stale');
+    expect(organizerPublicationStateFromProjection(undefined, 'event-1', 'v2')).toBe('not_published');
+    expect(organizerPublicationStateFromProjection({ ...projection, publicStatus: 'draft' }, 'event-1', 'v2')).toBe('unavailable');
+    expect(organizerPublicationStateFromProjection({ ...projection, eventId: 'other' }, 'event-1', 'v2')).toBe('unavailable');
   });
 
   it('accepts a complete application with version-scoped evidence', () => {

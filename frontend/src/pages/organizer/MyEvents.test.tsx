@@ -11,9 +11,10 @@ const { listener, authValue } = vi.hoisted(() => ({
 vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => authValue }));
 vi.mock('../../config/firebase', () => ({ db: {}, isFirebaseConfigured: true }));
 vi.mock('firebase/firestore', () => ({
-  collection: vi.fn(), query: vi.fn(), where: vi.fn(),
-  onSnapshot: vi.fn((_query, onNext: (value: unknown) => void, onError: (error: Error) => void) => {
+  collection: vi.fn((_db, path: string) => ({ path })), query: vi.fn((source) => source), where: vi.fn(),
+  onSnapshot: vi.fn((source: { path: string }, onNext: (value: unknown) => void, onError: (error: Error) => void) => {
     if (listener.mode === 'error') onError(new Error('offline'));
+    else if (source.path === 'public_events') onNext({ docs: [{ id: 'event-2', data: () => ({ eventId: 'event-2', versionId: 'v1', publicStatus: 'approved' }) }] });
     else onNext({ docs: [
       { id: 'event-1', data: () => ({
         organizerId: 'organizer-1', status: 'Draft', currentVersionNumber: 0, draftDocumentPaths: [], requiredAuthorities: [], createdAt: 1, updatedAt: 1,
@@ -21,6 +22,7 @@ vi.mock('firebase/firestore', () => ({
       }) },
       { id: 'event-2', data: () => ({
         organizerId: 'organizer-1', status: 'Draft', currentVersionId: 'v1', currentVersionNumber: 1, editableVersionId: 'v2', activeRevision: { kind: 'rejected_revision', sourceVersionId: 'v1', startedAt: 2 }, currentAssessmentId: 'v1', draftDocumentPaths: [], requiredAuthorities: ['PDRM'], createdAt: 2, updatedAt: 2,
+        initialReview: { decision: 'Approved', reason: 'Complete', reviewerUid: 'admin-1', reviewedAt: 1 },
         eventDetails: { name: 'Revision Forum', type: 'conference', venueName: 'PICC', startDatetime: 0 },
       }) },
     ] });
@@ -43,6 +45,12 @@ describe('MyEvents', () => {
     expect(await screen.findAllByText('Revision Forum')).not.toHaveLength(0);
     const revisionLink = screen.getAllByRole('link').find((link) => link.getAttribute('href') === '/organizer/events/event-2/edit');
     expect(revisionLink).toBeTruthy();
+  });
+
+  it('shows Admin decisions and publication from the public projection', async () => {
+    render(<MemoryRouter><MyEvents /></MemoryRouter>);
+    expect((await screen.findAllByText(/Initial Admin review approved - Published in public calendar/)).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/No Admin decision recorded - Not published/).length).toBeGreaterThan(0);
   });
 
   it('shows a retryable error when the event listener fails', async () => {
