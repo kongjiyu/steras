@@ -25,7 +25,6 @@ import EventDetail from './pages/organizer/EventDetail';
 import AuthorityDashboard from './pages/authority/AuthorityDashboard';
 import ReviewQueue from './pages/authority/ReviewQueue';
 import AuthorityEventReview from './pages/authority/AuthorityEventReview';
-import Analytics from './pages/authority/Analytics';
 import RiskAssessments from './pages/authority/RiskAssessments';
 import ResourceRecommendations from './pages/authority/ResourceRecommendations';
 import DashboardPreview from './pages/DashboardPreview';
@@ -91,7 +90,7 @@ export default function App() {
         <Route path="/authority/applications" element={<ReviewQueue />} />
         <Route path="/authority/risk" element={<RiskAssessments />} />
         <Route path="/authority/resources" element={<ResourceRecommendations />} />
-        <Route path="/authority/reports" element={<Analytics />} />
+        <Route path="/authority/reports" element={<Navigate to="/admin/analytics" replace />} />
         <Route path="/authority/calendar" element={<Navigate to="/calendar" replace />} />
         <Route path="/authority/audit" element={<Navigate to="/authority/applications" replace />} />
         <Route path="/authority/users" element={<Navigate to="/authority" replace />} />

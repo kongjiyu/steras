@@ -12,9 +12,11 @@ M5 observes source records. It never changes an assessment, resource recommendat
 
 ## Current Progress
 
-- The authority-scoped reports page is implemented with date filtering, monthly application/approval trends, official-risk distribution, average score, AI agreement, fallback rate, turnaround summary, and CSV export.
+- The admin-only, read-only `/admin/analytics` page is implemented inside the shared admin shell; `/authority/reports` remains a compatibility redirect.
+- `/dashboard-preview?view=reports` provides a design-review version with representative data.
+- The page currently provides five report modes, date filtering, event-type scope, authority-scoped reads, application/approval trends, official-risk distribution, assessment-quality signals, review outcomes, operations summaries, explicit M4 unavailable states, and CSV/PDF export.
 - Analytics calculation helpers and unit tests exist, and CSV cells receive basic spreadsheet-formula neutralisation.
-- Remaining gaps include the rest of the PRD filters and metrics, M2 readiness/compliance/confidence reporting, resource/override/re-application views, M4 data, schema metadata, synthetic-data exclusion, bounded aggregation, and stronger privacy/export tests.
+- Remaining gaps include the rest of the PRD filters and metrics, resource/override/re-application views, full M4 data, schema metadata, synthetic-data exclusion, bounded aggregation, and stronger privacy/export tests.
 
 ## Current Delivery Goal
 
@@ -24,9 +26,10 @@ Turn the existing reports foundation into an auditable, privacy-safe dashboard w
 
 | Route | Page | Responsibility |
 |---|---|---|
-| `/authority/reports` | `pages/authority/Analytics.tsx` | Filters, KPIs, charts, trends, and CSV export |
+| `/admin/analytics` | `pages/admin/AdminAnalytics.tsx` with `pages/authority/Analytics.tsx` | Admin-shell integration, filters, KPIs, charts, trends, and CSV/PDF export |
+| `/dashboard-preview?view=reports` | `pages/authority/Analytics.tsx` | Design-review preview with representative data |
 
-If the page becomes too large, M5 may add nested routes below `/authority/reports/*`. M5 must update `docs/GENERAL.md` before adding them.
+`/authority/reports` remains a compatibility redirect. If the page becomes too large, M5 may add nested routes below `/admin/analytics/*`. M5 must update `docs/GENERAL.md` before adding them.
 
 ## Owned Code and Data
 

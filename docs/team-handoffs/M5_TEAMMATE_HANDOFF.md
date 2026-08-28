@@ -12,11 +12,16 @@
 
 目前已经实现：
 
-- `/authority/reports`
+- `/admin/analytics`（`/authority/reports` 保留为 compatibility redirect）
+- `/dashboard-preview?view=reports` design-review preview
 - Authority-scope query
 - Date range filter
+- Five report modes with event-type scope
 - Monthly applications/approvals
 - Official-risk distribution
+- Assessment-quality signals
+- Review outcomes and operations summaries
+- Explicit M4 unavailable state
 - Monthly average official score
 - AI-vs-deterministic agreement
 - AI fallback rate
