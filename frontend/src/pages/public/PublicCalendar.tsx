@@ -8,6 +8,7 @@ import { db, isFirebaseConfigured } from '../../config/firebase';
 import PublicHeader from '../../components/layout/PublicHeader';
 import EmptyState from '../../components/ui/EmptyState';
 import { filterPublicEvents, groupPublicEventsByMonth } from './publicEvents';
+import { mockPublicEvents } from '../../mock_data/public_events';
 
 export default function PublicCalendar() {
   const [events, setEvents] = useState<PublicEvent[]>([]);
@@ -20,7 +21,8 @@ export default function PublicCalendar() {
 
   useEffect(() => {
     if (!isFirebaseConfigured) {
-      setError('The public event service is not configured.');
+      setEvents(mockPublicEvents);
+      setError('');
       setLoading(false);
       return;
     }

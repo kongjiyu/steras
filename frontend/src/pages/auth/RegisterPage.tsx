@@ -5,29 +5,7 @@ import toast from 'react-hot-toast';
 import AuthShell from '../../components/layout/AuthShell';
 import { getRoleHome } from '../../routing';
 import { authErrorMessage } from '../../contexts/authErrors';
-import { CalendarPlus, Eye, LogIn, LogOut } from 'lucide-react';
-
-type SignupRole = 'organizer' | 'public';
-
-const ROLE_OPTIONS: Array<{
-  value: SignupRole;
-  title: string;
-  body: string;
-  icon: typeof CalendarPlus;
-}> = [
-  {
-    value: 'organizer',
-    title: 'Event organizer',
-    body: 'Submit and track event applications for review by authorities.',
-    icon: CalendarPlus,
-  },
-  {
-    value: 'public',
-    title: 'Public viewer',
-    body: 'Follow approved public events on the tourism calendar. No submission access.',
-    icon: Eye,
-  },
-];
+import { CalendarPlus, LogIn, LogOut } from 'lucide-react';
 
 export default function RegisterPage() {
   const { user, profile, signUp, signOut, configured } = useAuth();
@@ -36,7 +14,6 @@ export default function RegisterPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [phone, setPhone] = useState('');
-  const [role, setRole] = useState<SignupRole>('organizer');
   const [submitting, setSubmitting] = useState(false);
   const existingSessionHome = user ? getRoleHome(profile?.role) : null;
   const [signingOut, setSigningOut] = useState(false);
@@ -58,12 +35,10 @@ export default function RegisterPage() {
         email,
         password,
         name,
-        role,
         ...(phone.trim() ? { phone: phone.trim() } : {}),
       });
       toast.success('Account created.');
-      const destination = getRoleHome(role) ?? '/';
-      navigate(destination, { replace: true });
+      navigate('/organizer', { replace: true });
     } catch (err) {
       toast.error(authErrorMessage(err));
     } finally {
@@ -129,7 +104,7 @@ export default function RegisterPage() {
       <div className="w-full border-t-4 border-brand-700 bg-[#fffdf8] px-5 py-7 shadow-[0_16px_40px_rgba(63,77,29,0.08)] sm:px-8 sm:py-8">
           <p className="page-eyebrow">Create account</p>
           <h1 className="font-display text-2xl font-bold tracking-[-0.025em] text-ink-900">Create your STERAS account</h1>
-          <p className="mt-2 text-sm leading-6 text-ink-500">Choose how you want to use STERAS, then complete the form below.</p>
+          <p className="mt-2 text-sm leading-6 text-ink-500">Create an organiser account to submit and track event applications.</p>
 
           {!configured && (
             <div className="mt-5 rounded-md border border-gold-300 bg-gold-50 p-3 text-sm text-gold-600">
@@ -138,47 +113,15 @@ export default function RegisterPage() {
           )}
 
           <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-            <fieldset>
-              <legend className="field-label">I am registering as</legend>
-              <div className="mt-1.5 grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Account type">
-                {ROLE_OPTIONS.map((option) => {
-                  const Icon = option.icon;
-                  const selected = role === option.value;
-                  return (
-                    <label
-                      key={option.value}
-                      className={
-                        'group flex cursor-pointer flex-col gap-1.5 rounded-lg border-2 px-4 py-3 transition-colors ' +
-                        (selected
-                          ? 'border-brand-700 bg-brand-50 shadow-[0_2px_10px_rgba(63,77,29,0.08)]'
-                          : 'border-[#dce3c6] bg-[#fffdf8] hover:border-brand-400 hover:bg-cream-50')
-                      }
-                    >
-                      <input
-                        type="radio"
-                        name="role"
-                        value={option.value}
-                        checked={selected}
-                        onChange={() => setRole(option.value)}
-                        className="sr-only"
-                        disabled={submitting}
-                      />
-                      <span className="flex items-center gap-2 text-sm font-bold text-ink-900">
-                        <Icon
-                          size={16}
-                          className={selected ? 'text-brand-700' : 'text-ink-500 group-hover:text-brand-700'}
-                        />
-                        {option.title}
-                      </span>
-                      <span className="text-xs leading-5 text-ink-500">{option.body}</span>
-                    </label>
-                  );
-                })}
-              </div>
+            <div className="rounded-lg border border-[#dce3c6] bg-brand-50 px-4 py-3">
+              <span className="flex items-center gap-2 text-sm font-bold text-ink-900">
+                <CalendarPlus size={16} className="text-brand-700" />
+                Event organiser
+              </span>
               <p className="mt-2 text-xs text-ink-500">
-                Authority and admin accounts are provisioned separately by the project administrator.
+                Public self-registration creates organiser profiles only. Authority and admin accounts are provisioned separately by the project administrator.
               </p>
-            </fieldset>
+            </div>
 
             <div>
               <label htmlFor="name" className="field-label">Full name</label>

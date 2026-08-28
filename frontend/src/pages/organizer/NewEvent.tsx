@@ -9,16 +9,21 @@ import { COLLECTIONS } from '@shared/types';
 import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
 import { useNavigate, useParams } from 'react-router-dom';
+import OrganizerStatusBadge from './OrganizerStatusBadge';
+import { isEditableApplicationStatus, nextVersionId, validateEventApplication } from './organizerApplication';
+import { mockVenues } from '../../mock_data/venues';
+import { findEventById } from '../../mock_data/events';
 
 export default function NewEvent() {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
   const { eventId } = useParams<{ eventId: string }>();
   const [draftId, setDraftId] = useState(eventId ?? '');
-  const [editableStatus, setEditableStatus] = useState<'Draft'>('Draft');
+  const [editableStatus, setEditableStatus] = useState<'Draft' | 'Revision Requested'>('Draft');
   const [currentVersionNumber, setCurrentVersionNumber] = useState(0);
   const [editableVersionId, setEditableVersionId] = useState('v1');
   const [documentPaths, setDocumentPaths] = useState<string[]>([]);
+  const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [loading, setLoading] = useState(Boolean(eventId));
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -47,10 +52,12 @@ export default function NewEvent() {
   });
 
   const update = <K extends keyof EventDetails>(key: K, value: EventDetails[K]) => {
+    setValidationErrors([]);
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
   const updateRiskProfile = <K extends keyof EventRiskProfile>(key: K, value: EventRiskProfile[K]) => {
+    setValidationErrors([]);
     setForm((previous) => ({
       ...previous,
       riskProfile: { ...previous.riskProfile, [key]: value },
@@ -58,7 +65,10 @@ export default function NewEvent() {
   };
 
   useEffect(() => {
-    if (!isFirebaseConfigured) return;
+    if (!isFirebaseConfigured) {
+      setVenues(mockVenues.filter((venue) => venue.active === true).sort((left, right) => left.name.localeCompare(right.name)));
+      return;
+    }
     getDocs(collection(db, COLLECTIONS.VENUES))
       .then((snapshot) => setVenues(snapshot.docs
         .map((document) => ({ venueId: document.id, ...document.data() }) as Venue)
@@ -68,15 +78,35 @@ export default function NewEvent() {
   }, []);
 
   useEffect(() => {
-    if (!eventId || !isFirebaseConfigured) return;
+    if (!eventId) return;
+    if (!isFirebaseConfigured) {
+      const event = findEventById(eventId);
+      if (!event) {
+        toast.error('Event draft not found.');
+        navigate('/organizer/events');
+        return;
+      }
+      if (!isEditableApplicationStatus(event.status)) {
+        toast.error('Only draft or revision-requested applications can be edited.');
+        navigate('/organizer/events');
+        return;
+      }
+      setForm({ ...event.eventDetails, riskProfile: completeRiskProfile(event.eventDetails.riskProfile) });
+      setEditableStatus(event.status);
+      setCurrentVersionNumber(event.currentVersionNumber ?? 0);
+      setEditableVersionId(event.editableVersionId ?? nextVersionId(event.currentVersionNumber ?? 0));
+      setDocumentPaths(event.draftDocumentPaths ?? []);
+      setLoading(false);
+      return;
+    }
     getDoc(doc(db, COLLECTIONS.EVENTS, eventId)).then((snapshot) => {
       if (!snapshot.exists()) throw new Error('Event draft not found.');
       const data = snapshot.data();
-      if (data.status !== 'Draft') throw new Error('Only draft applications can be edited. Rejected applications are final.');
+      if (!isEditableApplicationStatus(data.status)) throw new Error('Only draft or revision-requested applications can be edited.');
       setForm({ ...(data.eventDetails as EventDetails), riskProfile: completeRiskProfile(data.eventDetails?.riskProfile) });
-      setEditableStatus('Draft');
+      setEditableStatus(data.status);
       setCurrentVersionNumber(data.currentVersionNumber ?? 0);
-      setEditableVersionId(data.editableVersionId ?? `v${(data.currentVersionNumber ?? 0) + 1}`);
+      setEditableVersionId(data.editableVersionId ?? nextVersionId(data.currentVersionNumber ?? 0));
       setDocumentPaths(data.draftDocumentPaths ?? []);
     }).catch((error) => {
       toast.error(error instanceof Error ? error.message : 'Unable to load draft.');
@@ -91,13 +121,13 @@ export default function NewEvent() {
       await updateDoc(doc(db, COLLECTIONS.EVENTS, draftId), { eventDetails: form, draftDocumentPaths: documentPaths, updatedAt: now });
       return draftId;
     }
-    const nextVersionId = `v${currentVersionNumber + 1}`;
+    const nextEditableVersionId = nextVersionId(currentVersionNumber);
     const reference = await addDoc(collection(db, COLLECTIONS.EVENTS), {
       organizerId: user.uid,
       eventDetails: form,
       status: 'Draft',
       currentVersionNumber,
-      editableVersionId: nextVersionId,
+      editableVersionId: nextEditableVersionId,
       draftDocumentPaths: [],
       requiredAuthorities: [],
       createdAt: now,
@@ -105,7 +135,7 @@ export default function NewEvent() {
       _serverCreatedAt: serverTimestamp(),
     });
     setDraftId(reference.id);
-    setEditableVersionId(nextVersionId);
+    setEditableVersionId(nextEditableVersionId);
     window.history.replaceState(null, '', `/organizer/events/${reference.id}/edit`);
     return reference.id;
   };
@@ -126,12 +156,14 @@ export default function NewEvent() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!user) return;
-    if (!isFirebaseConfigured) {
-      toast.error('Firebase is not configured. Submission disabled.');
+    const errors = validateEventApplication(form, documentPaths);
+    if (errors.length > 0) {
+      setValidationErrors(errors);
+      toast.error(errors[0]);
       return;
     }
-    if (form.endDatetime <= form.startDatetime) {
-      toast.error('End datetime must be after start datetime.');
+    if (!isFirebaseConfigured) {
+      toast.error('Firebase is not configured. Submission disabled.');
       return;
     }
     setSubmitting(true);
@@ -139,7 +171,7 @@ export default function NewEvent() {
       const id = await ensureDraft();
       const submit = httpsCallable<{ eventId: string }, { versionId: string }>(functions, 'submitEvent');
       await submit({ eventId: id });
-      toast.success('Event submitted. The risk assessment will run shortly.');
+      toast.success(editableStatus === 'Revision Requested' ? 'Revised application submitted.' : 'Event submitted. The risk assessment will run shortly.');
       navigate(`/organizer/events/${id}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Submission failed';
@@ -188,6 +220,7 @@ export default function NewEvent() {
         await updateDoc(doc(db, COLLECTIONS.EVENTS, id), { draftDocumentPaths: arrayUnion(path), updatedAt: Date.now() });
         setDocumentPaths((current) => [...current, path]);
       }
+      setValidationErrors([]);
       toast.success(`${uploaded.length} document${uploaded.length === 1 ? '' : 's'} uploaded.`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Document upload failed.');
@@ -202,6 +235,7 @@ export default function NewEvent() {
     if (!draftId || !path.startsWith(`event_documents/${draftId}/${editableVersionId}/`)) return;
     try {
       await updateDoc(doc(db, COLLECTIONS.EVENTS, draftId), { draftDocumentPaths: arrayRemove(path), updatedAt: Date.now() });
+      setValidationErrors([]);
       setDocumentPaths((current) => current.filter((item) => item !== path));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Unable to remove document.');
@@ -226,12 +260,34 @@ export default function NewEvent() {
         description="Complete the operational details and supporting evidence used for the official category assessment and advisory M3 explanation."
       />
 
-      <form onSubmit={handleSubmit} className="overflow-hidden rounded-lg border border-[#ded5c5] bg-[#fffdf8] shadow-card">
+      <form onSubmit={handleSubmit} noValidate className="overflow-hidden rounded-lg border border-[#ded5c5] bg-[#fffdf8] shadow-card">
         <div className="border-b border-[#e3dacb] bg-brand-50 px-4 py-4 sm:px-6">
           <p className="text-xs font-bold uppercase tracking-[0.07em] text-brand-700">Application {editableVersionId}</p>
-          <p className="mt-1 text-sm text-ink-500">Fields marked * are required. Save a draft at any time before submission.</p>
+          <p className="mt-1 text-sm text-ink-500">
+            Fields marked * are required. Save a draft at any time before submission.
+            {editableStatus === 'Revision Requested' ? ' This edit creates a new immutable version when resubmitted.' : ''}
+          </p>
         </div>
         <div className="space-y-8 p-4 sm:p-6 lg:p-8">
+          {validationErrors.length > 0 && (
+            <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800" role="alert">
+              <p className="font-semibold">Review the application before submitting</p>
+              <ul className="mt-2 list-disc space-y-1 pl-5">
+                {validationErrors.map((error) => <li key={error}>{error}</li>)}
+              </ul>
+            </div>
+          )}
+
+          {editableStatus === 'Revision Requested' && (
+            <div className="flex flex-col gap-3 rounded-lg border border-gold-200 bg-gold-50 p-4 text-sm text-gold-700 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="font-semibold text-gold-700">Revision requested</p>
+                <p className="mt-1 leading-6">Update this draft version and resubmit it for authority review. Previously submitted versions remain locked.</p>
+              </div>
+              <OrganizerStatusBadge status={editableStatus} />
+            </div>
+          )}
+
           <fieldset className="space-y-5">
             <legend className="section-title mb-5">Event and venue</legend>
 
@@ -258,6 +314,7 @@ export default function NewEvent() {
                   className="input mt-1"
                   value={form.venueId ?? ''}
                   onChange={(e) => {
+                    setValidationErrors([]);
                     const venue = venues.find((item) => item.venueId === e.target.value);
                     if (!venue) {
                       setForm((previous) => ({ ...previous, venueId: undefined }));
@@ -282,7 +339,7 @@ export default function NewEvent() {
               </div>
               <div>
                 <label htmlFor="venue-name" className="field-label">Venue name *</label>
-                <input id="venue-name" className="input mt-1" required disabled={Boolean(form.venueId)} value={form.venueName} onChange={(e) => setForm((previous) => ({ ...previous, venueId: undefined, venueName: e.target.value }))} />
+                <input id="venue-name" className="input mt-1" required disabled={Boolean(form.venueId)} value={form.venueName} onChange={(e) => { setValidationErrors([]); setForm((previous) => ({ ...previous, venueId: undefined, venueName: e.target.value })); }} />
               </div>
             </div>
 
@@ -312,7 +369,7 @@ export default function NewEvent() {
               <div>
                 <label htmlFor="expected-attendance" className="field-label">Expected attendance *</label>
                 <input id="expected-attendance" type="number" min={1} className="input mt-1" required value={form.expectedAttendance || ''} onChange={(e) => update('expectedAttendance', Number(e.target.value))} />
-                {form.venueCapacity > 0 && form.expectedAttendance > form.venueCapacity && <p className="mt-2 rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-700">Attendance exceeds the declared venue capacity and will increase the crowd-risk score.</p>}
+                {form.venueCapacity > 0 && form.expectedAttendance > form.venueCapacity && <p className="mt-2 rounded-md border border-red-200 bg-red-50 p-2 text-sm text-red-700">Attendance cannot exceed the declared venue capacity.</p>}
               </div>
             </div>
 
@@ -428,7 +485,7 @@ export default function NewEvent() {
             <button type="button" className="btn-secondary" onClick={() => navigate(-1)}>Cancel</button>
             <button type="button" disabled={saving || submitting || uploading} className="btn-secondary" onClick={handleSaveDraft}>{saving ? 'Saving...' : 'Save draft'}</button>
             <button type="submit" disabled={submitting || saving || uploading} className="btn-primary">
-              {submitting ? 'Submitting…' : 'Submit application'}
+              {submitting ? 'Submitting…' : editableStatus === 'Revision Requested' ? 'Submit revision' : 'Submit application'}
             </button>
           </div>
         </div>
