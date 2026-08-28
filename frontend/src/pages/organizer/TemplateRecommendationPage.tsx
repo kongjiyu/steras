@@ -16,7 +16,7 @@ import {
   scenarioTemplateFor,
   templateDownloadUrl,
 } from '../../features/m1/templateRegistry';
-import { createInitialEventDetails } from './organizerApplication';
+import { createInitialEventDetails, createM1DraftRecord } from './organizerApplication';
 
 const TemplatePreview = lazy(() => import('../../features/m1/TemplatePreview'));
 
@@ -83,16 +83,7 @@ export default function TemplateRecommendationPage() {
         return;
       }
       const reference = await addDoc(collection(db, COLLECTIONS.EVENTS), {
-        organizerId: user.uid,
-        eventDetails: details,
-        templateSelection: selection,
-        status: 'Draft',
-        currentVersionNumber: 0,
-        editableVersionId: 'v1',
-        draftDocumentPaths: [],
-        requiredAuthorities: [],
-        createdAt: now,
-        updatedAt: now,
+        ...createM1DraftRecord(user.uid, details, selection, now),
         _serverCreatedAt: serverTimestamp(),
       });
       toast.success('Template choice saved. Your Draft is ready.');

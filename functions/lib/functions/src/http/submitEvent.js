@@ -14,6 +14,7 @@ const m1TemplateContract_1 = require("../../../shared/m1TemplateContract");
 const runtime_1 = require("../config/runtime");
 const resourceCutoverLock_1 = require("../config/resourceCutoverLock");
 const storageEvidence_1 = require("../utils/storageEvidence");
+const extractApplicationDocuments_1 = require("./extractApplicationDocuments");
 var storageEvidence_2 = require("../utils/storageEvidence");
 Object.defineProperty(exports, "isValidEvidenceMetadata", { enumerable: true, get: function () { return storageEvidence_2.isValidEvidenceMetadata; } });
 exports.submitEvent = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
@@ -35,7 +36,7 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
         throw new https_1.HttpsError('permission-denied', 'Only organizer accounts can submit applications.');
     if (!preflightEvent.exists)
         throw new https_1.HttpsError('not-found', 'Event draft was not found.');
-    const preflight = { eventId, ...preflightEvent.data() };
+    const preflight = { ...preflightEvent.data(), eventId };
     if (preflight.organizerId !== uid)
         throw new https_1.HttpsError('permission-denied', 'You do not own this event.');
     if (!(0, m1TemplateContract_1.isValidM1TemplateSelection)(preflight.templateSelection)) {
@@ -46,6 +47,12 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
         throw new https_1.HttpsError('failed-precondition', 'The template recommendation no longer matches the event type or venue setting.');
     }
     const preflightVersionId = `v${(preflight.currentVersionNumber ?? 0) + 1}`;
+    const preflightDocuments = preflight.documentSchemaVersion === types_1.M1_DOCUMENT_SCHEMA_VERSION
+        ? (0, extractApplicationDocuments_1.validateDraftDocuments)(eventId, preflightVersionId, preflight.draftDocuments)
+        : undefined;
+    const preflightExtraction = preflightDocuments
+        ? await loadCurrentExtraction(preflight, eventReference)
+        : undefined;
     await validateSubmissionAssets(eventId, preflightVersionId, preflight.draftDocumentPaths ?? []);
     await validateCanonicalVenue(preflight.eventDetails);
     const preflightFingerprint = submissionFingerprint(preflight);
@@ -67,7 +74,7 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
         }
         if (!eventSnapshot.exists)
             throw new https_1.HttpsError('not-found', 'Event draft was not found.');
-        const event = { eventId, ...eventSnapshot.data() };
+        const event = { ...eventSnapshot.data(), eventId };
         if (submissionFingerprint(event) !== preflightFingerprint)
             throw new https_1.HttpsError('aborted', 'The draft changed during submission. Review it and retry.');
         if (event.organizerId !== uid)
@@ -103,6 +110,8 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
             eventDetails: event.eventDetails,
             templateSelection: event.templateSelection,
             documentPaths,
+            documentUploads: preflightDocuments,
+            extractionId: preflightExtraction?.extractionId,
         })).digest('hex');
         const version = {
             versionId,
@@ -111,6 +120,8 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
             eventDetails: event.eventDetails,
             templateSelection: event.templateSelection,
             documentPaths,
+            ...(preflightDocuments ? { documentUploads: preflightDocuments } : {}),
+            ...(preflightExtraction ? { extractionId: preflightExtraction.extractionId } : {}),
             submittedBy: uid,
             submittedAt: now,
             inputHash,
@@ -232,7 +243,7 @@ async function validateSubmissionAssets(eventId, versionId, paths) {
     if (missing)
         throw new https_1.HttpsError('failed-precondition', `Supporting evidence is missing from Storage: ${missing.path}.`);
     if (inspections.some((item) => item.status !== 'eligible')) {
-        throw new https_1.HttpsError('invalid-argument', 'Supporting evidence must be a non-empty PDF, JPEG, PNG, or WebP file no larger than 10 MB.');
+        throw new https_1.HttpsError('invalid-argument', 'Application documents must be non-empty DOCX, PDF, JPEG, PNG, or WebP files no larger than 10 MB.');
     }
 }
 async function validateCanonicalVenue(details) {
@@ -277,7 +288,38 @@ function submissionFingerprint(event) {
         eventDetails: event.eventDetails,
         templateSelection: event.templateSelection,
         documentPaths: event.draftDocumentPaths,
+        documentUploads: event.draftDocuments,
+        documentSchemaVersion: event.documentSchemaVersion,
+        currentExtractionId: event.currentExtractionId,
     })).digest('hex');
+}
+async function loadCurrentExtraction(event, eventReference) {
+    if (!event.currentExtractionId || !/^[A-Za-z0-9_-]{1,128}$/.test(event.currentExtractionId)) {
+        throw new https_1.HttpsError('failed-precondition', 'Extract and review the completed Core and scenario DOCX files before submission.');
+    }
+    const snapshot = await eventReference.collection(types_1.COLLECTIONS.DOCUMENT_EXTRACTIONS).doc(event.currentExtractionId).get();
+    if (!snapshot.exists)
+        throw new https_1.HttpsError('failed-precondition', 'The current document extraction could not be found. Extract the files again.');
+    const extraction = snapshot.data();
+    const expectedPaths = (event.draftDocuments ?? [])
+        .filter((document) => document.role === 'core_template' || document.role === 'scenario_template')
+        .map((document) => `${document.role}:${document.path}:${document.originalName}:${document.mimeType}:${document.sizeBytes}`)
+        .sort();
+    const actualPaths = Array.isArray(extraction.sourceDocuments)
+        ? extraction.sourceDocuments.map((document) => `${document.role}:${document.path}:${document.originalName}:${document.mimeType}:${document.sizeBytes}`).sort()
+        : [];
+    if (extraction.extractionId !== event.currentExtractionId
+        || extraction.eventId !== event.eventId
+        || extraction.editableVersionId !== event.editableVersionId
+        || extraction.schemaVersion !== types_1.M1_EXTRACTION_SCHEMA_VERSION
+        || extraction.templateRegistryVersion !== event.templateSelection?.templateRegistryVersion
+        || extraction.coreTemplateId !== event.templateSelection?.coreTemplateId
+        || extraction.scenarioTemplateId !== event.templateSelection?.scenarioTemplateId
+        || !['ready', 'needs_review'].includes(extraction.status)
+        || JSON.stringify(actualPaths) !== JSON.stringify(expectedPaths)) {
+        throw new https_1.HttpsError('failed-precondition', 'The document extraction is stale or does not match the current Draft files. Extract the files again.');
+    }
+    return extraction;
 }
 function normalizeText(value) {
     return typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').toLowerCase() : '';

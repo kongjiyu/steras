@@ -4,7 +4,7 @@ exports.refreshAssessmentContext = void 0;
 exports.refreshGenerationFor = refreshGenerationFor;
 exports.shouldRefreshAssessmentContext = shouldRefreshAssessmentContext;
 const firebase_admin_1 = require("firebase-admin");
-const firebase_functions_1 = require("firebase-functions");
+const logger_1 = require("firebase-functions/logger");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
 const types_1 = require("../../../shared/types");
 const secrets_1 = require("../config/secrets");
@@ -21,7 +21,7 @@ exports.refreshAssessmentContext = (0, scheduler_1.onSchedule)({
 }, async () => {
     const db = (0, firebase_admin_1.firestore)();
     if ((await db.doc(resourceCutoverLock_1.RESOURCE_CUTOVER_LOCK_PATH).get()).exists) {
-        firebase_functions_1.logger.info('[assessment-refresh] skipped while the M2 cutover lock exists');
+        logger_1.logger.info('[assessment-refresh] skipped while the M2 cutover lock exists');
         return;
     }
     const now = Date.now();
@@ -43,7 +43,7 @@ exports.refreshAssessmentContext = (0, scheduler_1.onSchedule)({
             });
         }
         catch (error) {
-            firebase_functions_1.logger.error(`[assessment-refresh] ${event.eventId} failed`, error);
+            logger_1.logger.error(`[assessment-refresh] ${event.eventId} failed`, error);
         }
     }
 });

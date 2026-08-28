@@ -7,7 +7,7 @@
  * the private control document and its sanitised public projection.
  */
 import { firestore } from 'firebase-admin';
-import { logger } from 'firebase-functions';
+import { logger } from 'firebase-functions/logger';
 import { onDocumentUpdated } from 'firebase-functions/v2/firestore';
 import {
   COLLECTIONS,

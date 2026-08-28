@@ -139,8 +139,12 @@ service cloud.firestore {
                     && request.resource.data.status == 'Draft'
                     && request.resource.data.currentVersionNumber == 0
                     && request.resource.data.editableVersionId == 'v1'
+                    && request.resource.data.documentSchemaVersion == '2026-08-28-document-v1'
+                    && !request.resource.data.keys().hasAny(['eventId', 'currentExtractionId'])
                     && validM1TemplateSelection(request.resource.data)
                     && request.resource.data.draftDocumentPaths.size() == 0
+                    && (!request.resource.data.keys().hasAny(['draftDocuments'])
+                        || request.resource.data.draftDocuments.size() == 0)
                     && request.resource.data.requiredAuthorities.size() == 0;
 
       // Submitted Pending versions are immutable. Generated pointers and status
@@ -152,6 +156,9 @@ service cloud.firestore {
                     && request.resource.data.status == resource.data.status
                     && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
                       'currentVersionId', 'currentAssessmentId', 'currentResourceId',
+                      'currentExtractionId',
+                      'documentSchemaVersion',
+                      'eventId',
                       'requiredAuthorities', 'currentVersionNumber', 'editableVersionId',
                       'submittedAt'
                     ])
@@ -171,6 +178,13 @@ service cloud.firestore {
         allow read: if isAdmin()
                     || (isSignedIn() && isAssignedAuthority(eventId))
                     || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
+        allow write: if false;
+      }
+
+      match /document_extractions/{extractionId} {
+        allow read: if isAdmin()
+                    || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId))
+                    || (isSignedIn() && isAssignedAuthority(eventId));
         allow write: if false;
       }
 

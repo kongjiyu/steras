@@ -12,7 +12,7 @@ exports.applyM4ReportOutcome = applyM4ReportOutcome;
  * the private control document and its sanitised public projection.
  */
 const firebase_admin_1 = require("firebase-admin");
-const firebase_functions_1 = require("firebase-functions");
+const logger_1 = require("firebase-functions/logger");
 const firestore_1 = require("firebase-functions/v2/firestore");
 const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
@@ -30,7 +30,7 @@ exports.onM4ReportOutcome = (0, firestore_1.onDocumentUpdated)({ document: `${ty
         await applyM4ReportOutcome(after, after.outcome, after.outcomeSetAt ?? Date.now());
     }
     catch (error) {
-        firebase_functions_1.logger.error('[onM4ReportOutcome] failed to apply M4 outcome', {
+        logger_1.logger.error('[onM4ReportOutcome] failed to apply M4 outcome', {
             ticketId: after.ticketId,
             error: error instanceof Error ? error.message : String(error),
         });
@@ -54,7 +54,7 @@ async function applyM4ReportOutcome(report, outcome, now = Date.now()) {
             tx.get(publicRef),
         ]);
         if (!eventSnap.exists || !controlSnap.exists || !stage2Snap.exists) {
-            firebase_functions_1.logger.warn('[onM4ReportOutcome] referenced control no longer exists', {
+            logger_1.logger.warn('[onM4ReportOutcome] referenced control no longer exists', {
                 ticketId: report.ticketId,
                 eventId: report.eventId,
                 controlId: report.controlId,
@@ -167,7 +167,7 @@ async function applyM4ReportOutcome(report, outcome, now = Date.now()) {
             });
         }
         catch (error) {
-            firebase_functions_1.logger.warn('[onM4ReportOutcome] notification failed (non-fatal)', {
+            logger_1.logger.warn('[onM4ReportOutcome] notification failed (non-fatal)', {
                 recipientUid,
                 ticketId: report.ticketId,
                 error: error instanceof Error ? error.message : String(error),
