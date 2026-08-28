@@ -14,6 +14,7 @@ import {
   M1DocumentExtraction,
   M1DraftDocument,
   M1_EXTRACTION_SCHEMA_VERSION,
+  Notification,
 } from '@shared/types';
 import { isValidM1TemplateSelection, m1CategoryForEventType, m1VenueSettingMatchesEnvironment } from '@shared/m1TemplateContract';
 import { FUNCTION_REGION } from '../config/runtime';
@@ -154,6 +155,15 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
     const versionReference = eventReference.collection(COLLECTIONS.VERSIONS).doc(versionId);
     const versionSnapshot = await transaction.get(versionReference);
     if (versionSnapshot.exists) throw new HttpsError('already-exists', 'This application version has already been submitted.');
+    const adminSnapshots = await transaction.get(db.collection(COLLECTIONS.USERS).where('role', '==', 'admin'));
+    const adminNotifications = adminSnapshots.docs.map((admin) => buildAdminSubmissionNotification({
+      adminUid: admin.id,
+      eventId,
+      versionId,
+      versionNumber,
+      eventName: event.eventDetails.name,
+      submittedAt: now,
+    }));
 
     const requiredAuthorities = requiredAuthoritiesFor(event.eventDetails);
     transaction.create(versionReference, version);
@@ -188,10 +198,48 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
       timestamp: now,
       previousStatus: event.status,
       newStatus: 'Pending',
-      metadata: { inputHash, documentCount: documentPaths.length, requiredAuthorities },
+      metadata: {
+        inputHash,
+        documentCount: documentPaths.length,
+        requiredAuthorities,
+        adminNotificationCount: adminNotifications.length,
+      },
     });
+    for (const notification of adminNotifications) {
+      transaction.create(db.collection(COLLECTIONS.NOTIFICATIONS).doc(notification.notificationId), notification);
+    }
     return { eventId, versionId, versionNumber, status: 'Pending' as const };
   });
+}
+
+interface AdminSubmissionNotificationInput {
+  adminUid: string;
+  eventId: string;
+  versionId: string;
+  versionNumber: number;
+  eventName: string;
+  submittedAt: number;
+}
+
+/** Build the privacy-safe, deterministic notification written with the submission transaction. */
+export function buildAdminSubmissionNotification(input: AdminSubmissionNotificationInput): Notification {
+  const sourceActionId = `application-submitted:${input.eventId}:${input.versionId}`;
+  const notificationId = `m1-submit-${createHash('sha256')
+    .update(`${sourceActionId}:${input.adminUid}`)
+    .digest('hex')}`;
+  const isEditedApplication = input.versionNumber > 1;
+  return {
+    notificationId,
+    recipientUid: input.adminUid,
+    eventId: input.eventId,
+    versionId: input.versionId,
+    type: 'application_submitted_for_review',
+    title: isEditedApplication ? 'Updated application submitted' : 'New application submitted',
+    message: `${input.eventName} (${input.versionId}) is ready for administrative review.`,
+    sourceActionId,
+    read: false,
+    createdAt: input.submittedAt,
+  };
 }
 
 export function validateEventDetails(value: unknown, now = Date.now()): string[] {

@@ -177,6 +177,28 @@ describe('Firestore security rules', () => {
     await assertFails(getDoc(doc(organizerDb, 'admin_audit_logs/account-1')));
   });
 
+  it('keeps submission notifications server-written and recipient-scoped', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, 'users/admin-1'), { uid: 'admin-1', role: 'admin' });
+      await setDoc(doc(db, 'users/organizer-1'), { uid: 'organizer-1', role: 'organizer' });
+      await setDoc(doc(db, 'users/organizer-2'), { uid: 'organizer-2', role: 'organizer' });
+      await setDoc(doc(db, 'notifications/admin-submission-1'), {
+        notificationId: 'admin-submission-1', recipientUid: 'admin-1', eventId: 'event-1', versionId: 'v1',
+        type: 'application_submitted_for_review', title: 'New application submitted', message: 'Event (v1) is ready for administrative review.',
+        sourceActionId: 'application-submitted:event-1:v1', read: false, createdAt: 1,
+      });
+    });
+    const adminDb = environment.authenticatedContext('admin-1').firestore();
+    const recipientDb = environment.authenticatedContext('organizer-1').firestore();
+    const otherDb = environment.authenticatedContext('organizer-2').firestore();
+    await assertSucceeds(getDoc(doc(adminDb, 'notifications/admin-submission-1')));
+    await assertFails(getDoc(doc(recipientDb, 'notifications/admin-submission-1')));
+    await assertFails(getDoc(doc(otherDb, 'notifications/admin-submission-1')));
+    await assertFails(setDoc(doc(adminDb, 'notifications/forged'), { recipientUid: 'admin-1' }));
+    await assertFails(updateDoc(doc(adminDb, 'notifications/admin-submission-1'), { read: true }));
+  });
+
   it('prepares Pending edits and rejected revisions without mutating submitted versions', async () => {
     const adminDb = getFirestore(adminApp);
     await adminDb.doc('users/organizer-1').set({ role: 'organizer' });
@@ -324,22 +346,43 @@ describe('Firestore security rules', () => {
     await environment.withSecurityRulesDisabled(async (context) => {
       const db = context.firestore();
       await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer' });
+      await setDoc(doc(db, 'users/admin-1'), { role: 'admin', email: 'admin1@steras.test' });
+      await setDoc(doc(db, 'users/admin-2'), { role: 'admin', email: 'admin2@steras.test' });
+      await setDoc(doc(db, 'users/authority-1'), { role: 'authority', authorityType: 'PDRM' });
       await setDoc(doc(db, 'events/draft-1'), {
         organizerId: 'organizer-1', eventDetails: validDetails, templateSelection: validTemplateSelection, status: 'Draft', currentVersionNumber: 0,
         editableVersionId: 'v1', draftDocumentPaths: [v1Evidence], requiredAuthorities: [], createdAt: 1, updatedAt: 1,
       });
     });
-    await submitEventForUser('organizer-1', 'draft-1', 1_000);
+    const concurrentSubmissions = await Promise.allSettled([
+      submitEventForUser('organizer-1', 'draft-1', 1_000),
+      submitEventForUser('organizer-1', 'draft-1', 1_000),
+    ]);
+    expect(concurrentSubmissions.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(concurrentSubmissions.filter((result) => result.status === 'rejected')).toHaveLength(1);
     const db = environment.authenticatedContext('organizer-1').firestore();
     const eventSnapshot = await assertSucceeds(getDoc(doc(db, 'events/draft-1')));
     const versionSnapshot = await assertSucceeds(getDoc(doc(db, 'events/draft-1/versions/v1')));
     if (!eventSnapshot.exists() || !versionSnapshot.exists()) throw new Error('Submission records were not created.');
     if (eventSnapshot.data().status !== 'Pending' || eventSnapshot.data().currentVersionId !== 'v1') throw new Error('Event was not advanced to version 1.');
+    const adminDb = getFirestore(adminApp);
+    const notifications = await adminDb.collection('notifications').where('eventId', '==', 'draft-1').get();
+    expect(notifications.size).toBe(2);
+    expect(notifications.docs.map((document) => document.data().recipientUid).sort()).toEqual(['admin-1', 'admin-2']);
+    for (const notification of notifications.docs.map((document) => document.data())) {
+      expect(notification).toMatchObject({
+        eventId: 'draft-1', versionId: 'v1', type: 'application_submitted_for_review',
+        title: 'New application submitted', read: false, createdAt: 1_000,
+      });
+      expect(JSON.stringify(notification)).not.toMatch(/organizer@example|\+60123456789|riskProfile|documentPaths/i);
+    }
+    expect((await adminDb.doc('events/draft-1/audit_logs/1000-submitted-v1').get()).data()?.metadata.adminNotificationCount).toBe(2);
     await assertFails(setDoc(doc(db, 'events/draft-1/versions/v1'), { versionNumber: 99 }));
     await submitEventForUser('organizer-1', 'draft-1', 1_001).then(
       () => { throw new Error('Duplicate submission unexpectedly succeeded.'); },
       () => undefined,
     );
+    expect((await adminDb.collection('notifications').where('eventId', '==', 'draft-1').get()).size).toBe(2);
   });
 
   it('binds a current structured DOCX extraction into the immutable submitted version', async () => {
@@ -379,6 +422,7 @@ describe('Firestore security rules', () => {
     const eventId = 'revision-submit';
     const adminDb = getFirestore(adminApp);
     await adminDb.doc('users/organizer-1').set({ role: 'organizer' });
+    await adminDb.doc('users/admin-1').set({ role: 'admin' });
     await adminDb.doc(`events/${eventId}`).set({
       organizerId: 'organizer-1', eventDetails: validDetails, templateSelection: validTemplateSelection,
       status: 'Rejected', currentVersionId: 'v1', currentVersionNumber: 1, editableVersionId: null,
@@ -430,6 +474,12 @@ describe('Firestore security rules', () => {
     });
     expect((await adminDb.doc(`events/${eventId}`).get()).data()?.activeRevision).toBeUndefined();
     expect((await adminDb.doc(`events/${eventId}`).get()).data()?.initialReview).toBeUndefined();
+    const notifications = await adminDb.collection('notifications').where('eventId', '==', eventId).get();
+    expect(notifications.size).toBe(1);
+    expect(notifications.docs[0].data()).toMatchObject({
+      recipientUid: 'admin-1', versionId: 'v2', type: 'application_submitted_for_review',
+      title: 'Updated application submitted', read: false, createdAt: 1_100,
+    });
   });
 
   it('rejects missing evidence, tampered templates, and spoofed venue identity before version creation', async () => {

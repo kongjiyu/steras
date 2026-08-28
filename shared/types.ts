@@ -1217,6 +1217,7 @@ export type AuditAction =
   | 'deployment_migration';
 
 export type NotificationType =
+  | 'application_submitted_for_review'
   | 'decision_made'
   | 'application_approved'
   | 'application_rejected'
