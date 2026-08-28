@@ -11,8 +11,9 @@ import PageHeader from '../../components/ui/PageHeader';
 import OrganizerAssessmentSummaryView, { OrganizerResourceSummaryView } from '../../components/m2/OrganizerAssessmentSummaryView';
 import { isCurrentEventRecord, isCurrentEventVersion, isOrganizerAssessmentSummary } from '../../components/m2/m2Contract';
 import OrganizerStatusBadge from './OrganizerStatusBadge';
-import { applicationStatusLabel, isEditableApplicationStatus, isWithdrawableApplicationStatus, nextVersionId } from './organizerApplication';
+import { applicationStatusLabel, isEditableApplicationStatus, isWithdrawableApplicationStatus, nextVersionId, organizerAdminDecisionLabel, organizerPublicationLabel, organizerPublicationStateFromProjection, OrganizerPublicationState } from './organizerApplication';
 import { findEventById } from '../../mock_data/events';
+import { findPublicEventById } from '../../mock_data/public_events';
 
 export default function EventDetail() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -27,6 +28,7 @@ export default function EventDetail() {
   const [loadError, setLoadError] = useState('');
   const [supportingDataError, setSupportingDataError] = useState('');
   const [retryKey, setRetryKey] = useState(0);
+  const [publicationState, setPublicationState] = useState<OrganizerPublicationState>('loading');
 
   useEffect(() => {
     if (!eventId) {
@@ -82,6 +84,21 @@ export default function EventDetail() {
     }, () => setSupportingDataError('Application version history could not be refreshed.'));
   }, [eventId]);
 
+  useEffect(() => {
+    if (!eventId) {
+      setPublicationState('not_published');
+      return;
+    }
+    if (!isFirebaseConfigured) {
+      setPublicationState(organizerPublicationStateFromProjection(findPublicEventById(eventId), eventId, event?.currentVersionId));
+      return;
+    }
+    setPublicationState('loading');
+    return onSnapshot(doc(db, COLLECTIONS.PUBLIC_EVENTS, eventId), (snapshot) => {
+      setPublicationState(organizerPublicationStateFromProjection(snapshot.exists() ? snapshot.data() : undefined, eventId, event?.currentVersionId));
+    }, () => setPublicationState('unavailable'));
+  }, [event?.currentVersionId, eventId, retryKey]);
+
   if (loading) return <div className="py-16 text-center text-ink-500">Loading application…</div>;
   if (loadError) return <EmptyState title="Application unavailable" description={loadError}><button type="button" className="btn-secondary" onClick={() => { setLoading(true); setRetryKey((value) => value + 1); }}>Try again</button></EmptyState>;
   if (!event) return <EmptyState title="Event not found" description="It may have been removed or you do not have access." />;
@@ -105,7 +122,6 @@ export default function EventDetail() {
   const canPrepareEdit = pendingBeforeAdminReview || rejectedWithFeedback;
   const submittedVersionLabel = event.currentVersionId ?? 'Not submitted';
   const editableVersionLabel = event.editableVersionId ?? (editable ? nextVersionId(event.currentVersionNumber) : 'Locked');
-  const publicationLabel = status === 'Approved' ? 'Eligible for sanitised public listing' : 'Not publicly listed';
   const revisionFeedback = versions.find((version) => version.versionId === event.currentVersionId)?.revisionSource ?? event.activeRevision;
 
   const prepareEdit = async () => {
@@ -188,8 +204,8 @@ export default function EventDetail() {
             <Row label="Editable" value={editableVersionLabel} />
             <Row label="Submitted at" value={event.submittedAt ? format(new Date(event.submittedAt), 'PPp') : 'Not submitted'} />
             <Row label="Assessment" value={event.currentAssessmentId ? 'Available' : status === 'Pending' ? 'Processing' : 'Unavailable'} />
-            <Row label="Decision" value={decisionSummary(event)} />
-            <Row label="Public" value={publicationLabel} />
+            <Row label="Admin decision" value={organizerAdminDecisionLabel(event)} />
+            <Row label="Public" value={organizerPublicationLabel(publicationState)} />
             <Row label="Authorities" value={event.requiredAuthorities.length > 0 ? event.requiredAuthorities.join(', ') : 'Not assigned yet'} />
           </div>
         </section>
@@ -245,18 +261,6 @@ export default function EventDetail() {
 
 function Row({ label, value }: { label: string; value: string }) {
   return <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3 py-3"><span className="text-ink-500">{label}</span><span className="break-words font-medium text-ink-800">{value}</span></div>;
-}
-
-function decisionSummary(event: EventRecord): string {
-  const status = String(event.status);
-  if (status === 'Approved') return 'Approved';
-  if (status === 'Rejected') return event.initialReview?.reason ? 'Rejected with recorded reason' : 'Rejected';
-  if (status === 'Cancelled') return 'Cancelled before Admin review';
-  if (status === 'Withdrawn') return 'Withdrawn';
-  if (status === 'UnderReview') return 'Authority review in progress';
-  if (status === 'Pending') return 'Awaiting initial review';
-  if (status === 'Manual Review Required') return 'Manual assessment required';
-  return 'No decision yet';
 }
 
 function isOrganizerEventRecord(value: unknown, expectedEventId: string): value is EventRecord {

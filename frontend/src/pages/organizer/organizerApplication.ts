@@ -1,4 +1,4 @@
-import { EventDetails, EventRiskProfile, EventStatus, EventType, M1_DOCUMENT_SCHEMA_VERSION, M1_EVIDENCE_MANIFEST_SCHEMA_VERSION, M1DocumentExtraction, M1DraftDocument, M1EvidenceRequirementResponse, M1ExtractedField, M1TemplateSelection, Venue } from '@shared/types';
+import { EventDetails, EventRecord, EventRiskProfile, EventStatus, EventType, M1_DOCUMENT_SCHEMA_VERSION, M1_EVIDENCE_MANIFEST_SCHEMA_VERSION, M1DocumentExtraction, M1DraftDocument, M1EvidenceRequirementResponse, M1ExtractedField, M1TemplateSelection, Venue } from '@shared/types';
 import { isValidM1TemplateSelection, m1CategoryForEventType, m1VenueSettingMatchesEnvironment } from '@shared/m1TemplateContract';
 import { isM1EvidenceForcedRequired, m1EvidenceRequirementsFor } from '@shared/m1EvidenceContract';
 
@@ -32,6 +32,38 @@ export function isSelectableRegistryVenue(venue: Venue): boolean {
 export function applicationStatusLabel(status: string): string {
   if (status === 'UnderReview') return 'Under Review';
   return status.replace(/([a-z])([A-Z])/g, '$1 $2');
+}
+
+export function organizerAdminDecisionLabel(event: Pick<EventRecord, 'status' | 'initialReview'>): string {
+  const initialDecision = event.initialReview?.decision;
+  if (event.status === 'Approved') return 'Final Admin review approved';
+  if (event.status === 'Rejected' && initialDecision === 'Approved') return 'Final Admin review rejected';
+  if (initialDecision === 'Approved') return 'Initial Admin review approved';
+  if (initialDecision === 'Rejected') return 'Initial Admin review rejected';
+  return 'No Admin decision recorded';
+}
+
+export type OrganizerPublicationState = 'loading' | 'published' | 'not_published' | 'stale' | 'unavailable';
+
+export function organizerPublicationStateFromProjection(
+  value: unknown,
+  eventId: string,
+  currentVersionId?: string,
+): Exclude<OrganizerPublicationState, 'loading'> {
+  if (value === undefined || value === null) return 'not_published';
+  if (typeof value !== 'object' || Array.isArray(value)) return 'unavailable';
+  const projection = value as Record<string, unknown>;
+  if (projection.eventId !== eventId || projection.publicStatus !== 'approved'
+    || typeof projection.versionId !== 'string' || !projection.versionId) return 'unavailable';
+  return projection.versionId === currentVersionId ? 'published' : 'stale';
+}
+
+export function organizerPublicationLabel(state: OrganizerPublicationState): string {
+  if (state === 'loading') return 'Checking public listing';
+  if (state === 'published') return 'Published in public calendar';
+  if (state === 'stale') return 'Previous version remains published';
+  if (state === 'unavailable') return 'Publication state unavailable';
+  return 'Not published';
 }
 
 export function nextVersionId(currentVersionNumber: unknown): string {
