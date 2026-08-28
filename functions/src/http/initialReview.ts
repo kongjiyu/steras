@@ -159,6 +159,7 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
     const currentEventSnap = await tx.get(eventRef);
     const currentEvent = { eventId, ...currentEventSnap.data() } as EventRecord;
     if (!currentEventSnap.exists
+      || currentEvent.status !== event.status
       || currentEvent.currentVersionId !== versionId
       || currentEvent.currentAssessmentId !== assessmentId
       || currentEvent.currentResourceId !== resourceId

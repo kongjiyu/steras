@@ -20,7 +20,7 @@ vi.mock('firebase/firestore', () => ({
         eventDetails: { name: 'Draft Forum', type: 'conference', venueName: 'PICC', startDatetime: 0 },
       }) },
       { id: 'event-2', data: () => ({
-        organizerId: 'organizer-1', status: 'Revision Requested', currentVersionId: 'v1', currentVersionNumber: 1, editableVersionId: 'v2', currentAssessmentId: 'v1', draftDocumentPaths: [], requiredAuthorities: ['PDRM'], createdAt: 2, updatedAt: 2,
+        organizerId: 'organizer-1', status: 'Draft', currentVersionId: 'v1', currentVersionNumber: 1, editableVersionId: 'v2', activeRevision: { kind: 'rejected_revision', sourceVersionId: 'v1', startedAt: 2 }, currentAssessmentId: 'v1', draftDocumentPaths: [], requiredAuthorities: ['PDRM'], createdAt: 2, updatedAt: 2,
         eventDetails: { name: 'Revision Forum', type: 'conference', venueName: 'PICC', startDatetime: 0 },
       }) },
     ] });

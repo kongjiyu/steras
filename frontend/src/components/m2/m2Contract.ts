@@ -69,7 +69,7 @@ export function isCurrentEventRecord(value: unknown, expectedEventId?: string): 
     || typeof value.eventId !== 'string' || !value.eventId.trim()
     || (expectedEventId !== undefined && value.eventId !== expectedEventId)
     || typeof value.organizerId !== 'string' || !value.organizerId.trim()
-    || !['Draft', 'Pending', 'UnderReview', 'Approved', 'Rejected', 'Withdrawn', 'Manual Review Required'].includes(String(value.status))
+    || !['Draft', 'Pending', 'UnderReview', 'Approved', 'Rejected', 'Cancelled', 'Withdrawn', 'Manual Review Required'].includes(String(value.status))
     || !Number.isSafeInteger(value.currentVersionNumber) || Number(value.currentVersionNumber) < 0
     || !Array.isArray(value.draftDocumentPaths)
     || !value.draftDocumentPaths.every((path) => typeof path === 'string')
@@ -95,7 +95,24 @@ export function isCurrentEventVersion(value: unknown, expectedEventId?: string, 
     && typeof value.submittedBy === 'string' && value.submittedBy.trim().length > 0
     && Number.isFinite(value.submittedAt) && Number(value.submittedAt) >= 0
     && typeof value.inputHash === 'string' && /^[a-f0-9]{64}$/.test(value.inputHash)
+    && (value.revisionSource === undefined || isM1RevisionSource(value.revisionSource))
     && (value.supersededAt === undefined || (typeof value.supersededAt === 'number' && Number.isFinite(value.supersededAt) && value.supersededAt >= 0));
+}
+
+function isM1RevisionSource(value: unknown): boolean {
+  if (!isRecord(value)
+    || !['pending_edit', 'rejected_revision'].includes(String(value.kind))
+    || !isSafeDocumentId(value.sourceVersionId)
+    || !Number.isFinite(value.startedAt)) return false;
+  const keys = Object.keys(value);
+  if (value.kind === 'rejected_revision') {
+    return keys.length === 5
+      && keys.every((key) => ['kind', 'sourceVersionId', 'startedAt', 'rejectionReason', 'rejectionSuggestion'].includes(key))
+      && typeof value.rejectionReason === 'string' && value.rejectionReason.trim().length > 0
+      && typeof value.rejectionSuggestion === 'string' && value.rejectionSuggestion.trim().length > 0;
+  }
+  return keys.length === 3
+    && keys.every((key) => ['kind', 'sourceVersionId', 'startedAt'].includes(key));
 }
 
 export function isCurrentAuthorityDecision(value: unknown, expectedEventId?: string, expectedDecisionId?: string): value is AuthorityDecision {

@@ -27,6 +27,7 @@ exports.buildPublicEventControl = buildPublicEventControl;
  *   `stage2_doc_rejected` audit + organizer notification).
  */
 const firebase_admin_1 = require("firebase-admin");
+const firestore_1 = require("firebase-admin/firestore");
 const https_1 = require("firebase-functions/v2/https");
 const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
@@ -130,9 +131,9 @@ async function publishStage2DocForUser(uid, data, now = Date.now()) {
             publishedAt: now,
             publishedBy: uid,
             // Clear rejection fields so the organizer + admin UI sees a clean slate.
-            rejectionReason: firebase_admin_1.firestore.FieldValue.delete(),
-            rejectionAt: firebase_admin_1.firestore.FieldValue.delete(),
-            rejectedBy: firebase_admin_1.firestore.FieldValue.delete(),
+            rejectionReason: firestore_1.FieldValue.delete(),
+            rejectionAt: firestore_1.FieldValue.delete(),
+            rejectedBy: firestore_1.FieldValue.delete(),
         });
         // Public viewers read this sanitised projection, never the private
         // organiser/officer document. The image is explicitly selected by the

@@ -21,6 +21,7 @@ import { RESOURCE_CUTOVER_LOCK_PATH } from '../config/resourceCutoverLock';
 import { inspectStorageEvidence } from '../utils/storageEvidence';
 import { validateDraftDocuments } from './extractApplicationDocuments';
 import { validateM1EvidenceManifest } from '../engines/m1EvidenceManifest';
+import { hasValidActiveRevision } from './applicationLifecycle';
 
 export { isValidEvidenceMetadata } from '../utils/storageEvidence';
 
@@ -49,6 +50,10 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
   if (!preflightEvent.exists) throw new HttpsError('not-found', 'Event draft was not found.');
   const preflight = { ...preflightEvent.data(), eventId } as EventRecord;
   if (preflight.organizerId !== uid) throw new HttpsError('permission-denied', 'You do not own this event.');
+  if ((preflight.currentVersionNumber > 0 && !preflight.activeRevision)
+    || (preflight.activeRevision && !hasValidActiveRevision(preflight))) {
+    throw new HttpsError('failed-precondition', 'The application revision provenance is invalid.');
+  }
   if (!isValidM1TemplateSelection(preflight.templateSelection)) {
     throw new HttpsError('failed-precondition', 'Choose a valid Core and scenario template before submitting.');
   }
@@ -126,6 +131,7 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
       extractionId: preflightExtraction?.extractionId,
       evidenceManifest: preflightEvidenceManifest,
       evidenceManifestSchemaVersion: preflight.evidenceManifestSchemaVersion,
+      revisionSource: preflight.activeRevision,
     })).digest('hex');
     const version: EventVersion = {
       versionId,
@@ -140,6 +146,7 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
         evidenceManifest: preflightEvidenceManifest,
         evidenceManifestSchemaVersion: M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
       } : {}),
+      ...(preflight.activeRevision ? { revisionSource: preflight.activeRevision } : {}),
       submittedBy: uid,
       submittedAt: now,
       inputHash,
@@ -164,6 +171,7 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
       assignedOfficerByAuthority: {},
       reviewStage: 'initial',
       initialReview: FieldValue.delete(),
+      activeRevision: FieldValue.delete(),
       manualAssessment: FieldValue.delete(),
       verifiedControlIds: [],
       submittedAt: now,
@@ -303,6 +311,7 @@ function submissionFingerprint(event: EventRecord): string {
     currentExtractionId: event.currentExtractionId,
     evidenceManifest: event.draftEvidenceManifest,
     evidenceManifestSchemaVersion: event.evidenceManifestSchemaVersion,
+    activeRevision: event.activeRevision,
   })).digest('hex');
 }
 

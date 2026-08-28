@@ -44,6 +44,7 @@ export type EventStatus =
   | 'UnderReview'
   | 'Approved'
   | 'Rejected'
+  | 'Cancelled'
   | 'Withdrawn'
   | 'Manual Review Required';
 
@@ -53,6 +54,7 @@ export const EVENT_STATUSES: { value: EventStatus; label: string; color: string 
   { value: 'UnderReview', label: 'Under Review', color: 'blue' },
   { value: 'Approved', label: 'Approved', color: 'green' },
   { value: 'Rejected', label: 'Rejected', color: 'red' },
+  { value: 'Cancelled', label: 'Cancelled', color: 'gray' },
   { value: 'Withdrawn', label: 'Withdrawn', color: 'gray' },
   { value: 'Manual Review Required', label: 'Manual Review Required', color: 'purple' },
 ];
@@ -227,6 +229,13 @@ export interface EventRecord {
   /** Requirement-by-requirement evidence state for the current editable generation. */
   draftEvidenceManifest?: M1EvidenceRequirementResponse[];
   evidenceManifestSchemaVersion?: typeof M1_EVIDENCE_MANIFEST_SCHEMA_VERSION;
+  /** Current editable generation and its immutable submitted-version origin. */
+  activeRevision?: M1ApplicationRevisionSource;
+  cancelledAt?: number;
+  cancelledFromVersionId?: string;
+  withdrawnAt?: number;
+  withdrawnFromStatus?: Exclude<EventStatus, 'Withdrawn'>;
+  withdrawalRationale?: string;
   requiredAuthorities: AuthorityType[];
   /** M3 named-officer authorization. Populated atomically with assignments. */
   assignedOfficerUids?: string[];
@@ -295,6 +304,14 @@ export interface EventRecord {
   authorityReviewCompletedVersionId?: string;
 }
 
+export interface M1ApplicationRevisionSource {
+  kind: 'pending_edit' | 'rejected_revision';
+  sourceVersionId: string;
+  startedAt: number;
+  rejectionReason?: string;
+  rejectionSuggestion?: string;
+}
+
 export interface EventVersion {
   versionId: string;
   eventId: string;
@@ -307,6 +324,7 @@ export interface EventVersion {
   extractionId?: string;
   evidenceManifest?: M1EvidenceRequirementResponse[];
   evidenceManifestSchemaVersion?: typeof M1_EVIDENCE_MANIFEST_SCHEMA_VERSION;
+  revisionSource?: M1ApplicationRevisionSource;
   submittedBy: string;
   submittedAt: number;
   inputHash: string;
@@ -1155,6 +1173,9 @@ export type AuditAction =
   | 'event_updated'
   | 'application_documents_extracted'
   | 'event_submitted'
+  | 'application_edit_started'
+  | 'application_revision_started'
+  | 'application_cancelled'
   | 'event_withdrawn'
   | 'status_changed'
   | 'risk_score_computed'

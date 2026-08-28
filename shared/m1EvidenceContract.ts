@@ -1,4 +1,4 @@
-import { EventRiskProfile } from './types';
+import { EventRiskProfile, M1EvidenceRequirementResponse } from './types';
 
 export interface M1EvidenceRequirementDefinition {
   id: string;
@@ -81,4 +81,15 @@ export function isM1EvidenceForcedRequired(
 ): boolean {
   return definition.requirement === 'always'
     || (definition.riskFlag !== undefined && riskProfile?.[definition.riskFlag] === true);
+}
+
+export function createM1EvidenceManifestDraft(
+  scenarioTemplateId: string,
+  riskProfile: EventRiskProfile | undefined,
+): M1EvidenceRequirementResponse[] {
+  return m1EvidenceRequirementsFor(scenarioTemplateId).map((definition) => (
+    isM1EvidenceForcedRequired(definition, riskProfile)
+      ? { requirementId: definition.id, applicability: 'required' }
+      : { requirementId: definition.id, applicability: 'not_applicable', notApplicableReason: '' }
+  ));
 }

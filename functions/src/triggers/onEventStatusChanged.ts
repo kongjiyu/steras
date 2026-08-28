@@ -81,15 +81,16 @@ export async function cleanupWithdrawnEvent(eventId: string, now = Date.now()): 
     updatedAt: now,
   }, { merge: true });
   finalBatch.delete(db.collection(COLLECTIONS.PUBLIC_EVENTS).doc(eventId));
-  finalBatch.set(eventRef.collection(COLLECTIONS.AUDIT_LOGS).doc(`withdrawn_cleanup_${now}`), {
-    id: `withdrawn_cleanup_${now}`,
+  const cleanupAuditId = `withdrawn_cleanup_${event.currentVersionId ?? 'unversioned'}`;
+  finalBatch.set(eventRef.collection(COLLECTIONS.AUDIT_LOGS).doc(cleanupAuditId), {
+    id: cleanupAuditId,
     eventId,
     versionId: event.currentVersionId,
     action: 'withdrawn_cleanup',
     actorId: 'system',
     actorRole: 'system',
     timestamp: now,
-    previousStatus: event.status,
+    previousStatus: event.withdrawnFromStatus ?? event.status,
     newStatus: 'Withdrawn',
     notes: 'Closed pending assignments and unpublished event-control projections after withdrawal.',
     metadata: {

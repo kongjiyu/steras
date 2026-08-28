@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.M1_CORE_EVIDENCE_REQUIREMENT_IDS = void 0;
 exports.m1EvidenceRequirementsFor = m1EvidenceRequirementsFor;
 exports.isM1EvidenceForcedRequired = isM1EvidenceForcedRequired;
+exports.createM1EvidenceManifestDraft = createM1EvidenceManifestDraft;
 exports.M1_CORE_EVIDENCE_REQUIREMENT_IDS = [
     'DOC-A01', 'DOC-A02', 'DOC-A03', 'DOC-B01', 'DOC-B02',
     'DOC-C01', 'DOC-C02', 'DOC-D01', 'DOC-D02',
@@ -69,5 +70,10 @@ function m1EvidenceRequirementsFor(scenarioTemplateId) {
 function isM1EvidenceForcedRequired(definition, riskProfile) {
     return definition.requirement === 'always'
         || (definition.riskFlag !== undefined && riskProfile?.[definition.riskFlag] === true);
+}
+function createM1EvidenceManifestDraft(scenarioTemplateId, riskProfile) {
+    return m1EvidenceRequirementsFor(scenarioTemplateId).map((definition) => (isM1EvidenceForcedRequired(definition, riskProfile)
+        ? { requirementId: definition.id, applicability: 'required' }
+        : { requirementId: definition.id, applicability: 'not_applicable', notApplicableReason: '' }));
 }
 //# sourceMappingURL=m1EvidenceContract.js.map

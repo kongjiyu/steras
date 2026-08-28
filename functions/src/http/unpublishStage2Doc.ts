@@ -30,6 +30,7 @@
  *   - Notifies the organizer with the reason in the message.
  */
 import { firestore } from 'firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import {
   AuthorityType,
@@ -153,8 +154,8 @@ export async function unpublishStage2DocForUser(
       update.rejectedBy = uid;
     }
     // Clear the published fields so the doc looks "pending" again.
-    update.publishedAt = firestore.FieldValue.delete();
-    update.publishedBy = firestore.FieldValue.delete();
+    update.publishedAt = FieldValue.delete();
+    update.publishedBy = FieldValue.delete();
 
     tx.update(docRef, update);
     // Remove the sanitised public projection at the same atomic boundary so

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { firestore } from 'firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions/logger';
 import { onDocumentCreated, onDocumentUpdated } from 'firebase-functions/v2/firestore';
 import {
@@ -339,7 +340,7 @@ export async function runRiskAndResourcePipeline(
       if (manualLockState(claim) !== 'absent') return false;
       if (cutoverLockSnapshot.exists && !options.cutoverSessionId) {
         transaction.update(db.doc(RESOURCE_CUTOVER_LOCK_PATH), {
-          queuedEvents: firestore.FieldValue.arrayUnion(createResourceCutoverQueueToken({
+          queuedEvents: FieldValue.arrayUnion(createResourceCutoverQueueToken({
             eventId,
             currentVersionId: versionId,
             currentAssessmentId: assessment.assessmentId,
@@ -354,7 +355,7 @@ export async function runRiskAndResourcePipeline(
         transaction.set(summaryReference, organizerSummary(assessment, undefined, createdAt));
         transaction.update(eventReference, {
           currentAssessmentId: assessmentId,
-          currentResourceId: firestore.FieldValue.delete(),
+          currentResourceId: FieldValue.delete(),
           updatedAt: createdAt,
         });
       }
@@ -451,7 +452,7 @@ async function recordMissingVersionFailure(
     } satisfies OrganizerAssessmentSummary);
     transaction.update(eventReference, {
       currentAssessmentId: assessmentId,
-      currentResourceId: firestore.FieldValue.delete(),
+      currentResourceId: FieldValue.delete(),
       updatedAt: now,
     });
     transaction.set(eventReference.collection(COLLECTIONS.AUDIT_LOGS).doc(`${assessmentId}-risk-score-computed`), {
@@ -640,7 +641,7 @@ async function markFailed(
     }
     if (cutoverLockSnapshot.exists) {
       transaction.update(db.doc(RESOURCE_CUTOVER_LOCK_PATH), {
-        queuedEvents: firestore.FieldValue.arrayUnion(createResourceCutoverQueueToken({
+        queuedEvents: FieldValue.arrayUnion(createResourceCutoverQueueToken({
           eventId: current.eventId, currentVersionId: current.versionId, currentAssessmentId: current.assessmentId,
           assessmentInputHash: inputHash, generationId: claimId, queuedAt: Date.now(),
         })),
@@ -661,7 +662,7 @@ async function markFailed(
     } satisfies OrganizerAssessmentSummary);
     transaction.update(eventReference, {
       currentAssessmentId: current.assessmentId,
-      currentResourceId: firestore.FieldValue.delete(),
+      currentResourceId: FieldValue.delete(),
       updatedAt: Date.now(),
     });
   });
@@ -821,7 +822,7 @@ async function persistResourceCalculation(
         && isSameResourceAssessment(currentAssessment, assessment, version.eventDetails))) return false;
       if (!await officialAssessmentProvenanceMatches(transaction, eventReference, current, version, currentAssessment)) return false;
       if (!expectedCurrentAssessmentId) {
-        transaction.update(eventReference, { currentResourceId: firestore.FieldValue.delete(), updatedAt: computedAt });
+        transaction.update(eventReference, { currentResourceId: FieldValue.delete(), updatedAt: computedAt });
         transaction.set(
           eventReference.collection(COLLECTIONS.ASSESSMENT_SUMMARIES).doc(version.versionId),
           organizerSummary(assessment, undefined, computedAt),
