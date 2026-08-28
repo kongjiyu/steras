@@ -15,6 +15,7 @@ const runtime_1 = require("../config/runtime");
 const resourceCutoverLock_1 = require("../config/resourceCutoverLock");
 const storageEvidence_1 = require("../utils/storageEvidence");
 const extractApplicationDocuments_1 = require("./extractApplicationDocuments");
+const m1EvidenceManifest_1 = require("../engines/m1EvidenceManifest");
 var storageEvidence_2 = require("../utils/storageEvidence");
 Object.defineProperty(exports, "isValidEvidenceMetadata", { enumerable: true, get: function () { return storageEvidence_2.isValidEvidenceMetadata; } });
 exports.submitEvent = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
@@ -52,6 +53,9 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
         : undefined;
     const preflightExtraction = preflightDocuments
         ? await loadCurrentExtraction(preflight, eventReference)
+        : undefined;
+    const preflightEvidenceManifest = preflightDocuments
+        ? validateCurrentEvidenceManifest(preflight, preflightDocuments)
         : undefined;
     await validateSubmissionAssets(eventId, preflightVersionId, preflight.draftDocumentPaths ?? []);
     await validateCanonicalVenue(preflight.eventDetails);
@@ -112,6 +116,8 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
             documentPaths,
             documentUploads: preflightDocuments,
             extractionId: preflightExtraction?.extractionId,
+            evidenceManifest: preflightEvidenceManifest,
+            evidenceManifestSchemaVersion: preflight.evidenceManifestSchemaVersion,
         })).digest('hex');
         const version = {
             versionId,
@@ -122,6 +128,10 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
             documentPaths,
             ...(preflightDocuments ? { documentUploads: preflightDocuments } : {}),
             ...(preflightExtraction ? { extractionId: preflightExtraction.extractionId } : {}),
+            ...(preflightEvidenceManifest ? {
+                evidenceManifest: preflightEvidenceManifest,
+                evidenceManifestSchemaVersion: types_1.M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
+            } : {}),
             submittedBy: uid,
             submittedAt: now,
             inputHash,
@@ -291,7 +301,18 @@ function submissionFingerprint(event) {
         documentUploads: event.draftDocuments,
         documentSchemaVersion: event.documentSchemaVersion,
         currentExtractionId: event.currentExtractionId,
+        evidenceManifest: event.draftEvidenceManifest,
+        evidenceManifestSchemaVersion: event.evidenceManifestSchemaVersion,
     })).digest('hex');
+}
+function validateCurrentEvidenceManifest(event, documents) {
+    if (event.evidenceManifestSchemaVersion !== types_1.M1_EVIDENCE_MANIFEST_SCHEMA_VERSION || !event.templateSelection) {
+        throw new https_1.HttpsError('failed-precondition', 'Complete the current supporting-evidence checklist before submission.');
+    }
+    const result = (0, m1EvidenceManifest_1.validateM1EvidenceManifest)(event.eventDetails, event.templateSelection, documents, event.draftEvidenceManifest);
+    if (result.errors.length > 0)
+        throw new https_1.HttpsError('failed-precondition', result.errors.join(' '));
+    return result.manifest;
 }
 async function loadCurrentExtraction(event, eventReference) {
     if (!event.currentExtractionId || !/^[A-Za-z0-9_-]{1,128}$/.test(event.currentExtractionId)) {

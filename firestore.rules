@@ -140,6 +140,10 @@ service cloud.firestore {
                     && request.resource.data.currentVersionNumber == 0
                     && request.resource.data.editableVersionId == 'v1'
                     && request.resource.data.documentSchemaVersion == '2026-08-28-document-v1'
+                    && request.resource.data.evidenceManifestSchemaVersion == '2026-08-28-evidence-v1'
+                    && request.resource.data.draftEvidenceManifest is list
+                    && request.resource.data.draftEvidenceManifest.size() >= 13
+                    && request.resource.data.draftEvidenceManifest.size() <= 19
                     && !request.resource.data.keys().hasAny(['eventId', 'currentExtractionId'])
                     && validM1TemplateSelection(request.resource.data)
                     && request.resource.data.draftDocumentPaths.size() == 0
@@ -158,6 +162,7 @@ service cloud.firestore {
                       'currentVersionId', 'currentAssessmentId', 'currentResourceId',
                       'currentExtractionId',
                       'documentSchemaVersion',
+                      'evidenceManifestSchemaVersion',
                       'eventId',
                       'requiredAuthorities', 'currentVersionNumber', 'editableVersionId',
                       'submittedAt'

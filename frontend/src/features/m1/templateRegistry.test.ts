@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { M1_TEMPLATE_REGISTRY_VERSION } from '@shared/types';
+import { m1EvidenceRequirementsFor } from '@shared/m1EvidenceContract';
 import {
   createTemplateSelection,
   isValidTemplateSelection,
@@ -34,6 +35,14 @@ describe('M1 template registry', () => {
       expect(template.pageCount).toBeGreaterThan(0);
       expect(new Set(template.supportingDocuments.map((item) => item.id)).size).toBe(template.supportingDocuments.length);
       expect(template.supportingDocuments.every((item) => item.title.trim() && item.condition.trim())).toBe(true);
+    }
+  });
+
+  it('keeps every scenario guidance item aligned with the backend evidence contract', () => {
+    for (const template of M1_SCENARIO_TEMPLATES) {
+      const definitions = m1EvidenceRequirementsFor(template.templateId).filter((item) => item.source === 'scenario');
+      expect(template.supportingDocuments.map((item) => item.id)).toEqual(definitions.map((item) => item.id));
+      expect(template.supportingDocuments.map((item) => item.requirement)).toEqual(definitions.map((item) => item.requirement));
     }
   });
 

@@ -69,6 +69,7 @@ export type SeatingType = 'seated' | 'standing' | 'mixed';
 export const M1_TEMPLATE_REGISTRY_VERSION = '2026-08-28-v1';
 export const M1_DOCUMENT_SCHEMA_VERSION = '2026-08-28-document-v1';
 export const M1_EXTRACTION_SCHEMA_VERSION = '2026-08-28-docx-fields-v1';
+export const M1_EVIDENCE_MANIFEST_SCHEMA_VERSION = '2026-08-28-evidence-v1';
 
 export type M1EventCategory =
   | 'entertainment_performance'
@@ -152,6 +153,16 @@ export interface M1DocumentExtraction {
   createdBy: string;
 }
 
+export type M1EvidenceApplicability = 'required' | 'not_applicable';
+
+/** Organizer declaration that binds one canonical evidence requirement to an immutable Storage object. */
+export interface M1EvidenceRequirementResponse {
+  requirementId: string;
+  applicability: M1EvidenceApplicability;
+  documentPath?: string;
+  notApplicableReason?: string;
+}
+
 export interface EventRiskProfile {
   vulnerableAttendeesPercent?: number;
   standingAttendeesPercent?: number;
@@ -213,6 +224,9 @@ export interface EventRecord {
   documentSchemaVersion?: typeof M1_DOCUMENT_SCHEMA_VERSION;
   /** Latest server-produced DOCX extraction for this editable generation. */
   currentExtractionId?: string;
+  /** Requirement-by-requirement evidence state for the current editable generation. */
+  draftEvidenceManifest?: M1EvidenceRequirementResponse[];
+  evidenceManifestSchemaVersion?: typeof M1_EVIDENCE_MANIFEST_SCHEMA_VERSION;
   requiredAuthorities: AuthorityType[];
   /** M3 named-officer authorization. Populated atomically with assignments. */
   assignedOfficerUids?: string[];
@@ -291,6 +305,8 @@ export interface EventVersion {
   documentPaths: string[];
   documentUploads?: M1DraftDocument[];
   extractionId?: string;
+  evidenceManifest?: M1EvidenceRequirementResponse[];
+  evidenceManifestSchemaVersion?: typeof M1_EVIDENCE_MANIFEST_SCHEMA_VERSION;
   submittedBy: string;
   submittedAt: number;
   inputHash: string;

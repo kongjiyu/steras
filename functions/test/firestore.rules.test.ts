@@ -33,6 +33,7 @@ import {
 import { ACTIVE_CATEGORY_SCHEMA } from '../src/config/categorySchema';
 import { computeResources } from '../src/engines/resourceCalculator';
 import { buildAuthorityReviewState, buildOfficialAssessmentResult } from '../src/engines/authorityFinalisation';
+import { m1EvidenceRequirementsFor } from '@shared/m1EvidenceContract';
 import {
   assessmentStateHashFor,
   abortResourceCutoverBeforeMutation,
@@ -161,6 +162,8 @@ describe('Firestore security rules', () => {
     const draft = {
       organizerId: 'organizer-1', eventDetails: validDetails, templateSelection: validTemplateSelection, status: 'Draft', currentVersionNumber: 0,
       editableVersionId: 'v1', draftDocumentPaths: [], draftDocuments: [], documentSchemaVersion: '2026-08-28-document-v1', requiredAuthorities: [], createdAt: 1, updatedAt: 1,
+      evidenceManifestSchemaVersion: '2026-08-28-evidence-v1',
+      draftEvidenceManifest: Array.from({ length: 17 }, (_, index) => ({ requirementId: `placeholder-${index}`, applicability: 'not_applicable', notApplicableReason: 'Not applicable to this event.' })),
     };
     await assertSucceeds(setDoc(doc(db, 'events/draft-1'), draft));
     await assertFails(setDoc(doc(db, 'events/invalid-template-draft'), {
@@ -180,6 +183,7 @@ describe('Firestore security rules', () => {
     await assertFails(updateDoc(doc(db, 'events/draft-1'), { currentVersionNumber: 1 }));
     await assertFails(updateDoc(doc(db, 'events/draft-1'), { currentExtractionId: 'attacker-controlled' }));
     await assertFails(updateDoc(doc(db, 'events/draft-1'), { documentSchemaVersion: 'legacy-bypass' }));
+    await assertFails(updateDoc(doc(db, 'events/draft-1'), { evidenceManifestSchemaVersion: 'legacy-bypass' }));
     await assertFails(updateDoc(doc(db, 'events/draft-1'), { eventId: 'different-event' }));
     await assertFails(updateDoc(doc(db, 'events/draft-1'), {
       templateSelection: { ...validTemplateSelection, venueSetting: 'indoor' },
@@ -255,6 +259,8 @@ describe('Firestore security rules', () => {
     const core = await uploadTestDocx('structured-1', 'v1', 'core_template', '../docs/templates/m1/core/Core Event Application Template.docx');
     const scenario = await uploadTestDocx('structured-1', 'v1', 'scenario_template', '../docs/templates/m1/cultural-heritage-festival/Cultural, Heritage and Festival Event - Outdoor Fixed-Site.docx');
     const support = await uploadTestEvidence('structured-1', 'v1');
+    const supportDocument = { path: support, role: 'supporting_evidence' as const, originalName: 'evidence.pdf', mimeType: 'application/pdf', sizeBytes: Buffer.byteLength('%PDF-1.4\ntest\n%%EOF\n'), uploadedAt: 1, schemaVersion: '2026-08-28-document-v1' as const };
+    const evidenceManifest = m1EvidenceRequirementsFor('STERAS-T08-CUL-OF-v1.0').map((definition) => ({ requirementId: definition.id, applicability: 'required' as const, documentPath: support }));
     const extractionId = 'extract_current';
     await environment.withSecurityRulesDisabled(async (context) => {
       const db = context.firestore();
@@ -262,8 +268,9 @@ describe('Firestore security rules', () => {
       await setDoc(doc(db, 'events/structured-1'), {
         eventId: 'structured-1', organizerId: 'organizer-1', eventDetails: validDetails, templateSelection: validTemplateSelection,
         status: 'Draft', currentVersionNumber: 0, editableVersionId: 'v1',
-        draftDocumentPaths: [core.path, scenario.path, support], draftDocuments: [core, scenario],
+        draftDocumentPaths: [core.path, scenario.path, support], draftDocuments: [core, scenario, supportDocument],
         documentSchemaVersion: '2026-08-28-document-v1', currentExtractionId: extractionId,
+        draftEvidenceManifest: evidenceManifest, evidenceManifestSchemaVersion: '2026-08-28-evidence-v1',
         requiredAuthorities: [], createdAt: 1, updatedAt: 1,
       });
       await setDoc(doc(db, `events/structured-1/document_extractions/${extractionId}`), {
@@ -277,7 +284,8 @@ describe('Firestore security rules', () => {
     await submitEventForUser('organizer-1', 'structured-1', 1_000);
     const submitted = await getFirestore(adminApp).doc('events/structured-1/versions/v1').get();
     expect(submitted.data()?.extractionId).toBe(extractionId);
-    expect(submitted.data()?.documentUploads).toHaveLength(2);
+    expect(submitted.data()?.documentUploads).toHaveLength(3);
+    expect(submitted.data()?.evidenceManifest).toHaveLength(17);
   });
 
   it('rejects missing evidence, tampered templates, and spoofed venue identity before version creation', async () => {

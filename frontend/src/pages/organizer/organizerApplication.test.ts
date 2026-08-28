@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EventDetails } from '@shared/types';
-import { applyM1ExtractedFields, createM1DraftRecord, extractionMatchesDraftDocuments, isEditableApplicationStatus, validateEventApplication, validateTemplateCompatibility } from './organizerApplication';
+import { applyM1ExtractedFields, createM1DraftRecord, extractionMatchesDraftDocuments, isEditableApplicationStatus, reconcileM1EvidenceManifest, validateEventApplication, validateM1EvidenceChecklist, validateTemplateCompatibility } from './organizerApplication';
 import { createTemplateSelection } from '../../features/m1/templateRegistry';
 
 const future = Date.now() + 7 * 24 * 60 * 60 * 1000;
@@ -62,8 +62,10 @@ describe('organizer application lifecycle helpers', () => {
     expect(createM1DraftRecord('organizer-1', validDetails(), templateSelection, 123)).toMatchObject({
       organizerId: 'organizer-1', status: 'Draft', editableVersionId: 'v1', currentVersionNumber: 0,
       draftDocumentPaths: [], draftDocuments: [], documentSchemaVersion: '2026-08-28-document-v1',
+      evidenceManifestSchemaVersion: '2026-08-28-evidence-v1',
       requiredAuthorities: [], createdAt: 123, updatedAt: 123,
     });
+    expect(createM1DraftRecord('organizer-1', validDetails(), templateSelection, 123).draftEvidenceManifest).toHaveLength(16);
   });
 
   it('blocks attendance above capacity and missing evidence before submit', () => {
@@ -138,5 +140,12 @@ describe('organizer application lifecycle helpers', () => {
     };
     expect(extractionMatchesDraftDocuments(extraction, documents)).toBe(true);
     expect(extractionMatchesDraftDocuments(extraction, [documents[0], { ...documents[1], path: 'event_documents/event-1/v1/replacement.docx' }])).toBe(false);
+  });
+
+  it('forces declared evidence conditions and blocks incomplete checklist items', () => {
+    const details = validDetails({ riskProfile: { ...validDetails().riskProfile, temporaryStructures: true } });
+    const manifest = reconcileM1EvidenceManifest(templateSelection, details, []);
+    expect(manifest.find((item) => item.requirementId === 'T10-DOC-01')).toEqual({ requirementId: 'T10-DOC-01', applicability: 'required' });
+    expect(validateM1EvidenceChecklist(details, templateSelection, [], manifest)).toContain('Attach a supporting-evidence file to DOC-A01.');
   });
 });

@@ -1,5 +1,6 @@
-import { EventDetails, EventRiskProfile, EventStatus, EventType, M1_DOCUMENT_SCHEMA_VERSION, M1DocumentExtraction, M1DraftDocument, M1ExtractedField, M1TemplateSelection } from '@shared/types';
+import { EventDetails, EventRiskProfile, EventStatus, EventType, M1_DOCUMENT_SCHEMA_VERSION, M1_EVIDENCE_MANIFEST_SCHEMA_VERSION, M1DocumentExtraction, M1DraftDocument, M1EvidenceRequirementResponse, M1ExtractedField, M1TemplateSelection } from '@shared/types';
 import { isValidM1TemplateSelection, m1CategoryForEventType, m1VenueSettingMatchesEnvironment } from '@shared/m1TemplateContract';
+import { isM1EvidenceForcedRequired, m1EvidenceRequirementsFor } from '@shared/m1EvidenceContract';
 
 export type RevisionRequestedStatus = 'Revision Requested';
 export type OrganizerApplicationStatus = EventStatus | RevisionRequestedStatus;
@@ -40,6 +41,7 @@ export function validateEventApplication(
   templateSelection?: M1TemplateSelection,
   draftDocuments?: M1DraftDocument[],
   currentExtractionId?: string,
+  evidenceManifest?: M1EvidenceRequirementResponse[],
   now = Date.now(),
 ): string[] {
   const errors: string[] = [];
@@ -88,6 +90,7 @@ export function validateEventApplication(
     if (draftDocuments.filter((document) => document.role === 'core_template').length !== 1) errors.push('Upload exactly one completed Core DOCX.');
     if (draftDocuments.filter((document) => document.role === 'scenario_template').length !== 1) errors.push('Upload exactly one completed scenario DOCX.');
     if (!currentExtractionId) errors.push('Extract and review the completed application documents before submission.');
+    if (templateSelection) errors.push(...validateM1EvidenceChecklist(details, templateSelection, draftDocuments, evidenceManifest));
   }
 
   return errors;
@@ -141,10 +144,58 @@ export function createM1DraftRecord(organizerId: string, eventDetails: EventDeta
     draftDocumentPaths: [] as string[],
     draftDocuments: [] as M1DraftDocument[],
     documentSchemaVersion: M1_DOCUMENT_SCHEMA_VERSION,
+    draftEvidenceManifest: reconcileM1EvidenceManifest(templateSelection, eventDetails, []),
+    evidenceManifestSchemaVersion: M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
     requiredAuthorities: [] as const,
     createdAt: now,
     updatedAt: now,
   };
+}
+
+export function reconcileM1EvidenceManifest(
+  selection: M1TemplateSelection,
+  details: EventDetails,
+  current: M1EvidenceRequirementResponse[],
+): M1EvidenceRequirementResponse[] {
+  const previous = new Map(current.map((response) => [response.requirementId, response]));
+  return m1EvidenceRequirementsFor(selection.scenarioTemplateId).map((definition) => {
+    const existing = previous.get(definition.id);
+    if (isM1EvidenceForcedRequired(definition, details.riskProfile)) {
+      return {
+        requirementId: definition.id,
+        applicability: 'required',
+        ...(existing?.documentPath ? { documentPath: existing.documentPath } : {}),
+      };
+    }
+    return existing ?? { requirementId: definition.id, applicability: 'not_applicable', notApplicableReason: '' };
+  });
+}
+
+export function validateM1EvidenceChecklist(
+  details: EventDetails,
+  selection: M1TemplateSelection,
+  documents: M1DraftDocument[],
+  manifest: M1EvidenceRequirementResponse[] | undefined,
+): string[] {
+  const definitions = m1EvidenceRequirementsFor(selection.scenarioTemplateId);
+  if (!manifest || manifest.length !== definitions.length) return ['Complete every supporting-evidence checklist item.'];
+  const responses = new Map(manifest.map((response) => [response.requirementId, response]));
+  const supportingPaths = new Set(documents.filter((document) => document.role === 'supporting_evidence').map((document) => document.path));
+  const referencedPaths = new Set(manifest.flatMap((response) => response.documentPath ? [response.documentPath] : []));
+  const errors: string[] = [];
+  for (const definition of definitions) {
+    const response = responses.get(definition.id);
+    if (!response) { errors.push(`Complete supporting-evidence item ${definition.id}.`); continue; }
+    if (isM1EvidenceForcedRequired(definition, details.riskProfile) && response.applicability !== 'required') {
+      errors.push(`${definition.id} is required for the current event declarations.`);
+    } else if (response.applicability === 'required' && (!response.documentPath || !supportingPaths.has(response.documentPath))) {
+      errors.push(`Attach a supporting-evidence file to ${definition.id}.`);
+    } else if (response.applicability === 'not_applicable' && (response.notApplicableReason?.trim().length ?? 0) < 10) {
+      errors.push(`Explain why ${definition.id} is not applicable (at least 10 characters).`);
+    }
+  }
+  if ([...supportingPaths].some((path) => !referencedPaths.has(path))) errors.push('Every uploaded supporting-evidence file must be linked to a checklist item.');
+  return errors;
 }
 
 export function applyM1ExtractedFields(details: EventDetails, fields: M1ExtractedField[]): EventDetails {
