@@ -63,7 +63,20 @@ async function seedVenues() {
     for (const [venueIndex, value] of exports.VENUES.entries()) {
         const venueId = stableVenueId(value.name);
         const incidents = generateIncidents(venueId, value.name, venueIndex);
-        const venue = { ...value, venueId, active: true, incidentCount: incidents.length };
+        const now = Date.now();
+        const venue = {
+            ...value, venueId, active: true, incidentCount: incidents.length,
+            state: value.state ?? stateFromAddress(value.address),
+            jurisdiction: value.jurisdiction ?? 'Synthetic prototype venue registry',
+            verifiedSafeCapacity: value.verifiedSafeCapacity ?? value.capacity,
+            fireCertificateStatus: value.fireCertificateStatus ?? 'not_required',
+            nearestHospitalTravelMinutes: value.nearestHospitalTravelMinutes ?? 15,
+            emergencyAccessVerified: value.emergencyAccessVerified ?? true,
+            synthetic: true,
+            verificationStatus: 'verified', revision: 1,
+            createdBy: 'system_seed', createdAt: now, updatedBy: 'system_seed', updatedAt: now,
+            verifiedBy: 'system_seed', verifiedAt: now,
+        };
         await db.collection(types_1.COLLECTIONS.VENUES).doc(venueId).set(venue);
         for (const [index, incident] of incidents.entries()) {
             await db.collection(types_1.COLLECTIONS.INCIDENTS).doc(`${venueId}-${String(index + 1).padStart(2, '0')}`).set(incident);
@@ -71,6 +84,10 @@ async function seedVenues() {
         console.log(`[seed] ${venue.name}: ${incidents.length} incidents`);
     }
     console.log(`[seed] Done. ${exports.VENUES.length} stable venues seeded.`);
+}
+function stateFromAddress(address) {
+    const states = ['Kuala Lumpur', 'Putrajaya', 'Penang', 'Johor', 'Selangor', 'Perak', 'Pahang', 'Melaka', 'Sabah', 'Sarawak', 'Terengganu', 'Negeri Sembilan', 'Perlis', 'Kelantan', 'Labuan', 'Kedah'];
+    return states.find((state) => address.includes(state)) ?? 'Malaysia';
 }
 if (require.main === module) {
     seedVenues().catch((error) => {

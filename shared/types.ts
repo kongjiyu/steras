@@ -1303,6 +1303,17 @@ export interface Venue {
   datasetVersion?: string;
   riskNotes?: string;
   incidentCount?: number;
+  /** M1 registry lifecycle. Legacy seeded venues may omit these fields. */
+  verificationStatus?: 'unverified' | 'verified';
+  revision?: number;
+  createdBy?: string;
+  createdAt?: number;
+  updatedBy?: string;
+  updatedAt?: number;
+  verifiedBy?: string;
+  verifiedAt?: number;
+  deactivatedBy?: string;
+  deactivatedAt?: number;
 }
 
 export interface Incident {
@@ -1422,6 +1433,8 @@ export const COLLECTIONS = {
   PUBLIC_EVENT_CONTROLS: 'public_event_controls',
   PUBLIC_EVENT_CONTROL_ITEMS: 'items',
   PUBLIC_REPORTS: 'public_reports',
+  ADMIN_OPERATIONS: 'admin_operations',
+  ADMIN_AUDIT_LOGS: 'admin_audit_logs',
 } as const;
 
 export const CATEGORY_SCHEMA_VERSION = '2026-07-24-all-hazards-v2';

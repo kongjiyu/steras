@@ -1,4 +1,4 @@
-import { EventDetails, EventRiskProfile, EventStatus, EventType, M1_DOCUMENT_SCHEMA_VERSION, M1_EVIDENCE_MANIFEST_SCHEMA_VERSION, M1DocumentExtraction, M1DraftDocument, M1EvidenceRequirementResponse, M1ExtractedField, M1TemplateSelection } from '@shared/types';
+import { EventDetails, EventRiskProfile, EventStatus, EventType, M1_DOCUMENT_SCHEMA_VERSION, M1_EVIDENCE_MANIFEST_SCHEMA_VERSION, M1DocumentExtraction, M1DraftDocument, M1EvidenceRequirementResponse, M1ExtractedField, M1TemplateSelection, Venue } from '@shared/types';
 import { isValidM1TemplateSelection, m1CategoryForEventType, m1VenueSettingMatchesEnvironment } from '@shared/m1TemplateContract';
 import { isM1EvidenceForcedRequired, m1EvidenceRequirementsFor } from '@shared/m1EvidenceContract';
 
@@ -23,6 +23,10 @@ export function isEditableApplicationStatus(status: unknown): status is 'Draft' 
 
 export function isWithdrawableApplicationStatus(status: unknown): status is 'UnderReview' | 'Approved' | 'Manual Review Required' {
   return status === 'UnderReview' || status === 'Approved' || status === 'Manual Review Required';
+}
+
+export function isSelectableRegistryVenue(venue: Venue): boolean {
+  return venue.active === true && venue.verificationStatus === 'verified' && venue.deactivatedAt === undefined;
 }
 
 export function applicationStatusLabel(status: string): string {

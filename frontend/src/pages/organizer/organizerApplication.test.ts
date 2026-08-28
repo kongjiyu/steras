@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EventDetails } from '@shared/types';
-import { applyM1ExtractedFields, createM1DraftRecord, extractionMatchesDraftDocuments, isEditableApplicationStatus, reconcileM1EvidenceManifest, validateEventApplication, validateM1EvidenceChecklist, validateTemplateCompatibility } from './organizerApplication';
+import { applyM1ExtractedFields, createM1DraftRecord, extractionMatchesDraftDocuments, isEditableApplicationStatus, isSelectableRegistryVenue, reconcileM1EvidenceManifest, validateEventApplication, validateM1EvidenceChecklist, validateTemplateCompatibility } from './organizerApplication';
 import { createTemplateSelection } from '../../features/m1/templateRegistry';
 
 const future = Date.now() + 7 * 24 * 60 * 60 * 1000;
@@ -52,6 +52,14 @@ describe('organizer application lifecycle helpers', () => {
     expect(isEditableApplicationStatus('Draft')).toBe(true);
     expect(isEditableApplicationStatus('Revision Requested')).toBe(false);
     expect(isEditableApplicationStatus('Pending')).toBe(false);
+  });
+
+  it('offers only active, explicitly verified registry venues', () => {
+    const venue = { venueId: 'venue-1', active: true, verificationStatus: 'verified' as const, name: 'Hall', address: 'Address', capacity: 100, location: { lat: 1, lng: 1 } };
+    expect(isSelectableRegistryVenue(venue)).toBe(true);
+    expect(isSelectableRegistryVenue({ ...venue, verificationStatus: 'unverified' })).toBe(false);
+    expect(isSelectableRegistryVenue({ ...venue, active: false })).toBe(false);
+    expect(isSelectableRegistryVenue({ ...venue, deactivatedAt: 1 })).toBe(false);
   });
 
   it('accepts a complete application with version-scoped evidence', () => {

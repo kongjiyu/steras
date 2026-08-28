@@ -98,7 +98,7 @@ function completeRiskProfile() {
         (0, vitest_1.expect)((0, submitEvent_1.isValidEvidenceMetadata)({ contentType: 'image/png', size: '100' })).toBe(false);
     });
     (0, vitest_1.it)('requires exact identity binding to an active canonical venue', () => {
-        const venue = { active: true, name: validDetails.venueName, address: validDetails.venueAddress, capacity: 2_000, location: validDetails.venueLocation };
+        const venue = { active: true, verificationStatus: 'verified', name: validDetails.venueName, address: validDetails.venueAddress, capacity: 2_000, location: validDetails.venueLocation };
         (0, vitest_1.expect)((0, submitEvent_1.validateCanonicalVenueRecord)(validDetails, venue)).toEqual([]);
         (0, vitest_1.expect)((0, submitEvent_1.validateCanonicalVenueRecord)(validDetails, { ...venue, active: false })).not.toEqual([]);
         (0, vitest_1.expect)((0, submitEvent_1.validateCanonicalVenueRecord)(validDetails, { ...venue, capacity: 2_001 })).not.toEqual([]);

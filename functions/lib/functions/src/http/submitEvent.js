@@ -268,7 +268,7 @@ async function validateCanonicalVenue(details) {
     if (!details.venueId)
         return;
     const snapshot = await (0, firestore_1.getFirestore)().collection(types_1.COLLECTIONS.VENUES).doc(details.venueId).get();
-    if (!snapshot.exists || snapshot.data()?.active !== true || snapshot.data()?.deactivatedAt !== undefined) {
+    if (!snapshot.exists || snapshot.data()?.active !== true || snapshot.data()?.verificationStatus !== 'verified' || snapshot.data()?.deactivatedAt !== undefined) {
         throw new https_1.HttpsError('failed-precondition', 'The selected venue is not an active verified registry venue.');
     }
     if (validateCanonicalVenueRecord(details, snapshot.data()).length > 0) {
@@ -285,7 +285,7 @@ function validateEvidencePaths(eventId, versionId, paths) {
         : [];
 }
 function validateCanonicalVenueRecord(details, value) {
-    if (!isRecord(value) || value.active !== true || value.deactivatedAt !== undefined) {
+    if (!isRecord(value) || value.active !== true || value.verificationStatus !== 'verified' || value.deactivatedAt !== undefined) {
         return ['The selected venue is not an active verified registry venue.'];
     }
     const location = isRecord(value.location) ? value.location : {};

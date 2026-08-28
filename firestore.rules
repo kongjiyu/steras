@@ -394,6 +394,20 @@ service cloud.firestore {
     match /venues/{venueId} {
       allow read: if isSignedIn();
       allow write: if false; // seeded via admin SDK / Cloud Functions
+
+      match /audit_logs/{auditId} {
+        allow read: if isAdmin();
+        allow write: if false;
+      }
+    }
+
+    match /admin_operations/{operationId} {
+      allow read, write: if false;
+    }
+
+    match /admin_audit_logs/{auditId} {
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
     // ---- incidents (synthetic dataset — read-only) ----
