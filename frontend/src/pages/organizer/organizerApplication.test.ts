@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EventDetails } from '@shared/types';
-import { isEditableApplicationStatus, validateEventApplication, validateTemplateCompatibility } from './organizerApplication';
+import { applyM1ExtractedFields, createM1DraftRecord, extractionMatchesDraftDocuments, isEditableApplicationStatus, validateEventApplication, validateTemplateCompatibility } from './organizerApplication';
 import { createTemplateSelection } from '../../features/m1/templateRegistry';
 
 const future = Date.now() + 7 * 24 * 60 * 60 * 1000;
@@ -58,6 +58,14 @@ describe('organizer application lifecycle helpers', () => {
     expect(validateEventApplication(validDetails(), ['event_documents/event-1/v1/plan.pdf'], templateSelection)).toEqual([]);
   });
 
+  it('creates new Drafts with the structured document contract required by Firestore rules', () => {
+    expect(createM1DraftRecord('organizer-1', validDetails(), templateSelection, 123)).toMatchObject({
+      organizerId: 'organizer-1', status: 'Draft', editableVersionId: 'v1', currentVersionNumber: 0,
+      draftDocumentPaths: [], draftDocuments: [], documentSchemaVersion: '2026-08-28-document-v1',
+      requiredAuthorities: [], createdAt: 123, updatedAt: 123,
+    });
+  });
+
   it('blocks attendance above capacity and missing evidence before submit', () => {
     expect(validateEventApplication(validDetails({ expectedAttendance: 1200 }), [], templateSelection)).toEqual(expect.arrayContaining([
       'Expected attendance cannot exceed venue capacity.',
@@ -86,5 +94,49 @@ describe('organizer application lifecycle helpers', () => {
     expect(validateTemplateCompatibility(validDetails({ type: 'sports' }), templateSelection)).toEqual([
       'Event type does not match the selected scenario template. Change the template recommendation or event type.',
     ]);
+  });
+
+  it('applies only type-compatible extracted fields and preserves unrelated values', () => {
+    const details = validDetails({ name: 'Old name', venueName: 'Verified venue' });
+    const next = applyM1ExtractedFields(details, [
+      { target: 'name', value: 'Extracted name', sourceFieldIds: ['EVENT_NAME'], confidence: 'high' },
+      { target: 'expectedAttendance', value: 800, sourceFieldIds: ['TOTAL_ATTENDANCE'], confidence: 'high' },
+      { target: 'organizerEmail', value: 123, sourceFieldIds: ['RESPONSIBLE_CONTACT'], confidence: 'low' },
+      { target: 'riskProfile.pyrotechnics', value: true, sourceFieldIds: ['SPECIAL_EFFECTS'], confidence: 'high' },
+    ]);
+    expect(next.name).toBe('Extracted name');
+    expect(next.expectedAttendance).toBe(800);
+    expect(next.organizerEmail).toBe(details.organizerEmail);
+    expect(next.venueName).toBe('Verified venue');
+    expect(next.riskProfile?.pyrotechnics).toBe(true);
+  });
+
+  it('requires both completed templates and a current extraction when structured intake is active', () => {
+    const documents = [{
+      path: 'event_documents/event-1/v1/core.docx', role: 'core_template' as const,
+      originalName: 'core.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      sizeBytes: 100, uploadedAt: 1, schemaVersion: '2026-08-28-document-v1' as const,
+    }];
+    expect(validateEventApplication(validDetails(), documents.map((document) => document.path), templateSelection, documents, '')).toEqual(expect.arrayContaining([
+      'Upload exactly one completed scenario DOCX.',
+      'Extract and review the completed application documents before submission.',
+    ]));
+  });
+
+  it('does not restore a stale extraction after either completed template is replaced', () => {
+    const documents = ['core_template', 'scenario_template'].map((role) => ({
+      path: `event_documents/event-1/v1/${role}.docx`, role: role as 'core_template' | 'scenario_template',
+      originalName: `${role}.docx`, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      sizeBytes: 100, uploadedAt: 1, schemaVersion: '2026-08-28-document-v1' as const,
+    }));
+    const extraction = {
+      extractionId: 'extract-1', eventId: 'event-1', editableVersionId: 'v1', status: 'ready' as const,
+      schemaVersion: '2026-08-28-docx-fields-v1' as const, templateRegistryVersion: templateSelection.templateRegistryVersion,
+      coreTemplateId: templateSelection.coreTemplateId, scenarioTemplateId: templateSelection.scenarioTemplateId,
+      sourceDocuments: documents.map((document) => ({ ...document, role: document.role, sha256: 'a'.repeat(64) })),
+      extractedFields: [], rawFieldIds: [], warnings: [], completionPercent: 0, createdAt: 1, createdBy: 'organizer-1',
+    };
+    expect(extractionMatchesDraftDocuments(extraction, documents)).toBe(true);
+    expect(extractionMatchesDraftDocuments(extraction, [documents[0], { ...documents[1], path: 'event_documents/event-1/v1/replacement.docx' }])).toBe(false);
   });
 });

@@ -14,7 +14,7 @@
  *   - overrideResources     — validates and audits resource adjustments
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.unpublishStage2Doc = exports.publishStage2Doc = exports.reportStage2Doc = exports.confirmStage2Doc = exports.submitStage2Doc = exports.submitStage1Doc = exports.editEventControlList = exports.generateEventControlList = exports.unassignAuthorityOfficers = exports.makeSecondReviewDecision = exports.recordOfficerProposal = exports.assignAuthorityOfficers = exports.proposeEventControlList = exports.listMyNotifications = exports.markNotificationRead = exports.verifyStage1Doc = exports.reviewAssessmentScores = exports.overrideResources = exports.makeInitialReviewDecision = exports.retryManualOfficialFinalisation = exports.submitAdminManualAssessment = exports.retryOfficialFinalisation = exports.resolveAuthorityScoreConflict = exports.submitAuthorityScoreReview = exports.makeAuthorityDecision = exports.withdrawEvent = exports.submitEvent = exports.manualRecompute = exports.onEventStatusChanged = exports.onM4ReportOutcome = exports.recomputeRiskAndResources = exports.refreshAssessmentContext = exports.onEventUpdated = exports.onEventCreated = void 0;
+exports.unpublishStage2Doc = exports.publishStage2Doc = exports.reportStage2Doc = exports.confirmStage2Doc = exports.submitStage2Doc = exports.submitStage1Doc = exports.editEventControlList = exports.generateEventControlList = exports.unassignAuthorityOfficers = exports.makeSecondReviewDecision = exports.recordOfficerProposal = exports.assignAuthorityOfficers = exports.proposeEventControlList = exports.listMyNotifications = exports.markNotificationRead = exports.verifyStage1Doc = exports.reviewAssessmentScores = exports.overrideResources = exports.makeInitialReviewDecision = exports.retryManualOfficialFinalisation = exports.submitAdminManualAssessment = exports.retryOfficialFinalisation = exports.resolveAuthorityScoreConflict = exports.submitAuthorityScoreReview = exports.makeAuthorityDecision = exports.withdrawEvent = exports.extractApplicationDocuments = exports.submitEvent = exports.manualRecompute = exports.onEventStatusChanged = exports.onM4ReportOutcome = exports.recomputeRiskAndResources = exports.refreshAssessmentContext = exports.onEventUpdated = exports.onEventCreated = void 0;
 const app_1 = require("firebase-admin/app");
 // Initialize firebase-admin before any function code runs.
 (0, app_1.initializeApp)();
@@ -34,6 +34,8 @@ var manualRecompute_1 = require("./http/manualRecompute");
 Object.defineProperty(exports, "manualRecompute", { enumerable: true, get: function () { return manualRecompute_1.manualRecompute; } });
 var submitEvent_1 = require("./http/submitEvent");
 Object.defineProperty(exports, "submitEvent", { enumerable: true, get: function () { return submitEvent_1.submitEvent; } });
+var extractApplicationDocuments_1 = require("./http/extractApplicationDocuments");
+Object.defineProperty(exports, "extractApplicationDocuments", { enumerable: true, get: function () { return extractApplicationDocuments_1.extractApplicationDocuments; } });
 var withdrawEvent_1 = require("./http/withdrawEvent");
 Object.defineProperty(exports, "withdrawEvent", { enumerable: true, get: function () { return withdrawEvent_1.withdrawEvent; } });
 var authorityDecision_1 = require("./http/authorityDecision");

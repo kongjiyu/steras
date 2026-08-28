@@ -27,6 +27,7 @@ export { onEventStatusChanged } from './triggers/onEventStatusChanged';
 // HTTP-callable functions (e.g. for manual authority re-trigger, seed runs)
 export { manualRecompute } from './http/manualRecompute';
 export { submitEvent } from './http/submitEvent';
+export { extractApplicationDocuments } from './http/extractApplicationDocuments';
 export { withdrawEvent } from './http/withdrawEvent';
 export { makeAuthorityDecision } from './http/authorityDecision';
 export { submitAuthorityScoreReview, resolveAuthorityScoreConflict, retryOfficialFinalisation } from './http/authorityScoreReview';

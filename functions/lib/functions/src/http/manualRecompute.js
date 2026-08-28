@@ -13,7 +13,7 @@ exports.validateRecomputeProfile = validateRecomputeProfile;
 exports.validateAuthorityAssignment = validateAuthorityAssignment;
 exports.validateRetryableAssessment = validateRetryableAssessment;
 const https_1 = require("firebase-functions/v2/https");
-const firebase_functions_1 = require("firebase-functions");
+const logger_1 = require("firebase-functions/logger");
 const firebase_admin_1 = require("firebase-admin");
 const types_1 = require("../../../shared/types");
 const computeRisk_1 = require("../triggers/computeRisk");
@@ -51,7 +51,7 @@ async function manualRecomputeForUser(uid, rawEventId, dependencies = defaultDep
         return { success: result.status === 'processed', ...result };
     }
     catch (err) {
-        firebase_functions_1.logger.error('[manualRecompute] failed:', err);
+        logger_1.logger.error('[manualRecompute] failed:', err);
         throw new https_1.HttpsError('internal', 'Recompute failed.');
     }
 }

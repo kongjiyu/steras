@@ -7,7 +7,7 @@
  * audit entries.
  */
 import { firestore } from 'firebase-admin';
-import { logger } from 'firebase-functions';
+import { logger } from 'firebase-functions/logger';
 import { onDocumentUpdated } from 'firebase-functions/v2/firestore';
 import { COLLECTIONS, EventControl, EventRecord, Stage2Doc } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
@@ -101,4 +101,3 @@ export async function cleanupWithdrawnEvent(eventId: string, now = Date.now()): 
   await finalBatch.commit();
   logger.info('[onEventStatusChanged] withdrawal cleanup complete', { eventId, assignments: assignmentsSnap.size, controls: controlsSnap.size });
 }
-

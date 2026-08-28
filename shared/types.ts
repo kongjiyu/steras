@@ -67,6 +67,8 @@ export type VenueCoverage = 'covered' | 'partially_covered' | 'uncovered';
 export type SeatingType = 'seated' | 'standing' | 'mixed';
 
 export const M1_TEMPLATE_REGISTRY_VERSION = '2026-08-28-v1';
+export const M1_DOCUMENT_SCHEMA_VERSION = '2026-08-28-document-v1';
+export const M1_EXTRACTION_SCHEMA_VERSION = '2026-08-28-docx-fields-v1';
 
 export type M1EventCategory =
   | 'entertainment_performance'
@@ -85,6 +87,69 @@ export interface M1TemplateSelection {
   scenarioTemplateId: string;
   templateRegistryVersion: typeof M1_TEMPLATE_REGISTRY_VERSION;
   selectedAt: number;
+}
+
+export type M1DocumentRole = 'core_template' | 'scenario_template' | 'supporting_evidence';
+
+/** Organizer upload metadata. Storage bytes remain immutable after upload. */
+export interface M1DraftDocument {
+  path: string;
+  role: M1DocumentRole;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  uploadedAt: number;
+  schemaVersion: typeof M1_DOCUMENT_SCHEMA_VERSION;
+}
+
+export type M1AutoFillField =
+  | 'name'
+  | 'description'
+  | 'venueAddress'
+  | 'venueCapacity'
+  | 'expectedAttendance'
+  | 'startDatetime'
+  | 'endDatetime'
+  | 'emergencyPlanSummary'
+  | 'organizerName'
+  | 'organizerEmail'
+  | 'organizerPhone'
+  | 'riskProfile.pyrotechnics'
+  | 'riskProfile.temporaryStructures'
+  | 'riskProfile.foodServed'
+  | 'riskProfile.alcoholServed'
+  | 'riskProfile.ticketedEntry';
+
+export interface M1ExtractedField {
+  target: M1AutoFillField;
+  value: string | number | boolean;
+  sourceFieldIds: string[];
+  confidence: 'high' | 'medium' | 'low';
+}
+
+export interface M1DocumentExtraction {
+  extractionId: string;
+  eventId: string;
+  editableVersionId: string;
+  status: 'ready' | 'needs_review' | 'failed';
+  schemaVersion: typeof M1_EXTRACTION_SCHEMA_VERSION;
+  templateRegistryVersion: typeof M1_TEMPLATE_REGISTRY_VERSION;
+  coreTemplateId: string;
+  scenarioTemplateId: string;
+  sourceDocuments: Array<{
+    path: string;
+    role: 'core_template' | 'scenario_template';
+    originalName: string;
+    mimeType: string;
+    sizeBytes: number;
+    sha256: string;
+  }>;
+  extractedFields: M1ExtractedField[];
+  rawFieldIds: string[];
+  warnings: string[];
+  completionPercent: number;
+  createdAt: number;
+  createdBy: string;
 }
 
 export interface EventRiskProfile {
@@ -143,6 +208,11 @@ export interface EventRecord {
   currentResourceId?: string;
   editableVersionId?: string | null;
   draftDocumentPaths: string[];
+  /** Structured roles for current-version uploads. Legacy records may omit it. */
+  draftDocuments?: M1DraftDocument[];
+  documentSchemaVersion?: typeof M1_DOCUMENT_SCHEMA_VERSION;
+  /** Latest server-produced DOCX extraction for this editable generation. */
+  currentExtractionId?: string;
   requiredAuthorities: AuthorityType[];
   /** M3 named-officer authorization. Populated atomically with assignments. */
   assignedOfficerUids?: string[];
@@ -219,6 +289,8 @@ export interface EventVersion {
   /** Required for new submissions; optional only for immutable legacy versions. */
   templateSelection?: M1TemplateSelection;
   documentPaths: string[];
+  documentUploads?: M1DraftDocument[];
+  extractionId?: string;
   submittedBy: string;
   submittedAt: number;
   inputHash: string;
@@ -1065,6 +1137,7 @@ export interface AuthorityDecision {
 export type AuditAction =
   | 'event_created'
   | 'event_updated'
+  | 'application_documents_extracted'
   | 'event_submitted'
   | 'event_withdrawn'
   | 'status_changed'
@@ -1280,6 +1353,7 @@ export const COLLECTIONS = {
   USERS: 'users',
   EVENTS: 'events',
   VERSIONS: 'versions',
+  DOCUMENT_EXTRACTIONS: 'document_extractions',
   ASSESSMENTS: 'assessments',
   ASSESSMENT_SUMMARIES: 'assessment_summaries',
   SCORE_REVIEWS: 'score_reviews',

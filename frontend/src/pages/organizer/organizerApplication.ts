@@ -1,4 +1,4 @@
-import { EventDetails, EventRiskProfile, EventStatus, EventType, M1TemplateSelection } from '@shared/types';
+import { EventDetails, EventRiskProfile, EventStatus, EventType, M1_DOCUMENT_SCHEMA_VERSION, M1DocumentExtraction, M1DraftDocument, M1ExtractedField, M1TemplateSelection } from '@shared/types';
 import { isValidM1TemplateSelection, m1CategoryForEventType, m1VenueSettingMatchesEnvironment } from '@shared/m1TemplateContract';
 
 export type RevisionRequestedStatus = 'Revision Requested';
@@ -38,6 +38,8 @@ export function validateEventApplication(
   details: EventDetails,
   documentPaths: string[],
   templateSelection?: M1TemplateSelection,
+  draftDocuments?: M1DraftDocument[],
+  currentExtractionId?: string,
   now = Date.now(),
 ): string[] {
   const errors: string[] = [];
@@ -82,6 +84,11 @@ export function validateEventApplication(
   if (documentPaths.length < 1 || documentPaths.length > 20 || new Set(documentPaths).size !== documentPaths.length) {
     errors.push('Submit between 1 and 20 unique supporting evidence files.');
   }
+  if (draftDocuments !== undefined) {
+    if (draftDocuments.filter((document) => document.role === 'core_template').length !== 1) errors.push('Upload exactly one completed Core DOCX.');
+    if (draftDocuments.filter((document) => document.role === 'scenario_template').length !== 1) errors.push('Upload exactly one completed scenario DOCX.');
+    if (!currentExtractionId) errors.push('Extract and review the completed application documents before submission.');
+  }
 
   return errors;
 }
@@ -121,6 +128,59 @@ export function createInitialEventDetails(profile?: { name?: string; email?: str
     organizerEmail: profile?.email ?? '',
     organizerPhone: profile?.phone ?? '',
   };
+}
+
+export function createM1DraftRecord(organizerId: string, eventDetails: EventDetails, templateSelection: M1TemplateSelection, now: number) {
+  return {
+    organizerId,
+    eventDetails,
+    templateSelection,
+    status: 'Draft' as const,
+    currentVersionNumber: 0,
+    editableVersionId: 'v1',
+    draftDocumentPaths: [] as string[],
+    draftDocuments: [] as M1DraftDocument[],
+    documentSchemaVersion: M1_DOCUMENT_SCHEMA_VERSION,
+    requiredAuthorities: [] as const,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+export function applyM1ExtractedFields(details: EventDetails, fields: M1ExtractedField[]): EventDetails {
+  const next: EventDetails = { ...details, riskProfile: completeRiskProfile(details.riskProfile) };
+  for (const field of fields) {
+    switch (field.target) {
+      case 'name': case 'description': case 'venueAddress': case 'emergencyPlanSummary':
+      case 'organizerName': case 'organizerEmail': case 'organizerPhone':
+        if (typeof field.value === 'string') Object.assign(next, { [field.target]: field.value });
+        break;
+      case 'venueCapacity': case 'expectedAttendance': case 'startDatetime': case 'endDatetime':
+        if (typeof field.value === 'number' && Number.isFinite(field.value)) Object.assign(next, { [field.target]: field.value });
+        break;
+      case 'riskProfile.pyrotechnics': case 'riskProfile.temporaryStructures': case 'riskProfile.foodServed':
+      case 'riskProfile.alcoholServed': case 'riskProfile.ticketedEntry': {
+        if (typeof field.value !== 'boolean') break;
+        const key = field.target.slice('riskProfile.'.length) as keyof EventRiskProfile;
+        next.riskProfile = { ...next.riskProfile, [key]: field.value };
+        break;
+      }
+    }
+  }
+  return next;
+}
+
+export function extractionMatchesDraftDocuments(extraction: M1DocumentExtraction, documents: M1DraftDocument[]): boolean {
+  const current = documents
+    .filter((document) => document.role === 'core_template' || document.role === 'scenario_template')
+    .map((document) => `${document.role}:${document.path}:${document.originalName}:${document.mimeType}:${document.sizeBytes}`)
+    .sort();
+  const extracted = Array.isArray(extraction.sourceDocuments)
+    ? extraction.sourceDocuments
+      .map((document) => `${document.role}:${document.path}:${document.originalName}:${document.mimeType}:${document.sizeBytes}`)
+      .sort()
+    : [];
+  return current.length === 2 && extracted.length === 2 && JSON.stringify(current) === JSON.stringify(extracted);
 }
 
 export function completeRiskProfile(value: unknown = {}): EventRiskProfile {

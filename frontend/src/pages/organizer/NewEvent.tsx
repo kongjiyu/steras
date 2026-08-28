@@ -1,7 +1,7 @@
 import PageHeader from '../../components/ui/PageHeader';
-import { EVENT_TYPES, EventType, EventDetails, EventRiskProfile, M1TemplateSelection, Venue } from '@shared/types';
+import { EVENT_TYPES, EventType, EventDetails, EventRiskProfile, M1_DOCUMENT_SCHEMA_VERSION, M1DocumentExtraction, M1DocumentRole, M1DraftDocument, M1TemplateSelection, Venue } from '@shared/types';
 import { useEffect, useState, FormEvent, ChangeEvent } from 'react';
-import { arrayRemove, arrayUnion, collection, addDoc, doc, getDoc, getDocs, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { collection, addDoc, doc, getDoc, getDocs, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { ref, uploadBytesResumable } from 'firebase/storage';
 import { db, functions, isFirebaseConfigured, storage } from '../../config/firebase';
@@ -10,11 +10,13 @@ import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import OrganizerStatusBadge from './OrganizerStatusBadge';
-import { completeRiskProfile, createInitialEventDetails, isEditableApplicationStatus, nextVersionId, validateEventApplication, validateTemplateCompatibility } from './organizerApplication';
+import { applyM1ExtractedFields, completeRiskProfile, createInitialEventDetails, createM1DraftRecord, extractionMatchesDraftDocuments, isEditableApplicationStatus, nextVersionId, validateEventApplication, validateTemplateCompatibility } from './organizerApplication';
 import { mockVenues } from '../../mock_data/venues';
 import { findEventById } from '../../mock_data/events';
 import { isValidTemplateSelection, M1_CORE_TEMPLATE, scenarioTemplateFor } from '../../features/m1/templateRegistry';
-import { FileText, RotateCcw } from 'lucide-react';
+import { FileCheck2, FileText, RotateCcw, Sparkles } from 'lucide-react';
+
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
 export default function NewEvent() {
   const { user, profile } = useAuth();
@@ -26,6 +28,10 @@ export default function NewEvent() {
   const [currentVersionNumber, setCurrentVersionNumber] = useState(0);
   const [editableVersionId, setEditableVersionId] = useState('v1');
   const [documentPaths, setDocumentPaths] = useState<string[]>([]);
+  const [draftDocuments, setDraftDocuments] = useState<M1DraftDocument[]>([]);
+  const [extraction, setExtraction] = useState<M1DocumentExtraction | null>(null);
+  const [currentExtractionId, setCurrentExtractionId] = useState('');
+  const [extracting, setExtracting] = useState(false);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [loading, setLoading] = useState(Boolean(eventId));
   const [saving, setSaving] = useState(false);
@@ -90,11 +96,13 @@ export default function NewEvent() {
       setCurrentVersionNumber(event.currentVersionNumber ?? 0);
       setEditableVersionId(event.editableVersionId ?? nextVersionId(event.currentVersionNumber ?? 0));
       setDocumentPaths(event.draftDocumentPaths ?? []);
+      setDraftDocuments(event.draftDocuments ?? []);
+      setCurrentExtractionId(event.currentExtractionId ?? '');
       setTemplateSelection(isValidTemplateSelection(event.templateSelection) ? event.templateSelection : undefined);
       setLoading(false);
       return;
     }
-    getDoc(doc(db, COLLECTIONS.EVENTS, eventId)).then((snapshot) => {
+    getDoc(doc(db, COLLECTIONS.EVENTS, eventId)).then(async (snapshot) => {
       if (!snapshot.exists()) throw new Error('Event draft not found.');
       const data = snapshot.data();
       if (!isEditableApplicationStatus(data.status)) throw new Error('Only draft or revision-requested applications can be edited.');
@@ -103,6 +111,30 @@ export default function NewEvent() {
       setCurrentVersionNumber(data.currentVersionNumber ?? 0);
       setEditableVersionId(data.editableVersionId ?? nextVersionId(data.currentVersionNumber ?? 0));
       setDocumentPaths(data.draftDocumentPaths ?? []);
+      const loadedDraftDocuments = Array.isArray(data.draftDocuments) ? data.draftDocuments as M1DraftDocument[] : [];
+      setDraftDocuments(loadedDraftDocuments);
+      const extractionId = typeof data.currentExtractionId === 'string' ? data.currentExtractionId : '';
+      setCurrentExtractionId('');
+      if (extractionId) {
+        const extractionSnapshot = await getDoc(doc(
+          db,
+          COLLECTIONS.EVENTS,
+          eventId,
+          COLLECTIONS.DOCUMENT_EXTRACTIONS,
+          extractionId,
+        ));
+        if (extractionSnapshot.exists()) {
+          const savedExtraction = extractionSnapshot.data() as M1DocumentExtraction;
+          if (savedExtraction.extractionId === extractionId
+            && Array.isArray(savedExtraction.extractedFields)
+            && Array.isArray(savedExtraction.rawFieldIds)
+            && Array.isArray(savedExtraction.warnings)
+            && extractionMatchesDraftDocuments(savedExtraction, loadedDraftDocuments)) {
+            setExtraction(savedExtraction);
+            setCurrentExtractionId(extractionId);
+          }
+        }
+      }
       setTemplateSelection(isValidTemplateSelection(data.templateSelection) ? data.templateSelection : undefined);
     }).catch((error) => {
       toast.error(error instanceof Error ? error.message : 'Unable to load draft.');
@@ -122,6 +154,7 @@ export default function NewEvent() {
       await updateDoc(doc(db, COLLECTIONS.EVENTS, draftId), {
         eventDetails: form,
         draftDocumentPaths: documentPaths,
+        draftDocuments,
         ...(templateSelection ? { templateSelection } : {}),
         updatedAt: now,
       });
@@ -129,16 +162,7 @@ export default function NewEvent() {
     }
     const nextEditableVersionId = nextVersionId(currentVersionNumber);
     const reference = await addDoc(collection(db, COLLECTIONS.EVENTS), {
-      organizerId: user.uid,
-      eventDetails: form,
-      templateSelection,
-      status: 'Draft',
-      currentVersionNumber,
-      editableVersionId: nextEditableVersionId,
-      draftDocumentPaths: [],
-      requiredAuthorities: [],
-      createdAt: now,
-      updatedAt: now,
+      ...createM1DraftRecord(user.uid, form, templateSelection!, now),
       _serverCreatedAt: serverTimestamp(),
     });
     setDraftId(reference.id);
@@ -163,7 +187,7 @@ export default function NewEvent() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!user) return;
-    const errors = validateEventApplication(form, documentPaths, templateSelection);
+    const errors = validateEventApplication(form, documentPaths, templateSelection, draftDocuments, currentExtractionId);
     if (errors.length > 0) {
       setValidationErrors(errors);
       toast.error(errors[0]);
@@ -203,30 +227,54 @@ export default function NewEvent() {
     }
   };
 
-  const handleFiles = async (event: ChangeEvent<HTMLInputElement>) => {
+  const handleFiles = async (event: ChangeEvent<HTMLInputElement>, role: M1DocumentRole = 'supporting_evidence') => {
     const files = [...(event.target.files ?? [])];
     if (files.length === 0) return;
-    if (documentPaths.length + files.length > 20) return toast.error('Submit no more than 20 supporting evidence files.');
-    const allowedTypes = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
-    const invalid = files.find((file) => file.size === 0 || file.size > 10 * 1024 * 1024 || !allowedTypes.has(file.type));
-    if (invalid) return toast.error(`${invalid.name} must be a non-empty PDF, JPEG, PNG, or WebP file no larger than 10 MB.`);
+    if (role !== 'supporting_evidence' && files.length !== 1) return toast.error('Choose exactly one completed DOCX template.');
+    const retained = role === 'supporting_evidence' ? draftDocuments : draftDocuments.filter((document) => document.role !== role);
+    if (retained.length + files.length > 20) return toast.error('Submit no more than 20 application documents.');
+    const allowedEvidenceTypes = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
+    const invalid = files.find((file) => file.size === 0
+      || file.size > 10 * 1024 * 1024
+      || (role === 'supporting_evidence'
+        ? !allowedEvidenceTypes.has(file.type)
+        : !(file.type === DOCX_MIME || (!file.type && file.name.toLocaleLowerCase().endsWith('.docx')))));
+    if (invalid) return toast.error(role === 'supporting_evidence'
+      ? `${invalid.name} must be a non-empty PDF, JPEG, PNG, or WebP file no larger than 10 MB.`
+      : `${invalid.name} must be a non-empty DOCX file no larger than 10 MB.`);
     setUploading(true);
     try {
       const id = await ensureDraft();
-      const uploaded: string[] = [];
+      const uploaded: M1DraftDocument[] = [];
       for (let index = 0; index < files.length; index += 1) {
         const file = files[index];
-        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-150) || 'document';
         const path = `event_documents/${id}/${editableVersionId}/${crypto.randomUUID()}-${safeName}`;
-        const task = uploadBytesResumable(ref(storage, path), file, { contentType: file.type });
+        const mimeType = role === 'supporting_evidence' ? file.type : DOCX_MIME;
+        const task = uploadBytesResumable(ref(storage, path), file, { contentType: mimeType });
         await new Promise<void>((resolve, reject) => task.on('state_changed', (snapshot) => {
           const fileProgress = snapshot.bytesTransferred / snapshot.totalBytes;
           setUploadProgress(Math.round(((index + fileProgress) / files.length) * 100));
         }, reject, resolve));
-        uploaded.push(path);
-        await updateDoc(doc(db, COLLECTIONS.EVENTS, id), { draftDocumentPaths: arrayUnion(path), updatedAt: Date.now() });
-        setDocumentPaths((current) => [...current, path]);
+        uploaded.push({
+          path,
+          role,
+          originalName: file.name.slice(0, 255),
+          mimeType,
+          sizeBytes: file.size,
+          uploadedAt: Date.now(),
+          schemaVersion: M1_DOCUMENT_SCHEMA_VERSION,
+        });
       }
+      const nextDocuments = [...retained, ...uploaded];
+      const structuredPaths = new Set(draftDocuments.map((document) => document.path));
+      const unstructuredLegacyPaths = documentPaths.filter((path) => !structuredPaths.has(path));
+      const nextPaths = [...unstructuredLegacyPaths, ...nextDocuments.map((document) => document.path)];
+      await updateDoc(doc(db, COLLECTIONS.EVENTS, id), { draftDocumentPaths: nextPaths, draftDocuments: nextDocuments, updatedAt: Date.now() });
+      setDraftDocuments(nextDocuments);
+      setDocumentPaths(nextPaths);
+      setExtraction(null);
+      setCurrentExtractionId('');
       setValidationErrors([]);
       toast.success(`${uploaded.length} document${uploaded.length === 1 ? '' : 's'} uploaded.`);
     } catch (error) {
@@ -241,11 +289,34 @@ export default function NewEvent() {
   const removeDocument = async (path: string) => {
     if (!draftId || !path.startsWith(`event_documents/${draftId}/${editableVersionId}/`)) return;
     try {
-      await updateDoc(doc(db, COLLECTIONS.EVENTS, draftId), { draftDocumentPaths: arrayRemove(path), updatedAt: Date.now() });
+      const nextDocuments = draftDocuments.filter((document) => document.path !== path);
+      const nextPaths = documentPaths.filter((item) => item !== path);
+      await updateDoc(doc(db, COLLECTIONS.EVENTS, draftId), { draftDocumentPaths: nextPaths, draftDocuments: nextDocuments, updatedAt: Date.now() });
       setValidationErrors([]);
-      setDocumentPaths((current) => current.filter((item) => item !== path));
+      setDraftDocuments(nextDocuments);
+      setDocumentPaths(nextPaths);
+      setExtraction(null);
+      setCurrentExtractionId('');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Unable to remove document.');
+    }
+  };
+
+  const extractDocuments = async () => {
+    if (!draftId) return toast.error('Save the Draft before extracting documents.');
+    setExtracting(true);
+    try {
+      const extract = httpsCallable<{ eventId: string }, M1DocumentExtraction>(functions, 'extractApplicationDocuments');
+      const result = (await extract({ eventId: draftId })).data;
+      setExtraction(result);
+      setCurrentExtractionId(result.extractionId);
+      setForm((current) => applyM1ExtractedFields(current, result.extractedFields));
+      setValidationErrors([]);
+      toast.success(`Auto-filled ${result.extractedFields.length} fields. Review all highlighted warnings before submission.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Document extraction failed.');
+    } finally {
+      setExtracting(false);
     }
   };
 
@@ -269,6 +340,11 @@ export default function NewEvent() {
   const recommendationUrl = draftId
     ? `/organizer/events/new?draft=${encodeURIComponent(draftId)}${templateSelection ? `&category=${templateSelection.eventCategory}&venue=${templateSelection.venueSetting}` : ''}`
     : '/organizer/events/new';
+  const coreUpload = draftDocuments.find((document) => document.role === 'core_template');
+  const scenarioUpload = draftDocuments.find((document) => document.role === 'scenario_template');
+  const supportingUploads = draftDocuments.filter((document) => document.role === 'supporting_evidence');
+  const structuredUploadPaths = new Set(draftDocuments.map((document) => document.path));
+  const legacySupportingPaths = documentPaths.filter((path) => !structuredUploadPaths.has(path));
 
   return (
     <div>
@@ -492,18 +568,45 @@ export default function NewEvent() {
             </div>
           </fieldset>
 
+          <fieldset className="space-y-5 border-t border-[#e3dacb] pt-8">
+            <legend className="section-title mb-2 pr-4">Completed application documents</legend>
+            <p className="text-sm leading-6 text-ink-500">Upload the completed Core and recommended scenario DOCX. STERAS validates their embedded template IDs before auto-filling this form.</p>
+            <div className="grid gap-4 md:grid-cols-2">
+              <TemplateUploadCard label="Core application DOCX" document={coreUpload} uploading={uploading} onChange={(event) => handleFiles(event, 'core_template')} onRemove={removeDocument} />
+              <TemplateUploadCard label="Scenario-specific DOCX" document={scenarioUpload} uploading={uploading} onChange={(event) => handleFiles(event, 'scenario_template')} onRemove={removeDocument} />
+            </div>
+            {uploading && <div className="h-1.5 overflow-hidden rounded bg-cream-200"><div className="h-full bg-brand-600 transition-transform" style={{ transform: `scaleX(${uploadProgress / 100})`, transformOrigin: 'left' }} /></div>}
+            <button type="button" className="btn-primary" disabled={!coreUpload || !scenarioUpload || uploading || extracting} onClick={extractDocuments}>
+              <Sparkles size={16} />{extracting ? 'Extracting documents…' : 'Extract and auto-fill'}
+            </button>
+            {extraction && (
+              <div className="rounded-lg border border-brand-200 bg-brand-50 p-4" role="status">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div><p className="font-semibold text-ink-900">Auto-fill review</p><p className="mt-1 text-sm text-ink-600">{extraction.extractedFields.length} fields populated from {extraction.rawFieldIds.length} recognised Field IDs.</p></div>
+                  <span className="badge bg-white text-brand-700">{extraction.completionPercent}% extracted</span>
+                </div>
+                <div className="mt-3 h-2 overflow-hidden rounded-full bg-white"><div className="h-full rounded-full bg-brand-600" style={{ width: `${extraction.completionPercent}%` }} /></div>
+                {extraction.warnings.length > 0 && <div className="mt-4 rounded-md border border-gold-300 bg-gold-50 p-3 text-sm text-gold-700"><p className="font-semibold">Check missing or uncertain responses</p><ul className="mt-2 list-disc space-y-1 pl-5">{extraction.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
+                <div className="mt-4 flex gap-3 overflow-x-auto pb-1" aria-label="Auto-filled fields by section">
+                  {groupExtractedFields(extraction).map((group) => <div key={group.label} className="min-w-[15rem] rounded-md border border-[#dce3c6] bg-white p-3"><p className="text-xs font-bold uppercase tracking-[0.06em] text-brand-700">{group.label}</p><p className="mt-2 text-sm text-ink-700">{group.count} field{group.count === 1 ? '' : 's'} filled</p></div>)}
+                </div>
+                <p className="mt-3 text-xs text-ink-500">The form remains editable. Compare every auto-filled value with the two uploaded documents before submitting.</p>
+              </div>
+            )}
+          </fieldset>
+
           <fieldset className="space-y-4 border-t border-[#e3dacb] pt-8">
             <legend className="section-title mb-2 pr-4">Supporting evidence</legend>
-            <p className="text-sm leading-6 text-ink-500">Upload PDF, JPEG, PNG, or WebP files up to 10 MB each. Submitted files are locked to this application version.</p>
+            <p className="text-sm leading-6 text-ink-500">Upload PDF, JPEG, PNG, or WebP files up to 10 MB each. Requirement-by-requirement completeness is checked in the next step.</p>
             <label className="flex min-h-24 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-[#b9ad97] bg-cream-50 px-4 py-5 text-center text-sm font-semibold text-brand-700 hover:bg-cream-100">
               <span>{uploading ? `Uploading ${uploadProgress}%` : 'Choose supporting files'}</span>
               <span className="mt-1 text-xs font-normal text-ink-500">Multiple files are supported</span>
-              <input type="file" multiple accept="application/pdf,image/jpeg,image/png,image/webp" onChange={handleFiles} disabled={uploading} className="sr-only" />
+              <input type="file" multiple accept="application/pdf,image/jpeg,image/png,image/webp" onChange={(event) => handleFiles(event, 'supporting_evidence')} disabled={uploading} className="sr-only" />
             </label>
-            {uploading && <div className="h-1.5 overflow-hidden rounded bg-cream-200"><div className="h-full bg-brand-600 transition-transform" style={{ transform: `scaleX(${uploadProgress / 100})`, transformOrigin: 'left' }} /></div>}
-            {documentPaths.length > 0 && <ul className="divide-y divide-[#e3dacb] rounded-md border border-[#ded5c5]">{documentPaths.map((path) => (
-              <li key={path} className="flex items-center justify-between gap-3 px-3 py-2 text-sm"><span className="min-w-0 truncate">{documentName(path)}</span><button type="button" onClick={() => removeDocument(path)} className="min-h-11 px-2 font-semibold text-red-700 hover:text-red-800">Remove</button></li>
+            {supportingUploads.length > 0 && <ul className="divide-y divide-[#e3dacb] rounded-md border border-[#ded5c5]">{supportingUploads.map((document) => (
+              <li key={document.path} className="flex items-center justify-between gap-3 px-3 py-2 text-sm"><span className="min-w-0 truncate">{document.originalName}</span><button type="button" onClick={() => removeDocument(document.path)} className="min-h-11 px-2 font-semibold text-red-700 hover:text-red-800">Remove</button></li>
             ))}</ul>}
+            {legacySupportingPaths.length > 0 && <div className="rounded-md border border-gold-200 bg-gold-50 p-3"><p className="text-xs font-semibold text-gold-700">Files uploaded before structured document roles were introduced</p><ul className="mt-2 divide-y divide-gold-200">{legacySupportingPaths.map((path) => <li key={path} className="flex items-center justify-between gap-3 py-2 text-sm"><span className="min-w-0 truncate">{legacyDocumentName(path)}</span><button type="button" onClick={() => removeDocument(path)} className="min-h-11 px-2 font-semibold text-red-700">Remove</button></li>)}</ul></div>}
           </fieldset>
 
           <fieldset className="space-y-4 border-t border-[#e3dacb] pt-8">
@@ -539,9 +642,42 @@ export default function NewEvent() {
   );
 }
 
-function documentName(path: string): string {
-  const encoded = path.split('/').pop() ?? 'supporting-file';
-  return decodeURIComponent(encoded).replace(/^[0-9a-f]{8}-[0-9a-f-]{27}-/i, '');
+function legacyDocumentName(path: string): string {
+  const value = path.split('/').pop() ?? 'supporting-file';
+  try {
+    return decodeURIComponent(value).replace(/^[0-9a-f]{8}-[0-9a-f-]{27}-/i, '');
+  } catch {
+    return 'supporting-file';
+  }
+}
+
+function TemplateUploadCard({ label, document, uploading, onChange, onRemove }: {
+  label: string;
+  document?: M1DraftDocument;
+  uploading: boolean;
+  onChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onRemove: (path: string) => void;
+}) {
+  return <div className={`rounded-lg border p-4 ${document ? 'border-brand-200 bg-brand-50' : 'border-[#ded5c5] bg-cream-50'}`}>
+    <div className="flex items-start gap-3"><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${document ? 'bg-brand-700 text-white' : 'bg-cream-200 text-ink-500'}`}>{document ? <FileCheck2 size={17} /> : <FileText size={17} />}</span><div className="min-w-0"><p className="text-sm font-semibold text-ink-900">{label}</p><p className="mt-1 truncate text-xs text-ink-500">{document?.originalName ?? 'No completed file uploaded'}</p></div></div>
+    <div className="mt-4 flex flex-wrap gap-2">
+      <label className="btn-secondary cursor-pointer"><span>{document ? 'Replace DOCX' : 'Upload DOCX'}</span><input type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" disabled={uploading} onChange={onChange} className="sr-only" /></label>
+      {document && <button type="button" className="min-h-11 px-3 text-sm font-semibold text-red-700" onClick={() => onRemove(document.path)}>Remove</button>}
+    </div>
+  </div>;
+}
+
+function groupExtractedFields(extraction: M1DocumentExtraction): Array<{ label: string; count: number }> {
+  const groups = [
+    { label: 'Event', targets: ['name', 'description', 'expectedAttendance', 'venueCapacity'] },
+    { label: 'Schedule and venue', targets: ['venueAddress', 'startDatetime', 'endDatetime'] },
+    { label: 'Organizer', targets: ['organizerName', 'organizerEmail', 'organizerPhone'] },
+    { label: 'Safety and risk', targets: ['emergencyPlanSummary', 'riskProfile.'] },
+  ];
+  return groups.map((group) => ({
+    label: group.label,
+    count: extraction.extractedFields.filter((field) => group.targets.some((target) => target.endsWith('.') ? field.target.startsWith(target) : field.target === target)).length,
+  })).filter((group) => group.count > 0);
 }
 
 const RISK_PROFILE_OPTIONS: Array<{

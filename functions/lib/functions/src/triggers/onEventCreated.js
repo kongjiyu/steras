@@ -14,7 +14,7 @@ exports.isResourceEligibleAssessment = isResourceEligibleAssessment;
 exports.isCurrentManualReviewAssessment = isCurrentManualReviewAssessment;
 const node_crypto_1 = require("node:crypto");
 const firebase_admin_1 = require("firebase-admin");
-const firebase_functions_1 = require("firebase-functions");
+const logger_1 = require("firebase-functions/logger");
 const firestore_1 = require("firebase-functions/v2/firestore");
 const types_1 = require("../../../shared/types");
 const aiPredictor_1 = require("../engines/aiPredictor");
@@ -329,7 +329,7 @@ async function runRiskAndResourcePipeline(eventId, now = Date.now(), retryManual
                 throw new Error(`Atomic provisional publication failed: ${resourceResult.reason ?? 'unknown-resource-error'}`);
             }
         }
-        firebase_functions_1.logger.info(`[assessment] ${eventId}/${versionId}: status=${assessment.status}, ai=${assessment.aiProposal?.status ?? 'not-attempted'}`);
+        logger_1.logger.info(`[assessment] ${eventId}/${versionId}: status=${assessment.status}, ai=${assessment.aiProposal?.status ?? 'not-attempted'}`);
         return {
             status: 'processed', eventId, versionId, assessmentId, assessmentStatus: assessment.status,
             ...(resourceStatus ? { resourceStatus } : {}),
@@ -1364,14 +1364,14 @@ exports.onEventCreated = (0, firestore_1.onDocumentCreated)({ document: `${types
         && createdData?.m3Uat?.datasetId === m3UatFixtures_1.M3_UAT_DATASET_ID
         && createdData?.m3Uat?.managedBy === 'seed:m3:uat';
     if (legacyM3FixtureIds.has(eventId) || isManagedUatFixture) {
-        firebase_functions_1.logger.info(`[onEventCreated] skipped M3 test fixture: ${eventId}`);
+        logger_1.logger.info(`[onEventCreated] skipped M3 test fixture: ${eventId}`);
         return;
     }
     try {
         await runRiskAndResourcePipeline(eventId);
     }
     catch (error) {
-        firebase_functions_1.logger.error('[onEventCreated] failed', error);
+        logger_1.logger.error('[onEventCreated] failed', error);
     }
 });
 exports.onEventUpdated = (0, firestore_1.onDocumentUpdated)({ document: `${types_1.COLLECTIONS.EVENTS}/{eventId}`, region: runtime_1.FUNCTION_REGION, secrets: secrets_1.ASSESSMENT_SECRETS }, async (trigger) => {
@@ -1385,7 +1385,7 @@ exports.onEventUpdated = (0, firestore_1.onDocumentUpdated)({ document: `${types
         await runRiskAndResourcePipeline(trigger.params.eventId);
     }
     catch (error) {
-        firebase_functions_1.logger.error('[onEventUpdated] failed', error);
+        logger_1.logger.error('[onEventUpdated] failed', error);
     }
 });
 //# sourceMappingURL=onEventCreated.js.map

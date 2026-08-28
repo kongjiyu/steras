@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { firestore } from 'firebase-admin';
-import { logger } from 'firebase-functions';
+import { logger } from 'firebase-functions/logger';
 import { onDocumentCreated, onDocumentUpdated } from 'firebase-functions/v2/firestore';
 import {
   ASSESSMENT_SCHEMA_VERSION,

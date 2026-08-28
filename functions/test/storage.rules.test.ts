@@ -37,6 +37,8 @@ describe('Storage security rules', () => {
     const storage = environment.authenticatedContext('organizer-1').storage();
     const bytes = new Uint8Array([1, 2, 3]);
     await assertSucceeds(uploadBytes(ref(storage, 'event_documents/event-1/v1/plan.pdf'), bytes, { contentType: 'application/pdf' }));
+    await assertSucceeds(uploadBytes(ref(storage, 'event_documents/event-1/v1/core.docx'), bytes, { contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
+    await assertFails(uploadBytes(ref(storage, 'event_documents/event-1/v1/fake.docx'), bytes, { contentType: 'application/zip' }));
     await assertFails(uploadBytes(ref(storage, 'event_documents/event-1/v1/plan.pdf'), bytes, { contentType: 'application/pdf' }));
     await assertFails(uploadBytes(ref(storage, 'event_documents/event-1/v2/plan.pdf'), bytes, { contentType: 'application/pdf' }));
     await assertFails(uploadBytes(ref(storage, 'event_documents/event-1/v1/script.exe'), bytes, { contentType: 'application/octet-stream' }));

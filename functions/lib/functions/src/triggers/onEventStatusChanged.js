@@ -11,7 +11,7 @@ exports.cleanupWithdrawnEvent = cleanupWithdrawnEvent;
  * audit entries.
  */
 const firebase_admin_1 = require("firebase-admin");
-const firebase_functions_1 = require("firebase-functions");
+const logger_1 = require("firebase-functions/logger");
 const firestore_1 = require("firebase-functions/v2/firestore");
 const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
@@ -97,6 +97,6 @@ async function cleanupWithdrawnEvent(eventId, now = Date.now()) {
         },
     }, { merge: true });
     await finalBatch.commit();
-    firebase_functions_1.logger.info('[onEventStatusChanged] withdrawal cleanup complete', { eventId, assignments: assignmentsSnap.size, controls: controlsSnap.size });
+    logger_1.logger.info('[onEventStatusChanged] withdrawal cleanup complete', { eventId, assignments: assignmentsSnap.size, controls: controlsSnap.size });
 }
 //# sourceMappingURL=onEventStatusChanged.js.map
