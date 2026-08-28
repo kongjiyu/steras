@@ -1,4 +1,5 @@
-import { EventDetails, EventStatus, EventType } from '@shared/types';
+import { EventDetails, EventRiskProfile, EventStatus, EventType, M1TemplateSelection } from '@shared/types';
+import { isValidM1TemplateSelection, m1CategoryForEventType, m1VenueSettingMatchesEnvironment } from '@shared/m1TemplateContract';
 
 export type RevisionRequestedStatus = 'Revision Requested';
 export type OrganizerApplicationStatus = EventStatus | RevisionRequestedStatus;
@@ -33,8 +34,14 @@ export function nextVersionId(currentVersionNumber: unknown): string {
   return `v${Number.isSafeInteger(currentVersionNumber) ? Number(currentVersionNumber) + 1 : 1}`;
 }
 
-export function validateEventApplication(details: EventDetails, documentPaths: string[], now = Date.now()): string[] {
+export function validateEventApplication(
+  details: EventDetails,
+  documentPaths: string[],
+  templateSelection?: M1TemplateSelection,
+  now = Date.now(),
+): string[] {
   const errors: string[] = [];
+  errors.push(...validateTemplateCompatibility(details, templateSelection));
   requiredText(details.name, 'Event name', 200, errors);
   requiredText(details.venueName, 'Venue name', 200, errors);
   requiredText(details.venueAddress, 'Venue address', 500, errors);
@@ -77,6 +84,67 @@ export function validateEventApplication(details: EventDetails, documentPaths: s
   }
 
   return errors;
+}
+
+export function validateTemplateCompatibility(details: EventDetails, templateSelection?: M1TemplateSelection): string[] {
+  if (!templateSelection) return ['Select the Core and scenario templates before submitting.'];
+  if (!isValidM1TemplateSelection(templateSelection)) {
+    return ['The selected template recommendation is invalid or out of date. Choose the templates again.'];
+  }
+  const errors: string[] = [];
+  if (m1CategoryForEventType(details.type) !== templateSelection.eventCategory) {
+    errors.push('Event type does not match the selected scenario template. Change the template recommendation or event type.');
+  }
+  if (!m1VenueSettingMatchesEnvironment(templateSelection.venueSetting, details.environment)) {
+    errors.push('Event environment does not match the selected venue-setting template.');
+  }
+  return errors;
+}
+
+export function createInitialEventDetails(profile?: { name?: string; email?: string; phone?: string }): EventDetails {
+  return {
+    name: '',
+    type: 'concert',
+    venueName: '',
+    venueAddress: '',
+    venueCapacity: 0,
+    expectedAttendance: 0,
+    environment: 'outdoor',
+    coverage: 'uncovered',
+    seating: 'mixed',
+    startDatetime: 0,
+    endDatetime: 0,
+    description: '',
+    emergencyPlanSummary: '',
+    riskProfile: completeRiskProfile(),
+    organizerName: profile?.name ?? '',
+    organizerEmail: profile?.email ?? '',
+    organizerPhone: profile?.phone ?? '',
+  };
+}
+
+export function completeRiskProfile(value: unknown = {}): EventRiskProfile {
+  const source = value && typeof value === 'object' ? value as Partial<EventRiskProfile> : {};
+  return {
+    vulnerableAttendeesPercent: source.vulnerableAttendeesPercent ?? 0,
+    standingAttendeesPercent: source.standingAttendeesPercent ?? 0,
+    internationalAttendees: source.internationalAttendees ?? false,
+    alcoholServed: source.alcoholServed ?? false,
+    foodServed: source.foodServed ?? false,
+    freeDrinkingWater: source.freeDrinkingWater ?? false,
+    ticketedEntry: source.ticketedEntry ?? false,
+    overnightAccommodation: source.overnightAccommodation ?? false,
+    pyrotechnics: source.pyrotechnics ?? false,
+    temporaryStructures: source.temporaryStructures ?? false,
+    rivalryOrTensionExpected: source.rivalryOrTensionExpected ?? false,
+    crowdManagementPlan: source.crowdManagementPlan ?? false,
+    trafficManagementPlan: source.trafficManagementPlan ?? false,
+    severeWeatherPlan: source.severeWeatherPlan ?? false,
+    medicalPlan: source.medicalPlan ?? false,
+    evacuationPlanTested: source.evacuationPlanTested ?? false,
+    authorityCoordinationConfirmed: source.authorityCoordinationConfirmed ?? false,
+    ...(source.nearestHospitalTravelMinutes !== undefined ? { nearestHospitalTravelMinutes: source.nearestHospitalTravelMinutes } : {}),
+  };
 }
 
 const EVENT_TYPE_VALUES = new Set<EventType>([

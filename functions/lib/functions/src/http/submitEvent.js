@@ -10,6 +10,7 @@ const node_crypto_1 = require("node:crypto");
 const firestore_1 = require("firebase-admin/firestore");
 const https_1 = require("firebase-functions/v2/https");
 const types_1 = require("../../../shared/types");
+const m1TemplateContract_1 = require("../../../shared/m1TemplateContract");
 const runtime_1 = require("../config/runtime");
 const resourceCutoverLock_1 = require("../config/resourceCutoverLock");
 const storageEvidence_1 = require("../utils/storageEvidence");
@@ -37,6 +38,13 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
     const preflight = { eventId, ...preflightEvent.data() };
     if (preflight.organizerId !== uid)
         throw new https_1.HttpsError('permission-denied', 'You do not own this event.');
+    if (!(0, m1TemplateContract_1.isValidM1TemplateSelection)(preflight.templateSelection)) {
+        throw new https_1.HttpsError('failed-precondition', 'Choose a valid Core and scenario template before submitting.');
+    }
+    if ((0, m1TemplateContract_1.m1CategoryForEventType)(preflight.eventDetails.type) !== preflight.templateSelection.eventCategory
+        || !(0, m1TemplateContract_1.m1VenueSettingMatchesEnvironment)(preflight.templateSelection.venueSetting, preflight.eventDetails.environment)) {
+        throw new https_1.HttpsError('failed-precondition', 'The template recommendation no longer matches the event type or venue setting.');
+    }
     const preflightVersionId = `v${(preflight.currentVersionNumber ?? 0) + 1}`;
     await validateSubmissionAssets(eventId, preflightVersionId, preflight.draftDocumentPaths ?? []);
     await validateCanonicalVenue(preflight.eventDetails);
@@ -67,6 +75,13 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
         if (event.status !== 'Draft') {
             throw new https_1.HttpsError('failed-precondition', 'Only draft applications can be submitted. Rejected applications are final.');
         }
+        if (!(0, m1TemplateContract_1.isValidM1TemplateSelection)(event.templateSelection)) {
+            throw new https_1.HttpsError('failed-precondition', 'Choose a valid Core and scenario template before submitting.');
+        }
+        if ((0, m1TemplateContract_1.m1CategoryForEventType)(event.eventDetails.type) !== event.templateSelection.eventCategory
+            || !(0, m1TemplateContract_1.m1VenueSettingMatchesEnvironment)(event.templateSelection.venueSetting, event.eventDetails.environment)) {
+            throw new https_1.HttpsError('failed-precondition', 'The template recommendation no longer matches the event type or venue setting.');
+        }
         if (event.eventDetails.venueId && (!venueSnapshot?.exists
             || validateCanonicalVenueRecord(event.eventDetails, venueSnapshot.data()).length > 0)) {
             throw new https_1.HttpsError('failed-precondition', 'The selected venue changed during submission. Review the verified venue and retry.');
@@ -84,12 +99,17 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
         if (documentPaths.some((path) => !path.startsWith(allowedPrefix))) {
             throw new https_1.HttpsError('invalid-argument', 'One or more uploaded document paths do not belong to this application version.');
         }
-        const inputHash = (0, node_crypto_1.createHash)('sha256').update(JSON.stringify({ eventDetails: event.eventDetails, documentPaths })).digest('hex');
+        const inputHash = (0, node_crypto_1.createHash)('sha256').update(JSON.stringify({
+            eventDetails: event.eventDetails,
+            templateSelection: event.templateSelection,
+            documentPaths,
+        })).digest('hex');
         const version = {
             versionId,
             eventId,
             versionNumber,
             eventDetails: event.eventDetails,
+            templateSelection: event.templateSelection,
             documentPaths,
             submittedBy: uid,
             submittedAt: now,
@@ -255,6 +275,7 @@ function submissionFingerprint(event) {
         currentVersionNumber: event.currentVersionNumber,
         editableVersionId: event.editableVersionId,
         eventDetails: event.eventDetails,
+        templateSelection: event.templateSelection,
         documentPaths: event.draftDocumentPaths,
     })).digest('hex');
 }

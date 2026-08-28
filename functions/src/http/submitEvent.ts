@@ -10,6 +10,7 @@ import {
   EventType,
   EventVersion,
 } from '@shared/types';
+import { isValidM1TemplateSelection, m1CategoryForEventType, m1VenueSettingMatchesEnvironment } from '@shared/m1TemplateContract';
 import { FUNCTION_REGION } from '../config/runtime';
 import { RESOURCE_CUTOVER_LOCK_PATH } from '../config/resourceCutoverLock';
 import { inspectStorageEvidence } from '../utils/storageEvidence';
@@ -41,6 +42,13 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
   if (!preflightEvent.exists) throw new HttpsError('not-found', 'Event draft was not found.');
   const preflight = { eventId, ...preflightEvent.data() } as EventRecord;
   if (preflight.organizerId !== uid) throw new HttpsError('permission-denied', 'You do not own this event.');
+  if (!isValidM1TemplateSelection(preflight.templateSelection)) {
+    throw new HttpsError('failed-precondition', 'Choose a valid Core and scenario template before submitting.');
+  }
+  if (m1CategoryForEventType(preflight.eventDetails.type) !== preflight.templateSelection.eventCategory
+    || !m1VenueSettingMatchesEnvironment(preflight.templateSelection.venueSetting, preflight.eventDetails.environment)) {
+    throw new HttpsError('failed-precondition', 'The template recommendation no longer matches the event type or venue setting.');
+  }
   const preflightVersionId = `v${(preflight.currentVersionNumber ?? 0) + 1}`;
   await validateSubmissionAssets(eventId, preflightVersionId, preflight.draftDocumentPaths ?? []);
   await validateCanonicalVenue(preflight.eventDetails);
@@ -69,6 +77,13 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
     if (event.status !== 'Draft') {
       throw new HttpsError('failed-precondition', 'Only draft applications can be submitted. Rejected applications are final.');
     }
+    if (!isValidM1TemplateSelection(event.templateSelection)) {
+      throw new HttpsError('failed-precondition', 'Choose a valid Core and scenario template before submitting.');
+    }
+    if (m1CategoryForEventType(event.eventDetails.type) !== event.templateSelection.eventCategory
+      || !m1VenueSettingMatchesEnvironment(event.templateSelection.venueSetting, event.eventDetails.environment)) {
+      throw new HttpsError('failed-precondition', 'The template recommendation no longer matches the event type or venue setting.');
+    }
     if (event.eventDetails.venueId && (!venueSnapshot?.exists
       || validateCanonicalVenueRecord(event.eventDetails, venueSnapshot.data()).length > 0)) {
       throw new HttpsError('failed-precondition', 'The selected venue changed during submission. Review the verified venue and retry.');
@@ -87,12 +102,17 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
       throw new HttpsError('invalid-argument', 'One or more uploaded document paths do not belong to this application version.');
     }
 
-    const inputHash = createHash('sha256').update(JSON.stringify({ eventDetails: event.eventDetails, documentPaths })).digest('hex');
+    const inputHash = createHash('sha256').update(JSON.stringify({
+      eventDetails: event.eventDetails,
+      templateSelection: event.templateSelection,
+      documentPaths,
+    })).digest('hex');
     const version: EventVersion = {
       versionId,
       eventId,
       versionNumber,
       eventDetails: event.eventDetails,
+      templateSelection: event.templateSelection,
       documentPaths,
       submittedBy: uid,
       submittedAt: now,
@@ -250,6 +270,7 @@ function submissionFingerprint(event: EventRecord): string {
     currentVersionNumber: event.currentVersionNumber,
     editableVersionId: event.editableVersionId,
     eventDetails: event.eventDetails,
+    templateSelection: event.templateSelection,
     documentPaths: event.draftDocumentPaths,
   })).digest('hex');
 }

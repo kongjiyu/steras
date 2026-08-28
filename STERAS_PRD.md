@@ -151,6 +151,12 @@ baseline.
 
 The module manages organiser authentication, event application versions, evidence submission, application status, and the public approved-event calendar.
 
+#### Organiser template-guided application flow
+
+For FR-M1-04 to FR-M1-10, the organiser experience follows this sequence: (1) choose the event scenario, (2) receive a template recommendation, (3) preview the complete recommended documents, (4) review scenario-based supporting-document guidance, (5) start the Draft application, (6) complete one Core document and one scenario-specific document and provide the applicable supporting evidence, (7) allow STERAS to extract and auto-fill application fields, (8) review and correct the extracted information and validation warnings, and (9) confirm the application for administrative review.
+
+The recommendation asks for exactly one event category and one venue setting. The five categories are Entertainment and Performance; Sports and Recreational; Cultural, Heritage and Festival; Exhibition, Convention and Promotional; and Carnival and Public Celebration. The three venue settings are Indoor, Outdoor fixed-site, and Outdoor route-based. Every combination maps to exactly one versioned scenario template, and every application also requires the common Core Event Application Template. Before starting the Draft, the organiser can preview every page of both documents, download both editable Word files, and review the Core and conditional scenario evidence guidance. Conditional evidence is presented as guidance at recommendation time and becomes required only when the corresponding application condition applies. The selected template IDs, versions and registry version are preserved with the Draft and submitted application version. The organiser may change the selection while the application remains editable and before a completed template is uploaded.
+
 | ID | Functional Requirement |
 |---|---|
 | FR-M1-01 | The system shall allow registered organisers, authority users, and administrators to log in and log out, and shall provide access to system functions according to their assigned roles. The system shall allow new users to register where registration is permitted. |

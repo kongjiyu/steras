@@ -1,5 +1,5 @@
 import PageHeader from '../../components/ui/PageHeader';
-import { EVENT_TYPES, EventType, EventDetails, EventRiskProfile, Venue } from '@shared/types';
+import { EVENT_TYPES, EventType, EventDetails, EventRiskProfile, M1TemplateSelection, Venue } from '@shared/types';
 import { useEffect, useState, FormEvent, ChangeEvent } from 'react';
 import { arrayRemove, arrayUnion, collection, addDoc, doc, getDoc, getDocs, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
@@ -8,15 +8,18 @@ import { db, functions, isFirebaseConfigured, storage } from '../../config/fireb
 import { COLLECTIONS } from '@shared/types';
 import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import OrganizerStatusBadge from './OrganizerStatusBadge';
-import { isEditableApplicationStatus, nextVersionId, validateEventApplication } from './organizerApplication';
+import { completeRiskProfile, createInitialEventDetails, isEditableApplicationStatus, nextVersionId, validateEventApplication, validateTemplateCompatibility } from './organizerApplication';
 import { mockVenues } from '../../mock_data/venues';
 import { findEventById } from '../../mock_data/events';
+import { isValidTemplateSelection, M1_CORE_TEMPLATE, scenarioTemplateFor } from '../../features/m1/templateRegistry';
+import { FileText, RotateCcw } from 'lucide-react';
 
 export default function NewEvent() {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const { eventId } = useParams<{ eventId: string }>();
   const [draftId, setDraftId] = useState(eventId ?? '');
   const [editableStatus, setEditableStatus] = useState<'Draft' | 'Revision Requested'>('Draft');
@@ -30,25 +33,16 @@ export default function NewEvent() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [venues, setVenues] = useState<Venue[]>([]);
+  const routeState = location.state as { templateSelection?: unknown; initialDetails?: unknown } | null;
+  const [templateSelection, setTemplateSelection] = useState<M1TemplateSelection | undefined>(
+    isValidTemplateSelection(routeState?.templateSelection) ? routeState.templateSelection : undefined,
+  );
 
-  const [form, setForm] = useState<EventDetails>({
-    name: '',
-    type: 'concert',
-    venueName: '',
-    venueAddress: '',
-    venueCapacity: 0,
-    expectedAttendance: 0,
-    environment: 'outdoor',
-    coverage: 'uncovered',
-    seating: 'mixed',
-    startDatetime: 0,
-    endDatetime: 0,
-    description: '',
-    emergencyPlanSummary: '',
-    riskProfile: completeRiskProfile(),
-    organizerName: profile?.name ?? '',
-    organizerEmail: profile?.email ?? '',
-    organizerPhone: profile?.phone ?? '',
+  const [form, setForm] = useState<EventDetails>(() => {
+    const initial = routeState?.initialDetails;
+    return initial && typeof initial === 'object'
+      ? { ...(initial as EventDetails), riskProfile: completeRiskProfile((initial as EventDetails).riskProfile) }
+      : createInitialEventDetails(profile ?? undefined);
   });
 
   const update = <K extends keyof EventDetails>(key: K, value: EventDetails[K]) => {
@@ -96,6 +90,7 @@ export default function NewEvent() {
       setCurrentVersionNumber(event.currentVersionNumber ?? 0);
       setEditableVersionId(event.editableVersionId ?? nextVersionId(event.currentVersionNumber ?? 0));
       setDocumentPaths(event.draftDocumentPaths ?? []);
+      setTemplateSelection(isValidTemplateSelection(event.templateSelection) ? event.templateSelection : undefined);
       setLoading(false);
       return;
     }
@@ -108,6 +103,7 @@ export default function NewEvent() {
       setCurrentVersionNumber(data.currentVersionNumber ?? 0);
       setEditableVersionId(data.editableVersionId ?? nextVersionId(data.currentVersionNumber ?? 0));
       setDocumentPaths(data.draftDocumentPaths ?? []);
+      setTemplateSelection(isValidTemplateSelection(data.templateSelection) ? data.templateSelection : undefined);
     }).catch((error) => {
       toast.error(error instanceof Error ? error.message : 'Unable to load draft.');
       navigate('/organizer/events');
@@ -116,15 +112,26 @@ export default function NewEvent() {
 
   const ensureDraft = async () => {
     if (!user) throw new Error('Sign in before saving a draft.');
+    if (!templateSelection && !draftId) throw new Error('Choose the Core and scenario templates before creating a Draft.');
+    if (templateSelection) {
+      const [templateError] = validateTemplateCompatibility(form, templateSelection);
+      if (templateError) throw new Error(templateError);
+    }
     const now = Date.now();
     if (draftId) {
-      await updateDoc(doc(db, COLLECTIONS.EVENTS, draftId), { eventDetails: form, draftDocumentPaths: documentPaths, updatedAt: now });
+      await updateDoc(doc(db, COLLECTIONS.EVENTS, draftId), {
+        eventDetails: form,
+        draftDocumentPaths: documentPaths,
+        ...(templateSelection ? { templateSelection } : {}),
+        updatedAt: now,
+      });
       return draftId;
     }
     const nextEditableVersionId = nextVersionId(currentVersionNumber);
     const reference = await addDoc(collection(db, COLLECTIONS.EVENTS), {
       organizerId: user.uid,
       eventDetails: form,
+      templateSelection,
       status: 'Draft',
       currentVersionNumber,
       editableVersionId: nextEditableVersionId,
@@ -156,7 +163,7 @@ export default function NewEvent() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!user) return;
-    const errors = validateEventApplication(form, documentPaths);
+    const errors = validateEventApplication(form, documentPaths, templateSelection);
     if (errors.length > 0) {
       setValidationErrors(errors);
       toast.error(errors[0]);
@@ -253,12 +260,49 @@ export default function NewEvent() {
 
   if (loading) return <div className="py-16 text-center text-ink-500">Loading application…</div>;
 
+  const selectedScenario = templateSelection
+    ? scenarioTemplateFor(templateSelection.eventCategory, templateSelection.venueSetting)
+    : undefined;
+  const [templateCompatibilityError] = templateSelection
+    ? validateTemplateCompatibility(form, templateSelection)
+    : [];
+  const recommendationUrl = draftId
+    ? `/organizer/events/new?draft=${encodeURIComponent(draftId)}${templateSelection ? `&category=${templateSelection.eventCategory}&venue=${templateSelection.venueSetting}` : ''}`
+    : '/organizer/events/new';
+
   return (
     <div>
       <PageHeader
         title={draftId ? 'Edit Event Application' : 'New Event Application'}
         description="Complete the operational details and supporting evidence used for the official category assessment and advisory M3 explanation."
       />
+
+      <section className={`mb-6 border ${templateSelection && !templateCompatibilityError ? 'border-brand-200 bg-brand-50' : 'border-gold-300 bg-gold-50'} p-4 sm:p-5`} aria-labelledby="template-choice-heading">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-full ${templateSelection && !templateCompatibilityError ? 'bg-brand-700 text-cream-50' : 'bg-gold-300 text-brand-950'}`}><FileText size={18} /></span>
+            <div>
+              <h2 id="template-choice-heading" className="font-bold text-ink-800">{templateCompatibilityError ? 'Template recommendation needs attention' : selectedScenario ? 'Two application templates selected' : 'Template recommendation required'}</h2>
+              {templateCompatibilityError ? (
+                <p className="mt-1 text-sm leading-5 text-ink-600">{templateCompatibilityError}</p>
+              ) : selectedScenario ? (
+                <p className="mt-1 text-sm leading-5 text-ink-600">{M1_CORE_TEMPLATE.title} + {selectedScenario.title}</p>
+              ) : (
+                <p className="mt-1 text-sm leading-5 text-ink-600">This legacy Draft is safe to edit, but you must choose a Core and scenario template before submission.</p>
+              )}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn-secondary shrink-0"
+            disabled={documentPaths.length > 0}
+            title={documentPaths.length > 0 ? 'Remove uploaded documents before changing the template recommendation.' : undefined}
+            onClick={() => navigate(recommendationUrl)}
+          >
+            <RotateCcw size={16} /> {documentPaths.length > 0 ? 'Templates locked after upload' : selectedScenario ? 'Change templates' : 'Choose templates'}
+          </button>
+        </div>
+      </section>
 
       <form onSubmit={handleSubmit} noValidate className="overflow-hidden rounded-lg border border-[#ded5c5] bg-[#fffdf8] shadow-card">
         <div className="border-b border-[#e3dacb] bg-brand-50 px-4 py-4 sm:px-6">
@@ -493,30 +537,6 @@ export default function NewEvent() {
 
     </div>
   );
-}
-
-function completeRiskProfile(value: unknown = {}): EventRiskProfile {
-  const source = value && typeof value === 'object' ? value as Partial<EventRiskProfile> : {};
-  return {
-    vulnerableAttendeesPercent: source.vulnerableAttendeesPercent ?? 0,
-    standingAttendeesPercent: source.standingAttendeesPercent ?? 0,
-    internationalAttendees: source.internationalAttendees ?? false,
-    alcoholServed: source.alcoholServed ?? false,
-    foodServed: source.foodServed ?? false,
-    freeDrinkingWater: source.freeDrinkingWater ?? false,
-    ticketedEntry: source.ticketedEntry ?? false,
-    overnightAccommodation: source.overnightAccommodation ?? false,
-    pyrotechnics: source.pyrotechnics ?? false,
-    temporaryStructures: source.temporaryStructures ?? false,
-    rivalryOrTensionExpected: source.rivalryOrTensionExpected ?? false,
-    crowdManagementPlan: source.crowdManagementPlan ?? false,
-    trafficManagementPlan: source.trafficManagementPlan ?? false,
-    severeWeatherPlan: source.severeWeatherPlan ?? false,
-    medicalPlan: source.medicalPlan ?? false,
-    evacuationPlanTested: source.evacuationPlanTested ?? false,
-    authorityCoordinationConfirmed: source.authorityCoordinationConfirmed ?? false,
-    ...(source.nearestHospitalTravelMinutes !== undefined ? { nearestHospitalTravelMinutes: source.nearestHospitalTravelMinutes } : {}),
-  };
 }
 
 function documentName(path: string): string {
