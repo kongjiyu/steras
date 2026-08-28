@@ -110,4 +110,41 @@ function completeRiskProfile() {
         (0, vitest_1.expect)((0, submitEvent_1.requiredAuthoritiesFor)(validDetails)).toEqual(['PDRM', 'BOMBA', 'KKM', 'MOTAC', 'DBKL']);
     });
 });
+(0, vitest_1.describe)('buildAdminSubmissionNotification', () => {
+    const base = {
+        adminUid: 'admin-1',
+        eventId: 'event-1',
+        versionId: 'v1',
+        versionNumber: 1,
+        eventName: 'KL Cultural Festival',
+        submittedAt: 10_000,
+    };
+    (0, vitest_1.it)('creates a deterministic, unread notification for a new application', () => {
+        const first = (0, submitEvent_1.buildAdminSubmissionNotification)(base);
+        const replay = (0, submitEvent_1.buildAdminSubmissionNotification)(base);
+        (0, vitest_1.expect)(first).toEqual(replay);
+        (0, vitest_1.expect)(first).toMatchObject({
+            recipientUid: 'admin-1',
+            eventId: 'event-1',
+            versionId: 'v1',
+            type: 'application_submitted_for_review',
+            title: 'New application submitted',
+            read: false,
+            createdAt: 10_000,
+        });
+        (0, vitest_1.expect)(first.notificationId).toMatch(/^m1-submit-[a-f0-9]{64}$/);
+    });
+    (0, vitest_1.it)('labels later versions as edited submissions and isolates each admin recipient', () => {
+        const edited = (0, submitEvent_1.buildAdminSubmissionNotification)({ ...base, versionId: 'v2', versionNumber: 2 });
+        const secondAdmin = (0, submitEvent_1.buildAdminSubmissionNotification)({ ...base, versionId: 'v2', versionNumber: 2, adminUid: 'admin-2' });
+        (0, vitest_1.expect)(edited.title).toBe('Updated application submitted');
+        (0, vitest_1.expect)(edited.notificationId).not.toBe(secondAdmin.notificationId);
+        (0, vitest_1.expect)(edited.sourceActionId).toBe(secondAdmin.sourceActionId);
+    });
+    (0, vitest_1.it)('does not expose organizer contact details or application internals', () => {
+        const serialized = JSON.stringify((0, submitEvent_1.buildAdminSubmissionNotification)(base));
+        (0, vitest_1.expect)(serialized).not.toMatch(/email|phone|evidence|riskProfile|document/i);
+        (0, vitest_1.expect)(serialized).toContain('KL Cultural Festival');
+    });
+});
 //# sourceMappingURL=submitEvent.test.js.map

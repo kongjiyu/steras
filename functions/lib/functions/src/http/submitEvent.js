@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.submitEvent = exports.isValidEvidenceMetadata = void 0;
 exports.submitEventForUser = submitEventForUser;
+exports.buildAdminSubmissionNotification = buildAdminSubmissionNotification;
 exports.validateEventDetails = validateEventDetails;
 exports.validateEvidencePaths = validateEvidencePaths;
 exports.validateCanonicalVenueRecord = validateCanonicalVenueRecord;
@@ -147,6 +148,15 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
         const versionSnapshot = await transaction.get(versionReference);
         if (versionSnapshot.exists)
             throw new https_1.HttpsError('already-exists', 'This application version has already been submitted.');
+        const adminSnapshots = await transaction.get(db.collection(types_1.COLLECTIONS.USERS).where('role', '==', 'admin'));
+        const adminNotifications = adminSnapshots.docs.map((admin) => buildAdminSubmissionNotification({
+            adminUid: admin.id,
+            eventId,
+            versionId,
+            versionNumber,
+            eventName: event.eventDetails.name,
+            submittedAt: now,
+        }));
         const requiredAuthorities = requiredAuthoritiesFor(event.eventDetails);
         transaction.create(versionReference, version);
         transaction.update(eventReference, {
@@ -180,10 +190,38 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
             timestamp: now,
             previousStatus: event.status,
             newStatus: 'Pending',
-            metadata: { inputHash, documentCount: documentPaths.length, requiredAuthorities },
+            metadata: {
+                inputHash,
+                documentCount: documentPaths.length,
+                requiredAuthorities,
+                adminNotificationCount: adminNotifications.length,
+            },
         });
+        for (const notification of adminNotifications) {
+            transaction.create(db.collection(types_1.COLLECTIONS.NOTIFICATIONS).doc(notification.notificationId), notification);
+        }
         return { eventId, versionId, versionNumber, status: 'Pending' };
     });
+}
+/** Build the privacy-safe, deterministic notification written with the submission transaction. */
+function buildAdminSubmissionNotification(input) {
+    const sourceActionId = `application-submitted:${input.eventId}:${input.versionId}`;
+    const notificationId = `m1-submit-${(0, node_crypto_1.createHash)('sha256')
+        .update(`${sourceActionId}:${input.adminUid}`)
+        .digest('hex')}`;
+    const isEditedApplication = input.versionNumber > 1;
+    return {
+        notificationId,
+        recipientUid: input.adminUid,
+        eventId: input.eventId,
+        versionId: input.versionId,
+        type: 'application_submitted_for_review',
+        title: isEditedApplication ? 'Updated application submitted' : 'New application submitted',
+        message: `${input.eventName} (${input.versionId}) is ready for administrative review.`,
+        sourceActionId,
+        read: false,
+        createdAt: input.submittedAt,
+    };
 }
 function validateEventDetails(value, now = Date.now()) {
     if (!isRecord(value))

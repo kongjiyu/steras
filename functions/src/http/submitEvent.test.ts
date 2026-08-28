@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EventDetails } from '@shared/types';
-import { isValidEvidenceMetadata, requiredAuthoritiesFor, validateCanonicalVenueRecord, validateEventDetails, validateEvidencePaths } from './submitEvent';
+import { buildAdminSubmissionNotification, isValidEvidenceMetadata, requiredAuthoritiesFor, validateCanonicalVenueRecord, validateEventDetails, validateEvidencePaths } from './submitEvent';
 
 const validDetails: EventDetails = {
   name: 'KL Cultural Festival',
@@ -118,5 +118,46 @@ describe('submission evidence and registry venue integrity', () => {
 describe('requiredAuthoritiesFor', () => {
   it('adds MOTAC for cultural events and DBKL for Kuala Lumpur', () => {
     expect(requiredAuthoritiesFor(validDetails)).toEqual(['PDRM', 'BOMBA', 'KKM', 'MOTAC', 'DBKL']);
+  });
+});
+
+describe('buildAdminSubmissionNotification', () => {
+  const base = {
+    adminUid: 'admin-1',
+    eventId: 'event-1',
+    versionId: 'v1',
+    versionNumber: 1,
+    eventName: 'KL Cultural Festival',
+    submittedAt: 10_000,
+  };
+
+  it('creates a deterministic, unread notification for a new application', () => {
+    const first = buildAdminSubmissionNotification(base);
+    const replay = buildAdminSubmissionNotification(base);
+    expect(first).toEqual(replay);
+    expect(first).toMatchObject({
+      recipientUid: 'admin-1',
+      eventId: 'event-1',
+      versionId: 'v1',
+      type: 'application_submitted_for_review',
+      title: 'New application submitted',
+      read: false,
+      createdAt: 10_000,
+    });
+    expect(first.notificationId).toMatch(/^m1-submit-[a-f0-9]{64}$/);
+  });
+
+  it('labels later versions as edited submissions and isolates each admin recipient', () => {
+    const edited = buildAdminSubmissionNotification({ ...base, versionId: 'v2', versionNumber: 2 });
+    const secondAdmin = buildAdminSubmissionNotification({ ...base, versionId: 'v2', versionNumber: 2, adminUid: 'admin-2' });
+    expect(edited.title).toBe('Updated application submitted');
+    expect(edited.notificationId).not.toBe(secondAdmin.notificationId);
+    expect(edited.sourceActionId).toBe(secondAdmin.sourceActionId);
+  });
+
+  it('does not expose organizer contact details or application internals', () => {
+    const serialized = JSON.stringify(buildAdminSubmissionNotification(base));
+    expect(serialized).not.toMatch(/email|phone|evidence|riskProfile|document/i);
+    expect(serialized).toContain('KL Cultural Festival');
   });
 });
