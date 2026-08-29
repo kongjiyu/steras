@@ -11,7 +11,7 @@ exports.resolveAuthUid = resolveAuthUid;
  *     recipientUid: string      — who sees it in the bell
  *     eventId: string          — related event (if any)
  *     versionId?: string       — versioned with the event
- *     type: 'decision_made' | 'application_approved' | 'application_rejected'
+ *     type: 'application_submitted_for_review' | 'decision_made' | 'application_approved' | 'application_rejected'
  *         | 'control_verified' | 'control_rejected'
  *     title: string            — short, present-tense
  *     message: string          — privacy-safe, no PII beyond event name

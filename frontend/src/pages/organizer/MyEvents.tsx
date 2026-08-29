@@ -9,8 +9,9 @@ import EmptyState from '../../components/ui/EmptyState';
 import { format } from 'date-fns';
 import { ArrowRight, CalendarPlus, MapPin } from 'lucide-react';
 import OrganizerStatusBadge from './OrganizerStatusBadge';
-import { applicationStatusLabel, isEditableApplicationStatus, ORGANIZER_STATUS_FILTERS, OrganizerStatusFilter } from './organizerApplication';
+import { applicationStatusLabel, isEditableApplicationStatus, ORGANIZER_STATUS_FILTERS, organizerAdminDecisionLabel, organizerPublicationLabel, organizerPublicationStateFromProjection, OrganizerStatusFilter } from './organizerApplication';
 import { mockEvents } from '../../mock_data/events';
+import { mockPublicEvents } from '../../mock_data/public_events';
 
 export default function MyEvents() {
   const { user } = useAuth();
@@ -19,6 +20,8 @@ export default function MyEvents() {
   const [filter, setFilter] = useState<OrganizerStatusFilter>('all');
   const [error, setError] = useState('');
   const [retryKey, setRetryKey] = useState(0);
+  const [publicProjections, setPublicProjections] = useState<Map<string, unknown>>(new Map());
+  const [publicationLoadState, setPublicationLoadState] = useState<'loading' | 'ready' | 'unavailable'>('loading');
 
   useEffect(() => {
     if (!isFirebaseConfigured || !user) {
@@ -51,6 +54,28 @@ export default function MyEvents() {
     );
     return () => unsub();
   }, [user, retryKey]);
+
+  useEffect(() => {
+    if (!isFirebaseConfigured) {
+      setPublicProjections(new Map(mockPublicEvents.map((event) => [event.eventId, event])));
+      setPublicationLoadState('ready');
+      return;
+    }
+    setPublicationLoadState('loading');
+    return onSnapshot(collection(db, COLLECTIONS.PUBLIC_EVENTS), (snapshot) => {
+      setPublicProjections(new Map(snapshot.docs.map((document) => [document.id, document.data()])));
+      setPublicationLoadState('ready');
+    }, () => {
+      setPublicProjections(new Map());
+      setPublicationLoadState('unavailable');
+    });
+  }, [retryKey]);
+
+  const publicationStateFor = (event: EventRecord) => publicationLoadState === 'loading'
+    ? 'loading' as const
+    : publicationLoadState === 'unavailable'
+      ? 'unavailable' as const
+      : organizerPublicationStateFromProjection(publicProjections.get(event.eventId), event.eventId, event.currentVersionId);
 
   const filtered = filter === 'all' ? events : events.filter((e) => String(e.status) === filter);
 
@@ -114,7 +139,7 @@ export default function MyEvents() {
                   <td className="px-4 py-3 text-ink-600">{versionLabel(e)}</td>
                   <td className="px-4 py-3 text-ink-600">
                     <div>{assessmentLabel(e)}</div>
-                    <div className="mt-0.5 text-xs text-ink-500">{decisionLabel(e)} - {publicationLabel(e)}</div>
+                    <div className="mt-0.5 text-xs text-ink-500">{organizerAdminDecisionLabel(e)} - {organizerPublicationLabel(publicationStateFor(e))}</div>
                   </td>
                   <td className="px-4 py-3 tabular-nums text-ink-600">
                     {e.eventDetails.startDatetime ? format(new Date(e.eventDetails.startDatetime), 'PP') : 'Not scheduled'}
@@ -136,7 +161,7 @@ export default function MyEvents() {
               const editable = isEditableApplicationStatus(String(e.status));
               return <li key={e.eventId}><Link to={editable ? `/organizer/events/${e.eventId}/edit` : `/organizer/events/${e.eventId}`} className="block rounded-lg border border-[#ded5c5] bg-[#fffdf8] p-4 active:bg-cream-100">
                 <div className="flex items-start justify-between gap-3"><h2 className="font-display text-base font-bold leading-snug text-ink-800">{e.eventDetails.name || 'Untitled event'}</h2><OrganizerStatusBadge status={String(e.status)} /></div>
-                <div className="mt-3 space-y-1 text-sm text-ink-500"><p className="flex items-center gap-2"><MapPin size={14} />{e.eventDetails.venueName || 'Venue not set'}</p><p className="tabular-nums">{e.eventDetails.startDatetime ? format(new Date(e.eventDetails.startDatetime), 'PP') : 'Not scheduled'}</p><p>{versionLabel(e)} - {assessmentLabel(e)}</p><p>{decisionLabel(e)} - {publicationLabel(e)}</p></div>
+                <div className="mt-3 space-y-1 text-sm text-ink-500"><p className="flex items-center gap-2"><MapPin size={14} />{e.eventDetails.venueName || 'Venue not set'}</p><p className="tabular-nums">{e.eventDetails.startDatetime ? format(new Date(e.eventDetails.startDatetime), 'PP') : 'Not scheduled'}</p><p>{versionLabel(e)} - {assessmentLabel(e)}</p><p>{organizerAdminDecisionLabel(e)} - {organizerPublicationLabel(publicationStateFor(e))}</p></div>
                 <div className="mt-4 flex items-center justify-between border-t border-[#e3dacb] pt-3 text-sm font-semibold text-brand-700"><span>{editable ? 'Continue application' : 'View application'}</span><ArrowRight size={16} /></div>
               </Link></li>;
             })}
@@ -150,7 +175,7 @@ export default function MyEvents() {
 function versionLabel(event: EventRecord): string {
   const status = String(event.status);
   if (isEditableApplicationStatus(status)) {
-    return `${status === 'Draft' ? 'Draft' : 'Revision'} ${event.editableVersionId ?? `v${(event.currentVersionNumber ?? 0) + 1}`}`;
+    return `${event.activeRevision ? 'Revision' : 'Draft'} ${event.editableVersionId ?? `v${(event.currentVersionNumber ?? 0) + 1}`}`;
   }
   return event.currentVersionId ? `Submitted ${event.currentVersionId}` : 'No submitted version';
 }
@@ -161,20 +186,4 @@ function assessmentLabel(event: EventRecord): string {
   if (isEditableApplicationStatus(String(event.status))) return 'Not submitted';
   if (event.status === 'Manual Review Required') return 'Manual assessment required';
   return 'Assessment unavailable';
-}
-
-function decisionLabel(event: EventRecord): string {
-  if (event.status === 'Approved') return 'Approved by authorities';
-  if (event.status === 'Rejected') return 'Rejected by authority';
-  if (event.status === 'Withdrawn') return 'Withdrawn by organiser';
-  if (event.initialReview?.decision === 'Rejected') return 'Correction details recorded';
-  if (event.status === 'UnderReview') return 'Authority review in progress';
-  if (event.status === 'Pending') return 'Awaiting review';
-  if (event.status === 'Manual Review Required') return 'Awaiting manual review';
-  return 'No decision yet';
-}
-
-function publicationLabel(event: EventRecord): string {
-  if (event.status === 'Approved') return 'Public listing eligible';
-  return 'Not public';
 }

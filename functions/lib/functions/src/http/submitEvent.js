@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.submitEvent = exports.isValidEvidenceMetadata = void 0;
 exports.submitEventForUser = submitEventForUser;
+exports.buildAdminSubmissionNotification = buildAdminSubmissionNotification;
 exports.validateEventDetails = validateEventDetails;
 exports.validateEvidencePaths = validateEvidencePaths;
 exports.validateCanonicalVenueRecord = validateCanonicalVenueRecord;
@@ -10,9 +11,13 @@ const node_crypto_1 = require("node:crypto");
 const firestore_1 = require("firebase-admin/firestore");
 const https_1 = require("firebase-functions/v2/https");
 const types_1 = require("../../../shared/types");
+const m1TemplateContract_1 = require("../../../shared/m1TemplateContract");
 const runtime_1 = require("../config/runtime");
 const resourceCutoverLock_1 = require("../config/resourceCutoverLock");
 const storageEvidence_1 = require("../utils/storageEvidence");
+const extractApplicationDocuments_1 = require("./extractApplicationDocuments");
+const m1EvidenceManifest_1 = require("../engines/m1EvidenceManifest");
+const applicationLifecycle_1 = require("./applicationLifecycle");
 var storageEvidence_2 = require("../utils/storageEvidence");
 Object.defineProperty(exports, "isValidEvidenceMetadata", { enumerable: true, get: function () { return storageEvidence_2.isValidEvidenceMetadata; } });
 exports.submitEvent = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
@@ -34,10 +39,30 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
         throw new https_1.HttpsError('permission-denied', 'Only organizer accounts can submit applications.');
     if (!preflightEvent.exists)
         throw new https_1.HttpsError('not-found', 'Event draft was not found.');
-    const preflight = { eventId, ...preflightEvent.data() };
+    const preflight = { ...preflightEvent.data(), eventId };
     if (preflight.organizerId !== uid)
         throw new https_1.HttpsError('permission-denied', 'You do not own this event.');
+    if ((preflight.currentVersionNumber > 0 && !preflight.activeRevision)
+        || (preflight.activeRevision && !(0, applicationLifecycle_1.hasValidActiveRevision)(preflight))) {
+        throw new https_1.HttpsError('failed-precondition', 'The application revision provenance is invalid.');
+    }
+    if (!(0, m1TemplateContract_1.isValidM1TemplateSelection)(preflight.templateSelection)) {
+        throw new https_1.HttpsError('failed-precondition', 'Choose a valid Core and scenario template before submitting.');
+    }
+    if ((0, m1TemplateContract_1.m1CategoryForEventType)(preflight.eventDetails.type) !== preflight.templateSelection.eventCategory
+        || !(0, m1TemplateContract_1.m1VenueSettingMatchesEnvironment)(preflight.templateSelection.venueSetting, preflight.eventDetails.environment)) {
+        throw new https_1.HttpsError('failed-precondition', 'The template recommendation no longer matches the event type or venue setting.');
+    }
     const preflightVersionId = `v${(preflight.currentVersionNumber ?? 0) + 1}`;
+    const preflightDocuments = preflight.documentSchemaVersion === types_1.M1_DOCUMENT_SCHEMA_VERSION
+        ? (0, extractApplicationDocuments_1.validateDraftDocuments)(eventId, preflightVersionId, preflight.draftDocuments)
+        : undefined;
+    const preflightExtraction = preflightDocuments
+        ? await loadCurrentExtraction(preflight, eventReference)
+        : undefined;
+    const preflightEvidenceManifest = preflightDocuments
+        ? validateCurrentEvidenceManifest(preflight, preflightDocuments)
+        : undefined;
     await validateSubmissionAssets(eventId, preflightVersionId, preflight.draftDocumentPaths ?? []);
     await validateCanonicalVenue(preflight.eventDetails);
     const preflightFingerprint = submissionFingerprint(preflight);
@@ -59,13 +84,20 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
         }
         if (!eventSnapshot.exists)
             throw new https_1.HttpsError('not-found', 'Event draft was not found.');
-        const event = { eventId, ...eventSnapshot.data() };
+        const event = { ...eventSnapshot.data(), eventId };
         if (submissionFingerprint(event) !== preflightFingerprint)
             throw new https_1.HttpsError('aborted', 'The draft changed during submission. Review it and retry.');
         if (event.organizerId !== uid)
             throw new https_1.HttpsError('permission-denied', 'You do not own this event.');
         if (event.status !== 'Draft') {
             throw new https_1.HttpsError('failed-precondition', 'Only draft applications can be submitted. Rejected applications are final.');
+        }
+        if (!(0, m1TemplateContract_1.isValidM1TemplateSelection)(event.templateSelection)) {
+            throw new https_1.HttpsError('failed-precondition', 'Choose a valid Core and scenario template before submitting.');
+        }
+        if ((0, m1TemplateContract_1.m1CategoryForEventType)(event.eventDetails.type) !== event.templateSelection.eventCategory
+            || !(0, m1TemplateContract_1.m1VenueSettingMatchesEnvironment)(event.templateSelection.venueSetting, event.eventDetails.environment)) {
+            throw new https_1.HttpsError('failed-precondition', 'The template recommendation no longer matches the event type or venue setting.');
         }
         if (event.eventDetails.venueId && (!venueSnapshot?.exists
             || validateCanonicalVenueRecord(event.eventDetails, venueSnapshot.data()).length > 0)) {
@@ -84,13 +116,30 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
         if (documentPaths.some((path) => !path.startsWith(allowedPrefix))) {
             throw new https_1.HttpsError('invalid-argument', 'One or more uploaded document paths do not belong to this application version.');
         }
-        const inputHash = (0, node_crypto_1.createHash)('sha256').update(JSON.stringify({ eventDetails: event.eventDetails, documentPaths })).digest('hex');
+        const inputHash = (0, node_crypto_1.createHash)('sha256').update(JSON.stringify({
+            eventDetails: event.eventDetails,
+            templateSelection: event.templateSelection,
+            documentPaths,
+            documentUploads: preflightDocuments,
+            extractionId: preflightExtraction?.extractionId,
+            evidenceManifest: preflightEvidenceManifest,
+            evidenceManifestSchemaVersion: preflight.evidenceManifestSchemaVersion,
+            revisionSource: preflight.activeRevision,
+        })).digest('hex');
         const version = {
             versionId,
             eventId,
             versionNumber,
             eventDetails: event.eventDetails,
+            templateSelection: event.templateSelection,
             documentPaths,
+            ...(preflightDocuments ? { documentUploads: preflightDocuments } : {}),
+            ...(preflightExtraction ? { extractionId: preflightExtraction.extractionId } : {}),
+            ...(preflightEvidenceManifest ? {
+                evidenceManifest: preflightEvidenceManifest,
+                evidenceManifestSchemaVersion: types_1.M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
+            } : {}),
+            ...(preflight.activeRevision ? { revisionSource: preflight.activeRevision } : {}),
             submittedBy: uid,
             submittedAt: now,
             inputHash,
@@ -99,6 +148,15 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
         const versionSnapshot = await transaction.get(versionReference);
         if (versionSnapshot.exists)
             throw new https_1.HttpsError('already-exists', 'This application version has already been submitted.');
+        const adminSnapshots = await transaction.get(db.collection(types_1.COLLECTIONS.USERS).where('role', '==', 'admin'));
+        const adminNotifications = adminSnapshots.docs.map((admin) => buildAdminSubmissionNotification({
+            adminUid: admin.id,
+            eventId,
+            versionId,
+            versionNumber,
+            eventName: event.eventDetails.name,
+            submittedAt: now,
+        }));
         const requiredAuthorities = requiredAuthoritiesFor(event.eventDetails);
         transaction.create(versionReference, version);
         transaction.update(eventReference, {
@@ -115,6 +173,7 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
             assignedOfficerByAuthority: {},
             reviewStage: 'initial',
             initialReview: firestore_1.FieldValue.delete(),
+            activeRevision: firestore_1.FieldValue.delete(),
             manualAssessment: firestore_1.FieldValue.delete(),
             verifiedControlIds: [],
             submittedAt: now,
@@ -131,10 +190,38 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
             timestamp: now,
             previousStatus: event.status,
             newStatus: 'Pending',
-            metadata: { inputHash, documentCount: documentPaths.length, requiredAuthorities },
+            metadata: {
+                inputHash,
+                documentCount: documentPaths.length,
+                requiredAuthorities,
+                adminNotificationCount: adminNotifications.length,
+            },
         });
+        for (const notification of adminNotifications) {
+            transaction.create(db.collection(types_1.COLLECTIONS.NOTIFICATIONS).doc(notification.notificationId), notification);
+        }
         return { eventId, versionId, versionNumber, status: 'Pending' };
     });
+}
+/** Build the privacy-safe, deterministic notification written with the submission transaction. */
+function buildAdminSubmissionNotification(input) {
+    const sourceActionId = `application-submitted:${input.eventId}:${input.versionId}`;
+    const notificationId = `m1-submit-${(0, node_crypto_1.createHash)('sha256')
+        .update(`${sourceActionId}:${input.adminUid}`)
+        .digest('hex')}`;
+    const isEditedApplication = input.versionNumber > 1;
+    return {
+        notificationId,
+        recipientUid: input.adminUid,
+        eventId: input.eventId,
+        versionId: input.versionId,
+        type: 'application_submitted_for_review',
+        title: isEditedApplication ? 'Updated application submitted' : 'New application submitted',
+        message: `${input.eventName} (${input.versionId}) is ready for administrative review.`,
+        sourceActionId,
+        read: false,
+        createdAt: input.submittedAt,
+    };
 }
 function validateEventDetails(value, now = Date.now()) {
     if (!isRecord(value))
@@ -212,14 +299,14 @@ async function validateSubmissionAssets(eventId, versionId, paths) {
     if (missing)
         throw new https_1.HttpsError('failed-precondition', `Supporting evidence is missing from Storage: ${missing.path}.`);
     if (inspections.some((item) => item.status !== 'eligible')) {
-        throw new https_1.HttpsError('invalid-argument', 'Supporting evidence must be a non-empty PDF, JPEG, PNG, or WebP file no larger than 10 MB.');
+        throw new https_1.HttpsError('invalid-argument', 'Application documents must be non-empty DOCX, PDF, JPEG, PNG, or WebP files no larger than 10 MB.');
     }
 }
 async function validateCanonicalVenue(details) {
     if (!details.venueId)
         return;
     const snapshot = await (0, firestore_1.getFirestore)().collection(types_1.COLLECTIONS.VENUES).doc(details.venueId).get();
-    if (!snapshot.exists || snapshot.data()?.active !== true || snapshot.data()?.deactivatedAt !== undefined) {
+    if (!snapshot.exists || snapshot.data()?.active !== true || snapshot.data()?.verificationStatus !== 'verified' || snapshot.data()?.deactivatedAt !== undefined) {
         throw new https_1.HttpsError('failed-precondition', 'The selected venue is not an active verified registry venue.');
     }
     if (validateCanonicalVenueRecord(details, snapshot.data()).length > 0) {
@@ -236,7 +323,7 @@ function validateEvidencePaths(eventId, versionId, paths) {
         : [];
 }
 function validateCanonicalVenueRecord(details, value) {
-    if (!isRecord(value) || value.active !== true || value.deactivatedAt !== undefined) {
+    if (!isRecord(value) || value.active !== true || value.verificationStatus !== 'verified' || value.deactivatedAt !== undefined) {
         return ['The selected venue is not an active verified registry venue.'];
     }
     const location = isRecord(value.location) ? value.location : {};
@@ -255,8 +342,52 @@ function submissionFingerprint(event) {
         currentVersionNumber: event.currentVersionNumber,
         editableVersionId: event.editableVersionId,
         eventDetails: event.eventDetails,
+        templateSelection: event.templateSelection,
         documentPaths: event.draftDocumentPaths,
+        documentUploads: event.draftDocuments,
+        documentSchemaVersion: event.documentSchemaVersion,
+        currentExtractionId: event.currentExtractionId,
+        evidenceManifest: event.draftEvidenceManifest,
+        evidenceManifestSchemaVersion: event.evidenceManifestSchemaVersion,
+        activeRevision: event.activeRevision,
     })).digest('hex');
+}
+function validateCurrentEvidenceManifest(event, documents) {
+    if (event.evidenceManifestSchemaVersion !== types_1.M1_EVIDENCE_MANIFEST_SCHEMA_VERSION || !event.templateSelection) {
+        throw new https_1.HttpsError('failed-precondition', 'Complete the current supporting-evidence checklist before submission.');
+    }
+    const result = (0, m1EvidenceManifest_1.validateM1EvidenceManifest)(event.eventDetails, event.templateSelection, documents, event.draftEvidenceManifest);
+    if (result.errors.length > 0)
+        throw new https_1.HttpsError('failed-precondition', result.errors.join(' '));
+    return result.manifest;
+}
+async function loadCurrentExtraction(event, eventReference) {
+    if (!event.currentExtractionId || !/^[A-Za-z0-9_-]{1,128}$/.test(event.currentExtractionId)) {
+        throw new https_1.HttpsError('failed-precondition', 'Extract and review the combined PDF or completed Core and scenario DOCX files before submission.');
+    }
+    const snapshot = await eventReference.collection(types_1.COLLECTIONS.DOCUMENT_EXTRACTIONS).doc(event.currentExtractionId).get();
+    if (!snapshot.exists)
+        throw new https_1.HttpsError('failed-precondition', 'The current document extraction could not be found. Extract the files again.');
+    const extraction = snapshot.data();
+    const expectedPaths = (event.draftDocuments ?? [])
+        .filter((document) => document.role === 'core_template' || document.role === 'scenario_template' || document.role === 'combined_application')
+        .map((document) => `${document.role}:${document.path}:${document.originalName}:${document.mimeType}:${document.sizeBytes}`)
+        .sort();
+    const actualPaths = Array.isArray(extraction.sourceDocuments)
+        ? extraction.sourceDocuments.map((document) => `${document.role}:${document.path}:${document.originalName}:${document.mimeType}:${document.sizeBytes}`).sort()
+        : [];
+    if (extraction.extractionId !== event.currentExtractionId
+        || extraction.eventId !== event.eventId
+        || extraction.editableVersionId !== event.editableVersionId
+        || extraction.schemaVersion !== types_1.M1_EXTRACTION_SCHEMA_VERSION
+        || extraction.templateRegistryVersion !== event.templateSelection?.templateRegistryVersion
+        || extraction.coreTemplateId !== event.templateSelection?.coreTemplateId
+        || extraction.scenarioTemplateId !== event.templateSelection?.scenarioTemplateId
+        || !['ready', 'needs_review'].includes(extraction.status)
+        || JSON.stringify(actualPaths) !== JSON.stringify(expectedPaths)) {
+        throw new https_1.HttpsError('failed-precondition', 'The document extraction is stale or does not match the current Draft files. Extract the files again.');
+    }
+    return extraction;
 }
 function normalizeText(value) {
     return typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').toLowerCase() : '';

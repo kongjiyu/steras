@@ -10,7 +10,13 @@ export interface StorageEvidenceInspection {
   reason?: string;
 }
 
-const EVIDENCE_MIME_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
+const EVIDENCE_MIME_TYPES = new Set([
+  'application/pdf',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+]);
 const MAX_EVIDENCE_SIZE = 10 * 1024 * 1024;
 
 export async function inspectStorageEvidence(paths: string[], now = Date.now()): Promise<StorageEvidenceInspection[]> {

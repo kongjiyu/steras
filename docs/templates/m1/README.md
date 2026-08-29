@@ -21,6 +21,7 @@ The common template is `core/Core Event Application Template.docx` with template
 - Preserve the original `.docx` files for organiser download.
 - Use the template identifier and Field IDs as stable extraction references.
 - Generate separate preview artifacts for the web interface; do not modify the source Word files during preview generation.
+- Browser-ready, visually inspected derivatives are versioned in `output/pdf/m1-template-previews/` and emitted by the frontend build without duplicating the DOCX source tree.
 - Treat conditional supporting-evidence rows as input to a versioned recommendation/checklist contract after the rules are confirmed in the PRD.
 - Verify `SHA256SUMS` whenever replacing a template so changes are explicit and reviewable.
 

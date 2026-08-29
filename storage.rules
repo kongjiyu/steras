@@ -52,7 +52,7 @@ service firebase.storage {
                     && fileName.matches('[A-Za-z0-9._-]{1,200}')
                     && request.resource.size > 0
                     && request.resource.size <= 10 * 1024 * 1024
-                    && request.resource.contentType.matches('image/(jpeg|png|webp)|application/pdf');
+                    && request.resource.contentType.matches('image/(jpeg|png|webp)|application/pdf|application/vnd\\.openxmlformats-officedocument\\.wordprocessingml\\.document');
       allow update: if false;
       // Keep evidence bytes immutable. A draft can stop referring to an upload,
       // but delete-and-recreate would permit a client to swap a file after the

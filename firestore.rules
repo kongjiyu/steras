@@ -54,6 +54,48 @@ service cloud.firestore {
       return status == 'Draft';
     }
 
+    function validM1TemplateSelection(data) {
+      return data.templateSelection is map
+        && data.templateSelection.keys().hasOnly([
+          'eventCategory', 'venueSetting', 'coreTemplateId',
+          'scenarioTemplateId', 'templateRegistryVersion', 'selectedAt'
+        ])
+        && data.templateSelection.coreTemplateId == 'STERAS-CORE'
+        && data.templateSelection.templateRegistryVersion == '2026-08-28-v1'
+        && data.templateSelection.selectedAt is int
+        && data.templateSelection.selectedAt > 0
+        && (data.eventDetails.type + '|' + data.templateSelection.eventCategory) in [
+          'concert|entertainment_performance',
+          'festival|cultural_heritage_festival',
+          'sports|sports_recreational',
+          'cultural|cultural_heritage_festival',
+          'religious|cultural_heritage_festival',
+          'exhibition|exhibition_convention_promotional',
+          'fair|carnival_public_celebration',
+          'conference|exhibition_convention_promotional',
+          'other|carnival_public_celebration'
+        ]
+        && ((data.templateSelection.venueSetting == 'indoor' && data.eventDetails.environment == 'indoor')
+          || (data.templateSelection.venueSetting != 'indoor' && data.eventDetails.environment in ['outdoor', 'mixed']))
+        && (data.templateSelection.eventCategory + '|' + data.templateSelection.venueSetting + '|' + data.templateSelection.scenarioTemplateId) in [
+          'entertainment_performance|indoor|STERAS-T01-ENT-IN-v2.0',
+          'entertainment_performance|outdoor_fixed_site|STERAS-T02-ENT-OF-v1.0',
+          'entertainment_performance|outdoor_route_based|STERAS-T03-ENT-OR-v1.0',
+          'sports_recreational|indoor|STERAS-T04-SPT-IN-v1.0',
+          'sports_recreational|outdoor_fixed_site|STERAS-T05-SPT-OF-v1.0',
+          'sports_recreational|outdoor_route_based|STERAS-T06-SPT-OR-v1.0',
+          'cultural_heritage_festival|indoor|STERAS-T07-CUL-IN-v1.0',
+          'cultural_heritage_festival|outdoor_fixed_site|STERAS-T08-CUL-OF-v1.0',
+          'cultural_heritage_festival|outdoor_route_based|STERAS-T09-CUL-OR-v1.0',
+          'exhibition_convention_promotional|indoor|STERAS-T10-EXP-IN-v1.0',
+          'exhibition_convention_promotional|outdoor_fixed_site|STERAS-T11-EXP-OF-v1.0',
+          'exhibition_convention_promotional|outdoor_route_based|STERAS-T12-EXP-OR-v1.0',
+          'carnival_public_celebration|indoor|STERAS-T13-CAR-IN-v1.0',
+          'carnival_public_celebration|outdoor_fixed_site|STERAS-T14-CAR-OF-v1.0',
+          'carnival_public_celebration|outdoor_route_based|STERAS-T15-CAR-OR-v1.0'
+        ];
+    }
+
     // ---- users collection ----
     // Self can read own profile.
     // Authorities can read other authorities (for assignment/coordination).
@@ -97,7 +139,20 @@ service cloud.firestore {
                     && request.resource.data.status == 'Draft'
                     && request.resource.data.currentVersionNumber == 0
                     && request.resource.data.editableVersionId == 'v1'
+                    && request.resource.data.documentSchemaVersion == '2026-08-28-document-v1'
+                    && request.resource.data.evidenceManifestSchemaVersion == '2026-08-28-evidence-v1'
+                    && request.resource.data.draftEvidenceManifest is list
+                    && request.resource.data.draftEvidenceManifest.size() >= 13
+                    && request.resource.data.draftEvidenceManifest.size() <= 19
+                    && !request.resource.data.keys().hasAny([
+                      'eventId', 'currentExtractionId', 'activeRevision',
+                      'cancelledAt', 'cancelledFromVersionId',
+                      'withdrawnAt', 'withdrawnFromStatus', 'withdrawalRationale'
+                    ])
+                    && validM1TemplateSelection(request.resource.data)
                     && request.resource.data.draftDocumentPaths.size() == 0
+                    && (!request.resource.data.keys().hasAny(['draftDocuments'])
+                        || request.resource.data.draftDocuments.size() == 0)
                     && request.resource.data.requiredAuthorities.size() == 0;
 
       // Submitted Pending versions are immutable. Generated pointers and status
@@ -109,9 +164,24 @@ service cloud.firestore {
                     && request.resource.data.status == resource.data.status
                     && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
                       'currentVersionId', 'currentAssessmentId', 'currentResourceId',
+                      'currentExtractionId',
+                      'documentSchemaVersion',
+                      'evidenceManifestSchemaVersion',
+                      'activeRevision',
+                      'cancelledAt', 'cancelledFromVersionId',
+                      'withdrawnAt', 'withdrawnFromStatus', 'withdrawalRationale',
+                      'eventId',
                       'requiredAuthorities', 'currentVersionNumber', 'editableVersionId',
                       'submittedAt'
-                    ]);
+                    ])
+                    && (
+                      !request.resource.data.diff(resource.data).affectedKeys().hasAny(['templateSelection'])
+                        ? (!resource.data.keys().hasAny(['templateSelection'])
+                            || validM1TemplateSelection(request.resource.data))
+                        : (resource.data.draftDocumentPaths.size() == 0
+                            && request.resource.data.draftDocumentPaths.size() == 0
+                            && validM1TemplateSelection(request.resource.data))
+                    );
 
       // Status transitions to Approved/Rejected/UnderReview are server-only (Cloud Functions).
       allow delete: if false;
@@ -120,6 +190,13 @@ service cloud.firestore {
         allow read: if isAdmin()
                     || (isSignedIn() && isAssignedAuthority(eventId))
                     || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
+        allow write: if false;
+      }
+
+      match /document_extractions/{extractionId} {
+        allow read: if isAdmin()
+                    || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId))
+                    || (isSignedIn() && isAssignedAuthority(eventId));
         allow write: if false;
       }
 
@@ -317,6 +394,20 @@ service cloud.firestore {
     match /venues/{venueId} {
       allow read: if isSignedIn();
       allow write: if false; // seeded via admin SDK / Cloud Functions
+
+      match /audit_logs/{auditId} {
+        allow read: if isAdmin();
+        allow write: if false;
+      }
+    }
+
+    match /admin_operations/{operationId} {
+      allow read, write: if false;
+    }
+
+    match /admin_audit_logs/{auditId} {
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
     // ---- incidents (synthetic dataset — read-only) ----

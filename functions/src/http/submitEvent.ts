@@ -9,10 +9,20 @@ import {
   EventRiskProfile,
   EventType,
   EventVersion,
+  M1_DOCUMENT_SCHEMA_VERSION,
+  M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
+  M1DocumentExtraction,
+  M1DraftDocument,
+  M1_EXTRACTION_SCHEMA_VERSION,
+  Notification,
 } from '@shared/types';
+import { isValidM1TemplateSelection, m1CategoryForEventType, m1VenueSettingMatchesEnvironment } from '@shared/m1TemplateContract';
 import { FUNCTION_REGION } from '../config/runtime';
 import { RESOURCE_CUTOVER_LOCK_PATH } from '../config/resourceCutoverLock';
 import { inspectStorageEvidence } from '../utils/storageEvidence';
+import { validateDraftDocuments } from './extractApplicationDocuments';
+import { validateM1EvidenceManifest } from '../engines/m1EvidenceManifest';
+import { hasValidActiveRevision } from './applicationLifecycle';
 
 export { isValidEvidenceMetadata } from '../utils/storageEvidence';
 
@@ -39,9 +49,29 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
   if (preflightLock.exists) throw new HttpsError('unavailable', 'Resource migration is in progress. Retry the submission shortly.');
   if (!preflightUser.exists || preflightUser.data()?.role !== 'organizer') throw new HttpsError('permission-denied', 'Only organizer accounts can submit applications.');
   if (!preflightEvent.exists) throw new HttpsError('not-found', 'Event draft was not found.');
-  const preflight = { eventId, ...preflightEvent.data() } as EventRecord;
+  const preflight = { ...preflightEvent.data(), eventId } as EventRecord;
   if (preflight.organizerId !== uid) throw new HttpsError('permission-denied', 'You do not own this event.');
+  if ((preflight.currentVersionNumber > 0 && !preflight.activeRevision)
+    || (preflight.activeRevision && !hasValidActiveRevision(preflight))) {
+    throw new HttpsError('failed-precondition', 'The application revision provenance is invalid.');
+  }
+  if (!isValidM1TemplateSelection(preflight.templateSelection)) {
+    throw new HttpsError('failed-precondition', 'Choose a valid Core and scenario template before submitting.');
+  }
+  if (m1CategoryForEventType(preflight.eventDetails.type) !== preflight.templateSelection.eventCategory
+    || !m1VenueSettingMatchesEnvironment(preflight.templateSelection.venueSetting, preflight.eventDetails.environment)) {
+    throw new HttpsError('failed-precondition', 'The template recommendation no longer matches the event type or venue setting.');
+  }
   const preflightVersionId = `v${(preflight.currentVersionNumber ?? 0) + 1}`;
+  const preflightDocuments = preflight.documentSchemaVersion === M1_DOCUMENT_SCHEMA_VERSION
+    ? validateDraftDocuments(eventId, preflightVersionId, preflight.draftDocuments)
+    : undefined;
+  const preflightExtraction = preflightDocuments
+    ? await loadCurrentExtraction(preflight, eventReference)
+    : undefined;
+  const preflightEvidenceManifest = preflightDocuments
+    ? validateCurrentEvidenceManifest(preflight, preflightDocuments)
+    : undefined;
   await validateSubmissionAssets(eventId, preflightVersionId, preflight.draftDocumentPaths ?? []);
   await validateCanonicalVenue(preflight.eventDetails);
   const preflightFingerprint = submissionFingerprint(preflight);
@@ -63,11 +93,18 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
       throw new HttpsError('permission-denied', 'Only organizer accounts can submit applications.');
     }
     if (!eventSnapshot.exists) throw new HttpsError('not-found', 'Event draft was not found.');
-    const event = { eventId, ...eventSnapshot.data() } as EventRecord;
+    const event = { ...eventSnapshot.data(), eventId } as EventRecord;
     if (submissionFingerprint(event) !== preflightFingerprint) throw new HttpsError('aborted', 'The draft changed during submission. Review it and retry.');
     if (event.organizerId !== uid) throw new HttpsError('permission-denied', 'You do not own this event.');
     if (event.status !== 'Draft') {
       throw new HttpsError('failed-precondition', 'Only draft applications can be submitted. Rejected applications are final.');
+    }
+    if (!isValidM1TemplateSelection(event.templateSelection)) {
+      throw new HttpsError('failed-precondition', 'Choose a valid Core and scenario template before submitting.');
+    }
+    if (m1CategoryForEventType(event.eventDetails.type) !== event.templateSelection.eventCategory
+      || !m1VenueSettingMatchesEnvironment(event.templateSelection.venueSetting, event.eventDetails.environment)) {
+      throw new HttpsError('failed-precondition', 'The template recommendation no longer matches the event type or venue setting.');
     }
     if (event.eventDetails.venueId && (!venueSnapshot?.exists
       || validateCanonicalVenueRecord(event.eventDetails, venueSnapshot.data()).length > 0)) {
@@ -87,13 +124,30 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
       throw new HttpsError('invalid-argument', 'One or more uploaded document paths do not belong to this application version.');
     }
 
-    const inputHash = createHash('sha256').update(JSON.stringify({ eventDetails: event.eventDetails, documentPaths })).digest('hex');
+    const inputHash = createHash('sha256').update(JSON.stringify({
+      eventDetails: event.eventDetails,
+      templateSelection: event.templateSelection,
+      documentPaths,
+      documentUploads: preflightDocuments,
+      extractionId: preflightExtraction?.extractionId,
+      evidenceManifest: preflightEvidenceManifest,
+      evidenceManifestSchemaVersion: preflight.evidenceManifestSchemaVersion,
+      revisionSource: preflight.activeRevision,
+    })).digest('hex');
     const version: EventVersion = {
       versionId,
       eventId,
       versionNumber,
       eventDetails: event.eventDetails,
+      templateSelection: event.templateSelection,
       documentPaths,
+      ...(preflightDocuments ? { documentUploads: preflightDocuments } : {}),
+      ...(preflightExtraction ? { extractionId: preflightExtraction.extractionId } : {}),
+      ...(preflightEvidenceManifest ? {
+        evidenceManifest: preflightEvidenceManifest,
+        evidenceManifestSchemaVersion: M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
+      } : {}),
+      ...(preflight.activeRevision ? { revisionSource: preflight.activeRevision } : {}),
       submittedBy: uid,
       submittedAt: now,
       inputHash,
@@ -101,6 +155,15 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
     const versionReference = eventReference.collection(COLLECTIONS.VERSIONS).doc(versionId);
     const versionSnapshot = await transaction.get(versionReference);
     if (versionSnapshot.exists) throw new HttpsError('already-exists', 'This application version has already been submitted.');
+    const adminSnapshots = await transaction.get(db.collection(COLLECTIONS.USERS).where('role', '==', 'admin'));
+    const adminNotifications = adminSnapshots.docs.map((admin) => buildAdminSubmissionNotification({
+      adminUid: admin.id,
+      eventId,
+      versionId,
+      versionNumber,
+      eventName: event.eventDetails.name,
+      submittedAt: now,
+    }));
 
     const requiredAuthorities = requiredAuthoritiesFor(event.eventDetails);
     transaction.create(versionReference, version);
@@ -118,6 +181,7 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
       assignedOfficerByAuthority: {},
       reviewStage: 'initial',
       initialReview: FieldValue.delete(),
+      activeRevision: FieldValue.delete(),
       manualAssessment: FieldValue.delete(),
       verifiedControlIds: [],
       submittedAt: now,
@@ -134,10 +198,48 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
       timestamp: now,
       previousStatus: event.status,
       newStatus: 'Pending',
-      metadata: { inputHash, documentCount: documentPaths.length, requiredAuthorities },
+      metadata: {
+        inputHash,
+        documentCount: documentPaths.length,
+        requiredAuthorities,
+        adminNotificationCount: adminNotifications.length,
+      },
     });
+    for (const notification of adminNotifications) {
+      transaction.create(db.collection(COLLECTIONS.NOTIFICATIONS).doc(notification.notificationId), notification);
+    }
     return { eventId, versionId, versionNumber, status: 'Pending' as const };
   });
+}
+
+interface AdminSubmissionNotificationInput {
+  adminUid: string;
+  eventId: string;
+  versionId: string;
+  versionNumber: number;
+  eventName: string;
+  submittedAt: number;
+}
+
+/** Build the privacy-safe, deterministic notification written with the submission transaction. */
+export function buildAdminSubmissionNotification(input: AdminSubmissionNotificationInput): Notification {
+  const sourceActionId = `application-submitted:${input.eventId}:${input.versionId}`;
+  const notificationId = `m1-submit-${createHash('sha256')
+    .update(`${sourceActionId}:${input.adminUid}`)
+    .digest('hex')}`;
+  const isEditedApplication = input.versionNumber > 1;
+  return {
+    notificationId,
+    recipientUid: input.adminUid,
+    eventId: input.eventId,
+    versionId: input.versionId,
+    type: 'application_submitted_for_review',
+    title: isEditedApplication ? 'Updated application submitted' : 'New application submitted',
+    message: `${input.eventName} (${input.versionId}) is ready for administrative review.`,
+    sourceActionId,
+    read: false,
+    createdAt: input.submittedAt,
+  };
 }
 
 export function validateEventDetails(value: unknown, now = Date.now()): string[] {
@@ -204,14 +306,14 @@ async function validateSubmissionAssets(eventId: string, versionId: string, path
   const missing = inspections.find((item) => item.status === 'missing');
   if (missing) throw new HttpsError('failed-precondition', `Supporting evidence is missing from Storage: ${missing.path}.`);
   if (inspections.some((item) => item.status !== 'eligible')) {
-    throw new HttpsError('invalid-argument', 'Supporting evidence must be a non-empty PDF, JPEG, PNG, or WebP file no larger than 10 MB.');
+    throw new HttpsError('invalid-argument', 'Application documents must be non-empty DOCX, PDF, JPEG, PNG, or WebP files no larger than 10 MB.');
   }
 }
 
 async function validateCanonicalVenue(details: EventDetails): Promise<void> {
   if (!details.venueId) return;
   const snapshot = await getFirestore().collection(COLLECTIONS.VENUES).doc(details.venueId).get();
-  if (!snapshot.exists || snapshot.data()?.active !== true || snapshot.data()?.deactivatedAt !== undefined) {
+  if (!snapshot.exists || snapshot.data()?.active !== true || snapshot.data()?.verificationStatus !== 'verified' || snapshot.data()?.deactivatedAt !== undefined) {
     throw new HttpsError('failed-precondition', 'The selected venue is not an active verified registry venue.');
   }
   if (validateCanonicalVenueRecord(details, snapshot.data()).length > 0) {
@@ -230,7 +332,7 @@ export function validateEvidencePaths(eventId: string, versionId: string, paths:
 }
 
 export function validateCanonicalVenueRecord(details: EventDetails, value: unknown): string[] {
-  if (!isRecord(value) || value.active !== true || value.deactivatedAt !== undefined) {
+  if (!isRecord(value) || value.active !== true || value.verificationStatus !== 'verified' || value.deactivatedAt !== undefined) {
     return ['The selected venue is not an active verified registry venue.'];
   }
   const location = isRecord(value.location) ? value.location : {};
@@ -250,8 +352,55 @@ function submissionFingerprint(event: EventRecord): string {
     currentVersionNumber: event.currentVersionNumber,
     editableVersionId: event.editableVersionId,
     eventDetails: event.eventDetails,
+    templateSelection: event.templateSelection,
     documentPaths: event.draftDocumentPaths,
+    documentUploads: event.draftDocuments,
+    documentSchemaVersion: event.documentSchemaVersion,
+    currentExtractionId: event.currentExtractionId,
+    evidenceManifest: event.draftEvidenceManifest,
+    evidenceManifestSchemaVersion: event.evidenceManifestSchemaVersion,
+    activeRevision: event.activeRevision,
   })).digest('hex');
+}
+
+function validateCurrentEvidenceManifest(event: EventRecord, documents: M1DraftDocument[]) {
+  if (event.evidenceManifestSchemaVersion !== M1_EVIDENCE_MANIFEST_SCHEMA_VERSION || !event.templateSelection) {
+    throw new HttpsError('failed-precondition', 'Complete the current supporting-evidence checklist before submission.');
+  }
+  const result = validateM1EvidenceManifest(event.eventDetails, event.templateSelection, documents, event.draftEvidenceManifest);
+  if (result.errors.length > 0) throw new HttpsError('failed-precondition', result.errors.join(' '));
+  return result.manifest;
+}
+
+async function loadCurrentExtraction(
+  event: EventRecord,
+  eventReference: FirebaseFirestore.DocumentReference,
+): Promise<M1DocumentExtraction> {
+  if (!event.currentExtractionId || !/^[A-Za-z0-9_-]{1,128}$/.test(event.currentExtractionId)) {
+    throw new HttpsError('failed-precondition', 'Extract and review the combined PDF or completed Core and scenario DOCX files before submission.');
+  }
+  const snapshot = await eventReference.collection(COLLECTIONS.DOCUMENT_EXTRACTIONS).doc(event.currentExtractionId).get();
+  if (!snapshot.exists) throw new HttpsError('failed-precondition', 'The current document extraction could not be found. Extract the files again.');
+  const extraction = snapshot.data() as M1DocumentExtraction;
+  const expectedPaths = (event.draftDocuments ?? [])
+    .filter((document) => document.role === 'core_template' || document.role === 'scenario_template' || document.role === 'combined_application')
+    .map((document) => `${document.role}:${document.path}:${document.originalName}:${document.mimeType}:${document.sizeBytes}`)
+    .sort();
+  const actualPaths = Array.isArray(extraction.sourceDocuments)
+    ? extraction.sourceDocuments.map((document) => `${document.role}:${document.path}:${document.originalName}:${document.mimeType}:${document.sizeBytes}`).sort()
+    : [];
+  if (extraction.extractionId !== event.currentExtractionId
+    || extraction.eventId !== event.eventId
+    || extraction.editableVersionId !== event.editableVersionId
+    || extraction.schemaVersion !== M1_EXTRACTION_SCHEMA_VERSION
+    || extraction.templateRegistryVersion !== event.templateSelection?.templateRegistryVersion
+    || extraction.coreTemplateId !== event.templateSelection?.coreTemplateId
+    || extraction.scenarioTemplateId !== event.templateSelection?.scenarioTemplateId
+    || !['ready', 'needs_review'].includes(extraction.status)
+    || JSON.stringify(actualPaths) !== JSON.stringify(expectedPaths)) {
+    throw new HttpsError('failed-precondition', 'The document extraction is stale or does not match the current Draft files. Extract the files again.');
+  }
+  return extraction;
 }
 
 function normalizeText(value: unknown): string {

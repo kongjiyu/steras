@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { firestore } from 'firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import {
   ASSESSMENT_SCHEMA_VERSION,
@@ -249,8 +250,8 @@ export async function makeAuthorityDecisionForUser(
     transaction.create(historyReference, { ...authorityDecision, decisionId: historyId, current: false });
     transaction.update(eventReference, {
       status: aggregateStatus,
-      authorityReviewCompletedAt: allOfficersCompleted ? now : firestore.FieldValue.delete(),
-      authorityReviewCompletedVersionId: allOfficersCompleted ? versionId : firestore.FieldValue.delete(),
+      authorityReviewCompletedAt: allOfficersCompleted ? now : FieldValue.delete(),
+      authorityReviewCompletedVersionId: allOfficersCompleted ? versionId : FieldValue.delete(),
       updatedAt: now,
     });
     transaction.create(auditReference, {

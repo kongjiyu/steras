@@ -135,6 +135,7 @@ async function makeInitialReviewDecisionForUser(uid, data, now = Date.now()) {
         const currentEventSnap = await tx.get(eventRef);
         const currentEvent = { eventId, ...currentEventSnap.data() };
         if (!currentEventSnap.exists
+            || currentEvent.status !== event.status
             || currentEvent.currentVersionId !== versionId
             || currentEvent.currentAssessmentId !== assessmentId
             || currentEvent.currentResourceId !== resourceId

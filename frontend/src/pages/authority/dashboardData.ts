@@ -48,5 +48,5 @@ export function statusDistribution(records: DashboardRecord[]) {
   return records.reduce<Record<EventStatus, number>>((counts, { event }) => {
     counts[event.status] += 1;
     return counts;
-    }, { Draft: 0, Pending: 0, UnderReview: 0, Approved: 0, Rejected: 0, Withdrawn: 0, 'Manual Review Required': 0 });
+    }, { Draft: 0, Pending: 0, UnderReview: 0, Approved: 0, Rejected: 0, Cancelled: 0, Withdrawn: 0, 'Manual Review Required': 0 });
 }
