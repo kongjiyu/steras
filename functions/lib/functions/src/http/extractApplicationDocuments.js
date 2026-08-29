@@ -12,8 +12,9 @@ const m1TemplateContract_1 = require("../../../shared/m1TemplateContract");
 const runtime_1 = require("../config/runtime");
 const m1DocumentExtractor_1 = require("../engines/m1DocumentExtractor");
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const PDF_MIME = 'application/pdf';
 const MAX_DOCX_BYTES = 10 * 1024 * 1024;
-const DOCUMENT_ROLES = new Set(['core_template', 'scenario_template', 'supporting_evidence']);
+const DOCUMENT_ROLES = new Set(['core_template', 'scenario_template', 'combined_application', 'supporting_evidence']);
 const EVIDENCE_MIME_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
 const DOCUMENT_KEYS = new Set(['path', 'role', 'originalName', 'mimeType', 'sizeBytes', 'uploadedAt', 'schemaVersion']);
 exports.extractApplicationDocuments = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION, memory: '512MiB', timeoutSeconds: 60 }, async (request) => {
@@ -46,11 +47,27 @@ async function extractApplicationDocumentsForUser(uid, eventId, now = Date.now()
         throw new https_1.HttpsError('failed-precondition', 'Choose a current Core and scenario template first.');
     }
     const documents = validateDraftDocuments(eventId, event.editableVersionId, event.draftDocuments);
-    const core = documents.find((document) => document.role === 'core_template');
-    const scenario = documents.find((document) => document.role === 'scenario_template');
-    const inspected = await Promise.all([core, scenario].map(downloadDocx));
-    const [parsedCore, parsedScenario] = await Promise.all(inspected.map((item) => (0, m1DocumentExtractor_1.parseM1Docx)(item.buffer)));
-    const identityErrors = (0, m1DocumentExtractor_1.validateTemplateIdentity)(parsedCore, parsedScenario, event.templateSelection.scenarioTemplateId);
+    const combined = documents.find((document) => document.role === 'combined_application');
+    const applicationDocuments = combined
+        ? [combined]
+        : [
+            documents.find((document) => document.role === 'core_template'),
+            documents.find((document) => document.role === 'scenario_template'),
+        ];
+    const inspected = await Promise.all(applicationDocuments.map(downloadApplicationDocument));
+    let parsed;
+    try {
+        parsed = await Promise.all(inspected.map((item) => item.document.role === 'combined_application'
+            ? (0, m1DocumentExtractor_1.parseM1Pdf)(item.buffer)
+            : (0, m1DocumentExtractor_1.parseM1Docx)(item.buffer)));
+    }
+    catch (error) {
+        throw new https_1.HttpsError('invalid-argument', error instanceof Error ? error.message : 'The application document could not be extracted.');
+    }
+    const [parsedCore, parsedScenario] = combined ? [parsed[0], parsed[0]] : [parsed[0], parsed[1]];
+    const identityErrors = combined
+        ? (0, m1DocumentExtractor_1.validateCombinedTemplateIdentity)(parsed[0], event.templateSelection.scenarioTemplateId)
+        : (0, m1DocumentExtractor_1.validateTemplateIdentity)(parsedCore, parsedScenario, event.templateSelection.scenarioTemplateId);
     if (identityErrors.length > 0)
         throw new https_1.HttpsError('invalid-argument', identityErrors.join(' '));
     const mapped = (0, m1DocumentExtractor_1.mapM1Documents)(parsedCore, parsedScenario);
@@ -124,16 +141,19 @@ async function extractApplicationDocumentsForUser(uid, eventId, now = Date.now()
 }
 function validateDraftDocuments(eventId, versionId, value) {
     if (!Array.isArray(value))
-        throw new https_1.HttpsError('failed-precondition', 'Upload the completed Core and scenario DOCX files before extraction.');
+        throw new https_1.HttpsError('failed-precondition', 'Upload a combined application PDF or the completed Core and scenario DOCX files before extraction.');
     const documents = value;
-    if (documents.length < 2)
-        throw new https_1.HttpsError('failed-precondition', 'Upload exactly one completed Core DOCX and one completed scenario DOCX.');
+    if (documents.length < 1)
+        throw new https_1.HttpsError('failed-precondition', 'Upload a combined application PDF or the two completed DOCX files.');
     if (documents.length > 20)
         throw new https_1.HttpsError('failed-precondition', 'The Draft document list exceeds the 20-file limit.');
-    const roles = documents.filter((document) => document?.role === 'core_template' || document?.role === 'scenario_template');
-    if (roles.filter((document) => document.role === 'core_template').length !== 1
-        || roles.filter((document) => document.role === 'scenario_template').length !== 1) {
-        throw new https_1.HttpsError('failed-precondition', 'Upload exactly one completed Core DOCX and one completed scenario DOCX.');
+    const coreCount = documents.filter((document) => document?.role === 'core_template').length;
+    const scenarioCount = documents.filter((document) => document?.role === 'scenario_template').length;
+    const combinedCount = documents.filter((document) => document?.role === 'combined_application').length;
+    const splitValid = combinedCount === 0 && coreCount === 1 && scenarioCount === 1;
+    const combinedValid = combinedCount === 1 && coreCount === 0 && scenarioCount === 0;
+    if (!splitValid && !combinedValid) {
+        throw new https_1.HttpsError('failed-precondition', 'Use either one combined application PDF or exactly one completed Core DOCX and one completed scenario DOCX.');
     }
     const paths = new Set();
     for (const document of documents) {
@@ -163,6 +183,10 @@ function validateDraftDocuments(eventId, versionId, value) {
             && (document.mimeType !== DOCX_MIME || !document.originalName.toLocaleLowerCase().endsWith('.docx'))) {
             throw new https_1.HttpsError('invalid-argument', 'Completed application templates must be DOCX files.');
         }
+        if (document.role === 'combined_application'
+            && (document.mimeType !== PDF_MIME || !document.originalName.toLocaleLowerCase().endsWith('.pdf'))) {
+            throw new https_1.HttpsError('invalid-argument', 'The combined application must be a PDF file.');
+        }
         if (document.role === 'supporting_evidence' && !EVIDENCE_MIME_TYPES.has(document.mimeType)) {
             throw new https_1.HttpsError('invalid-argument', 'Supporting evidence metadata must identify a PDF, JPEG, PNG, or WebP file.');
         }
@@ -175,14 +199,15 @@ function hasControlCharacter(value) {
         return codePoint <= 31 || codePoint === 127;
     });
 }
-async function downloadDocx(document) {
+async function downloadApplicationDocument(document) {
     const file = (0, storage_1.getStorage)().bucket().file(document.path);
     const [exists] = await file.exists();
     if (!exists)
         throw new https_1.HttpsError('failed-precondition', `The uploaded document is missing: ${document.originalName}.`);
     const [metadata] = await file.getMetadata();
     const size = Number(metadata.size);
-    if (metadata.contentType !== DOCX_MIME || !Number.isSafeInteger(size) || size <= 0 || size > MAX_DOCX_BYTES
+    const expectedMime = document.role === 'combined_application' ? PDF_MIME : DOCX_MIME;
+    if (metadata.contentType !== expectedMime || !Number.isSafeInteger(size) || size <= 0 || size > MAX_DOCX_BYTES
         || size !== document.sizeBytes) {
         throw new https_1.HttpsError('invalid-argument', `Storage metadata does not match ${document.originalName}.`);
     }

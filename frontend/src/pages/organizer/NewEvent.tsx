@@ -242,17 +242,26 @@ export default function NewEvent() {
     if (files.length === 0) return;
     if (files.length !== 1) return toast.error('Choose exactly one file.');
     if (role === 'supporting_evidence' && !requirementId) return toast.error('Choose the checklist requirement for this evidence file.');
-    const retained = role === 'supporting_evidence' ? draftDocuments : draftDocuments.filter((document) => document.role !== role);
+    const applicationRoles = new Set<M1DocumentRole>(['core_template', 'scenario_template', 'combined_application']);
+    const retained = role === 'supporting_evidence'
+      ? draftDocuments
+      : draftDocuments.filter((document) => role === 'combined_application'
+        ? !applicationRoles.has(document.role)
+        : document.role !== role && document.role !== 'combined_application');
     if (retained.length + files.length > 20) return toast.error('Submit no more than 20 application documents.');
     const allowedEvidenceTypes = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
     const invalid = files.find((file) => file.size === 0
       || file.size > 10 * 1024 * 1024
       || (role === 'supporting_evidence'
         ? !allowedEvidenceTypes.has(file.type)
-        : !(file.type === DOCX_MIME || (!file.type && file.name.toLocaleLowerCase().endsWith('.docx')))));
+        : role === 'combined_application'
+          ? !(file.type === 'application/pdf' || (!file.type && file.name.toLocaleLowerCase().endsWith('.pdf')))
+          : !(file.type === DOCX_MIME || (!file.type && file.name.toLocaleLowerCase().endsWith('.docx')))));
     if (invalid) return toast.error(role === 'supporting_evidence'
       ? `${invalid.name} must be a non-empty PDF, JPEG, PNG, or WebP file no larger than 10 MB.`
-      : `${invalid.name} must be a non-empty DOCX file no larger than 10 MB.`);
+      : role === 'combined_application'
+        ? `${invalid.name} must be a non-empty PDF file no larger than 10 MB.`
+        : `${invalid.name} must be a non-empty DOCX file no larger than 10 MB.`);
     setUploading(true);
     try {
       const id = await ensureDraft();
@@ -261,7 +270,7 @@ export default function NewEvent() {
         const file = files[index];
         const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-150) || 'document';
         const path = `event_documents/${id}/${editableVersionId}/${crypto.randomUUID()}-${safeName}`;
-        const mimeType = role === 'supporting_evidence' ? file.type : DOCX_MIME;
+        const mimeType = role === 'supporting_evidence' ? file.type : role === 'combined_application' ? 'application/pdf' : DOCX_MIME;
         const task = uploadBytesResumable(ref(storage, path), file, { contentType: mimeType });
         await new Promise<void>((resolve, reject) => task.on('state_changed', (snapshot) => {
           const fileProgress = snapshot.bytesTransferred / snapshot.totalBytes;
@@ -407,6 +416,7 @@ export default function NewEvent() {
     : '/organizer/events/new';
   const coreUpload = draftDocuments.find((document) => document.role === 'core_template');
   const scenarioUpload = draftDocuments.find((document) => document.role === 'scenario_template');
+  const combinedUpload = draftDocuments.find((document) => document.role === 'combined_application');
   const supportingUploads = draftDocuments.filter((document) => document.role === 'supporting_evidence');
   const structuredUploadPaths = new Set(draftDocuments.map((document) => document.path));
   const legacySupportingPaths = documentPaths.filter((path) => !structuredUploadPaths.has(path));
@@ -648,13 +658,15 @@ export default function NewEvent() {
 
           <fieldset className="space-y-5 border-t border-[#e3dacb] pt-8">
             <legend className="section-title mb-2 pr-4">Completed application documents</legend>
-            <p className="text-sm leading-6 text-ink-500">Upload the completed Core and recommended scenario DOCX. STERAS validates their embedded template IDs before auto-filling this form.</p>
+            <p className="text-sm leading-6 text-ink-500">Upload one combined, text-searchable PDF, or upload the completed Core and recommended scenario DOCX separately. STERAS detects both template IDs and Field IDs before auto-filling this form.</p>
+            <TemplateUploadCard label="Combined Core + scenario PDF" document={combinedUpload} uploading={uploading} format="PDF" onChange={(event) => handleFiles(event, 'combined_application')} onRemove={removeDocument} />
+            <div className="flex items-center gap-3 text-xs font-bold uppercase tracking-[0.08em] text-ink-400"><span className="h-px flex-1 bg-[#e3dacb]" /><span>or upload separately</span><span className="h-px flex-1 bg-[#e3dacb]" /></div>
             <div className="grid gap-4 md:grid-cols-2">
               <TemplateUploadCard label="Core application DOCX" document={coreUpload} uploading={uploading} onChange={(event) => handleFiles(event, 'core_template')} onRemove={removeDocument} />
               <TemplateUploadCard label="Scenario-specific DOCX" document={scenarioUpload} uploading={uploading} onChange={(event) => handleFiles(event, 'scenario_template')} onRemove={removeDocument} />
             </div>
             {uploading && <div className="h-1.5 overflow-hidden rounded bg-cream-200"><div className="h-full bg-brand-600 transition-transform" style={{ transform: `scaleX(${uploadProgress / 100})`, transformOrigin: 'left' }} /></div>}
-            <button type="button" className="btn-primary" disabled={!coreUpload || !scenarioUpload || uploading || extracting} onClick={extractDocuments}>
+            <button type="button" className="btn-primary" disabled={(!combinedUpload && (!coreUpload || !scenarioUpload)) || uploading || extracting} onClick={extractDocuments}>
               <Sparkles size={16} />{extracting ? 'Extracting documents…' : 'Extract and auto-fill'}
             </button>
             {extraction && (
@@ -668,7 +680,7 @@ export default function NewEvent() {
                 <div className="mt-4 flex gap-3 overflow-x-auto pb-1" aria-label="Auto-filled fields by section">
                   {groupExtractedFields(extraction).map((group) => <div key={group.label} className="min-w-[15rem] rounded-md border border-[#dce3c6] bg-white p-3"><p className="text-xs font-bold uppercase tracking-[0.06em] text-brand-700">{group.label}</p><p className="mt-2 text-sm text-ink-700">{group.count} field{group.count === 1 ? '' : 's'} filled</p></div>)}
                 </div>
-                <p className="mt-3 text-xs text-ink-500">The form remains editable. Compare every auto-filled value with the two uploaded documents before submitting.</p>
+                <p className="mt-3 text-xs text-ink-500">The form remains editable. Compare every auto-filled value with the uploaded application document(s) before submitting.</p>
               </div>
             )}
           </fieldset>
@@ -749,17 +761,18 @@ function legacyDocumentName(path: string): string {
   }
 }
 
-function TemplateUploadCard({ label, document, uploading, onChange, onRemove }: {
+function TemplateUploadCard({ label, document, uploading, format = 'DOCX', onChange, onRemove }: {
   label: string;
   document?: M1DraftDocument;
   uploading: boolean;
+  format?: 'DOCX' | 'PDF';
   onChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onRemove: (path: string) => void;
 }) {
   return <div className={`rounded-lg border p-4 ${document ? 'border-brand-200 bg-brand-50' : 'border-[#ded5c5] bg-cream-50'}`}>
     <div className="flex items-start gap-3"><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${document ? 'bg-brand-700 text-white' : 'bg-cream-200 text-ink-500'}`}>{document ? <FileCheck2 size={17} /> : <FileText size={17} />}</span><div className="min-w-0"><p className="text-sm font-semibold text-ink-900">{label}</p><p className="mt-1 truncate text-xs text-ink-500">{document?.originalName ?? 'No completed file uploaded'}</p></div></div>
     <div className="mt-4 flex flex-wrap gap-2">
-      <label className="btn-secondary cursor-pointer"><span>{document ? 'Replace DOCX' : 'Upload DOCX'}</span><input type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" disabled={uploading} onChange={onChange} className="sr-only" /></label>
+      <label className="btn-secondary cursor-pointer"><span>{document ? `Replace ${format}` : `Upload ${format}`}</span><input type="file" accept={format === 'PDF' ? ".pdf,application/pdf" : ".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"} disabled={uploading} onChange={onChange} className="sr-only" /></label>
       {document && <button type="button" className="min-h-11 px-3 text-sm font-semibold text-red-700" onClick={() => onRemove(document.path)}>Remove</button>}
     </div>
   </div>;

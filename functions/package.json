@@ -42,7 +42,8 @@
     "axios": "^1.7.9",
     "firebase-admin": "^13.10.0",
     "firebase-functions": "^7.3.2",
-    "jszip": "^3.10.1"
+    "jszip": "^3.10.1",
+    "pdf-parse": "^2.4.5"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

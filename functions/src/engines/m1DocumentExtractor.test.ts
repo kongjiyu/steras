@@ -1,9 +1,32 @@
 import { readFileSync } from 'node:fs';
 import JSZip from 'jszip';
 import { describe, expect, it } from 'vitest';
-import { mapM1Documents, parseM1Docx, validateTemplateIdentity } from './m1DocumentExtractor';
+import { mapM1Documents, parseM1Docx, parseM1Pdf, validateCombinedTemplateIdentity, validateTemplateIdentity } from './m1DocumentExtractor';
 
 describe('M1 DOCX extraction', () => {
+  it('extracts searchable Field IDs from the repository PDF preview', async () => {
+    const core = await parseM1Pdf(readFileSync('../output/pdf/m1-template-previews/Core Event Application Template.pdf'));
+    const scenario = await parseM1Pdf(readFileSync('../output/pdf/m1-template-previews/Entertainment and Performance Event - Indoor.pdf'));
+    expect(core.fields.size).toBeGreaterThan(25);
+    expect(core.fields.has('EVENT_NAME')).toBe(true);
+    expect(scenario.fields.size).toBeGreaterThan(20);
+    expect(mapM1Documents(core, scenario).extractedFields).toEqual([]);
+    expect(validateCombinedTemplateIdentity(core, 'STERAS-T01-ENT-IN-v2.0')).toContain(
+      'The combined PDF does not contain scenario template STERAS-T01-ENT-IN-v2.0.',
+    );
+    await expect(parseM1Pdf(Buffer.from('not-a-pdf'))).rejects.toThrow('not a readable PDF');
+  });
+
+  it('validates a combined Core and scenario identity without requiring forged document roles', () => {
+    const fields = new Map([
+      ['EVENT_NAME', 'Event'], ['EVENT_DATES', '2026-10-10'], ['EVENT_ADDRESS', 'KL'],
+      ['TOTAL_ATTENDANCE', '100'], ['RESPONSIBLE_PERSON', 'Organizer'], ['PERFORMANCE_TYPE', 'Concert'],
+    ]);
+    const combined = { text: 'STERAS-CORE STERAS-T01-ENT-IN-v2.0 T01-A01 / PERFORMANCE_TYPE', fields };
+    expect(validateCombinedTemplateIdentity(combined, 'STERAS-T01-ENT-IN-v2.0')).toEqual([]);
+    expect(validateCombinedTemplateIdentity(combined, 'STERAS-T02-ENT-OF-v1.0')).not.toEqual([]);
+  });
+
   it('recognises the versioned repository Core and scenario templates', async () => {
     const core = await parseM1Docx(readFileSync('../docs/templates/m1/core/Core Event Application Template.docx'));
     const scenario = await parseM1Docx(readFileSync('../docs/templates/m1/entertainment-performance/Entertainment and Performance Event - Indoor.docx'));
@@ -34,7 +57,7 @@ describe('M1 DOCX extraction', () => {
       ['A06 / EVENT_ADDRESS', 'Dataran Merdeka, Kuala Lumpur'],
       ['A07 / TOTAL_ATTENDANCE', '12,500'],
       ['B03 / RESPONSIBLE_PERSON', 'Nur Aisyah'],
-      ['B04 / RESPONSIBLE_CONTACT', '+60 12-345 6789\nnur@example.com'],
+      ['B04 / RESPONSIBLE_CONTACT', '+60 12-345 6789\nnur@example.co\nm'],
       ['C03 / REGISTRATION_TICKETING', 'Yes\nOnline QR ticket'],
       ['D01 / CROWD_MANAGEMENT', 'Zoned barriers and counters.'],
       ['D02 / SECURITY', 'PDRM liaison and bag screening.'],

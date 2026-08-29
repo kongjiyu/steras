@@ -377,13 +377,13 @@ async function loadCurrentExtraction(
   eventReference: FirebaseFirestore.DocumentReference,
 ): Promise<M1DocumentExtraction> {
   if (!event.currentExtractionId || !/^[A-Za-z0-9_-]{1,128}$/.test(event.currentExtractionId)) {
-    throw new HttpsError('failed-precondition', 'Extract and review the completed Core and scenario DOCX files before submission.');
+    throw new HttpsError('failed-precondition', 'Extract and review the combined PDF or completed Core and scenario DOCX files before submission.');
   }
   const snapshot = await eventReference.collection(COLLECTIONS.DOCUMENT_EXTRACTIONS).doc(event.currentExtractionId).get();
   if (!snapshot.exists) throw new HttpsError('failed-precondition', 'The current document extraction could not be found. Extract the files again.');
   const extraction = snapshot.data() as M1DocumentExtraction;
   const expectedPaths = (event.draftDocuments ?? [])
-    .filter((document) => document.role === 'core_template' || document.role === 'scenario_template')
+    .filter((document) => document.role === 'core_template' || document.role === 'scenario_template' || document.role === 'combined_application')
     .map((document) => `${document.role}:${document.path}:${document.originalName}:${document.mimeType}:${document.sizeBytes}`)
     .sort();
   const actualPaths = Array.isArray(extraction.sourceDocuments)

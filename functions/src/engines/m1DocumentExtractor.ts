@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import { PDFParse } from 'pdf-parse';
 import { M1ExtractedField } from '@shared/types';
 
 export interface ParsedM1Document {
@@ -14,6 +15,7 @@ export interface M1MappedExtraction {
 
 const MAX_DOCUMENT_XML_BYTES = 8_000_000;
 const MAX_ARCHIVE_ENTRIES = 1_000;
+const MAX_PDF_TEXT_CHARACTERS = 2_000_000;
 
 const REQUIRED_AUTO_FILL_TARGETS = [
   'name',
@@ -58,6 +60,66 @@ export async function parseM1Docx(buffer: Buffer): Promise<ParsedM1Document> {
   }
   if (fields.size === 0) throw new Error('No STERAS Field IDs were found in the DOCX.');
   return { text, fields };
+}
+
+export async function parseM1Pdf(buffer: Buffer): Promise<ParsedM1Document> {
+  if (buffer.length < 5 || buffer.subarray(0, 5).toString('ascii') !== '%PDF-') {
+    throw new Error('The uploaded file is not a readable PDF.');
+  }
+  const parser = new PDFParse({ data: buffer });
+  let text: string;
+  let tableRows: string[][] = [];
+  try {
+    const result = await parser.getText();
+    text = result.text.replace(/\r/g, '').trim();
+    try {
+      const tableResult = await parser.getTable();
+      tableRows = tableResult.pages.flatMap((page) => page.tables.flatMap((table) => table));
+    } catch {
+      tableRows = [];
+    }
+  } catch {
+    throw new Error('The uploaded PDF could not be read.');
+  } finally {
+    await parser.destroy();
+  }
+  if (!text) throw new Error('The combined PDF contains no searchable text. Upload a text-based PDF rather than a scanned image.');
+  if (text.length > MAX_PDF_TEXT_CHARACTERS) throw new Error('The combined PDF contains too much text to extract safely.');
+
+  const fields = new Map<string, string>();
+  for (const row of tableRows) {
+    const match = row[0]?.match(/\b(?:[A-Z]\d{2}|T\d{2}-[A-Z]\d{2})\s*\/\s*([A-Z][A-Z0-9_]+)\b/);
+    if (!match) continue;
+    if (fields.has(match[1])) throw new Error(`The combined PDF contains duplicate field ID ${match[1]}.`);
+    fields.set(match[1], cleanResponse(row.slice(1).join('\n').replace(/\[[\s\S]*?\]/g, '')));
+  }
+  if (fields.size === 0) {
+    const markers = [...text.matchAll(/\b(?:[A-Z]\d{2}|T\d{2}-[A-Z]\d{2})\s*\/\s*([A-Z][A-Z0-9_]+)\b/g)];
+    for (let index = 0; index < markers.length; index += 1) {
+      const marker = markers[index];
+      const fieldId = marker[1];
+      if (fields.has(fieldId)) throw new Error(`The combined PDF contains duplicate field ID ${fieldId}.`);
+      const start = (marker.index ?? 0) + marker[0].length;
+      const end = markers[index + 1]?.index ?? text.length;
+      fields.set(fieldId, pdfResponse(text.slice(start, end)));
+    }
+  }
+  if (fields.size === 0) throw new Error('No STERAS Field IDs were found in the combined PDF.');
+  return { text, fields };
+}
+
+function pdfResponse(section: string): string {
+  const responseSection = section
+    .split(/\nRequired Supporting Documents\b/i)[0]
+    .replace(/\[[\s\S]*?\]/g, '');
+  const lines = responseSection.split('\n').map((line) => line.trim()).filter(Boolean);
+  const formatIndex = lines.findIndex((line) => /^Response format\s*:/i.test(line));
+  const candidates = (formatIndex >= 0 ? lines.slice(formatIndex + 1) : lines)
+    .filter((line) => !/^-- \d+ of \d+ --$/.test(line))
+    .filter((line) => !/^Required Supporting Documents\b/i.test(line))
+    .filter((line) => !/^Upload these files separately\b/i.test(line))
+    .filter((line) => !/^Document \/ Reference\b/i.test(line));
+  return cleanResponse(candidates.join('\n'));
 }
 
 async function readDocumentXml(document: JSZip.JSZipObject): Promise<string> {
@@ -111,6 +173,23 @@ export function validateTemplateIdentity(
     errors.push(`The scenario Field IDs do not match ${expectedScenarioTemplateId}.`);
   }
   if (containsToken(core.text, expectedScenarioTemplateId)) errors.push('The Core and scenario document roles appear to be reversed.');
+  return errors;
+}
+
+export function validateCombinedTemplateIdentity(document: ParsedM1Document, expectedScenarioTemplateId: string): string[] {
+  const errors: string[] = [];
+  if (!containsToken(document.text, 'STERAS-CORE')) errors.push('The combined PDF does not contain the STERAS Core template.');
+  if (!['EVENT_NAME', 'EVENT_DATES', 'EVENT_ADDRESS', 'TOTAL_ATTENDANCE', 'RESPONSIBLE_PERSON'].every((fieldId) => document.fields.has(fieldId))) {
+    errors.push('The combined PDF is missing required Core STERAS Field IDs.');
+  }
+  if (!containsToken(document.text, expectedScenarioTemplateId)) {
+    errors.push(`The combined PDF does not contain scenario template ${expectedScenarioTemplateId}.`);
+  }
+  const expectedPrefix = expectedScenarioTemplateId.match(/STERAS-(T\d{2})-/)?.[1];
+  const scenarioPrefixes = new Set([...document.text.matchAll(/\b(T\d{2})-[A-Z]\d{2}\s*\//g)].map((match) => match[1]));
+  if (!expectedPrefix || scenarioPrefixes.size !== 1 || !scenarioPrefixes.has(expectedPrefix)) {
+    errors.push(`The combined PDF scenario Field IDs do not match ${expectedScenarioTemplateId}.`);
+  }
   return errors;
 }
 
@@ -206,7 +285,11 @@ function firstSafeInteger(value: string | undefined): number | undefined {
 }
 
 function firstEmail(value: string): string | undefined {
-  return value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0];
+  const repairedPdfWrap = value.replace(
+    /([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})[ \t]*\n[ \t]*([A-Z]{1,4})\b/i,
+    '$1$2',
+  );
+  return repairedPdfWrap.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0];
 }
 
 function firstPhone(value: string): string | undefined {

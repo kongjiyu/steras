@@ -122,8 +122,13 @@ export function validateEventApplication(
     errors.push('Submit between 1 and 20 unique supporting evidence files.');
   }
   if (draftDocuments !== undefined) {
-    if (draftDocuments.filter((document) => document.role === 'core_template').length !== 1) errors.push('Upload exactly one completed Core DOCX.');
-    if (draftDocuments.filter((document) => document.role === 'scenario_template').length !== 1) errors.push('Upload exactly one completed scenario DOCX.');
+    const coreCount = draftDocuments.filter((document) => document.role === 'core_template').length;
+    const scenarioCount = draftDocuments.filter((document) => document.role === 'scenario_template').length;
+    const combinedCount = draftDocuments.filter((document) => document.role === 'combined_application').length;
+    if (!((combinedCount === 1 && coreCount === 0 && scenarioCount === 0)
+      || (combinedCount === 0 && coreCount === 1 && scenarioCount === 1))) {
+      errors.push('Upload either one combined application PDF or one completed Core DOCX and one completed scenario DOCX.');
+    }
     if (!currentExtractionId) errors.push('Extract and review the completed application documents before submission.');
     if (templateSelection) errors.push(...validateM1EvidenceChecklist(details, templateSelection, draftDocuments, evidenceManifest));
   }
@@ -258,7 +263,7 @@ export function applyM1ExtractedFields(details: EventDetails, fields: M1Extracte
 
 export function extractionMatchesDraftDocuments(extraction: M1DocumentExtraction, documents: M1DraftDocument[]): boolean {
   const current = documents
-    .filter((document) => document.role === 'core_template' || document.role === 'scenario_template')
+    .filter((document) => document.role === 'core_template' || document.role === 'scenario_template' || document.role === 'combined_application')
     .map((document) => `${document.role}:${document.path}:${document.originalName}:${document.mimeType}:${document.sizeBytes}`)
     .sort();
   const extracted = Array.isArray(extraction.sourceDocuments)
@@ -266,7 +271,10 @@ export function extractionMatchesDraftDocuments(extraction: M1DocumentExtraction
       .map((document) => `${document.role}:${document.path}:${document.originalName}:${document.mimeType}:${document.sizeBytes}`)
       .sort()
     : [];
-  return current.length === 2 && extracted.length === 2 && JSON.stringify(current) === JSON.stringify(extracted);
+  const validCount = current.length === 1
+    ? documents.some((document) => document.role === 'combined_application')
+    : current.length === 2;
+  return validCount && extracted.length === current.length && JSON.stringify(current) === JSON.stringify(extracted);
 }
 
 export function completeRiskProfile(value: unknown = {}): EventRiskProfile {
