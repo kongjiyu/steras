@@ -1,12 +1,10 @@
 import {
   EVENT_TYPES,
-  EventRecord,
-  EventStatus,
   EventType,
-  RiskAssessment,
   RiskLevel,
+  RESOURCE_KEYS,
 } from '@shared/types';
-import { assessmentResult, assessmentRiskLevel, assessmentScore } from '../../components/m2/m2Contract';
+import type { AnalyticsPortfolioRecord } from '@shared/analytics';
 
 export type ReportType =
   | 'risk-incident'
@@ -69,17 +67,7 @@ export const REPORT_CATALOG: ReportCatalogItem[] = [
   },
 ];
 
-export interface AnalyticsRecord {
-  eventId: string;
-  eventName: string;
-  eventType: EventType;
-  status: EventStatus;
-  createdAt: number;
-  submittedAt?: number;
-  updatedAt: number;
-  assessment?: RiskAssessment;
-  synthetic?: boolean;
-}
+export type AnalyticsRecord = AnalyticsPortfolioRecord;
 
 export interface MonthlyAnalytics {
   month: string;
@@ -211,10 +199,7 @@ export function buildMonthlyAnalytics(records: AnalyticsRecord[]): MonthlyAnalyt
     const applicationMonth = ensure(getMonth(record.createdAt));
     applicationMonth.applications += 1;
     if (record.status === 'Rejected') applicationMonth.rejections += 1;
-    if (record.assessment) {
-      const score = assessmentScore(record.assessment);
-      if (score !== undefined) applicationMonth.assessmentScores.push(score);
-    }
+    if (record.assessment?.officialScore !== undefined) applicationMonth.assessmentScores.push(record.assessment.officialScore);
     if (record.status === 'Approved' && Number.isFinite(record.updatedAt)) {
       ensure(getMonth(record.updatedAt)).approvals += 1;
     }
@@ -224,27 +209,21 @@ export function buildMonthlyAnalytics(records: AnalyticsRecord[]): MonthlyAnalyt
 
 export function riskDistribution(records: AnalyticsRecord[]): Record<RiskLevel, number> {
   return records.reduce<Record<RiskLevel, number>>((counts, record) => {
-    const level = assessmentRiskLevel(record.assessment);
+    const level = record.assessment?.officialRiskLevel;
     if (level) counts[level] += 1;
     return counts;
   }, { Low: 0, Medium: 0, High: 0 });
 }
 
 export function analyticsSummary(records: AnalyticsRecord[]) {
-  const assessed = records.filter((record) => record.assessment);
+  const assessed = records.filter((record) => record.assessment?.officialRiskLevel !== undefined);
   const approved = records.filter((record) => record.status === 'Approved');
-  const fallbackCount = assessed.filter((record) => record.assessment?.aiProposal?.status !== 'success').length;
-  const comparable = assessed.filter((record) => record.assessment && assessmentResult(record.assessment)
-    && !(record.assessment.status === 'official_ready' && 'sourceKind' in record.assessment && record.assessment.sourceKind === 'admin_manual'));
-  const agreements = comparable.filter((record) => {
-    const result = record.assessment ? assessmentResult(record.assessment) : undefined;
-    return result?.categories.every((category) => !('manualLikelihood' in category)
-      && category.proposedLikelihood === category.validatedLikelihood
-      && category.proposedSeverity === category.validatedSeverity);
-  });
+  const fallbackCount = assessed.filter((record) => record.assessment?.aiStatus !== 'success').length;
+  const comparable = assessed.filter((record) => record.assessment?.aiAgreement !== undefined);
+  const agreements = comparable.filter((record) => record.assessment?.aiAgreement === true);
   const turnaround = approved
-    .filter((record) => record.submittedAt && record.updatedAt >= record.submittedAt)
-    .map((record) => record.updatedAt - (record.submittedAt as number));
+    .filter((record) => record.submittedAt && record.terminalDecisionAt && record.terminalDecisionAt >= record.submittedAt)
+    .map((record) => (record.terminalDecisionAt as number) - (record.submittedAt as number));
   return {
     applications: records.length,
     approved: approved.length,
@@ -266,12 +245,12 @@ export function analyticsCsv(records: AnalyticsRecord[]): string {
     record.status,
     safeIso(record.createdAt),
     record.submittedAt ? safeIso(record.submittedAt) : '',
-    assessmentScore(record.assessment) ?? '',
-    assessmentRiskLevel(record.assessment) ?? '',
-    record.assessment ? assessmentResult(record.assessment)?.categorySchemaVersion ?? '' : '',
+    record.assessment?.officialScore ?? '',
+    record.assessment?.officialRiskLevel ?? '',
+    record.assessment?.categorySchemaVersion ?? '',
     '',
-    record.assessment?.aiProposal?.status ?? '',
-    '',
+    record.assessment?.aiStatus ?? '',
+    record.assessment?.aiAgreement ?? '',
   ]);
   return [
     ['event_id', 'event_name', 'event_type', 'status', 'created_at', 'submitted_at', 'assessment_score', 'assessment_risk_level', 'category_schema_version', 'm3_advisory_band', 'm3_status', 'ai_validation_agreement'],
@@ -297,8 +276,8 @@ export function reportCsv(model: ReportModel, records: AnalyticsRecord[] = []): 
     record.eventType,
     record.status,
     safeIso(record.createdAt),
-    assessmentRiskLevel(record.assessment) ?? 'Data Not Available',
-    assessmentScore(record.assessment) ?? 'Data Not Available',
+    record.assessment?.officialRiskLevel ?? 'Data Not Available',
+    record.assessment?.officialScore ?? 'Data Not Available',
   ]);
   return [...metadata, [], ...summary, [], ['event_id', 'event_name', 'event_type', 'status', 'created_at', 'official_risk', 'official_score'], ...rows]
     .map((row) => row.map((value) => csvCell(value as string | number | boolean)).join(','))
@@ -309,23 +288,10 @@ export function buildReportModel(
   reportType: ReportType,
   scope: AnalysisScope,
   eventType: EventType | undefined,
-  options: { preview?: boolean; records?: AnalyticsRecord[]; from?: string; to?: string } = {},
+  options: { preview?: boolean; records?: AnalyticsRecord[]; from?: string; to?: string; syntheticExcluded?: number; unavailableSections?: string[] } = {},
 ): ReportModel {
   if (options.preview) return buildDemoReport(reportType, scope, eventType);
-  return buildLiveReport(reportType, scope, eventType, options.records ?? [], options.from, options.to);
-}
-
-export function analyticsRecordsFromEvents(events: Array<{ event: EventRecord; assessment?: RiskAssessment }>): AnalyticsRecord[] {
-  return events.map(({ event, assessment }) => ({
-    eventId: event.eventId,
-    eventName: event.eventDetails.name,
-    eventType: event.eventDetails.type,
-    status: event.status,
-    createdAt: event.createdAt,
-    submittedAt: event.submittedAt,
-    updatedAt: event.updatedAt,
-    assessment,
-  }));
+  return buildLiveReport(reportType, scope, eventType, options.records ?? [], options.from, options.to, options.syntheticExcluded, options.unavailableSections);
 }
 
 function buildDemoReport(reportType: ReportType, scope: AnalysisScope, eventType?: EventType): ReportModel {
@@ -412,15 +378,51 @@ function buildDemoReport(reportType: ReportType, scope: AnalysisScope, eventType
   };
 }
 
-function buildLiveReport(reportType: ReportType, scope: AnalysisScope, eventType: EventType | undefined, records: AnalyticsRecord[], from?: string, to?: string): ReportModel {
+function buildLiveReport(
+  reportType: ReportType,
+  scope: AnalysisScope,
+  eventType: EventType | undefined,
+  records: AnalyticsRecord[],
+  from?: string,
+  to?: string,
+  backendSyntheticExcluded = 0,
+  backendUnavailable: string[] = [],
+): ReportModel {
   const selected = REPORT_CATALOG.find((item) => item.id === reportType) ?? REPORT_CATALOG[0];
-  const filtered = filterAnalyticsRecords(records, from, to).filter((record) => scope === 'overall' || record.eventType === eventType);
+  const scoped = filterAnalyticsRecords(records, from, to).filter((record) => scope === 'overall' || record.eventType === eventType);
+  const syntheticInScope = scoped.filter((record) => record.synthetic).length;
+  const filtered = scoped.filter((record) => !record.synthetic);
   const summary = analyticsSummary(filtered);
   const risks = riskDistribution(filtered);
   const monthlyTrend = buildMonthlyAnalytics(filtered);
   const total = filtered.length;
   const assessed = risks.Low + risks.Medium + risks.High;
-  const unavailable = ['Incident patterns', 'Resource overrides', 'Event-control verification', 'Rejection taxonomy'];
+  const incidentRecords = filtered.filter((record) => record.incidents.available);
+  const incidentTotal = incidentRecords.reduce((sum, record) => sum + record.incidents.total, 0);
+  const incidentSeverity = countRows(['low', 'medium', 'high'], (key) => incidentRecords.reduce((sum, record) => sum + record.incidents.bySeverity[key as 'low' | 'medium' | 'high'], 0));
+  const incidentResolution = countRows(['verified', 'under_review', 'rejected', 'unknown'], (key) => incidentRecords.reduce((sum, record) => sum + record.incidents.byStatus[key as keyof AnalyticsRecord['incidents']['byStatus']], 0));
+  const assessedRecords = filtered.filter((record) => record.assessment);
+  const resourceRecords = filtered.filter((record) => record.resources);
+  const controlRecords = filtered.filter((record) => record.controls.available);
+  const resources = RESOURCE_KEYS.map((key) => {
+    const values = resourceRecords.map((record) => record.resources?.items[key]).filter(Boolean) as NonNullable<NonNullable<AnalyticsRecord['resources']>['items'][typeof key]>[];
+    const overrideCount = values.reduce((sum, item) => sum + item.overrideCount, 0);
+    return {
+      label: resourceLabel(key),
+      baseline: values.length ? Math.round(average(values.map((item) => item.baseline))) : 0,
+      range: values.length ? `${Math.round(average(values.map((item) => item.minimum)))}–${Math.round(average(values.map((item) => item.maximum)))}` : 'Data Not Available',
+      overrides: overrideCount,
+      overrideRate: values.length ? overrideCount / values.length : 0,
+      reason: 'Detailed authority rationale excluded from analytics output',
+    };
+  }).filter((item) => item.range !== 'Data Not Available');
+  const controlTotal = controlRecords.reduce((sum, record) => sum + record.controls.total, 0);
+  const unavailable = [...new Set([
+    ...backendUnavailable,
+    ...(incidentRecords.length ? [] : ['Incident patterns']),
+    ...(resourceRecords.length ? [] : ['Resource recommendations']),
+    ...(controlRecords.length ? [] : ['Event-control verification']),
+  ])];
   return {
     reportType,
     title: selected.title,
@@ -431,10 +433,10 @@ function buildLiveReport(reportType: ReportType, scope: AnalysisScope, eventType
     generatedAt: Date.now(),
     coverage: { from: from ?? '', to: to ?? '', label: formatCoverage(from, to) },
     dataSource: 'live',
-    dataStatus: total === 0 ? 'unavailable' : 'partial',
+    dataStatus: total === 0 ? 'unavailable' : unavailable.length ? 'partial' : 'complete',
     population: total,
     eligibleRecords: total,
-    syntheticExcluded: filtered.filter((record) => record.synthetic).length,
+    syntheticExcluded: backendSyntheticExcluded + syntheticInScope,
     summary: [
       metric('Eligible applications', total, 'Latest records in selected scope', total === 0 ? 'muted' : 'neutral'),
       metric('Approved', total === 0 ? 'Data Not Available' : `${Math.round((summary.approved / total) * 100)}%`, `${summary.approved} approved records`, total === 0 ? 'muted' : 'positive'),
@@ -447,17 +449,64 @@ function buildLiveReport(reportType: ReportType, scope: AnalysisScope, eventType
       row('Medium', risks.Medium, '#d3a32e'),
       row('High', risks.High, '#cf6259'),
     ],
-    incidents: emptyIncidents(),
-    outcomes: { statuses: statusRows(filtered), riskCrossSection: [], revisions: [], rejections: [], durations: [] },
+    incidents: {
+      total: incidentTotal,
+      eventsWithIncidents: incidentRecords.filter((record) => record.incidents.total > 0).length,
+      incidentRate: incidentRecords.length ? incidentTotal / incidentRecords.length : 0,
+      averagePerEvent: incidentRecords.length ? incidentTotal / incidentRecords.length : 0,
+      severity: incidentSeverity,
+      immediateAction: [],
+      escalation: [],
+      resolution: incidentResolution,
+    },
+    outcomes: {
+      statuses: statusRows(filtered),
+      riskCrossSection: [row('Low', risks.Low), row('Medium', risks.Medium), row('High', risks.High)],
+      revisions: [row('Re-application', filtered.filter((record) => record.reapplication).length), row('No recorded re-application', filtered.filter((record) => !record.reapplication).length)],
+      rejections: [row('Rejected', filtered.filter((record) => record.status === 'Rejected').length)],
+      durations: summary.averageTurnaroundHours ? [{ label: 'Submission to terminal decision', average: `${summary.averageTurnaroundHours.toFixed(1)}h`, min: 'Privacy-safe aggregate', max: 'Privacy-safe aggregate', sample: filtered.filter((record) => record.submittedAt && record.terminalDecisionAt).length }] : [],
+    },
     assessment: {
       riskDistribution: [row('Low', risks.Low, '#5e9b70'), row('Medium', risks.Medium, '#d3a32e'), row('High', risks.High, '#cf6259')],
-      hazards: [], readiness: [], compliance: [], confidence: [], hardRuleAdjustments: 0, manualReviews: 0,
+      hazards: countValues(assessedRecords.map((record) => record.assessment?.dominantHazard)),
+      readiness: countValues(assessedRecords.map((record) => record.assessment?.readiness)),
+      compliance: countValues(assessedRecords.map((record) => record.assessment?.compliance)),
+      confidence: countValues(assessedRecords.map((record) => record.assessment?.confidence)),
+      hardRuleAdjustments: assessedRecords.reduce((sum, record) => sum + (record.assessment?.hardRuleAdjustments ?? 0), 0),
+      manualReviews: assessedRecords.filter((record) => record.assessment?.manualReview).length,
     },
-    resources: [],
-    controls: { statuses: [], totalItems: 0, verifiedRate: 0 },
+    resources,
+    controls: {
+      statuses: countRows(['Approved', 'Pending', 'Reported under review', 'Resubmit required', 'Use Previous'], (key) => controlRecords.reduce((sum, record) => sum + ({
+        'Approved': record.controls.approved,
+        'Pending': record.controls.pending,
+        'Reported under review': record.controls.reportedUnderReview,
+        'Resubmit required': record.controls.resubmitRequired,
+        'Use Previous': record.controls.usePrevious,
+      }[key] ?? 0), 0)),
+      totalItems: controlTotal,
+      verifiedRate: controlTotal ? controlRecords.reduce((sum, record) => sum + record.controls.approved, 0) / controlTotal : 0,
+    },
     unavailableSections: total === 0 ? ['All report sections'] : unavailable,
     definitions: definitionsFor(reportType),
   };
+}
+
+function countValues(values: Array<string | undefined>): BreakdownRow[] {
+  const counts = new Map<string, number>();
+  values.filter(Boolean).forEach((value) => counts.set(String(value), (counts.get(String(value)) ?? 0) + 1));
+  const total = [...counts.values()].reduce((sum, value) => sum + value, 0) || 1;
+  return [...counts.entries()].map(([label, value]) => row(label, value, undefined, value / total));
+}
+
+function countRows(labels: string[], valueFor: (label: string) => number): BreakdownRow[] {
+  const values = labels.map((label) => ({ label, value: valueFor(label) }));
+  const total = values.reduce((sum, item) => sum + item.value, 0) || 1;
+  return values.map((item) => row(item.label, item.value, undefined, item.value / total));
+}
+
+function resourceLabel(key: typeof RESOURCE_KEYS[number]): string {
+  return ({ police: 'Police officers', security: 'Security personnel', medicalTeams: 'Medical teams', ambulances: 'Ambulances', fireOfficers: 'Fire-safety officers', toilets: 'Portable toilets', wasteBins: 'Waste bins' })[key];
 }
 
 function demoSummary(reportType: ReportType, factor: number, population: number, eligibleRecords: number): ReportMetric[] {
@@ -532,10 +581,6 @@ function statusRows(records: AnalyticsRecord[]): BreakdownRow[] {
   records.forEach((record) => counts.set(record.status, (counts.get(record.status) ?? 0) + 1));
   const total = records.length || 1;
   return [...counts.entries()].map(([label, value]) => row(label, value, '#77925a', value / total));
-}
-
-function emptyIncidents(): IncidentReportData {
-  return { total: 0, eventsWithIncidents: 0, incidentRate: 0, averagePerEvent: 0, severity: [], immediateAction: [], escalation: [], resolution: [] };
 }
 
 function row(label: string, value: number, color?: string, percentage?: number): BreakdownRow {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { collection, doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import { Bar, Doughnut, Line } from 'react-chartjs-2';
 import {
   ArcElement,
@@ -36,8 +36,9 @@ import {
   Users,
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
-import { COLLECTIONS, EVENT_TYPES, EventRecord, EventType, RiskAssessment } from '@shared/types';
-import { db, isFirebaseConfigured } from '../../config/firebase';
+import { EVENT_TYPES, EventType } from '@shared/types';
+import type { AnalyticsPortfolioRequest, AnalyticsPortfolioResponse } from '@shared/analytics';
+import { functions, isFirebaseConfigured } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import logoUrl from '../../assets/brand/steras-logo-horizontal.svg';
 import {
@@ -52,7 +53,6 @@ import {
   ReportModel,
   ReportType,
   reportCsv,
-  analyticsRecordsFromEvents,
 } from './analyticsData';
 import './analytics.css';
 
@@ -115,6 +115,7 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
   const [error, setError] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [reportRecords, setReportRecords] = useState<AnalyticsRecord[]>([]);
+  const [backendMeta, setBackendMeta] = useState<{ syntheticExcluded: number; unavailableSections: string[] }>({ syntheticExcluded: 0, unavailableSections: [] });
   const [report, setReport] = useState<ReportModel>(() => buildReportModel('risk-incident', 'overall', undefined, { preview: previewMode }));
 
   useEffect(() => {
@@ -127,53 +128,36 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
       return;
     }
 
-    let request = 0;
-    const unsubscribe = onSnapshot(
-      collection(db, COLLECTIONS.EVENTS),
-      async (snapshot) => {
-        const currentRequest = ++request;
-        try {
-          const nextEvents = await Promise.all(snapshot.docs.map(async (eventDocument) => {
-            const event = { eventId: eventDocument.id, ...eventDocument.data() } as EventRecord;
-            if (!event.eventDetails) return null;
-            let assessment: RiskAssessment | undefined;
-            if (event.currentAssessmentId) {
-              const assessmentDocument = await getDoc(
-                doc(db, COLLECTIONS.EVENTS, event.eventId, COLLECTIONS.ASSESSMENTS, event.currentAssessmentId),
-              );
-              const value = assessmentDocument.data();
-              if (['provisional_ready', 'authority_review', 'official_ready'].includes(value?.status)) {
-                assessment = value as RiskAssessment;
-              }
-            }
-            return { event, assessment };
-          }));
-
-          if (currentRequest === request) {
-            const validEvents = nextEvents.filter(Boolean) as Array<{ event: EventRecord; assessment?: RiskAssessment }>;
-            const nextRecords = analyticsRecordsFromEvents(validEvents);
-            setRecords(nextRecords);
-            setReportRecords(selectRecords(nextRecords, 'overall', undefined, '', ''));
-            setReport(buildReportModel(reportType, scope, scope === 'eventType' ? eventType : undefined, {
-              records: nextRecords,
-              from,
-              to,
-            }));
-            setError('');
-            setLoading(false);
-          }
-        } catch {
-          setError('The latest valid records could not be loaded.');
-          setLoading(false);
-        }
-      },
-      () => {
+    let active = true;
+    const load = async () => {
+      try {
+        const callable = httpsCallable<AnalyticsPortfolioRequest, AnalyticsPortfolioResponse>(functions, 'getAnalyticsPortfolio');
+        const response = await callable({ limit: 500, includeSynthetic: false });
+        if (!active) return;
+        const nextRecords = response.data.records;
+        const nextMeta = {
+          syntheticExcluded: response.data.syntheticExcluded,
+          unavailableSections: response.data.unavailableSections,
+        };
+        setRecords(nextRecords);
+        setBackendMeta(nextMeta);
+        setReportRecords(selectRecords(nextRecords, 'overall', undefined, '', ''));
+        setReport(buildReportModel('risk-incident', 'overall', undefined, {
+          records: nextRecords,
+          syntheticExcluded: nextMeta.syntheticExcluded,
+          unavailableSections: nextMeta.unavailableSections,
+        }));
+        setError('');
+        setLoading(false);
+      } catch {
+        if (!active) return;
         setError('The latest valid records could not be loaded.');
         setLoading(false);
-      },
-    );
-    return () => unsubscribe();
-  }, [eventType, from, previewMode, profile?.role, reportType, scope, to]);
+      }
+    };
+    void load();
+    return () => { active = false; };
+  }, [previewMode, profile?.role]);
 
   const selectedRecords = useMemo(
     () => selectRecords(records, scope, scope === 'eventType' ? eventType : undefined, from, to),
@@ -192,6 +176,8 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
       records,
       from,
       to,
+      syntheticExcluded: backendMeta.syntheticExcluded,
+      unavailableSections: backendMeta.unavailableSections,
     });
     setReport(nextReport);
     setReportRecords(previewMode ? [] : selectedRecords);

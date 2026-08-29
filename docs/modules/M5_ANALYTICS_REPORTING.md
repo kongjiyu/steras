@@ -14,9 +14,12 @@ M5 observes source records. It never changes an assessment, resource recommendat
 
 - The admin-only, read-only `/admin/analytics` page is implemented inside the shared admin shell; `/authority/reports` remains a compatibility redirect.
 - `/dashboard-preview?view=reports` provides a design-review version with representative data.
+- `getAnalyticsPortfolio` provides one bounded, admin-only Cloud Functions read model for the live dashboard. It replaces browser-side full collection reads and per-event assessment requests.
+- The API returns only M5-safe fields: event identity and scope, assessment summaries, resource aggregates, incident counters, control counters, terminal timestamps, and re-application signals. It does not return organiser contact details, evidence paths, incident descriptions, authority rationale, or private notes.
+- Synthetic/UAT fixtures are identified and excluded by default. API responses include schema version, metric-definition version, generation timestamp, source cutoff, truncation state, and unavailable-section metadata.
 - The page currently provides five report modes, date filtering, event-type scope, authority-scoped reads, application/approval trends, official-risk distribution, assessment-quality signals, review outcomes, operations summaries, explicit M4 unavailable states, and CSV/PDF export.
 - Analytics calculation helpers and unit tests exist, and CSV cells receive basic spreadsheet-formula neutralisation.
-- Remaining gaps include the rest of the PRD filters and metrics, resource/override/re-application views, full M4 data, schema metadata, synthetic-data exclusion, bounded aggregation, and stronger privacy/export tests.
+- Remaining UI gaps are exposing every backend filter in the report builder, richer PDF formatting, and displaying full M4 metrics once Module 4 supplies production incident data.
 
 ## Current Delivery Goal
 
@@ -38,6 +41,25 @@ Turn the existing reports foundation into an auditable, privacy-safe dashboard w
 - future analytics query/aggregation Cloud Functions
 - future `analyticsSnapshots/{snapshotId}` records
 - metric definitions, schema-version grouping, and export contracts
+
+## Firebase Backend Contract
+
+The frontend calls the regional callable Function `getAnalyticsPortfolio`. The Function:
+
+1. requires Firebase Authentication;
+2. reads `users/{uid}` and permits only `role: admin`;
+3. applies a maximum response limit of 500 events and a maximum date range of five years;
+4. supports date, event type, status, venue, risk, authority, assessment schema, and synthetic-data filters;
+5. reads only the current event generation plus bounded supporting collections;
+6. returns the privacy-safe contract in `shared/analytics.ts`.
+
+No new client-readable analytics collection is introduced, so Firestore Rules and composite indexes are not expanded for M5. Firebase Admin access remains inside the callable Function. Deploy the backend only after review:
+
+```bash
+firebase deploy --only functions:getAnalyticsPortfolio
+```
+
+Until the Function is deployed, use `/dashboard-preview?view=reports` for a no-authentication design preview.
 
 General owns chart primitives only if they are genuinely reusable outside M5.
 
@@ -94,9 +116,8 @@ M5 provides read-only metrics and exports. Other modules may link to filtered re
 - Keep synthetic demo records excluded from operational KPI defaults and show them only under an explicit demo-data filter.
 - Report assessment coverage and missing-data rates separately from risk distribution; low-confidence or insufficient assessments are not “low risk”.
 
-- Replace client-side full collection reads with bounded queries or server-generated snapshots as data grows.
-- Add resource, override, incident-triage, incident-resolution, re-application, and review-stage charts.
-- Add schema/version filters and metric-definition metadata.
+- Expose the backend venue, risk, status, authority, synthetic-data, and schema-version filters in the report builder UI.
+- Add server-generated `analyticsSnapshots` only if production volume outgrows the bounded callable read model.
 - Add AI agreement coverage for success, fallback, missing, and schema-version cases.
 - Add export tests for privacy and spreadsheet-injection safety.
 

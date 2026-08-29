@@ -36,6 +36,8 @@ export { overrideResources } from './http/overrideResources';
 export { reviewAssessmentScores } from './http/reviewAssessmentScores';
 export { verifyStage1Doc } from './http/verifyStage1Doc';
 export { markNotificationRead, listMyNotifications } from './http/notifications';
+// M5 — bounded, admin-only, privacy-safe analytics read model.
+export { getAnalyticsPortfolio } from './http/getAnalyticsPortfolio';
 // M3 control-list proposal: MiniMax-backed with a deterministic fallback.
 export { proposeEventControlList } from './http/proposeEventControlList';
 // M3 Workstream 1 — officer assignment + multi-stage review.
