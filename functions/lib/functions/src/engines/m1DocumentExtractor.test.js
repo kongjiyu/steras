@@ -18,6 +18,20 @@ const m1DocumentExtractor_1 = require("./m1DocumentExtractor");
         (0, vitest_1.expect)((0, m1DocumentExtractor_1.validateCombinedTemplateIdentity)(core, 'STERAS-T01-ENT-IN-v2.0')).toContain('The combined PDF does not contain scenario template STERAS-T01-ENT-IN-v2.0.');
         await (0, vitest_1.expect)((0, m1DocumentExtractor_1.parseM1Pdf)(Buffer.from('not-a-pdf'))).rejects.toThrow('not a readable PDF');
     });
+    (0, vitest_1.it)('extracts the completed combined presentation PDF without leaking visual line wraps into fields', async () => {
+        const combined = await (0, m1DocumentExtractor_1.parseM1Pdf)((0, node_fs_1.readFileSync)('../output/pdf/m1-presentation-test-case/STERAS_DEMO_T01_Completed_Combined_Application.pdf'));
+        const fields = Object.fromEntries((0, m1DocumentExtractor_1.mapM1Documents)(combined, combined).extractedFields.map((field) => [field.target, field.value]));
+        (0, vitest_1.expect)((0, m1DocumentExtractor_1.validateCombinedTemplateIdentity)(combined, 'STERAS-T01-ENT-IN-v2.0')).toEqual([]);
+        (0, vitest_1.expect)(combined.fields.size).toBe(71);
+        (0, vitest_1.expect)(fields).toMatchObject({
+            name: 'Malaysia Tourism Storytelling Showcase 2026',
+            venueAddress: 'Kuala Lumpur Convention Centre, Kuala Lumpur City Centre, 50088 Kuala Lumpur, Malaysia',
+            expectedAttendance: 600,
+            organizerEmail: 'aina.rahman@example.com',
+            venueCapacity: 8000,
+        });
+        (0, vitest_1.expect)(fields.emergencyPlanSummary).toContain('two-metre stage buffer');
+    });
     (0, vitest_1.it)('validates a combined Core and scenario identity without requiring forged document roles', () => {
         const fields = new Map([
             ['EVENT_NAME', 'Event'], ['EVENT_DATES', '2026-10-10'], ['EVENT_ADDRESS', 'KL'],

@@ -171,7 +171,7 @@ describe('organizer application lifecycle helpers', () => {
     }));
     const extraction = {
       extractionId: 'extract-1', eventId: 'event-1', editableVersionId: 'v1', status: 'ready' as const,
-      schemaVersion: '2026-08-28-docx-fields-v1' as const, templateRegistryVersion: templateSelection.templateRegistryVersion,
+      schemaVersion: '2026-08-29-document-fields-v2' as const, templateRegistryVersion: templateSelection.templateRegistryVersion,
       coreTemplateId: templateSelection.coreTemplateId, scenarioTemplateId: templateSelection.scenarioTemplateId,
       sourceDocuments: documents.map((document) => ({ ...document, role: document.role, sha256: 'a'.repeat(64) })),
       extractedFields: [], rawFieldIds: [], warnings: [], completionPercent: 0, createdAt: 1, createdBy: 'organizer-1',
@@ -188,7 +188,7 @@ describe('organizer application lifecycle helpers', () => {
     };
     const extraction = {
       extractionId: 'extract-combined', eventId: 'event-1', editableVersionId: 'v1', status: 'ready' as const,
-      schemaVersion: '2026-08-28-docx-fields-v1' as const, templateRegistryVersion: templateSelection.templateRegistryVersion,
+      schemaVersion: '2026-08-29-document-fields-v2' as const, templateRegistryVersion: templateSelection.templateRegistryVersion,
       coreTemplateId: templateSelection.coreTemplateId, scenarioTemplateId: templateSelection.scenarioTemplateId,
       sourceDocuments: [{ ...document, sha256: 'b'.repeat(64) }], extractedFields: [], rawFieldIds: [], warnings: [],
       completionPercent: 0, createdAt: 1, createdBy: 'organizer-1',

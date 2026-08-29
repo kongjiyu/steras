@@ -27,7 +27,7 @@ exports.EVENT_STATUSES = [
 ];
 exports.M1_TEMPLATE_REGISTRY_VERSION = '2026-08-28-v1';
 exports.M1_DOCUMENT_SCHEMA_VERSION = '2026-08-28-document-v1';
-exports.M1_EXTRACTION_SCHEMA_VERSION = '2026-08-28-docx-fields-v1';
+exports.M1_EXTRACTION_SCHEMA_VERSION = '2026-08-29-document-fields-v2';
 exports.M1_EVIDENCE_MANIFEST_SCHEMA_VERSION = '2026-08-28-evidence-v1';
 exports.ASSESSMENT_SCHEMA_VERSION = '2026-08-21-prd-v5-hardening-v1';
 exports.CONTEXT_EVIDENCE_SCHEMA_VERSION = '2026-08-21-context-evidence-v1';

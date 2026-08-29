@@ -91,7 +91,7 @@ export async function parseM1Pdf(buffer: Buffer): Promise<ParsedM1Document> {
     const match = row[0]?.match(/\b(?:[A-Z]\d{2}|T\d{2}-[A-Z]\d{2})\s*\/\s*([A-Z][A-Z0-9_]+)\b/);
     if (!match) continue;
     if (fields.has(match[1])) throw new Error(`The combined PDF contains duplicate field ID ${match[1]}.`);
-    fields.set(match[1], cleanResponse(row.slice(1).join('\n').replace(/\[[\s\S]*?\]/g, '')));
+    fields.set(match[1], cleanPdfResponse(row.slice(1).join('\n').replace(/\[[\s\S]*?\]/g, '')));
   }
   if (fields.size === 0) {
     const markers = [...text.matchAll(/\b(?:[A-Z]\d{2}|T\d{2}-[A-Z]\d{2})\s*\/\s*([A-Z][A-Z0-9_]+)\b/g)];
@@ -119,7 +119,16 @@ function pdfResponse(section: string): string {
     .filter((line) => !/^Required Supporting Documents\b/i.test(line))
     .filter((line) => !/^Upload these files separately\b/i.test(line))
     .filter((line) => !/^Document \/ Reference\b/i.test(line));
-  return cleanResponse(candidates.join('\n'));
+  return cleanPdfResponse(candidates.join('\n'));
+}
+
+function cleanPdfResponse(value: string): string {
+  return cleanResponse(value)
+    .replace(/([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})[ \t]*\n[ \t]*([A-Z]{1,4})\b/gi, '$1$2')
+    .replace(/([A-Za-z])-\n(?=[a-z])/g, '$1-')
+    .replace(/\s*\n\s*/g, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
 }
 
 async function readDocumentXml(document: JSZip.JSZipObject): Promise<string> {

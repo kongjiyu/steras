@@ -70,7 +70,7 @@ export type SeatingType = 'seated' | 'standing' | 'mixed';
 
 export const M1_TEMPLATE_REGISTRY_VERSION = '2026-08-28-v1';
 export const M1_DOCUMENT_SCHEMA_VERSION = '2026-08-28-document-v1';
-export const M1_EXTRACTION_SCHEMA_VERSION = '2026-08-28-docx-fields-v1';
+export const M1_EXTRACTION_SCHEMA_VERSION = '2026-08-29-document-fields-v2';
 export const M1_EVIDENCE_MANIFEST_SCHEMA_VERSION = '2026-08-28-evidence-v1';
 
 export type M1EventCategory =

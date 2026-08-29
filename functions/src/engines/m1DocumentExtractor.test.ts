@@ -17,6 +17,21 @@ describe('M1 DOCX extraction', () => {
     await expect(parseM1Pdf(Buffer.from('not-a-pdf'))).rejects.toThrow('not a readable PDF');
   });
 
+  it('extracts the completed combined presentation PDF without leaking visual line wraps into fields', async () => {
+    const combined = await parseM1Pdf(readFileSync('../output/pdf/m1-presentation-test-case/STERAS_DEMO_T01_Completed_Combined_Application.pdf'));
+    const fields = Object.fromEntries(mapM1Documents(combined, combined).extractedFields.map((field) => [field.target, field.value]));
+    expect(validateCombinedTemplateIdentity(combined, 'STERAS-T01-ENT-IN-v2.0')).toEqual([]);
+    expect(combined.fields.size).toBe(71);
+    expect(fields).toMatchObject({
+      name: 'Malaysia Tourism Storytelling Showcase 2026',
+      venueAddress: 'Kuala Lumpur Convention Centre, Kuala Lumpur City Centre, 50088 Kuala Lumpur, Malaysia',
+      expectedAttendance: 600,
+      organizerEmail: 'aina.rahman@example.com',
+      venueCapacity: 8000,
+    });
+    expect(fields.emergencyPlanSummary).toContain('two-metre stage buffer');
+  });
+
   it('validates a combined Core and scenario identity without requiring forged document roles', () => {
     const fields = new Map([
       ['EVENT_NAME', 'Event'], ['EVENT_DATES', '2026-10-10'], ['EVENT_ADDRESS', 'KL'],
