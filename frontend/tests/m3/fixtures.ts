@@ -28,6 +28,7 @@ export const EVENTS = {
   musicFestival: STERAS_TEST_EVENTS.controlVerification,
   foodFair: STERAS_TEST_EVENTS.authorityPartial,
   mountainRun: STERAS_TEST_EVENTS.initialReady,
+  adminManualReview: STERAS_TEST_EVENTS.adminManualReview,
   marathon: STERAS_TEST_EVENTS.awaitingAssignment,
   complianceBlocked: STERAS_TEST_EVENTS.complianceBlocked,
   provisionalReview: STERAS_TEST_EVENTS.provisionalReview,

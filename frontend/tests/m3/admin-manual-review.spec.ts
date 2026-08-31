@@ -16,14 +16,15 @@ test.describe('Admin application visibility and manual assessment', () => {
     await loginAs('admin');
     await page.goto('/admin');
 
-    const queueItem = page.getByTestId(`manual-review-${EVENTS.provisionalReview}`);
+    const eventId = EVENTS.adminManualReview;
+    const queueItem = page.getByTestId(`manual-review-${eventId}`);
     await expect(queueItem).toBeVisible({ timeout: 30_000 });
     await expect(queueItem).toContainText('Organizer 1');
     await expect(queueItem).toContainText('insufficient data');
     await expect(page.getByTestId('manual-assessment-form')).toHaveCount(0);
     await queueItem.click();
 
-    await expect(page).toHaveURL(new RegExp(`/admin/applications/${EVENTS.provisionalReview}\\?focus=manual-assessment`));
+    await expect(page).toHaveURL(new RegExp(`/admin/applications/${eventId}\\?focus=manual-assessment`));
     const form = page.getByTestId('manual-assessment-form');
     await expect(form).toBeVisible();
     await form.getByPlaceholder('Hazard name').fill('Crowd congestion');
@@ -42,9 +43,9 @@ test.describe('Admin application visibility and manual assessment', () => {
     await expect(page.getByText('Manual assessment finalized as the official assessment.')).toBeVisible({ timeout: 30_000 });
 
     await expect.poll(async () => {
-      const event = await api.getDoc<{ currentAssessmentId?: string; currentResourceId?: string }>(`events/${EVENTS.provisionalReview}`);
+      const event = await api.getDoc<{ currentAssessmentId?: string; currentResourceId?: string }>(`events/${eventId}`);
       if (!event?.currentAssessmentId || !event.currentResourceId) return null;
-      const assessment = await api.getDoc<{ status?: string; sourceKind?: string }>(`events/${EVENTS.provisionalReview}/assessments/${event.currentAssessmentId}`);
+      const assessment = await api.getDoc<{ status?: string; sourceKind?: string }>(`events/${eventId}/assessments/${event.currentAssessmentId}`);
       return `${assessment?.status}:${assessment?.sourceKind}:${Boolean(event.currentResourceId)}`;
     }, { timeout: 30_000 }).toBe('official_ready:admin_manual:true');
   });

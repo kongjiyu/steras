@@ -41,6 +41,7 @@ export const STERAS_TEST_EVENTS = {
   draftPrimary: 'steras-test-perlis-01',
   draftSecondary: 'steras-test-perlis-02',
   initialReady: 'steras-test-johor-01',
+  adminManualReview: 'steras-test-johor-02',
   // Selangor keeps the default Playwright PDRM/BOMBA/KKM accounts in scope;
   // the scenario still covers a compliance-blocked manual assessment.
   complianceBlocked: 'steras-test-selangor-02',
