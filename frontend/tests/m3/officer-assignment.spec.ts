@@ -10,8 +10,8 @@
  *   5. Admin calls `makeSecondReviewDecision` to confirm the aggregate.
  *   6. Event status is updated and the assignment workload is decremented.
  *
- * Uses evt-004-kl-marathon (requires PDRM, BOMBA, KKM, DBKL; status
- * rejected application) so we can run a fresh flow without disturbing the
+ * Uses the managed Selangor religious fixture (requires PDRM, BOMBA, KKM,
+ * MOTAC) so we can run a fresh flow without disturbing the
  * other test events.
  */
 import { test, expect, EVENTS } from './fixtures';
@@ -27,7 +27,7 @@ test.describe('@M3 Workstream 1: officer assignment + second review', () => {
   test.setTimeout(180_000);
 
   test.beforeEach(async () => {
-    // Reset evt-004 + officers + notifications via Admin SDK (client
+    // Reset the managed assignment fixture + officers + notifications via Admin SDK (client
     // auth can't write to events/ — admin ops are server-only).
     await resetMarathon();
     OFFICERS = await dedicatedOfficerUids();
@@ -44,16 +44,16 @@ test.describe('@M3 Workstream 1: officer assignment + second review', () => {
     );
     expect(dryRun.checklist.length).toBe(4);
     expect(dryRun.venueState).toBe('Selangor');
-    // The shared Linkos project also contains non-UAT backup officers. The
+    // The shared Firebase project also contains non-fixture backup officers. The
     // production function correctly picks the lowest-workload eligible
     // officer, so the default may be one of those backups rather than the
-    // dedicated UAT identity. Verify the UAT officers are eligible candidates
+    // dedicated STERAS test identity. Verify the managed officers are eligible candidates
     // and explicitly choose them below to keep the rest of this flow isolated.
     const expectedUatByAuth = {
       PDRM: OFFICERS.pdrm,
       BOMBA: OFFICERS.bomba,
       KKM: OFFICERS.kkm,
-      DBKL: OFFICERS.dbkl,
+      MOTAC: OFFICERS.motac,
     } as const;
     for (const item of dryRun.checklist) {
       expect(item.defaultOfficerUid).toBeTruthy();
@@ -64,7 +64,7 @@ test.describe('@M3 Workstream 1: officer assignment + second review', () => {
       PDRM: OFFICERS.pdrm,
       BOMBA: OFFICERS.bomba,
       KKM: OFFICERS.kkm,
-      DBKL: OFFICERS.dbkl,
+      MOTAC: OFFICERS.motac,
     };
     const commitResult = await api.callFunction<{ eventId: string; assignmentMap: Record<string, string>; dryRun: false }, { assigned: number; venueState: string }>(
       'assignAuthorityOfficers',
@@ -73,10 +73,10 @@ test.describe('@M3 Workstream 1: officer assignment + second review', () => {
     expect(commitResult.assigned).toBe(4);
 
     // Only officers for the event's four required authorities increment;
-    // the dedicated MOTAC account remains an unassigned candidate.
+    // the dedicated DBKL account remains an unassigned candidate.
     for (const [authority, uid] of Object.entries(OFFICERS)) {
       const o = await api.getDoc<{ workloadCount: number }>(`officers/${uid}`);
-      expect(o?.workloadCount).toBe(authority === 'motac' ? 0 : 1);
+      expect(o?.workloadCount).toBe(authority === 'dbkl' ? 0 : 1);
     }
     // Verify event.reviewStage='authority'.
     const evAfter = await api.getDoc<{ reviewStage: string }>(`events/${MARATHON}`);
@@ -90,7 +90,7 @@ test.describe('@M3 Workstream 1: officer assignment + second review', () => {
       ['pdrm', 'PDRM approval: traffic management plan and crowd ingress accepted.', 'PDRM E2E — fine as-is.'],
       ['bomba', 'Bomba approval: fire safety officer signed off on egress routes.', 'Bomba E2E — no changes needed.'],
       ['kkm', 'KKM approval: medical plan meets mass-gathering guideline.', 'KKM E2E — medical coverage OK.'],
-      ['dbkl', 'DBKL approval: venue capacity and emergency access verified.', 'DBKL E2E — venue OK.'],
+      ['motac', 'MOTAC approval: cultural programme and venue conditions verified.', 'MOTAC E2E — venue OK.'],
     ];
     for (const [key, reason, suggestion] of rationales) {
       await api.signOut();
@@ -111,7 +111,7 @@ test.describe('@M3 Workstream 1: officer assignment + second review', () => {
     const assignmentLogs = auditLogs.filter((a) => a.action === 'assignment_created');
     expect(assignmentLogs.length).toBe(4);
     const loggedAuths = new Set(assignmentLogs.map((a) => a.metadata.authorityType));
-    expect(loggedAuths).toEqual(new Set(['PDRM', 'BOMBA', 'KKM', 'DBKL']));
+    expect(loggedAuths).toEqual(new Set(['PDRM', 'BOMBA', 'KKM', 'MOTAC']));
     for (const log of assignmentLogs) {
       expect(log.actorRole).toBe('admin');
       expect(log.metadata.officerUid).toMatch(/.+/);
@@ -152,7 +152,7 @@ test.describe('@M3 Workstream 1: officer assignment + second review', () => {
     await loginAs('admin');
     await api.callFunction<{ eventId: string; assignmentMap: Record<string, string>; dryRun: false }, { assigned: number }>(
       'assignAuthorityOfficers',
-      { eventId: MARATHON, assignmentMap: { PDRM: OFFICERS.pdrm, BOMBA: OFFICERS.bomba, KKM: OFFICERS.kkm, DBKL: OFFICERS.dbkl }, dryRun: false },
+      { eventId: MARATHON, assignmentMap: { PDRM: OFFICERS.pdrm, BOMBA: OFFICERS.bomba, KKM: OFFICERS.kkm, MOTAC: OFFICERS.motac }, dryRun: false },
     );
 
     // PDRM can record for their PDRM assignment. The "not assigned"
@@ -183,11 +183,11 @@ test.describe('@M3 Workstream 1: officer assignment + second review', () => {
     await loginAs('admin');
     await api.callFunction<{ eventId: string; assignmentMap: Record<string, string>; dryRun: false }, { assigned: number }>(
       'assignAuthorityOfficers',
-      { eventId: MARATHON, assignmentMap: { PDRM: OFFICERS.pdrm, BOMBA: OFFICERS.bomba, KKM: OFFICERS.kkm, DBKL: OFFICERS.dbkl }, dryRun: false },
+      { eventId: MARATHON, assignmentMap: { PDRM: OFFICERS.pdrm, BOMBA: OFFICERS.bomba, KKM: OFFICERS.kkm, MOTAC: OFFICERS.motac }, dryRun: false },
     );
 
-    // Read the actual currentVersionId (evt-004 is seeded as v2, not
-    // v1) so the assignment path matches the function's write.
+    // Read the actual currentVersionId so the assignment path matches the
+    // fixture's current version.
     const event = await api.getDoc<{ currentVersionId: string }>(`events/${MARATHON}`);
     const versionId = event?.currentVersionId ?? 'v1';
 
@@ -220,7 +220,7 @@ test.describe('@M3 Workstream 1: officer assignment + second review', () => {
     await loginAs('admin');
     await api.callFunction<{ eventId: string; assignmentMap: Record<string, string>; dryRun: false }, { assigned: number }>(
       'assignAuthorityOfficers',
-      { eventId: MARATHON, assignmentMap: { PDRM: OFFICERS.pdrm, BOMBA: OFFICERS.bomba, KKM: OFFICERS.kkm, DBKL: OFFICERS.dbkl }, dryRun: false },
+      { eventId: MARATHON, assignmentMap: { PDRM: OFFICERS.pdrm, BOMBA: OFFICERS.bomba, KKM: OFFICERS.kkm, MOTAC: OFFICERS.motac }, dryRun: false },
     );
 
     const event = await api.getDoc<{ currentVersionId: string }>(`events/${MARATHON}`);

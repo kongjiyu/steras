@@ -2,10 +2,10 @@
  * One-time, exact-ID migration for the Module 3 application decision contract.
  *
  * This is intentionally separate from the broader M3 deployment migration. It
- * only handles the two records that were created under the old
- * AmendmentRequested application workflow:
- *   - evt-004-kl-marathon
- *   - m3-uat-08-amendment
+ * only handles the one explicitly approved legacy record that was created
+ * under the old AmendmentRequested application workflow. The former UAT
+ * fixture records are retired and are handled by the exact cleanup list, not
+ * by this migration.
  *
  * The migration is read-only by default. Applying it requires an explicit
  * project id, a shared-project write flag, and a confirmation token. It never
@@ -15,15 +15,14 @@ import { applicationDefault, getApps, initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore, type DocumentData, type Firestore } from 'firebase-admin/firestore';
 import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { M3_UAT_DATASET_ID, M3_UAT_SHARED_PROJECT_ID } from '@shared/m3UatFixtures';
+import { STERAS_TEST_DATASET_ID, STERAS_TEST_SHARED_PROJECT_ID } from '@shared/sterasTestFixtures';
 import { COLLECTIONS, type Assignment, type EventRecord } from '@shared/types';
 
 export const DECISION_MIGRATION_ID = 'm3-application-decision-contract-v1' as const;
-export const DECISION_MIGRATION_PROJECT_ID = M3_UAT_SHARED_PROJECT_ID;
+export const DECISION_MIGRATION_PROJECT_ID = STERAS_TEST_SHARED_PROJECT_ID;
 export const DECISION_MIGRATION_CONFIRMATION = 'REJECT_APPLICATION_AMENDMENTS' as const;
 export const DECISION_MIGRATION_EVENT_IDS = [
   'evt-004-kl-marathon',
-  'm3-uat-08-amendment',
 ] as const;
 
 export type DecisionMigrationAction = 'dry-run' | 'snapshot' | 'apply' | 'verify';
@@ -39,7 +38,7 @@ export interface DecisionMigrationOptions {
  * A JSON-safe, exact-ID backup of the documents touched by this migration.
  * This is deliberately an evidence/recovery artifact, not a broad Firestore
  * export. It contains no credentials and never includes documents outside the
- * two explicit migration IDs.
+ * explicit migration ID allowlist.
  */
 export interface DecisionMigrationSnapshotEvent {
   eventId: string;
@@ -86,7 +85,7 @@ function exactEventIds(input?: string[]): string[] {
   if (ids.length === 0) throw new Error('At least one exact event ID is required.');
   const allowed = new Set<string>(DECISION_MIGRATION_EVENT_IDS);
   for (const id of ids) {
-    if (!allowed.has(id)) throw new Error(`Refusing event ${id}; this tool only permits the two exact migration IDs.`);
+    if (!allowed.has(id)) throw new Error(`Refusing event ${id}; this tool only permits the exact migration IDs in its approved allowlist.`);
   }
   if (new Set(ids).size !== ids.length) throw new Error('Duplicate event IDs are not allowed.');
   return ids;
@@ -196,8 +195,8 @@ export async function buildDecisionMigrationSnapshot(db: Firestore, eventIds?: s
 
 function markerValid(eventId: string, event: EventRecord & Record<string, unknown>): boolean {
   if (eventId === 'evt-004-kl-marathon') return true;
-  const marker = event.m3Uat as { datasetId?: string; fixtureId?: string } | undefined;
-  return marker?.datasetId === M3_UAT_DATASET_ID && marker.fixtureId === eventId;
+  const marker = event.sterasTest as { datasetId?: string; fixtureId?: string } | undefined;
+  return marker?.datasetId === STERAS_TEST_DATASET_ID && marker.fixtureId === eventId;
 }
 
 function isAlreadyMigrated(event: Record<string, unknown>): boolean {
@@ -306,7 +305,7 @@ async function applyEvent(db: Firestore, eventId: string): Promise<void> {
       updatedAt: now,
       decisionContractMigration: {
         migrationId: DECISION_MIGRATION_ID,
-        datasetId: event.m3Uat && typeof event.m3Uat === 'object' ? (event.m3Uat as Record<string, unknown>).datasetId ?? null : null,
+        datasetId: event.sterasTest && typeof event.sterasTest === 'object' ? (event.sterasTest as Record<string, unknown>).datasetId ?? null : null,
         migratedAt: now,
         previousStatus: event.status,
         closedAssignmentIds: activeAssignments.map(({ id }) => id),
@@ -430,3 +429,4 @@ if (require.main === module) {
     process.exitCode = 1;
   });
 }
+

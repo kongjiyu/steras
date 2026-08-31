@@ -14,7 +14,7 @@ M3 never changes the official M2 score or represents AI as the decision-maker.
 
 - Authority dashboard, assigned review queue, event review, evidence download, versioned authority decisions, decision history, resource override, audit writes, multi-authority aggregation, and approved-event publication are implemented.
 - The current backend already scopes actions by `authorityType` and required authority membership.
-- Durable notifications, verified-control actions, explicit M2 readiness/compliance gates, named-officer assignment, Stage 1/2 evidence and public reporting are implemented. The remaining release task is deployed Linkos UAT against the current merged commit.
+- Durable notifications, verified-control actions, explicit M2 readiness/compliance gates, named-officer assignment, Stage 1/2 evidence and public reporting are implemented. The STERAS build is deployed to the shared Firebase project `linkos-496505` for testing.
 
 ## Current Delivery Goal
 
@@ -54,7 +54,7 @@ The PRD describes initial review, multi-department review, and final authority. 
 3. The first valid authority action moves Pending to Under Review.
 4. Each required authority records one current decision per application version.
 5. Any Rejected decision makes the aggregate status Rejected.
-6. Otherwise any Revision Requested decision makes the aggregate status Revision Requested.
+6. Event applications have no Amendment/Revision Requested decision. Rejection is terminal; resubmission is available only for event-control documents.
 7. Only unanimous approval by all required authorities for the same version makes the event Approved and publishes it.
 8. A new submitted version invalidates the previous version's current decisions without deleting history.
 
@@ -101,13 +101,13 @@ Push notification is optional until FCM configuration exists. A push failure mus
 
 ## Remaining Work
 
-- Keep the Linkos `m3-linkos-v1` fixture set and the three single-worker Playwright suites green after cross-module merges.
+- Keep the STERAS `steras-module3-test-v2` fixture set and the three single-worker Playwright suites green after cross-module merges.
 - Preserve pointer-driven compatibility with M2 assessment/resource revisions and keep resource adjustments append-only.
 - Optional FCM delivery remains an enhancement; durable in-app notifications are already implemented.
 - Add editable AI-assisted rejection/revision wording only after the human-edit boundary is tested.
 - Decide whether `/authority/audit` needs a standalone page or remains part of event review.
 - Add M4 incident navigation when the triage and investigation queue exists.
-- Retain deployment reports, Playwright traces and fixture verification output for each Linkos UAT release.
+- Retain deployment reports, Playwright traces and fixture verification output for each STERAS Firebase test release.
 
 ## Definition of Done
 
@@ -117,3 +117,4 @@ Push notification is optional until FCM configuration exists. A push failure mus
 - Only unanimous same-version approval publishes a sanitised public event.
 - Organisers receive real-time status and durable notification updates.
 - M3 pages pass desktop/mobile, empty/error/loading, permission, and keyboard checks.
+

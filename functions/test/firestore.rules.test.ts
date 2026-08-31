@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { assertFails, assertSucceeds, initializeTestEnvironment, RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, setDoc, updateDoc, where } from 'firebase/firestore';
 import { App, deleteApp, initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
@@ -135,6 +135,32 @@ async function seedProfilesAndEvent() {
 }
 
 describe('Firestore security rules', () => {
+  it('keeps organizer drafts private from Admin until submission', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, 'users/admin-1'), { role: 'admin' });
+      await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer' });
+      await setDoc(doc(db, 'events/draft-private'), {
+        organizerId: 'organizer-1', eventDetails: validDetails, status: 'Draft', currentVersionNumber: 0,
+        editableVersionId: 'v1', draftDocumentPaths: [], requiredAuthorities: [], createdAt: 1, updatedAt: 1,
+      });
+    });
+    const adminDb = environment.authenticatedContext('admin-1').firestore();
+    const organizerDb = environment.authenticatedContext('organizer-1').firestore();
+    await assertFails(getDoc(doc(adminDb, 'events/draft-private')));
+    await assertSucceeds(getDoc(doc(organizerDb, 'events/draft-private')));
+    await environment.withSecurityRulesDisabled((context) => setDoc(doc(context.firestore(), 'events/submitted-visible'), {
+      organizerId: 'organizer-1', eventDetails: validDetails, status: 'Pending', currentVersionNumber: 1,
+      requiredAuthorities: ['PDRM'], createdAt: 2, updatedAt: 2,
+    }));
+    const submittedQuery = query(collection(adminDb, 'events'), where('status', 'in', [
+      'Pending', 'UnderReview', 'Approved', 'Rejected', 'Withdrawn', 'Manual Review Required',
+    ]));
+    const submitted = await assertSucceeds(getDocs(submittedQuery));
+    expect(submitted.docs.map((item) => item.id)).toEqual(['submitted-visible']);
+    await assertFails(getDocs(collection(adminDb, 'events')));
+  });
+
   it('allows organizer drafts but rejects direct Pending creation and generated-field changes', async () => {
     await environment.withSecurityRulesDisabled((context) => setDoc(doc(context.firestore(), 'users/organizer-1'), { role: 'organizer' }));
     const db = environment.authenticatedContext('organizer-1').firestore();

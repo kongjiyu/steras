@@ -8,11 +8,10 @@ import {
 } from './migrateM3DecisionContract';
 
 describe('Module 3 decision-contract migration safety', () => {
-  it('defaults to both exact legacy IDs in read-only mode', () => {
+  it('defaults to the exact approved legacy ID in read-only mode', () => {
     expect(parseDecisionMigrationArgs([])).toEqual({ action: 'dry-run' });
     expect(DECISION_MIGRATION_EVENT_IDS).toEqual([
       'evt-004-kl-marathon',
-      'm3-uat-08-amendment',
     ]);
   });
 
@@ -50,3 +49,4 @@ describe('Module 3 decision-contract migration safety', () => {
     })).not.toThrow();
   });
 });
+

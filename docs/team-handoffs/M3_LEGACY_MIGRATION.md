@@ -1,16 +1,15 @@
 # Module 3 legacy compatibility migration
 
-## Current Linkos inventory
+## Current STERAS/Firebase inventory
 
-The read-only inventory on `linkos-496505` found 20 event documents:
+The final inventory on Firebase project `linkos-496505` contains 40 event documents:
 
-- Ten `m3-uat-*` documents owned by the `m3-linkos-v1` UAT dataset.
-- Three `uat-assessment-*` documents created by older UAT runs.
-- Seven `evt-*` mock/Playwright fixtures from the legacy data shape.
+- Thirty-two `steras-test-*` documents owned by the `steras-module3-test-v2` STERAS test dataset.
+- Eight `evt-*` mock/legacy fixtures from the historical data shape.
 
 Only the seven exact `evt-*` IDs are in
-`functions/m3-legacy-migration-manifest.json`. The UAT and temporary
-assessment IDs are explicit exclusions and must not be migrated or deleted by
+`functions/m3-legacy-migration-manifest.json`. The STERAS test IDs and
+temporary assessment IDs are explicit exclusions and must not be migrated by
 this operation.
 
 ## Safe commands
@@ -44,8 +43,7 @@ npm --workspace functions run migrate:m3 -- --apply `
   --report artifacts/m3-migration/evt-004.apply.json
 ```
 
-Then run the same command for `evt-control-verification`. Verify the full
-manifest after both applies:
+After the exact event apply, verify the full manifest:
 
 ```powershell
 npm run migrate:m3:verify -- --snapshot artifacts/m3-migration/evt-control-verification.snapshot.json
@@ -62,8 +60,7 @@ npm --workspace functions run migrate:m3 -- --rollback artifacts/m3-migration/ev
 
 - `evt-004-kl-marathon`: backfill `assignedOfficerUids` and
   `assignedOfficerByAuthority` from active assignments for version `v2`.
-- `evt-control-verification`: set only `reviewStage` to `initial`.
-- The other five legacy fixtures: semantic no-op.
+- The other six legacy fixtures: semantic no-op.
 - No event status, approval decision, assignment document, control document,
   Stage 1/2 file, public projection, Storage object, Auth identity, or
   notification is changed.
@@ -77,7 +74,7 @@ This is a separate, narrower migration for the old Application
 `AmendmentRequested` workflow. It is not the seven-event compatibility
 migration above and must not be combined with a broad event scan.
 
-It is locked to exactly `evt-004-kl-marathon` and `m3-uat-08-amendment` on
+It is locked to exactly `evt-004-kl-marathon` on
 `linkos-496505`. The safe order is:
 
 ```powershell
@@ -92,9 +89,10 @@ npm run migrate:m3:decision-contract:apply
 npm run migrate:m3:decision-contract:verify
 ```
 
-The snapshot command writes only the two target event trees, assignments,
+The snapshot command writes only the one target event tree, assignments,
 officer workload documents, audit logs, and public projections to
 `artifacts/m3-migration/decision-contract-snapshot.json`. Apply refuses to
 start unless that exact snapshot exists and matches the migration identity and
 allowlist. Keep the snapshot outside Git and retain it with the deployment
 evidence for emergency manual recovery.
+

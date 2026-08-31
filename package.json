@@ -28,7 +28,7 @@
     "verify:external": "npm --workspace functions run verify:external",
     "seed:staging": "npm --workspace functions run seed:venues:staging",
     "seed:demo": "npm --workspace functions run seed:demo",
-    "seed:m3:uat": "npm --workspace functions run seed:m3:uat --",
+    "seed:steras:test": "npm --workspace functions run seed:steras:test --",
     "uat:staging": "npm --workspace functions run uat:staging",
     "uat:fallback": "npm --workspace functions run uat:fallback",
     "cutover:resource-v3": "npm --workspace functions run cutover:resource-v3",
@@ -66,3 +66,4 @@
     "vitest": "^4.1.10"
   }
 }
+

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
   AlertOctagon,
@@ -36,9 +36,13 @@ import {
   Assignment,
   UserProfile,
   AuthorityType,
+  EventVersion,
 } from '@shared/types';
 import { WorkspaceTopBar } from '../../components/layout/Sidebar';
 import { useAuth } from '../../contexts/AuthContext';
+import ManualAssessmentForm from './ManualAssessmentForm';
+import { isAdminManualEligible } from './manualAssessmentEligibility';
+import { isAdminVisibleEvent } from './adminApplicationVisibility';
 
 const STATUS_TONE: Record<EventStatus, string> = {
   Draft: 'admin-badge admin-badge--default',
@@ -136,8 +140,10 @@ export default function AdminApplicationReview() {
   const { eventId } = useParams<{ eventId: string }>();
   const { profile } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const [event, setEvent] = useState<EventRecord | null>(null);
+  const [version, setVersion] = useState<EventVersion | null>(null);
   const [assessment, setAssessment] = useState<RiskAssessment | null>(null);
   const [resource, setResource] = useState<ResourceRecommendation | null>(null);
   const [decisions, setDecisions] = useState<AuthorityDecision[]>([]);
@@ -146,6 +152,7 @@ export default function AdminApplicationReview() {
   const [audit, setAudit] = useState<Array<{ id: string; action: string; timestamp: number; actorId: string; notes?: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [reloadToken, setReloadToken] = useState(0);
 
   // Officer assignment checklist
   const [assigned, setAssigned] = useState<Record<AuthorityType, boolean>>({
@@ -178,7 +185,14 @@ export default function AdminApplicationReview() {
           return;
         }
         const eventData = { ...(eventSnap.data() as EventRecord), eventId: eventSnap.id };
+        if (!isAdminVisibleEvent(eventData)) {
+          setEvent(null);
+          setError('This application has not been submitted by the organizer.');
+          setLoading(false);
+          return;
+        }
         setEvent(eventData);
+        setVersion(null);
 
         // Default-check authorities based on event's required authorities
         const initial: Record<AuthorityType, boolean> = { PDRM: false, BOMBA: false, KKM: false, DBKL: false, MOTAC: false };
@@ -187,6 +201,12 @@ export default function AdminApplicationReview() {
 
         // Load all related sub-collections in parallel
         const promises: Promise<unknown>[] = [];
+        if (eventData.currentVersionId) {
+          promises.push(
+            getDoc(doc(eventRef, COLLECTIONS.VERSIONS, eventData.currentVersionId))
+              .then((s) => { if (s.exists()) setVersion(s.data() as EventVersion); }),
+          );
+        }
         if (eventData.currentAssessmentId) {
           promises.push(
             getDoc(doc(eventRef, COLLECTIONS.ASSESSMENTS, eventData.currentAssessmentId))
@@ -226,7 +246,13 @@ export default function AdminApplicationReview() {
       }
     })();
     return () => { cancelled = true; };
-  }, [eventId]);
+  }, [eventId, reloadToken]);
+
+  useEffect(() => {
+    if (!loading && searchParams.get('focus') === 'manual-assessment') {
+      document.getElementById('manual-assessment')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [loading, searchParams]);
 
   const officersByAuth = useMemo(() => {
     const m: Record<AuthorityType, UserProfile[]> = { PDRM: [], BOMBA: [], KKM: [], DBKL: [], MOTAC: [] };
@@ -239,6 +265,9 @@ export default function AdminApplicationReview() {
   const canReview = event && (event.status === 'Pending' || event.status === 'UnderReview' || event.status === 'Manual Review Required');
   const manualOfficialReady = assessment?.status === 'official_ready'
     && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual';
+  const manualReviewAssessment = assessment?.status === 'manual_review_required' && isAdminManualEligible(assessment)
+    ? assessment
+    : null;
   const initialReviewOpen = Boolean(canReview
     && (event?.status !== 'Manual Review Required' || manualOfficialReady)
     && !event?.initialReview
@@ -387,6 +416,35 @@ export default function AdminApplicationReview() {
                   </dl>
                 </Section>
 
+                {version && (
+                  <Section title={`Submitted version ${version.versionNumber}`} icon={ClipboardList}>
+                    <div className="grid gap-4 text-sm sm:grid-cols-2">
+                      <Detail label="Event type" value={version.eventDetails.type} />
+                      <Detail label="Event date" value={`${formatDateTime(version.eventDetails.startDatetime)} – ${formatDateTime(version.eventDetails.endDatetime)}`} />
+                      <Detail label="Venue address" value={version.eventDetails.venueAddress} />
+                      <Detail label="Capacity / expected attendance" value={`${version.eventDetails.venueCapacity.toLocaleString()} / ${version.eventDetails.expectedAttendance.toLocaleString()}`} />
+                      <Detail label="Environment" value={`${version.eventDetails.environment} · ${version.eventDetails.coverage} · ${version.eventDetails.seating}`} />
+                      <Detail label="Venue coordinates" value={version.eventDetails.venueLocation ? `${version.eventDetails.venueLocation.lat}, ${version.eventDetails.venueLocation.lng}` : 'Not provided'} />
+                    </div>
+                    <div className="mt-4 grid gap-4 text-sm">
+                      <div><p className="text-xs text-ink-500">Description</p><p className="mt-1 whitespace-pre-wrap text-ink-800">{version.eventDetails.description || 'Not provided'}</p></div>
+                      <div><p className="text-xs text-ink-500">Emergency-plan summary</p><p className="mt-1 whitespace-pre-wrap text-ink-800">{version.eventDetails.emergencyPlanSummary || 'Not provided'}</p></div>
+                    </div>
+                    <div className="mt-4">
+                      <p className="text-xs text-ink-500">Risk-profile answers</p>
+                      {version.eventDetails.riskProfile && Object.keys(version.eventDetails.riskProfile).length > 0 ? (
+                        <dl className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
+                          {Object.entries(version.eventDetails.riskProfile).map(([key, value]) => <div key={key} className="rounded border border-[#e8e0cf] bg-cream-50 px-3 py-2"><dt className="font-semibold text-ink-700">{key}</dt><dd className="mt-1 text-ink-600">{String(value)}</dd></div>)}
+                        </dl>
+                      ) : <p className="mt-1 text-sm text-ink-500">No additional risk-profile answers.</p>}
+                    </div>
+                    <div className="mt-4">
+                      <p className="text-xs text-ink-500">Submitted documents</p>
+                      {version.documentPaths.length ? <ul className="mt-2 space-y-1 text-xs text-ink-700">{version.documentPaths.map((path) => <li key={path} className="break-all rounded border border-[#e8e0cf] bg-cream-50 px-3 py-2">{path}</li>)}</ul> : <p className="mt-1 text-sm text-ink-500">No documents attached.</p>}
+                    </div>
+                  </Section>
+                )}
+
                 {/* Current M2 deterministic assessment and advisory. */}
                 {assessment && (() => {
                   const display = assessmentDisplay(assessment);
@@ -444,6 +502,22 @@ export default function AdminApplicationReview() {
                     </Section>
                   );
                 })()}
+
+                {manualReviewAssessment && event && (
+                  <div id="manual-assessment" className="scroll-mt-24">
+                    <Section title="Admin manual assessment" icon={FileWarning}>
+                      <div className="mb-4 rounded-md border border-gold-200 bg-gold-50 p-3 text-sm text-ink-700">
+                        <p className="font-semibold text-gold-700">This application requires Admin manual review before an application decision.</p>
+                        <p className="mt-1 text-xs leading-5">Review the complete application and M2 evidence above, then submit the locked assessment. The application decision remains Approve or Reject only.</p>
+                      </div>
+                      <ManualAssessmentForm
+                        eventId={event.eventId}
+                        assessment={manualReviewAssessment}
+                        onCompleted={() => setReloadToken((value) => value + 1)}
+                      />
+                    </Section>
+                  </div>
+                )}
 
                 {/* Resource recommendations */}
                 {resource && (
@@ -685,4 +759,8 @@ export default function AdminApplicationReview() {
       </main>
     </div>
   );
+}
+
+function Detail({ label, value }: { label: string; value: string }) {
+  return <div><p className="text-xs text-ink-500">{label}</p><p className="mt-1 text-ink-800">{value}</p></div>;
 }

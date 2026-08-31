@@ -7,7 +7,7 @@ rules_version = '2';
 //   - organizer:  self-signup; can edit own Draft applications only
 //   - authority:  server-provisioned only; reviews applications assigned to their agency
 //   - public:     self-signup; reads public_events (same as logged-out users)
-//   - admin:      server-provisioned only; full read across users/events for ops
+//   - admin:      server-provisioned only; reads submitted events for ops, never organizer Drafts
 // =====================================================================
 
 service cloud.firestore {
@@ -85,9 +85,10 @@ service cloud.firestore {
       // Organizer can read their own event.
       // Only the named officer assigned to the active event version can read
       // an application. Authority membership alone is not sufficient.
-      // Admins can read all events (ops view).
+      // Admin workflows start only after organizer submission. Drafts remain
+      // private to their organizer until the server advances the status.
       // Public viewers should query `public_events` instead — not `events`.
-      allow read: if isAdmin()
+      allow read: if (isAdmin() && resource.data.status != 'Draft')
                   || isAssignedAuthority(eventId)
                   || (isSignedIn() && isOwner(resource.data.organizerId));
 

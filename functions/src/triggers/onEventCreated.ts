@@ -43,7 +43,7 @@ import { AI_RESPONSE_SCHEMA_VERSION, PROMPT_VERSION, analyseWithAI } from '../en
 import { validateAndCalculateProvisional } from '../engines/assessmentValidator';
 import { buildOfficialAssessmentResult } from '../engines/authorityFinalisation';
 import { buildManualOfficialAssessmentResult } from '../engines/manualFinalisation';
-import { M3_UAT_DATASET_ID, M3_UAT_EVENT_IDS } from '@shared/m3UatFixtures';
+import { STERAS_TEST_DATASET_ID, STERAS_TEST_EVENT_IDS } from '@shared/sterasTestFixtures';
 import {
   computeResources,
   ResourceCalculationResult,
@@ -1504,15 +1504,15 @@ function organizerResourceRecommendation(resources: ResourceRecommendation): Org
 
 export const onEventCreated = onDocumentCreated({ document: `${COLLECTIONS.EVENTS}/{eventId}`, region: FUNCTION_REGION, secrets: ASSESSMENT_SECRETS }, async (trigger) => {
   const eventId = trigger.params.eventId;
-  const createdData = trigger.data?.data() as { m3Uat?: { datasetId?: string; managedBy?: string } } | undefined;
+  const createdData = trigger.data?.data() as { sterasTest?: { datasetId?: string; managedBy?: string } } | undefined;
   const legacyM3FixtureIds = new Set([
     'evt-compliance-blocked',
     'evt-provisional-readiness',
     'evt-control-verification',
   ]);
-  const isManagedUatFixture = (M3_UAT_EVENT_IDS as readonly string[]).includes(eventId)
-    && createdData?.m3Uat?.datasetId === M3_UAT_DATASET_ID
-    && createdData?.m3Uat?.managedBy === 'seed:m3:uat';
+  const isManagedUatFixture = (STERAS_TEST_EVENT_IDS as readonly string[]).includes(eventId)
+    && createdData?.sterasTest?.datasetId === STERAS_TEST_DATASET_ID
+    && createdData?.sterasTest?.managedBy === 'seed:steras:test';
   if (legacyM3FixtureIds.has(eventId) || isManagedUatFixture) {
     logger.info(`[onEventCreated] skipped M3 test fixture: ${eventId}`);
     return;
@@ -1527,3 +1527,4 @@ export const onEventUpdated = onDocumentUpdated({ document: `${COLLECTIONS.EVENT
   if (before.status === 'Pending' && before.currentVersionId === after.currentVersionId) return;
   try { await runRiskAndResourcePipeline(trigger.params.eventId); } catch (error) { logger.error('[onEventUpdated] failed', error); }
 });
+

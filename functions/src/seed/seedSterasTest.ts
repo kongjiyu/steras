@@ -4,19 +4,22 @@ import { getAuth, type Auth } from 'firebase-admin/auth';
 import { getFirestore, type Firestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
 import {
-  M3_UAT_ACCOUNT_EMAILS,
-  M3_UAT_DATASET_ID,
-  M3_UAT_EVENT_IDS,
-  M3_UAT_RETIRED_EVENT_IDS,
-  M3_UAT_EVENTS,
-  M3_UAT_SHARED_PROJECT_ID,
-  type M3UatEventId,
-} from '@shared/m3UatFixtures';
+  STERAS_TEST_ACCOUNT_EMAILS,
+  STERAS_TEST_ADMIN_EMAILS,
+  STERAS_TEST_DATASET_ID,
+  STERAS_TEST_EVENT_IDS,
+  STERAS_TEST_RETIRED_EVENT_IDS,
+  STERAS_TEST_EVENTS,
+  STERAS_TEST_SHARED_PROJECT_ID,
+  type SterasTestEventId,
+} from '@shared/sterasTestFixtures';
 import {
   ASSESSMENT_SCHEMA_VERSION,
   AuthorityScoreReview,
   AuthorityType,
+  EventDetails,
   EventRecord,
+  EventType,
   EventStatus,
   RESOURCE_KEYS,
   RESOURCE_SCHEMA_VERSION,
@@ -32,44 +35,46 @@ import { validateAndCalculateProvisional } from '../engines/assessmentValidator'
 import { computeCategoryBasedAssessment } from '../engines/ruleBased';
 import { validateResourceRecommendation } from '../engines/resourceContract';
 import { resourceDocumentId } from '../triggers/onEventCreated';
+import { requiredAuthoritiesFor } from '../http/submitEvent';
+import { STERAS_TEST_STATES, stateSlug, type SterasTestState } from '@shared/sterasTestFixtures';
 
-export type M3UatAction = 'dry-run' | 'apply' | 'verify' | 'cleanup';
+export type SterasTestAction = 'dry-run' | 'apply' | 'verify' | 'cleanup';
 
-const MANAGED_BY = 'seed:m3:uat' as const;
+const MANAGED_BY = 'seed:steras:test' as const;
 const VERSION_ID = 'v1';
-const STORAGE_BUCKET = process.env.M3_UAT_STORAGE_BUCKET
-  ?? `${M3_UAT_SHARED_PROJECT_ID}.firebasestorage.app`;
+const STORAGE_BUCKET = process.env.STERAS_TEST_STORAGE_BUCKET
+  ?? `${STERAS_TEST_SHARED_PROJECT_ID}.firebasestorage.app`;
 
-const REQUIRED_AUTHORITIES: AuthorityType[] = ['PDRM', 'BOMBA', 'KKM', 'DBKL'];
+const PLAYWRIGHT_AUTHORITIES: AuthorityType[] = ['PDRM', 'BOMBA', 'KKM', 'DBKL'];
 
 interface ManagedMarker {
-  datasetId: typeof M3_UAT_DATASET_ID;
+  datasetId: typeof STERAS_TEST_DATASET_ID;
   managedBy: typeof MANAGED_BY;
   fixtureId?: string;
 }
 
 interface Identity {
-  key: keyof typeof M3_UAT_ACCOUNT_EMAILS;
+  key: string;
   email: string;
   name: string;
   role: 'admin' | 'organizer' | 'public' | 'authority';
   authorityType?: AuthorityType;
+  state?: SterasTestState;
 }
 
 interface IdentityUids {
   admin: string;
   organizer: string;
   public: string;
-  PDRM: string;
-  BOMBA: string;
-  KKM: string;
-  DBKL: string;
-  MOTAC: string;
+  authorities: Record<string, string>;
 }
 
 interface Scenario {
-  id: M3UatEventId;
+  id: SterasTestEventId;
   name: string;
+  state: SterasTestState;
+  eventType: EventType;
+  recordKind: 'initial' | 'manual';
   status: EventStatus;
   requiredAuthorities: AuthorityType[];
   reviewStage?: 'initial' | 'authority' | 'second' | 'manual' | 'closed' | null;
@@ -80,33 +85,77 @@ interface Scenario {
   finalDecision?: 'Rejected';
 }
 
-const SCENARIOS: Scenario[] = [
-  { id: M3_UAT_EVENTS.initialReady, name: 'Initial Review Ready', status: 'Pending', requiredAuthorities: ['PDRM', 'BOMBA', 'KKM'], reviewStage: 'initial' },
-  { id: M3_UAT_EVENTS.complianceBlocked, name: 'Compliance Blocked', status: 'UnderReview', requiredAuthorities: ['PDRM', 'BOMBA'], reviewStage: 'authority', complianceStatus: 'blocked', assignments: 'pending' },
-  { id: M3_UAT_EVENTS.provisionalReview, name: 'Provisional Manual Review', status: 'Manual Review Required', requiredAuthorities: ['PDRM', 'BOMBA'], reviewStage: 'manual', assessmentReadiness: 'provisional' },
-  { id: M3_UAT_EVENTS.awaitingAssignment, name: 'Awaiting Officer Assignment', status: 'UnderReview', requiredAuthorities: REQUIRED_AUTHORITIES, reviewStage: 'initial' },
-  { id: M3_UAT_EVENTS.authorityPartial, name: 'Authority Review In Progress', status: 'UnderReview', requiredAuthorities: REQUIRED_AUTHORITIES, reviewStage: 'authority', assignments: 'partial' },
-  { id: M3_UAT_EVENTS.secondReview, name: 'Second Review Ready', status: 'UnderReview', requiredAuthorities: REQUIRED_AUTHORITIES, reviewStage: 'second', assignments: 'complete' },
-  { id: M3_UAT_EVENTS.rejected, name: 'Rejected Application', status: 'Rejected', requiredAuthorities: REQUIRED_AUTHORITIES, reviewStage: 'closed', assignments: 'complete', finalDecision: 'Rejected' },
-  { id: M3_UAT_EVENTS.secondReviewRejected, name: 'Second Review Rejected', status: 'Rejected', requiredAuthorities: REQUIRED_AUTHORITIES, reviewStage: 'closed', assignments: 'complete', finalDecision: 'Rejected' },
-  { id: M3_UAT_EVENTS.controlVerification, name: 'Stage 1 Control Verification', status: 'Approved', requiredAuthorities: REQUIRED_AUTHORITIES, reviewStage: null, controls: 'stage1' },
-  { id: M3_UAT_EVENTS.publicStage2, name: 'Published Stage 2 Evidence', status: 'Approved', requiredAuthorities: REQUIRED_AUTHORITIES, reviewStage: null, controls: 'stage2' },
+const STATE_EVENT_TYPES: Array<[SterasTestState, EventType, EventType]> = [
+  ['Johor', 'concert', 'festival'], ['Kedah', 'sports', 'cultural'], ['Kelantan', 'religious', 'exhibition'],
+  ['Melaka', 'fair', 'conference'], ['Negeri Sembilan', 'other', 'concert'], ['Pahang', 'festival', 'sports'],
+  ['Penang', 'cultural', 'religious'], ['Perak', 'exhibition', 'fair'], ['Perlis', 'conference', 'other'],
+  ['Sabah', 'concert', 'festival'], ['Sarawak', 'sports', 'cultural'], ['Selangor', 'religious', 'exhibition'],
+  ['Terengganu', 'fair', 'conference'], ['Kuala Lumpur', 'other', 'concert'], ['Labuan', 'festival', 'sports'],
+  ['Putrajaya', 'cultural', 'religious'],
 ];
 
+const workflowOverrides: Record<string, Partial<Scenario>> = {
+  [STERAS_TEST_EVENTS.complianceBlocked]: { status: 'UnderReview', complianceStatus: 'blocked', reviewStage: 'authority', assignments: 'pending' },
+  [STERAS_TEST_EVENTS.provisionalReview]: { requiredAuthorities: ['PDRM', 'BOMBA'], assessmentReadiness: 'provisional', reviewStage: 'manual' },
+  [STERAS_TEST_EVENTS.awaitingAssignment]: { reviewStage: 'initial' },
+  [STERAS_TEST_EVENTS.authorityPartial]: { reviewStage: 'authority', assignments: 'partial' },
+  [STERAS_TEST_EVENTS.secondReview]: { reviewStage: 'second', assignments: 'complete' },
+  [STERAS_TEST_EVENTS.rejected]: { reviewStage: 'closed', assignments: 'complete', finalDecision: 'Rejected' },
+  [STERAS_TEST_EVENTS.secondReviewRejected]: { reviewStage: 'closed', assignments: 'complete', finalDecision: 'Rejected' },
+  // These two fixtures are already approved so manual testers can open the
+  // control and public Stage 2 workflows immediately after seeding.
+  [STERAS_TEST_EVENTS.controlVerification]: { status: 'Approved', reviewStage: null, assignments: 'complete', controls: 'stage1' },
+  [STERAS_TEST_EVENTS.publicStage2]: { status: 'Approved', reviewStage: null, assignments: 'complete', controls: 'stage2' },
+};
+
+const SCENARIOS: Scenario[] = STATE_EVENT_TYPES.flatMap(([state, firstType, secondType]) => [firstType, secondType].map((eventType, index) => {
+  const id = `steras-test-${stateSlug(state)}-${String(index + 1).padStart(2, '0')}` as SterasTestEventId;
+  const recordKind = index === 0 ? 'initial' : 'manual';
+  const base: Scenario = {
+    id,
+    state,
+    eventType,
+    recordKind,
+    name: `${state} ${eventType} application ${index + 1}`,
+    status: recordKind === 'initial' ? 'Pending' : 'Manual Review Required',
+    requiredAuthorities: requiredAuthoritiesFor({
+      name: 'STERAS test event', type: eventType, venueName: `STERAS ${state} venue`, venueAddress: `${state}, Malaysia`,
+      venueCapacity: 10_000, expectedAttendance: 3_000, environment: 'outdoor', coverage: 'partially_covered', seating: 'mixed',
+      startDatetime: Date.now() + 86_400_000, endDatetime: Date.now() + 90_000_000, emergencyPlanSummary: 'Complete emergency plan.',
+      organizerName: 'Organizer 1', organizerEmail: 'organizer1@steras.test', organizerPhone: '+60 12-000 0001',
+    }),
+    reviewStage: recordKind === 'initial' ? 'initial' : 'manual',
+    assessmentReadiness: recordKind === 'initial' ? 'complete' : 'insufficient_data',
+  };
+  return { ...base, ...(workflowOverrides[id] ?? {}) };
+}));
+
 const IDENTITIES: Identity[] = [
-  { key: 'admin', email: M3_UAT_ACCOUNT_EMAILS.admin, name: 'M3 UAT Admin', role: 'admin' },
-  { key: 'organizer', email: M3_UAT_ACCOUNT_EMAILS.organizer, name: 'M3 UAT Organizer', role: 'organizer' },
-  { key: 'public', email: M3_UAT_ACCOUNT_EMAILS.public, name: 'M3 UAT Public User', role: 'public' },
-  ...(['PDRM', 'BOMBA', 'KKM', 'DBKL', 'MOTAC'] as AuthorityType[]).map((authorityType) => ({
-    key: authorityType,
-    email: M3_UAT_ACCOUNT_EMAILS[authorityType],
-    name: `M3 UAT ${authorityType} Officer`,
+  { key: 'admin', email: STERAS_TEST_ACCOUNT_EMAILS.admin, name: 'Admin 1', role: 'admin' },
+  { key: 'admin2', email: STERAS_TEST_ADMIN_EMAILS.admin2, name: 'Admin 2', role: 'admin' },
+  { key: 'admin3', email: STERAS_TEST_ADMIN_EMAILS.admin3, name: 'Admin 3', role: 'admin' },
+  { key: 'organizer', email: STERAS_TEST_ACCOUNT_EMAILS.organizer, name: 'Organizer 1', role: 'organizer' },
+  { key: 'public', email: STERAS_TEST_ACCOUNT_EMAILS.public, name: 'Public User 1', role: 'public' },
+  ...STERAS_TEST_STATES.flatMap((state) => (['PDRM', 'BOMBA', 'KKM'] as AuthorityType[]).map((authorityType) => ({
+    key: `${authorityType}:${state}`,
+    email: `${authorityType.toLowerCase()}.${stateSlug(state)}@steras.test`,
+    name: `${authorityType} Officer (${state})`,
     role: 'authority' as const,
     authorityType,
+    state,
+  }))),
+  { key: 'DBKL:Kuala Lumpur', email: STERAS_TEST_ACCOUNT_EMAILS.DBKL, name: 'DBKL Officer (Kuala Lumpur)', role: 'authority', authorityType: 'DBKL', state: 'Kuala Lumpur' },
+  ...STERAS_TEST_STATES.filter((state) => STATE_EVENT_TYPES.find(([candidate]) => candidate === state)?.slice(1).some((type) => ['festival', 'cultural', 'religious'].includes(type))).map((state) => ({
+    key: `MOTAC:${state}`,
+    email: `motac.${stateSlug(state)}@steras.test`,
+    name: `MOTAC Officer (${state})`,
+    role: 'authority' as const,
+    authorityType: 'MOTAC' as const,
+    state,
   })),
 ];
 
-export interface M3UatContext {
+export interface SterasTestContext {
   projectId: string;
   db: Firestore;
   auth: Auth;
@@ -114,27 +163,27 @@ export interface M3UatContext {
   password: string;
 }
 
-export function parseM3UatAction(argv: string[]): M3UatAction {
+export function parseSterasTestAction(argv: string[]): SterasTestAction {
   const flags = argv.filter((value) => ['--dry-run', '--apply', '--verify', '--cleanup'].includes(value));
   if (flags.length !== 1) {
     throw new Error('Choose exactly one action: --dry-run, --apply, --verify, or --cleanup.');
   }
-  return flags[0].slice(2) as M3UatAction;
+  return flags[0].slice(2) as SterasTestAction;
 }
 
-export function assertSharedProjectAuthorization(projectId: string, action: M3UatAction): void {
-  if (projectId !== M3_UAT_SHARED_PROJECT_ID) {
-    throw new Error(`Refusing target ${projectId}. This dataset is locked to ${M3_UAT_SHARED_PROJECT_ID}.`);
+export function assertSharedProjectAuthorization(projectId: string, action: SterasTestAction): void {
+  if (projectId !== STERAS_TEST_SHARED_PROJECT_ID) {
+    throw new Error(`Refusing target ${projectId}. This dataset is locked to ${STERAS_TEST_SHARED_PROJECT_ID}.`);
   }
-  if (['apply', 'cleanup'].includes(action) && process.env.M3_UAT_ALLOW_SHARED_PROJECT !== 'true') {
-    throw new Error('Set M3_UAT_ALLOW_SHARED_PROJECT=true to authorize writes to the shared linkos project.');
+  if (['apply', 'cleanup'].includes(action) && process.env.STERAS_TEST_ALLOW_SHARED_PROJECT !== 'true') {
+    throw new Error('Set STERAS_TEST_ALLOW_SHARED_PROJECT=true to authorize writes to the shared linkos project.');
   }
-  if (action === 'cleanup' && process.env.M3_UAT_CONFIRM_DATASET !== M3_UAT_DATASET_ID) {
-    throw new Error(`Set M3_UAT_CONFIRM_DATASET=${M3_UAT_DATASET_ID} before cleanup.`);
+  if (action === 'cleanup' && process.env.STERAS_TEST_CONFIRM_DATASET !== STERAS_TEST_DATASET_ID) {
+    throw new Error(`Set STERAS_TEST_CONFIRM_DATASET=${STERAS_TEST_DATASET_ID} before cleanup.`);
   }
 }
 
-export function initializeM3UatContext(): M3UatContext {
+export function initializeSterasTestContext(): SterasTestContext {
   const projectId = (process.env.FIREBASE_PROJECT_ID ?? process.env.GCLOUD_PROJECT ?? '').trim();
   if (!projectId) throw new Error('Set FIREBASE_PROJECT_ID explicitly.');
   const app = getApps()[0] ?? initializeApp({
@@ -147,17 +196,17 @@ export function initializeM3UatContext(): M3UatContext {
     app,
     db: getFirestore(app),
     auth: getAuth(app),
-    password: process.env.M3_UAT_PASSWORD?.trim() ?? process.env.STERAS_E2E_PASSWORD?.trim() ?? '',
+    password: process.env.STERAS_TEST_PASSWORD?.trim() ?? process.env.STERAS_E2E_PASSWORD?.trim() ?? '',
   };
 }
 
 function marker(fixtureId?: string): ManagedMarker {
-  return { datasetId: M3_UAT_DATASET_ID, managedBy: MANAGED_BY, ...(fixtureId ? { fixtureId } : {}) };
+  return { datasetId: STERAS_TEST_DATASET_ID, managedBy: MANAGED_BY, ...(fixtureId ? { fixtureId } : {}) };
 }
 
 function isManaged(data: FirebaseFirestore.DocumentData | undefined, fixtureId?: string): boolean {
-  const value = data?.m3Uat as Partial<ManagedMarker> | undefined;
-  return value?.datasetId === M3_UAT_DATASET_ID
+  const value = data?.sterasTest as Partial<ManagedMarker> | undefined;
+  return value?.datasetId === STERAS_TEST_DATASET_ID
     && value?.managedBy === MANAGED_BY
     && (!fixtureId || value.fixtureId === fixtureId);
 }
@@ -190,11 +239,21 @@ async function withTransientAuthRetry<T>(operation: () => Promise<T>): Promise<T
   throw lastError;
 }
 
-async function assertNoCollisions(ctx: M3UatContext): Promise<void> {
-  for (const eventId of [...M3_UAT_EVENT_IDS, ...M3_UAT_RETIRED_EVENT_IDS]) {
+async function assertNoCollisions(ctx: SterasTestContext): Promise<void> {
+  for (const eventId of [...STERAS_TEST_EVENT_IDS, ...STERAS_TEST_RETIRED_EVENT_IDS]) {
     const snap = await ctx.db.collection('events').doc(eventId).get();
     if (snap.exists && !isManaged(snap.data(), eventId)) {
-      throw new Error(`Collision at events/${eventId}: existing document is not owned by ${M3_UAT_DATASET_ID}.`);
+      throw new Error(`Collision at events/${eventId}: existing document is not owned by ${STERAS_TEST_DATASET_ID}.`);
+    }
+    const evidenceFile = getStorage(ctx.app).bucket().file(`event_documents/${eventId}/${VERSION_ID}/evidence.pdf`);
+    const [evidenceExists] = await evidenceFile.exists();
+    if (evidenceExists) {
+      const [metadata] = await evidenceFile.getMetadata();
+      if (metadata.metadata?.datasetId !== STERAS_TEST_DATASET_ID
+        || metadata.metadata?.managedBy !== MANAGED_BY
+        || metadata.metadata?.fixtureId !== eventId) {
+        throw new Error(`Collision at ${evidenceFile.name}: existing file is not owned by ${STERAS_TEST_DATASET_ID}.`);
+      }
     }
   }
   for (const identity of IDENTITIES) {
@@ -202,15 +261,15 @@ async function assertNoCollisions(ctx: M3UatContext): Promise<void> {
     if (!authUser) continue;
     const profile = await ctx.db.collection('users').doc(authUser.uid).get();
     if (!profile.exists || !isManaged(profile.data(), identity.email)) {
-      throw new Error(`Collision for Auth identity ${identity.email}: its profile is not owned by ${M3_UAT_DATASET_ID}.`);
+      throw new Error(`Collision for Auth identity ${identity.email}: its profile is not owned by ${STERAS_TEST_DATASET_ID}.`);
     }
   }
 }
 
-async function ensureIdentities(ctx: M3UatContext): Promise<IdentityUids> {
-  if (ctx.password.length < 12) throw new Error('Set M3_UAT_PASSWORD to at least 12 characters.');
+async function ensureIdentities(ctx: SterasTestContext): Promise<IdentityUids> {
+  if (ctx.password.length < 12) throw new Error('Set STERAS_TEST_PASSWORD to at least 12 characters.');
   const now = Date.now();
-  const uids: Partial<IdentityUids> = {};
+  const uids: IdentityUids = { admin: '', organizer: '', public: '', authorities: {} };
   for (const identity of IDENTITIES) {
     let authUser = await findAuthUser(ctx.auth, identity.email);
     if (!authUser) {
@@ -218,14 +277,17 @@ async function ensureIdentities(ctx: M3UatContext): Promise<IdentityUids> {
     } else {
       await withTransientAuthRetry(() => ctx.auth.updateUser(authUser!.uid, { password: ctx.password, displayName: identity.name, disabled: false }));
     }
-    uids[identity.key] = authUser.uid;
+    if (identity.key === 'admin') uids.admin = authUser.uid;
+    else if (identity.key === 'organizer') uids.organizer = authUser.uid;
+    else if (identity.key === 'public') uids.public = authUser.uid;
+    else uids.authorities[identity.key] = authUser.uid;
     await ctx.db.collection('users').doc(authUser.uid).set({
       uid: authUser.uid,
       email: identity.email,
       name: identity.name,
       role: identity.role,
       ...(identity.authorityType ? { authorityType: identity.authorityType } : {}),
-      m3Uat: marker(identity.email),
+      sterasTest: marker(identity.email),
       createdAt: now,
       updatedAt: now,
     });
@@ -233,18 +295,51 @@ async function ensureIdentities(ctx: M3UatContext): Promise<IdentityUids> {
       await ctx.db.collection('officers').doc(authUser.uid).set({
         uid: authUser.uid,
         authorityType: identity.authorityType,
-        state: 'ALL',
-        scopeType: 'federal',
+        state: identity.state ?? 'Federal',
+        scopeType: identity.state ? 'state' : 'federal',
         workloadCount: 0,
         workloadLimit: 20,
         active: true,
-        m3Uat: marker(identity.email),
+        sterasTest: marker(identity.email),
         createdAt: now,
         updatedAt: now,
       });
     }
   }
-  return uids as IdentityUids;
+  return uids;
+}
+
+/**
+ * Playwright reset helpers run between individual tests. They must not
+ * rewrite all 64 state-scoped Auth profiles on every reset (that can exceed
+ * Playwright's 60-second hook timeout). The global prepare step already
+ * validated and created the full identity set, so these helpers only read the
+ * seven canonical accounts used by the browser suite.
+ */
+async function loadPlaywrightIdentityUids(ctx: SterasTestContext): Promise<IdentityUids> {
+  const entries = await Promise.all([
+    ['admin', STERAS_TEST_ACCOUNT_EMAILS.admin],
+    ['organizer', STERAS_TEST_ACCOUNT_EMAILS.organizer],
+    ['public', STERAS_TEST_ACCOUNT_EMAILS.public],
+    ...(['PDRM', 'BOMBA', 'KKM', 'DBKL', 'MOTAC'] as const).map((authority) => [authority, STERAS_TEST_ACCOUNT_EMAILS[authority]] as const),
+  ].map(async ([key, email]) => [key, (await ctx.auth.getUserByEmail(email)).uid] as const));
+  const byKey = Object.fromEntries(entries) as Record<string, string>;
+  const uids: IdentityUids = { admin: byKey.admin, organizer: byKey.organizer, public: byKey.public, authorities: {} };
+  for (const authority of ['PDRM', 'BOMBA', 'KKM', 'DBKL', 'MOTAC'] as const) {
+    uids.authorities[authority] = byKey[authority];
+    uids.authorities[`${authority}:Selangor`] = byKey[authority];
+    if (authority === 'DBKL') uids.authorities[`${authority}:Kuala Lumpur`] = byKey[authority];
+  }
+  return uids;
+}
+
+function authorityUid(uids: IdentityUids, authority: AuthorityType, state?: string): string {
+  const stateKey = state ? `${authority}:${state}` : undefined;
+  return (stateKey && uids.authorities[stateKey])
+    || uids.authorities[authority]
+    || uids.authorities[`${authority}:Selangor`]
+    || uids.authorities[`${authority}:Kuala Lumpur`]
+    || '';
 }
 
 function processingHash(versionInputHash: string): string {
@@ -259,23 +354,32 @@ function processingHash(versionInputHash: string): string {
   })).digest('hex');
 }
 
-function eventDetails(scenario: Scenario, now: number) {
+function venueForState(state: SterasTestState) {
+  const index = STERAS_TEST_STATES.indexOf(state);
   return {
-    name: `[M3 UAT] ${scenario.name}`,
-    type: 'cultural',
-    venueId: 'm3-uat-venue-selangor',
-    venueName: 'M3 UAT Selangor Test Venue',
-    venueAddress: 'Persiaran Bandar Raya, Shah Alam, Selangor',
-    venueLocation: { lat: 3.0738, lng: 101.5183 },
-    venueCapacity: 12_000,
-    expectedAttendance: 4_000,
+    venueId: `steras-test-venue-${stateSlug(state)}`,
+    venueName: `STERAS Test Venue (${state})`,
+    venueAddress: `STERAS Test Venue, ${state}, Malaysia`,
+    venueLocation: { lat: 1.5 + index * 0.2, lng: 100.2 + index * 0.45 },
+    venueCapacity: 12_000 + index * 500,
+    jurisdiction: state === 'Kuala Lumpur' ? 'DBKL' : `${state} PBT`,
+  };
+}
+
+function eventDetails(scenario: Scenario, now: number): EventDetails {
+  const venue = venueForState(scenario.state);
+  return {
+    name: `STERAS Test · ${scenario.name}`,
+    type: scenario.eventType,
+    ...venue,
+    expectedAttendance: Math.min(4_000 + STERAS_TEST_STATES.indexOf(scenario.state) * 100, venue.venueCapacity),
     environment: 'outdoor',
     coverage: 'partially_covered',
     seating: 'mixed',
     startDatetime: now + 30 * 24 * 60 * 60 * 1000,
     endDatetime: now + 30 * 24 * 60 * 60 * 1000 + 8 * 60 * 60 * 1000,
-    description: `Isolated ${M3_UAT_DATASET_ID} scenario. Do not use as operational data.`,
-    emergencyPlanSummary: 'UAT emergency, evacuation, medical, traffic and authority coordination plan.',
+    description: `Deterministic STERAS Module 3 test application for ${scenario.state}. Do not use as operational data.`,
+    emergencyPlanSummary: 'Synthetic emergency, evacuation, medical, traffic and authority coordination plan.',
     riskProfile: {
       crowdManagementPlan: true,
       trafficManagementPlan: true,
@@ -284,13 +388,14 @@ function eventDetails(scenario: Scenario, now: number) {
       evacuationPlanTested: true,
       authorityCoordinationConfirmed: true,
     },
-    organizerName: 'M3 UAT Organizer',
-    organizerEmail: M3_UAT_ACCOUNT_EMAILS.organizer,
+    organizerName: 'Organizer 1',
+    organizerEmail: STERAS_TEST_ACCOUNT_EMAILS.organizer,
     organizerPhone: '+60 12-000 0303',
-  } as const;
+  };
 }
 
 function assessmentContext(scenario: Scenario, now: number) {
+  const venue = venueForState(scenario.state);
   return {
     weather: {
       data: { forecast: 'Partly cloudy', temperature: 31, humidity: 75, windSpeed: 12, precipitationProbability: 20, severeAlert: false },
@@ -306,17 +411,17 @@ function assessmentContext(scenario: Scenario, now: number) {
       dayOfWeek: 'Saturday',
       isWeekend: true,
       isHolidayOrAdjacent: false,
-      sourceVersion: 'm3-uat-v1',
+      sourceVersion: 'steras-test-v1',
       sourceTimestamp: now,
       coverageStatus: 'verified' as const,
     },
     venue: {
       matched: true,
-      venueId: 'm3-uat-venue-selangor',
-      submittedCapacity: 12_000,
-      registeredCapacity: 12_000,
+      venueId: venue.venueId,
+      submittedCapacity: venue.venueCapacity,
+      registeredCapacity: venue.venueCapacity,
       capacityDifference: 0,
-      jurisdiction: 'MBSA',
+      jurisdiction: venue.jurisdiction,
       fireCertificateStatus: 'valid' as const,
       fireCertificateExpiresAt: now + 31_536_000_000,
       emergencyAccessVerified: true,
@@ -325,7 +430,7 @@ function assessmentContext(scenario: Scenario, now: number) {
     },
     incidentHistory: {
       matched: false,
-      venueId: 'm3-uat-venue-selangor',
+      venueId: venue.venueId,
       incidentIds: [],
       total: 0,
       bySeverity: { low: 0, medium: 0, high: 0 },
@@ -342,17 +447,17 @@ function uatProposal(baseline: ReturnType<typeof computeCategoryBasedAssessment>
   };
   return {
     status: 'success' as const,
-    proposalId: `m3-uat-proposal-${scenario.id}`,
-    model: 'm3-uat-fixture',
-    promptVersion: 'm3-uat-v1',
-    responseSchemaVersion: 'm3-uat-v1',
+    proposalId: `steras-test-proposal-${scenario.id}`,
+    model: 'steras-test-fixture',
+    promptVersion: 'steras-test-v1',
+    responseSchemaVersion: 'steras-test-v1',
     hazards: [],
     categories: ACTIVE_CATEGORY_SCHEMA.categories.map((category) => ({
       categoryId: category.id,
       likelihood: 2 as const,
       severity: 2 as const,
       evidenceReferences: [evidenceByCategory[category.id] as never],
-      rationale: `Deterministic UAT evidence for ${category.name}.`,
+      rationale: `Deterministic STERAS test evidence for ${category.name}.`,
       confidence: 'high' as const,
       concerns: [],
       missingInformation: [],
@@ -367,13 +472,14 @@ function buildAssessmentArtifacts(
   event: EventRecord,
   uids: IdentityUids,
   now: number,
+  evidenceGeneration: string,
 ): { assessment: RiskAssessment; resource: ResourceRecommendation; reviews: AuthorityScoreReview[] } {
   const assessmentId = `assessment-${VERSION_ID}-${scenario.id}`;
   const context = assessmentContext(scenario, now);
   const baseline = computeCategoryBasedAssessment(event, context, now);
   const proposal = uatProposal(baseline, scenario, now);
   const validation = validateAndCalculateProvisional(proposal, baseline, now);
-  if (!validation.ok) throw new Error(`Unable to create M2 UAT assessment: ${validation.reason}`);
+  if (!validation.ok) throw new Error(`Unable to create M2 STERAS test assessment: ${validation.reason}`);
   const common = {
     assessmentId,
     eventId: scenario.id,
@@ -381,27 +487,27 @@ function buildAssessmentArtifacts(
     schemaVersion: ASSESSMENT_SCHEMA_VERSION,
     contextSnapshot: context,
     evidence: baseline.evidence,
-    contextEvidence: [{ evidenceId: `m3-uat-${scenario.id}-context`, evidenceKey: 'compliance' as const, sourceKind: 'submitted_document' as const, sourceLocator: `event_documents/${scenario.id}/${VERSION_ID}/evidence.pdf`, retrievedAt: now, sourceVersion: 'm3-uat-v1', eligibility: 'eligible' as const, synthetic: true, visibility: 'authority_only' as const }],
+    contextEvidence: [{ evidenceId: `steras-test-${scenario.id}-context`, evidenceKey: 'compliance' as const, sourceKind: 'submitted_document' as const, sourceLocator: `event_documents/${scenario.id}/${VERSION_ID}/evidence.pdf`, retrievedAt: now, sourceVersion: `storage-generation:${evidenceGeneration}`, eligibility: 'eligible' as const, synthetic: true, visibility: 'authority_only' as const }],
     sourceTimestamps: { weather: now, holiday: now, venue: now, incidents: now },
-    contextStatuses: { weather: 'm3-uat:matched', holiday: 'm3-uat:verified', venue: 'matched', incidents: 'unmatched' },
+    contextStatuses: { weather: 'steras-test:matched', holiday: 'steras-test:verified', venue: 'matched', incidents: 'unmatched' },
     assessmentReadiness: scenario.assessmentReadiness ?? 'complete',
     complianceStatus: scenario.complianceStatus ?? 'pass',
     complianceChecks: baseline.complianceChecks ?? [],
     dataConfidenceScore: baseline.dataConfidenceScore ?? 100,
     dataConfidenceLevel: baseline.dataConfidenceLevel ?? 'high',
-    inputHash: processingHash(`${M3_UAT_DATASET_ID}:${scenario.id}:${VERSION_ID}`),
+    inputHash: processingHash(`${STERAS_TEST_DATASET_ID}:${scenario.id}:${VERSION_ID}`),
     createdAt: now,
   };
-  if (scenario.id === M3_UAT_EVENTS.provisionalReview) {
+  if (scenario.recordKind === 'manual') {
     const manualAssessment = {
       ...common,
       status: 'manual_review_required' as const,
       aiProposal: null,
-      warnings: [{ warningId: `m3-uat-${scenario.id}-manual`, code: 'missing_evidence' as const, message: 'M3 UAT manual-review fixture.', evidenceReferences: [] }],
+      warnings: [{ warningId: `steras-test-${scenario.id}-manual`, code: 'missing_evidence' as const, message: 'STERAS test manual-review fixture.', evidenceReferences: [] }],
       authorityReviewRequired: true as const,
-      manualReviewReason: 'M3 UAT fixture requires the Admin manual assessment queue.',
+      manualReviewReason: `STERAS test application requires Admin manual review (${scenario.state}).`,
       assessmentReadiness: 'insufficient_data' as const,
-      m3Uat: marker(scenario.id),
+      sterasTest: marker(scenario.id),
     } as unknown as RiskAssessment;
     const calculation = computeResources({ eventId: scenario.id, versionId: VERSION_ID, assessmentId, eventDetails: event.eventDetails, assessmentResult: validation.result });
     if (!calculation.ok) throw new Error(calculation.message);
@@ -419,9 +525,9 @@ function buildAssessmentArtifacts(
     assessmentInputHash: common.inputHash,
     categorySchemaVersion: ACTIVE_CATEGORY_SCHEMA.version,
     authorityType: authority,
-    reviewerId: uids[authority],
+    reviewerId: authorityUid(uids, authority, scenario.state),
     categories: proposal.categories.map((category) => ({ categoryId: category.categoryId, likelihood: category.likelihood, severity: category.severity, decision: 'confirmed' as const })),
-    rationale: `M3 UAT ${authority} review confirms the current assessment evidence.`,
+    rationale: `STERAS test ${authority} review confirms the current assessment evidence.`,
     idempotencyKey: `${assessmentId}-${authority}-review-key`,
     createdAt: now,
   })) as AuthorityScoreReview[];
@@ -447,7 +553,7 @@ function buildAssessmentArtifacts(
     authorityReviewRequired: false as const,
     authorityReviewState: buildAuthorityReviewState(scenario.requiredAuthorities, reviews, now),
     officialResult,
-    m3Uat: marker(scenario.id),
+    sterasTest: marker(scenario.id),
   } as unknown as RiskAssessment;
   const calculation = computeResources({ eventId: scenario.id, versionId: VERSION_ID, assessmentId, eventDetails: event.eventDetails, assessmentResult: officialResult });
   if (!calculation.ok) throw new Error(calculation.message);
@@ -464,7 +570,7 @@ function provisionalResource(scenario: Scenario, assessmentId: string, calculati
     stage: 'provisional',
     revision: 1,
     supersedesResourceId: null,
-    assessmentReference: { stage: 'provisional', assessmentId, proposalId: `m3-uat-proposal-${scenario.id}` },
+    assessmentReference: { stage: 'provisional', assessmentId, proposalId: `steras-test-proposal-${scenario.id}` },
     resourceInputHash: calculation.resourceInputHash,
     formulaVersion: calculation.formulaVersion,
     configVersion: calculation.configVersion,
@@ -473,7 +579,7 @@ function provisionalResource(scenario: Scenario, assessmentId: string, calculati
     confidenceLevel: 'prototype',
     authorityReviewRequired: true,
     validationScope: 'provisional_risk_input',
-    notes: 'M3 UAT fixture; not an operational deployment authorisation.',
+    notes: 'STERAS test fixture; not an operational deployment authorisation.',
     computedAt: now,
   };
 }
@@ -488,7 +594,7 @@ function officialResource(scenario: Scenario, assessmentId: string, calculation:
     stage: 'official',
     revision: 1,
     supersedesResourceId: null,
-    assessmentReference: { stage: 'official', assessmentId, proposalId: `m3-uat-proposal-${scenario.id}`, finalizedAt: now, finalizedBy },
+    assessmentReference: { stage: 'official', assessmentId, proposalId: `steras-test-proposal-${scenario.id}`, finalizedAt: now, finalizedBy },
     resourceInputHash: calculation.resourceInputHash,
     formulaVersion: calculation.formulaVersion,
     configVersion: calculation.configVersion,
@@ -497,7 +603,7 @@ function officialResource(scenario: Scenario, assessmentId: string, calculation:
     confidenceLevel: 'authority_validated',
     authorityReviewRequired: false,
     validationScope: 'official_risk_input_only',
-    notes: 'M3 UAT fixture; not an operational deployment authorisation.',
+    notes: 'STERAS test fixture; not an operational deployment authorisation.',
     computedAt: now,
   };
 }
@@ -511,14 +617,26 @@ function assignmentDecision(authority: AuthorityType, scenario: Scenario) {
   return undefined;
 }
 
-async function writeScenario(ctx: M3UatContext, scenario: Scenario, uids: IdentityUids): Promise<void> {
+async function writeScenario(ctx: SterasTestContext, scenario: Scenario, uids: IdentityUids): Promise<void> {
   const now = Date.now();
+  const evidencePath = `event_documents/${scenario.id}/${VERSION_ID}/evidence.pdf`;
+  const evidenceFile = getStorage(ctx.app).bucket().file(evidencePath);
+  await evidenceFile.save(Buffer.from('%PDF-1.4\nSTERAS test evidence\n%%EOF\n'), {
+    resumable: false,
+    metadata: {
+      contentType: 'application/pdf',
+      metadata: { datasetId: STERAS_TEST_DATASET_ID, managedBy: MANAGED_BY, fixtureId: scenario.id },
+    },
+  });
+  const [evidenceMetadata] = await evidenceFile.getMetadata();
+  const evidenceGeneration = String(evidenceMetadata.generation ?? '');
+  if (!/^\d+$/.test(evidenceGeneration)) throw new Error(`Storage generation missing for ${evidencePath}.`);
   const details = eventDetails(scenario, now);
   const eventRef = ctx.db.collection('events').doc(scenario.id);
   const assigned = scenario.assignments && scenario.assignments !== 'none'
     ? scenario.requiredAuthorities
     : [];
-  const assignedOfficerByAuthority = Object.fromEntries(assigned.map((authority) => [authority, uids[authority]]));
+  const assignedOfficerByAuthority = Object.fromEntries(assigned.map((authority) => [authority, authorityUid(uids, authority, scenario.state)]));
   const eventBase = {
     eventId: scenario.id,
     organizerId: uids.organizer,
@@ -529,36 +647,36 @@ async function writeScenario(ctx: M3UatContext, scenario: Scenario, uids: Identi
     editableVersionId: null,
     draftDocumentPaths: [],
     requiredAuthorities: scenario.requiredAuthorities,
-    assignedOfficerUids: assigned.map((authority) => uids[authority]),
+    assignedOfficerUids: assigned.map((authority) => authorityUid(uids, authority, scenario.state)),
     assignedOfficerByAuthority,
     reviewStage: scenario.reviewStage ?? null,
     controlListGenerated: scenario.controls === 'stage1' || scenario.controls === 'stage2',
     createdAt: now,
     updatedAt: now,
     submittedAt: now,
-    m3Uat: marker(scenario.id),
+    sterasTest: marker(scenario.id),
   } as unknown as EventRecord;
-  const artifacts = buildAssessmentArtifacts(scenario, eventBase, uids, now);
+  const artifacts = buildAssessmentArtifacts(scenario, eventBase, uids, now, evidenceGeneration);
   const event: Record<string, unknown> = {
     ...eventBase,
     currentAssessmentId: artifacts.assessment.assessmentId,
     currentResourceId: artifacts.resource.resourceId,
   };
-  if (scenario.reviewStage && ['authority', 'second', 'closed'].includes(scenario.reviewStage)) {
-    event.initialReview = { decision: 'Approved', reason: 'M3 UAT initial review approved.', reviewerUid: uids.admin, reviewedAt: now, manualAssessmentRecorded: scenario.assessmentReadiness === 'provisional' };
+  if (scenario.status === 'Approved' || (scenario.reviewStage && ['authority', 'second', 'closed'].includes(scenario.reviewStage))) {
+    event.initialReview = { decision: 'Approved', reason: 'STERAS test initial review approved.', reviewerUid: uids.admin, reviewedAt: now, manualAssessmentRecorded: scenario.assessmentReadiness === 'provisional' };
   }
   if (scenario.finalDecision) {
-    event.secondReview = { confirmedDecision: scenario.finalDecision, reviewerUid: uids.admin, reviewedAt: now, adminNote: `M3 UAT ${scenario.finalDecision} outcome.` };
+    event.secondReview = { confirmedDecision: scenario.finalDecision, reviewerUid: uids.admin, reviewedAt: now, adminNote: `STERAS test ${scenario.finalDecision} outcome.` };
   }
   const batch = ctx.db.batch();
   batch.set(eventRef, event);
-  batch.set(eventRef.collection('versions').doc(VERSION_ID), { versionId: VERSION_ID, eventId: scenario.id, versionNumber: 1, eventDetails: details, documentPaths: [], submittedBy: uids.organizer, submittedAt: now, inputHash: processingHash(`${M3_UAT_DATASET_ID}:${scenario.id}:version`), m3Uat: marker(scenario.id) });
+  batch.set(eventRef.collection('versions').doc(VERSION_ID), { versionId: VERSION_ID, eventId: scenario.id, versionNumber: 1, eventDetails: details, documentPaths: [evidencePath], submittedBy: uids.organizer, submittedAt: now, inputHash: processingHash(`${STERAS_TEST_DATASET_ID}:${scenario.id}:version`), sterasTest: marker(scenario.id) });
   batch.set(eventRef.collection('assessments').doc(artifacts.assessment.assessmentId), artifacts.assessment);
-  batch.set(eventRef.collection('resources').doc(artifacts.resource.resourceId), { ...artifacts.resource, m3Uat: marker(scenario.id) });
+  batch.set(eventRef.collection('resources').doc(artifacts.resource.resourceId), { ...artifacts.resource, sterasTest: marker(scenario.id) });
   for (const review of artifacts.reviews) {
-    batch.set(eventRef.collection('assessments').doc(artifacts.assessment.assessmentId).collection('score_reviews').doc(review.reviewId), { ...review, m3Uat: marker(scenario.id) });
+    batch.set(eventRef.collection('assessments').doc(artifacts.assessment.assessmentId).collection('score_reviews').doc(review.reviewId), { ...review, sterasTest: marker(scenario.id) });
   }
-  batch.set(eventRef.collection('audit_logs').doc('m3-uat-seeded'), { id: 'm3-uat-seeded', eventId: scenario.id, versionId: VERSION_ID, action: 'uat_fixture_seeded', actorId: 'system', actorRole: 'system', timestamp: now, notes: `Seeded ${M3_UAT_DATASET_ID}`, m3Uat: marker(scenario.id) });
+  batch.set(eventRef.collection('audit_logs').doc('steras-test-seeded'), { id: 'steras-test-seeded', eventId: scenario.id, versionId: VERSION_ID, action: 'steras_test_seeded', actorId: 'system', actorRole: 'system', timestamp: now, notes: `Seeded ${STERAS_TEST_DATASET_ID}`, sterasTest: marker(scenario.id) });
   for (const authority of assigned) {
     const decision = assignmentDecision(authority, scenario);
     const assignmentId = `${VERSION_ID}_${authority}`;
@@ -567,12 +685,12 @@ async function writeScenario(ctx: M3UatContext, scenario: Scenario, uids: Identi
       eventId: scenario.id,
       versionId: VERSION_ID,
       authorityType: authority,
-      officerUid: uids[authority],
+      officerUid: authorityUid(uids, authority, scenario.state),
       assignedBy: uids.admin,
       assignedAt: now,
       status: decision ? 'completed' : 'pending',
       ...(decision ? { decision, reason: `${authority} fixture proposal for ${scenario.name}.`, suggestion: decision === 'Approved' ? 'No change required.' : 'Revise the identified safety controls.', decidedAt: now, confirmedReview: decision === 'Approved' } : {}),
-      m3Uat: marker(scenario.id),
+      sterasTest: marker(scenario.id),
     });
   }
   await batch.commit();
@@ -580,7 +698,7 @@ async function writeScenario(ctx: M3UatContext, scenario: Scenario, uids: Identi
   if (scenario.status === 'Approved') await writePublicEvent(ctx, scenario, uids, now);
 }
 
-async function writeControls(ctx: M3UatContext, scenario: Scenario, uids: IdentityUids, now: number): Promise<void> {
+async function writeControls(ctx: SterasTestContext, scenario: Scenario, uids: IdentityUids, now: number): Promise<void> {
   const eventRef = ctx.db.collection('events').doc(scenario.id);
   const snapshots: Record<string, unknown>[] = [];
   for (const authority of scenario.requiredAuthorities) {
@@ -604,7 +722,7 @@ async function writeControls(ctx: M3UatContext, scenario: Scenario, uids: Identi
       label: scenario.controls === 'stage2' ? 'approved' : authority === 'PDRM' ? 'resubmit_required' : authority === 'BOMBA' ? 'approved' : 'pending',
       createdAt: now,
       updatedAt: now,
-      m3Uat: marker(scenario.id),
+      sterasTest: marker(scenario.id),
     });
     snapshots.push({ controlId, controlName: `${authority} operational compliance`, authority, stageRequirement: 'stage1_and_stage2', stage1RequirementsCount: 3, stage2Label: `Photo of ${authority} control at venue`, controlItemVersion: 1, label: scenario.controls === 'stage2' ? 'approved' : 'pending' });
     const stageBatch = ctx.db.batch();
@@ -622,33 +740,33 @@ async function writeControls(ctx: M3UatContext, scenario: Scenario, uids: Identi
         status,
         evidencePath: `events/${scenario.id}/controls/${controlId}/stage1/${docId}.pdf`,
         uploadedAt: now,
-        ...(status === 'verified' ? { verifiedBy: uids[authority], verifiedAt: now } : {}),
-        ...(status === 'rejected' ? { rejectionReason: 'Fixture rejection: document expired.', rejectionSuggestion: 'Upload a current document.', rejectedBy: uids[authority], rejectedAt: now } : {}),
-        m3Uat: marker(scenario.id),
+        ...(status === 'verified' ? { verifiedBy: authorityUid(uids, authority, scenario.state), verifiedAt: now } : {}),
+        ...(status === 'rejected' ? { rejectionReason: 'Fixture rejection: document expired.', rejectionSuggestion: 'Upload a current document.', rejectedBy: authorityUid(uids, authority, scenario.state), rejectedAt: now } : {}),
+        sterasTest: marker(scenario.id),
       });
     }
     if (scenario.controls === 'stage2') {
       const docId = `${controlId}-s2`;
-      const imageUrl = `https://placehold.co/1200x800/png?text=${encodeURIComponent(`${authority}+M3+UAT`)}`;
-      stageBatch.set(controlRef.collection('stage2_docs').doc(docId), { docId, imageUrl, uploadedAt: now, uploadedBy: uids.organizer, published: true, publishedAt: now, publishedBy: uids.admin, publicConfirmCount: authority === 'PDRM' ? 1 : 0, ...(authority === 'PDRM' ? { m4TicketId: 'm3-uat-m4-ticket-001', reportedAt: now } : {}), m3Uat: marker(scenario.id) });
-      stageBatch.set(ctx.db.collection('public_event_controls').doc(scenario.id).collection('items').doc(`${controlId}-stage2`), { publicControlId: `${controlId}-stage2`, eventId: scenario.id, versionId: VERSION_ID, controlId, docId, authority, controlName: `${authority} operational compliance`, stage2Label: `Photo of ${authority} control at venue`, imageUrl, publicConfirmCount: authority === 'PDRM' ? 1 : 0, reported: authority === 'PDRM', publishedAt: now, sanitized: true, sanitizedAt: now, sanitizedBy: uids.admin, m3Uat: marker(scenario.id) });
+      const imageUrl = `https://placehold.co/1200x800/png?text=${encodeURIComponent(`${authority}+STERAS+TEST`)}`;
+      stageBatch.set(controlRef.collection('stage2_docs').doc(docId), { docId, imageUrl, uploadedAt: now, uploadedBy: uids.organizer, published: true, publishedAt: now, publishedBy: uids.admin, publicConfirmCount: authority === 'PDRM' ? 1 : 0, ...(authority === 'PDRM' ? { m4TicketId: 'steras-test-m4-ticket-001', reportedAt: now } : {}), sterasTest: marker(scenario.id) });
+      stageBatch.set(ctx.db.collection('public_event_controls').doc(scenario.id).collection('items').doc(`${controlId}-stage2`), { publicControlId: `${controlId}-stage2`, eventId: scenario.id, versionId: VERSION_ID, controlId, docId, authority, controlName: `${authority} operational compliance`, stage2Label: `Photo of ${authority} control at venue`, imageUrl, publicConfirmCount: authority === 'PDRM' ? 1 : 0, reported: authority === 'PDRM', publishedAt: now, sanitized: true, sanitizedAt: now, sanitizedBy: uids.admin, sterasTest: marker(scenario.id) });
       if (authority === 'PDRM') {
-        stageBatch.set(controlRef.collection('stage2_confirms').doc(uids.public), { uid: uids.public, confirmedAt: now, m3Uat: marker(scenario.id) });
-        stageBatch.set(controlRef.collection('stage2_reports').doc(uids.public), { uid: uids.public, reportId: 'm3-uat-report-001', reportedAt: now, m3Uat: marker(scenario.id) });
+        stageBatch.set(controlRef.collection('stage2_confirms').doc(uids.public), { uid: uids.public, confirmedAt: now, sterasTest: marker(scenario.id) });
+        stageBatch.set(controlRef.collection('stage2_reports').doc(uids.public), { uid: uids.public, reportId: 'steras-test-report-001', reportedAt: now, sterasTest: marker(scenario.id) });
       }
     }
     await stageBatch.commit();
   }
   await eventRef.set({ controlListGenerated: true, controlListSnapshot: snapshots, updatedAt: now }, { merge: true });
   if (scenario.controls === 'stage2') {
-    await ctx.db.collection('public_event_controls').doc(scenario.id).set({ eventId: scenario.id, versionId: VERSION_ID, datasetId: M3_UAT_DATASET_ID, m3Uat: marker(scenario.id), updatedAt: now });
-    await ctx.db.collection('public_reports').doc('m3-uat-report-001').set({ reportId: 'm3-uat-report-001', eventId: scenario.id, versionId: VERSION_ID, controlId: `${scenario.id}-ctrl-pdrm-v1`, docId: `${scenario.id}-ctrl-pdrm-v1-s2`, reporterUid: uids.public, reason: 'UAT report for M4 handoff testing.', status: 'open', m4TicketId: 'm3-uat-m4-ticket-001', createdAt: now, m3Uat: marker(scenario.id) });
+    await ctx.db.collection('public_event_controls').doc(scenario.id).set({ eventId: scenario.id, versionId: VERSION_ID, datasetId: STERAS_TEST_DATASET_ID, sterasTest: marker(scenario.id), updatedAt: now });
+    await ctx.db.collection('public_reports').doc('steras-test-report-001').set({ reportId: 'steras-test-report-001', eventId: scenario.id, versionId: VERSION_ID, controlId: `${scenario.id}-ctrl-pdrm-v1`, docId: `${scenario.id}-ctrl-pdrm-v1-s2`, reporterUid: uids.public, reason: 'STERAS test report for M4 handoff testing.', status: 'open', m4TicketId: 'steras-test-m4-ticket-001', createdAt: now, sterasTest: marker(scenario.id) });
   }
 }
 
-async function writePublicEvent(ctx: M3UatContext, scenario: Scenario, uids: IdentityUids, now: number): Promise<void> {
+async function writePublicEvent(ctx: SterasTestContext, scenario: Scenario, uids: IdentityUids, now: number): Promise<void> {
   const details = eventDetails(scenario, now);
-  await ctx.db.collection('public_events').doc(scenario.id).set({ eventId: scenario.id, versionId: VERSION_ID, eventName: details.name, venueName: details.venueName, eventType: details.type, startDatetime: details.startDatetime, endDatetime: details.endDatetime, approvedBy: scenario.requiredAuthorities, publicStatus: 'approved', publishedBy: uids.admin, m3Uat: marker(scenario.id) });
+  await ctx.db.collection('public_events').doc(scenario.id).set({ eventId: scenario.id, versionId: VERSION_ID, eventName: details.name, venueName: details.venueName, eventType: details.type, startDatetime: details.startDatetime, endDatetime: details.endDatetime, approvedBy: scenario.requiredAuthorities, publicStatus: 'approved', publishedBy: uids.admin, sterasTest: marker(scenario.id) });
 }
 
 async function deleteQuery(db: Firestore, query: FirebaseFirestore.Query): Promise<number> {
@@ -662,8 +780,8 @@ async function deleteQuery(db: Firestore, query: FirebaseFirestore.Query): Promi
   return snap.size;
 }
 
-async function clearManagedDataset(ctx: M3UatContext, includeIdentities: boolean): Promise<void> {
-  for (const eventId of [...M3_UAT_EVENT_IDS, ...M3_UAT_RETIRED_EVENT_IDS]) {
+async function clearManagedDataset(ctx: SterasTestContext, includeIdentities: boolean): Promise<void> {
+  for (const eventId of [...STERAS_TEST_EVENT_IDS, ...STERAS_TEST_RETIRED_EVENT_IDS]) {
     const eventRef = ctx.db.collection('events').doc(eventId);
     const eventSnap = await eventRef.get();
     const managedParent = eventSnap.exists && isManaged(eventSnap.data(), eventId);
@@ -687,6 +805,17 @@ async function clearManagedDataset(ctx: M3UatContext, includeIdentities: boolean
     await getStorage(ctx.app).bucket().deleteFiles({ prefix: `events/${eventId}/`, force: true }).catch((error: unknown) => {
       if ((error as { code?: number }).code !== 404) throw error;
     });
+    const evidenceFile = getStorage(ctx.app).bucket().file(`event_documents/${eventId}/${VERSION_ID}/evidence.pdf`);
+    const [evidenceExists] = await evidenceFile.exists();
+    if (evidenceExists) {
+      const [metadata] = await evidenceFile.getMetadata();
+      if (metadata.metadata?.datasetId !== STERAS_TEST_DATASET_ID
+        || metadata.metadata?.managedBy !== MANAGED_BY
+        || metadata.metadata?.fixtureId !== eventId) {
+        throw new Error(`Refusing to delete unowned ${evidenceFile.name}.`);
+      }
+      await evidenceFile.delete();
+    }
   }
   if (!includeIdentities) return;
   for (const identity of IDENTITIES) {
@@ -704,30 +833,57 @@ async function clearManagedDataset(ctx: M3UatContext, includeIdentities: boolean
     await profileRef.delete();
     await ctx.auth.deleteUser(authUser.uid);
   }
-  const venueRef = ctx.db.collection('venues').doc('m3-uat-venue-selangor');
-  const venue = await venueRef.get();
-  if (venue.exists) {
-    if (!isManaged(venue.data(), 'm3-uat-venue-selangor')) throw new Error('Refusing to delete unowned fixture venue.');
-    await venueRef.delete();
+  for (const state of STERAS_TEST_STATES) {
+    const venueId = venueForState(state).venueId;
+    const venueRef = ctx.db.collection('venues').doc(venueId);
+    const venue = await venueRef.get();
+    if (venue.exists) {
+      if (!isManaged(venue.data(), venueId)) throw new Error(`Refusing to delete unowned fixture venue ${venueId}.`);
+      await venueRef.delete();
+    }
   }
 }
 
-async function writeVenue(ctx: M3UatContext): Promise<void> {
+async function writeVenues(ctx: SterasTestContext): Promise<void> {
   const now = Date.now();
-  await ctx.db.collection('venues').doc('m3-uat-venue-selangor').set({ venueId: 'm3-uat-venue-selangor', name: 'M3 UAT Selangor Test Venue', address: 'Persiaran Bandar Raya, Shah Alam, Selangor', state: 'Selangor', location: { lat: 3.0738, lng: 101.5183 }, capacity: 12_000, environment: 'outdoor', coverage: 'partially_covered', seating: 'mixed', jurisdiction: 'MBSA', fireCertificateStatus: 'valid', fireCertificateExpiresAt: now + 31_536_000_000, emergencyAccessVerified: true, nearestHospitalTravelMinutes: 10, active: true, createdAt: now, updatedAt: now, m3Uat: marker('m3-uat-venue-selangor') });
+  const batch = ctx.db.batch();
+  for (const state of STERAS_TEST_STATES) {
+    const venue = venueForState(state);
+    batch.set(ctx.db.collection('venues').doc(venue.venueId), {
+      venueId: venue.venueId,
+      name: venue.venueName,
+      address: venue.venueAddress,
+      state,
+      location: venue.venueLocation,
+      capacity: venue.venueCapacity,
+      environment: 'outdoor',
+      coverage: 'partially_covered',
+      seating: 'mixed',
+      jurisdiction: venue.jurisdiction,
+      fireCertificateStatus: 'valid',
+      fireCertificateExpiresAt: now + 31_536_000_000,
+      emergencyAccessVerified: true,
+      nearestHospitalTravelMinutes: 10 + STERAS_TEST_STATES.indexOf(state),
+      active: true,
+      createdAt: now,
+      updatedAt: now,
+      sterasTest: marker(venue.venueId),
+    });
+  }
+  await batch.commit();
 }
 
-export async function applyM3UatDataset(ctx: M3UatContext): Promise<void> {
+export async function applySterasTestDataset(ctx: SterasTestContext): Promise<void> {
   await assertNoCollisions(ctx);
   const uids = await ensureIdentities(ctx);
   // Resolve/update Auth before destructive fixture replacement. A transient
   // Identity Toolkit failure must leave the existing Firestore dataset intact.
   await clearManagedDataset(ctx, false);
-  await writeVenue(ctx);
+  await writeVenues(ctx);
   for (const scenario of SCENARIOS) await writeScenario(ctx, scenario, uids);
 }
 
-export async function verifyM3UatDataset(ctx: M3UatContext): Promise<void> {
+export async function verifySterasTestDataset(ctx: SterasTestContext): Promise<void> {
   const failures: string[] = [];
   for (const scenario of SCENARIOS) {
     const eventRef = ctx.db.collection('events').doc(scenario.id);
@@ -744,7 +900,19 @@ export async function verifyM3UatDataset(ctx: M3UatContext): Promise<void> {
     if (!event.exists || !isManaged(event.data(), scenario.id)) failures.push(`${scenario.id}: event missing or marker invalid`);
     const assessmentData = assessmentSnap?.data() as Partial<RiskAssessment> | undefined;
     const resourceData = resourceSnap?.data() as ResourceRecommendation | undefined;
+    const evidencePath = `event_documents/${scenario.id}/${VERSION_ID}/evidence.pdf`;
+    const evidenceFile = getStorage(ctx.app).bucket().file(evidencePath);
+    const [evidenceExists] = await evidenceFile.exists();
+    const evidenceMetadata = evidenceExists ? (await evidenceFile.getMetadata())[0] : undefined;
+    const contextEvidence = assessmentData?.contextEvidence?.find((item) => item.sourceLocator === evidencePath);
     if (!version.exists || !assessmentSnap?.exists || !resourceSnap?.exists || audits.empty) failures.push(`${scenario.id}: core subdocuments incomplete`);
+    if (!evidenceExists
+      || evidenceMetadata?.metadata?.datasetId !== STERAS_TEST_DATASET_ID
+      || evidenceMetadata?.metadata?.managedBy !== MANAGED_BY
+      || evidenceMetadata?.metadata?.fixtureId !== scenario.id
+      || contextEvidence?.sourceVersion !== `storage-generation:${evidenceMetadata?.generation}`) {
+      failures.push(`${scenario.id}: submitted evidence file or Storage generation provenance invalid`);
+    }
     if (eventData?.organizerId === undefined || eventData?.currentVersionId !== VERSION_ID
       || !assessmentId || !resourceId || assessmentData?.assessmentId !== assessmentId
       || assessmentData?.eventId !== scenario.id || assessmentData?.versionId !== VERSION_ID
@@ -755,6 +923,21 @@ export async function verifyM3UatDataset(ctx: M3UatContext): Promise<void> {
       const controls = await eventRef.collection('event_controls').get();
       if (controls.size !== scenario.requiredAuthorities.length) failures.push(`${scenario.id}: expected ${scenario.requiredAuthorities.length} controls, found ${controls.size}`);
     }
+    // Approved fixtures must expose the sanitized public event projection.
+    // Playwright intentionally withdraws this projection while it resets the
+    // control-verification event, so check the current status rather than the
+    // baseline scenario status.
+    if (eventData?.status === 'Approved') {
+      const publicEvent = await ctx.db.collection('public_events').doc(scenario.id).get();
+      if (!publicEvent.exists || !isManaged(publicEvent.data(), scenario.id)) failures.push(`${scenario.id}: approved public projection missing or marker invalid`);
+    }
+    if (eventData?.status === 'Approved' && scenario.controls === 'stage2') {
+      const publicControls = ctx.db.collection('public_event_controls').doc(scenario.id);
+      const [publicControl, items] = await Promise.all([publicControls.get(), publicControls.collection('items').get()]);
+      if (!publicControl.exists || !isManaged(publicControl.data(), scenario.id) || items.size !== scenario.requiredAuthorities.length) {
+        failures.push(`${scenario.id}: Stage 2 public projection incomplete`);
+      }
+    }
   }
   for (const identity of IDENTITIES) {
     const authUser = await findAuthUser(ctx.auth, identity.email);
@@ -764,30 +947,30 @@ export async function verifyM3UatDataset(ctx: M3UatContext): Promise<void> {
       if (!profile.exists || !isManaged(profile.data(), identity.email)) failures.push(`Profile missing or marker invalid: ${identity.email}`);
     }
   }
-  for (const eventId of M3_UAT_RETIRED_EVENT_IDS) {
+  for (const eventId of STERAS_TEST_RETIRED_EVENT_IDS) {
     if ((await ctx.db.collection('events').doc(eventId).get()).exists) failures.push(`${eventId}: retired fixture still exists`);
   }
-  if (failures.length > 0) throw new Error(`M3 UAT verification failed:\n- ${failures.join('\n- ')}`);
+  if (failures.length > 0) throw new Error(`STERAS test verification failed:\n- ${failures.join('\n- ')}`);
 }
 
-export async function prepareM3UatForPlaywright(ctx: M3UatContext): Promise<void> {
-  await applyM3UatDataset(ctx);
+export async function prepareSterasTestForPlaywright(ctx: SterasTestContext): Promise<void> {
+  await applySterasTestDataset(ctx);
   const now = Date.now();
-  const adminUid = (await ctx.auth.getUserByEmail(M3_UAT_ACCOUNT_EMAILS.admin)).uid;
-  const releaseForOfficerTests = async (eventId: M3UatEventId, authorities: AuthorityType[]) => {
+  const adminUid = (await ctx.auth.getUserByEmail(STERAS_TEST_ACCOUNT_EMAILS.admin)).uid;
+  const releaseForOfficerTests = async (eventId: SterasTestEventId, authorities: AuthorityType[]) => {
     const eventRef = ctx.db.collection('events').doc(eventId);
     const officerUids: Partial<Record<AuthorityType, string>> = {};
     for (const authority of authorities) {
-      const user = await ctx.auth.getUserByEmail(M3_UAT_ACCOUNT_EMAILS[authority]);
+      const user = await ctx.auth.getUserByEmail(STERAS_TEST_ACCOUNT_EMAILS[authority]);
       officerUids[authority] = user.uid;
       const assignmentId = `${VERSION_ID}_${authority}`;
-      await eventRef.collection('assignments').doc(assignmentId).set({ assignmentId, eventId, versionId: VERSION_ID, authorityType: authority, officerUid: user.uid, assignedBy: adminUid, assignedAt: now, status: 'pending', m3Uat: marker(eventId) });
+      await eventRef.collection('assignments').doc(assignmentId).set({ assignmentId, eventId, versionId: VERSION_ID, authorityType: authority, officerUid: user.uid, assignedBy: adminUid, assignedAt: now, status: 'pending', sterasTest: marker(eventId) });
     }
-    await eventRef.set({ status: 'UnderReview', reviewStage: 'authority', initialReview: { decision: 'Approved', reason: 'Released for Playwright officer-gate coverage.', reviewerUid: adminUid, reviewedAt: now, manualAssessmentRecorded: eventId === M3_UAT_EVENTS.provisionalReview }, assignedOfficerUids: Object.values(officerUids), assignedOfficerByAuthority: officerUids, updatedAt: now }, { merge: true });
+    await eventRef.set({ status: 'UnderReview', reviewStage: 'authority', initialReview: { decision: 'Approved', reason: 'Released for Playwright officer-gate coverage.', reviewerUid: adminUid, reviewedAt: now, manualAssessmentRecorded: eventId === STERAS_TEST_EVENTS.provisionalReview }, assignedOfficerUids: Object.values(officerUids), assignedOfficerByAuthority: officerUids, updatedAt: now }, { merge: true });
   };
-  await releaseForOfficerTests(M3_UAT_EVENTS.provisionalReview, ['PDRM', 'BOMBA']);
-  await releaseForOfficerTests(M3_UAT_EVENTS.controlVerification, REQUIRED_AUTHORITIES);
-  const controls = await ctx.db.collection('events').doc(M3_UAT_EVENTS.controlVerification).collection('event_controls').get();
+  await releaseForOfficerTests(STERAS_TEST_EVENTS.provisionalReview, ['PDRM', 'BOMBA']);
+  await releaseForOfficerTests(STERAS_TEST_EVENTS.controlVerification, PLAYWRIGHT_AUTHORITIES);
+  const controls = await ctx.db.collection('events').doc(STERAS_TEST_EVENTS.controlVerification).collection('event_controls').get();
   for (const control of controls.docs) {
     const docs = await control.ref.collection('stage1_docs').get();
     const batch = ctx.db.batch();
@@ -799,8 +982,8 @@ export async function prepareM3UatForPlaywright(ctx: M3UatContext): Promise<void
 
 /** Rebuild only the Stage-1 verification fixture after another spec has
  * intentionally regenerated its control list. No other event is touched. */
-export async function resetM3UatControlVerificationForPlaywright(ctx: M3UatContext): Promise<void> {
-  const eventId = M3_UAT_EVENTS.controlVerification;
+export async function resetSterasTestControlVerificationForPlaywright(ctx: SterasTestContext): Promise<void> {
+  const eventId = STERAS_TEST_EVENTS.controlVerification;
   const scenario = SCENARIOS.find((candidate) => candidate.id === eventId);
   if (!scenario) throw new Error(`Missing fixture scenario ${eventId}.`);
   const eventRef = ctx.db.collection('events').doc(eventId);
@@ -816,12 +999,12 @@ export async function resetM3UatControlVerificationForPlaywright(ctx: M3UatConte
   await deleteQuery(ctx.db, ctx.db.collection('notifications').where('eventId', '==', eventId));
   await deleteQuery(ctx.db, ctx.db.collection('public_reports').where('eventId', '==', eventId));
 
-  const identityUids = await ensureIdentities(ctx);
+  const identityUids = await loadPlaywrightIdentityUids(ctx);
   await writeScenario(ctx, scenario, identityUids);
   const now = Date.now();
   const assignedOfficerByAuthority: Partial<Record<AuthorityType, string>> = {};
-  for (const authority of REQUIRED_AUTHORITIES) {
-    const officerUid = identityUids[authority];
+  for (const authority of PLAYWRIGHT_AUTHORITIES) {
+    const officerUid = authorityUid(identityUids, authority, scenario.state);
     assignedOfficerByAuthority[authority] = officerUid;
     const assignmentId = `${VERSION_ID}_${authority}`;
     await eventRef.collection('assignments').doc(assignmentId).set({
@@ -833,7 +1016,7 @@ export async function resetM3UatControlVerificationForPlaywright(ctx: M3UatConte
       assignedBy: identityUids.admin,
       assignedAt: now,
       status: 'pending',
-      m3Uat: marker(eventId),
+      sterasTest: marker(eventId),
     });
   }
   await eventRef.set({
@@ -860,23 +1043,24 @@ export async function resetM3UatControlVerificationForPlaywright(ctx: M3UatConte
   }
 }
 
-export async function runM3UatAction(action: M3UatAction, ctx = initializeM3UatContext()): Promise<void> {
+export async function runSterasTestAction(action: SterasTestAction, ctx = initializeSterasTestContext()): Promise<void> {
   assertSharedProjectAuthorization(ctx.projectId, action);
   if (action === 'dry-run') {
     await assertNoCollisions(ctx);
-    console.info(JSON.stringify({ projectId: ctx.projectId, action, datasetId: M3_UAT_DATASET_ID, events: SCENARIOS.map(({ id, name, status }) => ({ id, name, status })), retiredEventIds: M3_UAT_RETIRED_EVENT_IDS, accounts: IDENTITIES.map(({ email, role, authorityType }) => ({ email, role, authorityType })), storagePrefixes: [...M3_UAT_EVENT_IDS, ...M3_UAT_RETIRED_EVENT_IDS].map((id) => `events/${id}/`) }, null, 2));
+    console.info(JSON.stringify({ projectId: ctx.projectId, action, datasetId: STERAS_TEST_DATASET_ID, events: SCENARIOS.map(({ id, name, status }) => ({ id, name, status })), retiredEventIds: STERAS_TEST_RETIRED_EVENT_IDS, accounts: IDENTITIES.map(({ email, role, authorityType }) => ({ email, role, authorityType })), storagePrefixes: [...STERAS_TEST_EVENT_IDS, ...STERAS_TEST_RETIRED_EVENT_IDS].flatMap((id) => [`events/${id}/`, `event_documents/${id}/${VERSION_ID}/evidence.pdf`]) }, null, 2));
     return;
   }
-  if (action === 'apply') await applyM3UatDataset(ctx);
-  if (action === 'verify') await verifyM3UatDataset(ctx);
+  if (action === 'apply') await applySterasTestDataset(ctx);
+  if (action === 'verify') await verifySterasTestDataset(ctx);
   if (action === 'cleanup') await clearManagedDataset(ctx, true);
-  console.info(`[M3 UAT] ${action} complete for ${M3_UAT_DATASET_ID} on ${ctx.projectId}.`);
+  console.info(`[STERAS test] ${action} complete for ${STERAS_TEST_DATASET_ID} on ${ctx.projectId}.`);
 }
 
 if (require.main === module) {
-  const action = parseM3UatAction(process.argv.slice(2));
-  runM3UatAction(action).catch((error: unknown) => {
+  const action = parseSterasTestAction(process.argv.slice(2));
+  runSterasTestAction(action).catch((error: unknown) => {
     console.error(error);
     process.exitCode = 1;
   });
 }
+
