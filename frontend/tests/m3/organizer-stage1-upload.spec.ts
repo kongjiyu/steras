@@ -194,7 +194,7 @@ test.describe('@M3 Workstream 3: organizer Stage 1 upload + Use Previous', () =>
 
     // Step 3: PDRM officer rejects the doc with a reason + suggestion.
     await api.signOut();
-    await loginAs('pdrm');
+    await loginAs('pdrmKl');
     const rejectionRationale = 'Application letter is illegible. Please re-upload a higher-resolution scan with the official letterhead visible at the top of the page so the issuing officer can verify the signature.';
     await api.callFunction('verifyStage1Doc', {
       eventId: APPROVED,

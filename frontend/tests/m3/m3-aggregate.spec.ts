@@ -27,7 +27,7 @@ test.describe('@M3 aggregate decision flows', () => {
     // evt-002 requires PDRM, BOMBA, KKM, DBKL. A single rejection is the
     // aggregate recommendation, but only the admin's second review changes
     // the application status.
-    await loginAs('pdrm');
+    await loginAs('pdrmKl');
     await page.goto(`/authority/events/${EVENTS.foodFair}`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: /your decision/i })).toBeVisible();
     // Scope to the "Your decision" section — the Stage-1 control
@@ -48,8 +48,8 @@ test.describe('@M3 aggregate decision flows', () => {
 
     // Complete the remaining proposals so second review can open.
     for (const [key, reason] of [
-      ['bomba', BOMBA_RATIONALE],
-      ['kkm', KKM_RATIONALE],
+      ['bombaKl', BOMBA_RATIONALE],
+      ['kkmKl', KKM_RATIONALE],
       ['dbkl', DBKL_RATIONALE],
     ] as const) {
       await api.signOut();
@@ -72,7 +72,7 @@ test.describe('@M3 aggregate decision flows', () => {
 
     // A further officer proposal is rejected after the final decision.
     await api.signOut();
-    await loginAs('bomba');
+    await loginAs('bombaKl');
     let callError: string | null = null;
     try {
       await api.callFunction('recordOfficerProposal', {
@@ -93,7 +93,7 @@ test.describe('@M3 aggregate decision flows', () => {
   });
 
   test('removed amendment decisions are rejected by the officer endpoint', async ({ api, loginAs }) => {
-    await loginAs('pdrm');
+    await loginAs('pdrmKl');
     let callError: string | null = null;
     try {
       await api.callFunction('recordOfficerProposal', {
@@ -112,14 +112,14 @@ test.describe('@M3 aggregate decision flows', () => {
   test('unanimous publish: all required Approved (same version) → Approved + public_events + notification', async ({ page, api, loginAs }) => {
     // evt-002 requires PDRM, BOMBA, KKM, DBKL. All four must Approve on v1.
     const rationales: Array<[string, string]> = [
-      ['pdrm', 'PDRM approval: traffic management plan and crowd ingress accepted.'],
-      ['bomba', BOMBA_RATIONALE],
-      ['kkm', KKM_RATIONALE],
+      ['pdrmKl', 'PDRM approval: traffic management plan and crowd ingress accepted.'],
+      ['bombaKl', BOMBA_RATIONALE],
+      ['kkmKl', KKM_RATIONALE],
       ['dbkl', DBKL_RATIONALE],
     ];
     for (const [key, rationale] of rationales) {
       await api.signOut();
-      await loginAs(key as 'pdrm' | 'bomba' | 'kkm' | 'dbkl');
+      await loginAs(key as 'pdrmKl' | 'bombaKl' | 'kkmKl' | 'dbkl');
       await page.goto(`/authority/events/${EVENTS.foodFair}`, { waitUntil: 'domcontentloaded' });
       await expect(page.getByRole('heading', { name: /your decision/i })).toBeVisible();
       // Scope to the "Your decision" section (Stage-1 section has its
@@ -137,7 +137,8 @@ test.describe('@M3 aggregate decision flows', () => {
       await expect(approveBtn).toBeEnabled();
       await approveBtn.click();
       await expect.poll(async () => {
-        const d = await api.getDoc(`events/${EVENTS.foodFair}/assignments/v1_${key.toUpperCase()}`);
+        const authority = key === 'dbkl' ? 'DBKL' : key.replace('Kl', '').toUpperCase();
+        const d = await api.getDoc(`events/${EVENTS.foodFair}/assignments/v1_${authority}`);
         return d?.decision === 'Approved' ? true : null;
       }, { timeout: 10_000 }).toBe(true);
     }

@@ -14,7 +14,7 @@ test.describe('@M3 control verification UI', () => {
   });
 
   test('PDRM sees the per-doc verification form on evt-control-verification', async ({ page, loginAs }) => {
-    await loginAs('pdrm');
+    await loginAs('pdrmKl');
     await page.goto(`/authority/events/${EVENTS.controlVerification}`, { waitUntil: 'domcontentloaded' });
     const heading = page.getByRole('heading', { name: /stage-1 control verification/i });
     await expect(heading).toBeVisible({ timeout: 15_000 });
@@ -27,7 +27,7 @@ test.describe('@M3 control verification UI', () => {
 
   test('BOMBA can verify a declared Stage 1 document through the UI', async ({ page, api, loginAs }) => {
     // Sign in first so the api helper has auth context.
-    await loginAs('bomba');
+    await loginAs('bombaKl');
     // Clear any prior verifications on the BOMBA control so we can re-verify.
     const evtId = EVENTS.controlVerification;
     const ctrlId = `${evtId}-ctrl-bomba-v1`;

@@ -42,7 +42,7 @@ test.describe('@M3 negative decision gates', () => {
   });
 
   test('provisional-readiness: short rationale is rejected by Cloud Function', async ({ api, loginAs }) => {
-    await loginAs('bomba');
+    await loginAs('bombaKedah');
     let callError: string | null = null;
     try {
       await api.callFunction('recordOfficerProposal', {
@@ -60,7 +60,7 @@ test.describe('@M3 negative decision gates', () => {
   });
 
   test('provisional-readiness: ≥80 char rationale is accepted', async ({ page, api, loginAs }) => {
-    await loginAs('bomba');
+    await loginAs('bombaKedah');
     await page.goto(`/authority/events/${EVENTS.provisionalReview}`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: /your decision/i })).toBeVisible();
     // Scope to the "Your decision" section (Stage-1 section also has textareas).

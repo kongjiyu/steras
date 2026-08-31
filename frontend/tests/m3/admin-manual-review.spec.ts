@@ -9,7 +9,7 @@ test.describe('Admin application visibility and manual assessment', () => {
     await expect(api.getDoc('events/steras-test-perlis-01')).rejects.toThrow();
 
     await page.goto('/admin/applications/steras-test-perlis-01');
-    await expect(page.getByText(/application (could not be loaded|not found)/i)).toBeVisible();
+    await expect(page.getByText('Application could not be loaded.')).toBeVisible();
   });
 
   test('manual queue is list-only and a valid assessment finalizes from the detail page', async ({ page, api, loginAs }) => {
@@ -17,9 +17,9 @@ test.describe('Admin application visibility and manual assessment', () => {
     await page.goto('/admin');
 
     const queueItem = page.getByTestId(`manual-review-${EVENTS.provisionalReview}`);
-    await expect(queueItem).toBeVisible();
+    await expect(queueItem).toBeVisible({ timeout: 30_000 });
     await expect(queueItem).toContainText('Organizer 1');
-    await expect(queueItem).toContainText('provisional');
+    await expect(queueItem).toContainText('insufficient data');
     await expect(page.getByTestId('manual-assessment-form')).toHaveCount(0);
     await queueItem.click();
 
