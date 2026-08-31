@@ -70,6 +70,7 @@ export default defineConfig({
     {
       name: 'm3-smoke',
       testMatch: [
+        'admin-manual-review.spec.ts',
         'pdrm-decision.spec.ts',
         'm3-negative-gates.spec.ts',
         'm3-aggregate.spec.ts',
@@ -86,6 +87,7 @@ export default defineConfig({
       // Excludes officer-assignment (its 5-6 sequential Firebase Auth
       // logins flake when run immediately after the other 12 specs).
       testMatch: [
+        'admin-manual-review.spec.ts',
         'pdrm-decision.spec.ts',
         'm3-negative-gates.spec.ts',
         'm3-aggregate.spec.ts',

@@ -45,24 +45,22 @@ M3 owns each full page file above. M2 supplies assessment/resource contracts and
 - M3 decision, override, status, publication, and notification audit entries
 - future `notifications` collection and delivery triggers
 
-## Locked Prototype Review Model
+## Locked Review Model
 
-The PRD describes initial review, multi-department review, and final authority. For the prototype, use the existing simpler model:
+The latest PRD requires the full initial, multi-department, and second-review workflow:
 
 1. An authority account has one `authorityType`: PDRM, BOMBA, KKM, DBKL, or MOTAC.
 2. Submission determines `requiredAuthorities`.
-3. The first valid authority action moves Pending to Under Review.
-4. Each required authority records one current decision per application version.
-5. Any Rejected decision makes the aggregate status Rejected.
-6. Event applications have no Amendment/Revision Requested decision. Rejection is terminal; resubmission is available only for event-control documents.
-7. Only unanimous approval by all required authorities for the same version makes the event Approved and publishes it.
-8. A new submitted version invalidates the previous version's current decisions without deleting history.
-
-This multi-authority aggregate is the prototype final-authority mechanism. Do not add a second final-admin role unless the PRD is formally revised.
+3. Admin performs the initial review and either rejects the current version or advances it to named-officer review.
+4. Each assigned authority officer records one current proposal per application version.
+5. After all assigned officers finish, Admin records the authoritative second-review Approve/Reject result.
+6. Event applications have no Amendment decision. A rejected version is immutable, but the organizer may prepare and submit a corrected new version under FR-M1-16.
+7. Request resubmission remains exclusive to event-control documents.
+8. A new submitted version invalidates previous current decisions without deleting their history.
 
 ## Locked Decision Contract
 
-- Event application decisions are Approved or Rejected. Rejected applications are terminal; control-document resubmission is a separate workflow.
+- Event application decisions are Approved or Rejected. Reject closes the reviewed version; a corrected application is a new immutable version, not an Amendment decision.
 - Every action requires 10–1,000 characters of human rationale.
 - Reviewer UID, authority type, application version, timestamp, and current/history state are mandatory.
 - An authority may act only when its type appears in `requiredAuthorities`.

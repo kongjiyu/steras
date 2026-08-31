@@ -18,6 +18,8 @@ export type AccountKey = keyof typeof ACCOUNTS;
 
 /** STERAS test event IDs seeded by the managed Firebase fixture seeder. */
 export const EVENTS = {
+  draftPrimary: STERAS_TEST_EVENTS.draftPrimary,
+  draftSecondary: STERAS_TEST_EVENTS.draftSecondary,
   musicFestival: STERAS_TEST_EVENTS.controlVerification,
   foodFair: STERAS_TEST_EVENTS.authorityPartial,
   mountainRun: STERAS_TEST_EVENTS.initialReady,

@@ -322,7 +322,7 @@ async function applyEvent(db: Firestore, eventId: string): Promise<void> {
       timestamp: now,
       previousStatus: event.status,
       newStatus: 'Rejected',
-      notes: 'Closed legacy AmendmentRequested application workflow; rejection is terminal.',
+      notes: 'Closed the legacy AmendmentRequested decision; the rejected version is immutable and may be corrected only through the versioned M1 revision workflow.',
       metadata: {
         migrationId: DECISION_MIGRATION_ID,
         closedAssignmentIds: activeAssignments.map(({ id }) => id),

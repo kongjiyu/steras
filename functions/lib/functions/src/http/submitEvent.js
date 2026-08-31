@@ -90,7 +90,7 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
         if (event.organizerId !== uid)
             throw new https_1.HttpsError('permission-denied', 'You do not own this event.');
         if (event.status !== 'Draft') {
-            throw new https_1.HttpsError('failed-precondition', 'Only draft applications can be submitted. Rejected applications are final.');
+            throw new https_1.HttpsError('failed-precondition', 'Only a Draft application or prepared revision can be submitted.');
         }
         if (!(0, m1TemplateContract_1.isValidM1TemplateSelection)(event.templateSelection)) {
             throw new https_1.HttpsError('failed-precondition', 'Choose a valid Core and scenario template before submitting.');

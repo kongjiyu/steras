@@ -103,7 +103,9 @@ function m1TemplateAssets() {
             }));
             for (var _i = 0, _a = walkFiles(docxRoot, '.docx'); _i < _a.length; _i++) {
                 var sourcePath = _a[_i];
-                var relativePath = path.relative(docxRoot, sourcePath);
+                // SHA256SUMS uses portable forward-slash paths, while path.relative
+                // returns backslashes on Windows.
+                var relativePath = path.relative(docxRoot, sourcePath).split(path.sep).join('/');
                 var actual = createHash('sha256').update(fs.readFileSync(sourcePath)).digest('hex');
                 if (expectedChecksums.get(relativePath) !== actual) {
                     this.error("M1 template checksum mismatch: ".concat(relativePath, "."));

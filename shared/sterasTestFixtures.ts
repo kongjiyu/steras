@@ -38,6 +38,8 @@ export const STERAS_TEST_EVENT_IDS = Object.freeze(
 
 /** Stable aliases used by the Module 3 Playwright workflows. */
 export const STERAS_TEST_EVENTS = {
+  draftPrimary: 'steras-test-perlis-01',
+  draftSecondary: 'steras-test-perlis-02',
   initialReady: 'steras-test-johor-01',
   // Selangor keeps the default Playwright PDRM/BOMBA/KKM accounts in scope;
   // the scenario still covers a compliance-blocked manual assessment.
@@ -54,6 +56,8 @@ export const STERAS_TEST_EVENTS = {
   rejected: 'steras-test-melaka-01',
   secondReviewRejected: 'steras-test-melaka-02',
   controlVerification: 'steras-test-kuala-lumpur-02',
+  controlVerificationSecondary: 'steras-test-labuan-02',
+  publicStage2Secondary: 'steras-test-putrajaya-01',
   publicStage2: 'steras-test-putrajaya-02',
 } as const;
 

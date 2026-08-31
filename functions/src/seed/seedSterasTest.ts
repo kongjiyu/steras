@@ -27,7 +27,12 @@ import {
   RiskAssessment,
   ProvisionalRiskAssessment,
   SCORE_REVIEW_SCHEMA_VERSION,
+  M1_DOCUMENT_SCHEMA_VERSION,
+  M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
+  M1_TEMPLATE_REGISTRY_VERSION,
 } from '@shared/types';
+import { createM1EvidenceManifestDraft } from '@shared/m1EvidenceContract';
+import { m1CategoryForEventType, m1ScenarioTemplateIdFor } from '@shared/m1TemplateContract';
 import { ACTIVE_CATEGORY_SCHEMA } from '../config/categorySchema';
 import { buildAuthorityReviewState, buildOfficialAssessmentResult } from '../engines/authorityFinalisation';
 import { computeResources } from '../engines/resourceCalculator';
@@ -95,6 +100,8 @@ const STATE_EVENT_TYPES: Array<[SterasTestState, EventType, EventType]> = [
 ];
 
 const workflowOverrides: Record<string, Partial<Scenario>> = {
+  [STERAS_TEST_EVENTS.draftPrimary]: { status: 'Draft', requiredAuthorities: [], reviewStage: null, assignments: 'none' },
+  [STERAS_TEST_EVENTS.draftSecondary]: { status: 'Draft', requiredAuthorities: [], reviewStage: null, assignments: 'none' },
   [STERAS_TEST_EVENTS.complianceBlocked]: { status: 'UnderReview', complianceStatus: 'blocked', reviewStage: 'authority', assignments: 'pending' },
   [STERAS_TEST_EVENTS.provisionalReview]: { requiredAuthorities: ['PDRM', 'BOMBA'], assessmentReadiness: 'provisional', reviewStage: 'manual' },
   [STERAS_TEST_EVENTS.awaitingAssignment]: { reviewStage: 'initial' },
@@ -105,6 +112,8 @@ const workflowOverrides: Record<string, Partial<Scenario>> = {
   // These two fixtures are already approved so manual testers can open the
   // control and public Stage 2 workflows immediately after seeding.
   [STERAS_TEST_EVENTS.controlVerification]: { status: 'Approved', reviewStage: null, assignments: 'complete', controls: 'stage1' },
+  [STERAS_TEST_EVENTS.controlVerificationSecondary]: { status: 'Approved', reviewStage: null, assignments: 'complete', controls: 'stage1' },
+  [STERAS_TEST_EVENTS.publicStage2Secondary]: { status: 'Approved', reviewStage: null, assignments: 'complete', controls: 'stage2' },
   [STERAS_TEST_EVENTS.publicStage2]: { status: 'Approved', reviewStage: null, assignments: 'complete', controls: 'stage2' },
 };
 
@@ -619,6 +628,47 @@ function assignmentDecision(authority: AuthorityType, scenario: Scenario) {
 
 async function writeScenario(ctx: SterasTestContext, scenario: Scenario, uids: IdentityUids): Promise<void> {
   const now = Date.now();
+  const details = eventDetails(scenario, now);
+  const eventRef = ctx.db.collection('events').doc(scenario.id);
+  if (scenario.status === 'Draft') {
+    const eventCategory = m1CategoryForEventType(scenario.eventType);
+    const scenarioTemplateId = m1ScenarioTemplateIdFor(eventCategory, 'outdoor_fixed_site');
+    const batch = ctx.db.batch();
+    batch.set(eventRef, {
+      eventId: scenario.id,
+      organizerId: uids.organizer,
+      eventDetails: details,
+      templateSelection: {
+        eventCategory,
+        venueSetting: 'outdoor_fixed_site',
+        coreTemplateId: 'STERAS-CORE',
+        scenarioTemplateId,
+        templateRegistryVersion: M1_TEMPLATE_REGISTRY_VERSION,
+        selectedAt: now,
+      },
+      status: 'Draft',
+      currentVersionNumber: 0,
+      editableVersionId: VERSION_ID,
+      draftDocumentPaths: [],
+      draftDocuments: [],
+      documentSchemaVersion: M1_DOCUMENT_SCHEMA_VERSION,
+      draftEvidenceManifest: createM1EvidenceManifestDraft(scenarioTemplateId, details.riskProfile),
+      evidenceManifestSchemaVersion: M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
+      requiredAuthorities: [],
+      assignedOfficerUids: [],
+      assignedOfficerByAuthority: {},
+      controlListGenerated: false,
+      createdAt: now,
+      updatedAt: now,
+      sterasTest: marker(scenario.id),
+    });
+    batch.set(eventRef.collection('audit_logs').doc('steras-test-draft-seeded'), {
+      id: 'steras-test-draft-seeded', eventId: scenario.id, action: 'steras_test_draft_seeded',
+      actorId: 'system', actorRole: 'system', timestamp: now, sterasTest: marker(scenario.id),
+    });
+    await batch.commit();
+    return;
+  }
   const evidencePath = `event_documents/${scenario.id}/${VERSION_ID}/evidence.pdf`;
   const evidenceFile = getStorage(ctx.app).bucket().file(evidencePath);
   await evidenceFile.save(Buffer.from('%PDF-1.4\nSTERAS test evidence\n%%EOF\n'), {
@@ -631,8 +681,6 @@ async function writeScenario(ctx: SterasTestContext, scenario: Scenario, uids: I
   const [evidenceMetadata] = await evidenceFile.getMetadata();
   const evidenceGeneration = String(evidenceMetadata.generation ?? '');
   if (!/^\d+$/.test(evidenceGeneration)) throw new Error(`Storage generation missing for ${evidencePath}.`);
-  const details = eventDetails(scenario, now);
-  const eventRef = ctx.db.collection('events').doc(scenario.id);
   const assigned = scenario.assignments && scenario.assignments !== 'none'
     ? scenario.requiredAuthorities
     : [];
@@ -700,6 +748,8 @@ async function writeScenario(ctx: SterasTestContext, scenario: Scenario, uids: I
 
 async function writeControls(ctx: SterasTestContext, scenario: Scenario, uids: IdentityUids, now: number): Promise<void> {
   const eventRef = ctx.db.collection('events').doc(scenario.id);
+  const reportId = `${scenario.id}-report-001`;
+  const m4TicketId = `${scenario.id}-m4-ticket-001`;
   const snapshots: Record<string, unknown>[] = [];
   for (const authority of scenario.requiredAuthorities) {
     const controlId = `${scenario.id}-ctrl-${authority.toLowerCase()}-v1`;
@@ -748,11 +798,11 @@ async function writeControls(ctx: SterasTestContext, scenario: Scenario, uids: I
     if (scenario.controls === 'stage2') {
       const docId = `${controlId}-s2`;
       const imageUrl = `https://placehold.co/1200x800/png?text=${encodeURIComponent(`${authority}+STERAS+TEST`)}`;
-      stageBatch.set(controlRef.collection('stage2_docs').doc(docId), { docId, imageUrl, uploadedAt: now, uploadedBy: uids.organizer, published: true, publishedAt: now, publishedBy: uids.admin, publicConfirmCount: authority === 'PDRM' ? 1 : 0, ...(authority === 'PDRM' ? { m4TicketId: 'steras-test-m4-ticket-001', reportedAt: now } : {}), sterasTest: marker(scenario.id) });
+      stageBatch.set(controlRef.collection('stage2_docs').doc(docId), { docId, imageUrl, uploadedAt: now, uploadedBy: uids.organizer, published: true, publishedAt: now, publishedBy: uids.admin, publicConfirmCount: authority === 'PDRM' ? 1 : 0, ...(authority === 'PDRM' ? { m4TicketId, reportedAt: now } : {}), sterasTest: marker(scenario.id) });
       stageBatch.set(ctx.db.collection('public_event_controls').doc(scenario.id).collection('items').doc(`${controlId}-stage2`), { publicControlId: `${controlId}-stage2`, eventId: scenario.id, versionId: VERSION_ID, controlId, docId, authority, controlName: `${authority} operational compliance`, stage2Label: `Photo of ${authority} control at venue`, imageUrl, publicConfirmCount: authority === 'PDRM' ? 1 : 0, reported: authority === 'PDRM', publishedAt: now, sanitized: true, sanitizedAt: now, sanitizedBy: uids.admin, sterasTest: marker(scenario.id) });
       if (authority === 'PDRM') {
         stageBatch.set(controlRef.collection('stage2_confirms').doc(uids.public), { uid: uids.public, confirmedAt: now, sterasTest: marker(scenario.id) });
-        stageBatch.set(controlRef.collection('stage2_reports').doc(uids.public), { uid: uids.public, reportId: 'steras-test-report-001', reportedAt: now, sterasTest: marker(scenario.id) });
+        stageBatch.set(controlRef.collection('stage2_reports').doc(uids.public), { uid: uids.public, reportId, reportedAt: now, sterasTest: marker(scenario.id) });
       }
     }
     await stageBatch.commit();
@@ -760,7 +810,7 @@ async function writeControls(ctx: SterasTestContext, scenario: Scenario, uids: I
   await eventRef.set({ controlListGenerated: true, controlListSnapshot: snapshots, updatedAt: now }, { merge: true });
   if (scenario.controls === 'stage2') {
     await ctx.db.collection('public_event_controls').doc(scenario.id).set({ eventId: scenario.id, versionId: VERSION_ID, datasetId: STERAS_TEST_DATASET_ID, sterasTest: marker(scenario.id), updatedAt: now });
-    await ctx.db.collection('public_reports').doc('steras-test-report-001').set({ reportId: 'steras-test-report-001', eventId: scenario.id, versionId: VERSION_ID, controlId: `${scenario.id}-ctrl-pdrm-v1`, docId: `${scenario.id}-ctrl-pdrm-v1-s2`, reporterUid: uids.public, reason: 'STERAS test report for M4 handoff testing.', status: 'open', m4TicketId: 'steras-test-m4-ticket-001', createdAt: now, sterasTest: marker(scenario.id) });
+    await ctx.db.collection('public_reports').doc(reportId).set({ reportId, eventId: scenario.id, versionId: VERSION_ID, controlId: `${scenario.id}-ctrl-pdrm-v1`, docId: `${scenario.id}-ctrl-pdrm-v1-s2`, reporterUid: uids.public, reason: 'STERAS test report for M4 handoff testing.', status: 'open', outcome: 'under_review', m4TicketId, createdAt: now, sterasTest: marker(scenario.id) });
   }
 }
 
@@ -905,6 +955,17 @@ export async function verifySterasTestDataset(ctx: SterasTestContext): Promise<v
     const [evidenceExists] = await evidenceFile.exists();
     const evidenceMetadata = evidenceExists ? (await evidenceFile.getMetadata())[0] : undefined;
     const contextEvidence = assessmentData?.contextEvidence?.find((item) => item.sourceLocator === evidencePath);
+    if (scenario.status === 'Draft') {
+      if (eventData?.status !== 'Draft' || eventData.currentVersionNumber !== 0
+        || eventData.editableVersionId !== VERSION_ID || eventData.currentVersionId !== undefined
+        || eventData.currentAssessmentId !== undefined || eventData.currentResourceId !== undefined) {
+        failures.push(`${scenario.id}: Draft event lifecycle fields are invalid`);
+      }
+      if (version.exists || assessmentSnap?.exists || resourceSnap?.exists || evidenceExists || audits.empty) {
+        failures.push(`${scenario.id}: Draft fixture contains submitted or generated artifacts`);
+      }
+      continue;
+    }
     if (!version.exists || !assessmentSnap?.exists || !resourceSnap?.exists || audits.empty) failures.push(`${scenario.id}: core subdocuments incomplete`);
     if (!evidenceExists
       || evidenceMetadata?.metadata?.datasetId !== STERAS_TEST_DATASET_ID
