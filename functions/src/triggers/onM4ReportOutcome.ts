@@ -7,7 +7,8 @@
  * the private control document and its sanitised public projection.
  */
 import { firestore } from 'firebase-admin';
-import { logger } from 'firebase-functions';
+import { FieldValue } from 'firebase-admin/firestore';
+import { logger } from 'firebase-functions/logger';
 import { onDocumentUpdated } from 'firebase-functions/v2/firestore';
 import {
   COLLECTIONS,
@@ -86,8 +87,8 @@ export async function applyM4ReportOutcome(
       // replacement upload is now the next workflow step.
       tx.update(stage2Ref, {
         published: false,
-        m4TicketId: firestore.FieldValue.delete(),
-        reportedAt: firestore.FieldValue.delete(),
+        m4TicketId: FieldValue.delete(),
+        reportedAt: FieldValue.delete(),
         rejectionReason: 'M4 confirmed the public discrepancy; submit a corrected Stage 2 image.',
         rejectionAt: now,
         rejectedBy: 'm4',
@@ -105,11 +106,11 @@ export async function applyM4ReportOutcome(
         published: true,
         publishedAt: stage2.publishedAt ?? now,
         publishedBy: stage2.publishedBy ?? 'm4',
-        m4TicketId: firestore.FieldValue.delete(),
-        reportedAt: firestore.FieldValue.delete(),
-        rejectionReason: firestore.FieldValue.delete(),
-        rejectionAt: firestore.FieldValue.delete(),
-        rejectedBy: firestore.FieldValue.delete(),
+        m4TicketId: FieldValue.delete(),
+        reportedAt: FieldValue.delete(),
+        rejectionReason: FieldValue.delete(),
+        rejectionAt: FieldValue.delete(),
+        rejectedBy: FieldValue.delete(),
       });
       tx.update(controlRef, {
         label: 'approved',

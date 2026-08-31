@@ -50,6 +50,7 @@ const STATUS_LABELS: Record<EventRecord['status'], string> = {
   UnderReview: 'Under review',
   Approved: 'Approved',
   Rejected: 'Rejected',
+  Cancelled: 'Cancelled',
   Withdrawn: 'Withdrawn',
   'Manual Review Required': 'Manual review required',
 };
@@ -60,6 +61,7 @@ const STATUS_TONE: Record<EventRecord['status'], StatCard['tone']> = {
   UnderReview: 'warn',
   Approved: 'good',
   Rejected: 'bad',
+  Cancelled: 'default',
   Withdrawn: 'default',
   'Manual Review Required': 'warn',
 };

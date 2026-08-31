@@ -42,6 +42,7 @@ import {
 import { auth, db, functions, isFirebaseConfigured } from '../../config/firebase';
 import PublicHeader from '../../components/layout/PublicHeader';
 import EmptyState from '../../components/ui/EmptyState';
+import { findPublicEventById } from '../../mock_data/public_events';
 
 export default function PublicEventDetail() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -61,7 +62,13 @@ export default function PublicEventDetail() {
   }, []);
 
   useEffect(() => {
-    if (!isFirebaseConfigured || !eventId) {
+    if (!eventId) {
+      setLoading(false);
+      return;
+    }
+    if (!isFirebaseConfigured) {
+      setEvent(findPublicEventById(eventId) ?? null);
+      setError('');
       setLoading(false);
       return;
     }

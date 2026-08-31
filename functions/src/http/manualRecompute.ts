@@ -6,7 +6,7 @@
  */
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import { logger } from 'firebase-functions';
+import { logger } from 'firebase-functions/logger';
 import { firestore } from 'firebase-admin';
 import { AssessmentStatus, AuthorityType, COLLECTIONS, EventRecord } from '@shared/types';
 import { recomputeRiskAndResources } from '../triggers/computeRisk';

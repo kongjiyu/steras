@@ -1,5 +1,5 @@
 import { firestore } from 'firebase-admin';
-import { logger } from 'firebase-functions';
+import { logger } from 'firebase-functions/logger';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { AssessmentRecord, COLLECTIONS, EventRecord } from '@shared/types';
 import { ASSESSMENT_SECRETS } from '../config/secrets';

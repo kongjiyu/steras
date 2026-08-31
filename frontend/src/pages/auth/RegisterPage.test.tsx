@@ -44,7 +44,15 @@ describe('RegisterPage', () => {
 
     await waitFor(() => expect(screen.getByText('Organizer workspace')).toBeInTheDocument());
     expect(Object.keys(signUp.mock.calls[0][0])).not.toContain('phone');
+    expect(Object.keys(signUp.mock.calls[0][0])).not.toContain('role');
     expect(signUp).toHaveBeenCalledOnce();
+  });
+
+  it('does not offer public, authority, or admin self-registration choices', () => {
+    renderPage();
+    expect(screen.getByText('Event organiser')).toBeInTheDocument();
+    expect(screen.queryByText('Public viewer')).not.toBeInTheDocument();
+    expect(screen.queryByRole('radiogroup', { name: 'Account type' })).not.toBeInTheDocument();
   });
 
   it('preserves input and re-enables submission when registration fails', async () => {

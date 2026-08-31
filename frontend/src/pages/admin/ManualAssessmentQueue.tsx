@@ -74,26 +74,33 @@ export default function ManualAssessmentQueue() {
 
   return (
     <div className="overflow-hidden rounded-md border border-[#e3dacb] bg-white">
-      <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,1.1fr)_10rem_7rem] gap-3 border-b border-[#e8e0cf] bg-cream-50 px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.06em] text-ink-500">
-        <span>Application</span><span>Reason</span><span>Submitted</span><span className="text-right">Open</span>
+      <div className="hidden grid-cols-[minmax(0,1.7fr)_minmax(0,1.2fr)_8rem_9rem_7rem] gap-3 border-b border-[#e8e0cf] bg-cream-50 px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.06em] text-ink-500 lg:grid">
+        <span>Application</span><span>Organizer / venue</span><span>Status</span><span>Assessment</span><span className="text-right">Open</span>
       </div>
       <ul className="divide-y divide-[#e8e0cf]">
         {cases.map(({ event, assessment }) => (
           <li key={`${event.eventId}:${assessment.assessmentId}`}>
             <Link
               to={`/admin/applications/${event.eventId}?focus=manual-assessment`}
-              className="grid grid-cols-[minmax(0,2fr)_minmax(0,1.1fr)_10rem_7rem] items-center gap-3 px-4 py-3 transition hover:bg-cream-50"
+              className="grid gap-3 px-4 py-3 transition hover:bg-cream-50 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1.2fr)_8rem_9rem_7rem] lg:items-center"
               data-testid={`manual-review-${event.eventId}`}
             >
               <span className="flex min-w-0 items-center gap-3">
                 <ClipboardCheck size={17} className="shrink-0 text-gold-600" />
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-semibold text-ink-900">{event.eventDetails.name}</span>
-                  <span className="block truncate text-xs text-ink-500">{event.eventDetails.type} · {event.eventDetails.venueAddress}</span>
+                  <span className="block truncate text-xs text-ink-500">{event.currentVersionId} · submitted {formatDate(event.submittedAt)}</span>
                 </span>
               </span>
-              <span className="truncate text-xs text-ink-600" title={assessment.manualReviewReason}>{assessment.manualReviewReason}</span>
-              <span className="text-xs text-ink-600">{formatDate(event.submittedAt)}</span>
+              <span className="min-w-0 text-xs text-ink-600">
+                <span className="block truncate font-semibold text-ink-700">{event.eventDetails.organizerName}</span>
+                <span className="block truncate" title={event.eventDetails.venueAddress}>{event.eventDetails.venueName}</span>
+              </span>
+              <span className="text-xs"><span className="badge badge-amber">{event.status}</span></span>
+              <span className="text-xs text-ink-600" title={assessment.manualReviewReason}>
+                <span className="block font-semibold capitalize text-ink-700">{assessment.assessmentReadiness.replaceAll('_', ' ')}</span>
+                <span className="block capitalize">{assessment.complianceStatus.replaceAll('_', ' ')} · {assessment.warnings.length} warning{assessment.warnings.length === 1 ? '' : 's'}</span>
+              </span>
               <span className="flex items-center justify-end gap-1 text-xs font-semibold text-brand-700">Review <ArrowRight size={14} /></span>
             </Link>
           </li>

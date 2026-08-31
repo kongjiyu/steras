@@ -14,8 +14,9 @@ exports.isResourceEligibleAssessment = isResourceEligibleAssessment;
 exports.isCurrentManualReviewAssessment = isCurrentManualReviewAssessment;
 const node_crypto_1 = require("node:crypto");
 const firebase_admin_1 = require("firebase-admin");
-const firebase_functions_1 = require("firebase-functions");
-const firestore_1 = require("firebase-functions/v2/firestore");
+const firestore_1 = require("firebase-admin/firestore");
+const logger_1 = require("firebase-functions/logger");
+const firestore_2 = require("firebase-functions/v2/firestore");
 const types_1 = require("../../../shared/types");
 const aiPredictor_1 = require("../engines/aiPredictor");
 const assessmentValidator_1 = require("../engines/assessmentValidator");
@@ -33,6 +34,7 @@ const resourceCutoverLock_1 = require("../config/resourceCutoverLock");
 const submitEvent_1 = require("../http/submitEvent");
 const storageEvidence_1 = require("../utils/storageEvidence");
 const proposalContract_1 = require("../engines/proposalContract");
+const m1TemplateContract_1 = require("../../../shared/m1TemplateContract");
 const CLAIM_LEASE_MS = 2 * 60 * 1000;
 async function runRiskAndResourcePipeline(eventId, now = Date.now(), retryManual = false, retryAuthorization, options = {}) {
     const db = (0, firebase_admin_1.firestore)();
@@ -282,7 +284,7 @@ async function runRiskAndResourcePipeline(eventId, now = Date.now(), retryManual
                 return false;
             if (cutoverLockSnapshot.exists && !options.cutoverSessionId) {
                 transaction.update(db.doc(resourceCutoverLock_1.RESOURCE_CUTOVER_LOCK_PATH), {
-                    queuedEvents: firebase_admin_1.firestore.FieldValue.arrayUnion((0, resourceCutoverLock_1.createResourceCutoverQueueToken)({
+                    queuedEvents: firestore_1.FieldValue.arrayUnion((0, resourceCutoverLock_1.createResourceCutoverQueueToken)({
                         eventId,
                         currentVersionId: versionId,
                         currentAssessmentId: assessment.assessmentId,
@@ -298,7 +300,7 @@ async function runRiskAndResourcePipeline(eventId, now = Date.now(), retryManual
                 transaction.set(summaryReference, organizerSummary(assessment, undefined, createdAt));
                 transaction.update(eventReference, {
                     currentAssessmentId: assessmentId,
-                    currentResourceId: firebase_admin_1.firestore.FieldValue.delete(),
+                    currentResourceId: firestore_1.FieldValue.delete(),
                     updatedAt: createdAt,
                 });
             }
@@ -328,7 +330,7 @@ async function runRiskAndResourcePipeline(eventId, now = Date.now(), retryManual
                 throw new Error(`Atomic provisional publication failed: ${resourceResult.reason ?? 'unknown-resource-error'}`);
             }
         }
-        firebase_functions_1.logger.info(`[assessment] ${eventId}/${versionId}: status=${assessment.status}, ai=${assessment.aiProposal?.status ?? 'not-attempted'}`);
+        logger_1.logger.info(`[assessment] ${eventId}/${versionId}: status=${assessment.status}, ai=${assessment.aiProposal?.status ?? 'not-attempted'}`);
         return {
             status: 'processed', eventId, versionId, assessmentId, assessmentStatus: assessment.status,
             ...(resourceStatus ? { resourceStatus } : {}),
@@ -381,7 +383,7 @@ async function recordMissingVersionFailure(eventReference, assessmentReference, 
         });
         transaction.update(eventReference, {
             currentAssessmentId: assessmentId,
-            currentResourceId: firebase_admin_1.firestore.FieldValue.delete(),
+            currentResourceId: firestore_1.FieldValue.delete(),
             updatedAt: now,
         });
         transaction.set(eventReference.collection(types_1.COLLECTIONS.AUDIT_LOGS).doc(`${assessmentId}-risk-score-computed`), {
@@ -405,6 +407,7 @@ function isPipelineEventVersion(value, eventId, versionId) {
         || !details || typeof details !== 'object' || Array.isArray(details))
         return false;
     const eventDetails = details;
+    const templateSelection = version.templateSelection;
     const contractValid = typeof eventDetails.name === 'string' && Boolean(eventDetails.name.trim())
         && typeof eventDetails.type === 'string' && Boolean(eventDetails.type.trim())
         && typeof eventDetails.venueName === 'string' && Boolean(eventDetails.venueName.trim())
@@ -417,11 +420,16 @@ function isPipelineEventVersion(value, eventId, versionId) {
         && Number.isFinite(eventDetails.startDatetime) && Number.isFinite(eventDetails.endDatetime)
         && Number(eventDetails.endDatetime) >= Number(eventDetails.startDatetime)
         && typeof eventDetails.emergencyPlanSummary === 'string';
-    if (!contractValid || (0, submitEvent_1.validateEventDetails)(eventDetails, Number(version.submittedAt) - 1).length > 0
+    if (!contractValid
+        || !(0, m1TemplateContract_1.isValidM1TemplateSelection)(templateSelection)
+        || (0, m1TemplateContract_1.m1CategoryForEventType)(eventDetails.type) !== templateSelection.eventCategory
+        || !(0, m1TemplateContract_1.m1VenueSettingMatchesEnvironment)(templateSelection.venueSetting, eventDetails.environment)
+        || (0, submitEvent_1.validateEventDetails)(eventDetails, Number(version.submittedAt) - 1).length > 0
         || (0, submitEvent_1.validateEvidencePaths)(eventId, versionId, version.documentPaths).length > 0)
         return false;
     const expectedInputHash = (0, node_crypto_1.createHash)('sha256').update(JSON.stringify({
         eventDetails,
+        templateSelection,
         documentPaths: version.documentPaths,
     })).digest('hex');
     return version.inputHash === expectedInputHash;
@@ -536,7 +544,7 @@ async function markFailed(eventReference, reference, summaryReference, claimId, 
         }
         if (cutoverLockSnapshot.exists) {
             transaction.update(db.doc(resourceCutoverLock_1.RESOURCE_CUTOVER_LOCK_PATH), {
-                queuedEvents: firebase_admin_1.firestore.FieldValue.arrayUnion((0, resourceCutoverLock_1.createResourceCutoverQueueToken)({
+                queuedEvents: firestore_1.FieldValue.arrayUnion((0, resourceCutoverLock_1.createResourceCutoverQueueToken)({
                     eventId: current.eventId, currentVersionId: current.versionId, currentAssessmentId: current.assessmentId,
                     assessmentInputHash: inputHash, generationId: claimId, queuedAt: Date.now(),
                 })),
@@ -557,7 +565,7 @@ async function markFailed(eventReference, reference, summaryReference, claimId, 
         });
         transaction.update(eventReference, {
             currentAssessmentId: current.assessmentId,
-            currentResourceId: firebase_admin_1.firestore.FieldValue.delete(),
+            currentResourceId: firestore_1.FieldValue.delete(),
             updatedAt: Date.now(),
         });
     });
@@ -689,7 +697,7 @@ async function persistResourceCalculation(eventReference, version, assessment, c
             if (!await officialAssessmentProvenanceMatches(transaction, eventReference, current, version, currentAssessment))
                 return false;
             if (!expectedCurrentAssessmentId) {
-                transaction.update(eventReference, { currentResourceId: firebase_admin_1.firestore.FieldValue.delete(), updatedAt: computedAt });
+                transaction.update(eventReference, { currentResourceId: firestore_1.FieldValue.delete(), updatedAt: computedAt });
                 transaction.set(eventReference.collection(types_1.COLLECTIONS.ASSESSMENT_SUMMARIES).doc(version.versionId), organizerSummary(assessment, undefined, computedAt));
             }
             transaction.create(eventReference.collection(types_1.COLLECTIONS.AUDIT_LOGS).doc(failureId), {
@@ -1345,7 +1353,7 @@ function organizerResourceRecommendation(resources) {
             : 'Planning ranges derived from an official risk assessment; resource ratios remain internal prototype inputs.',
     };
 }
-exports.onEventCreated = (0, firestore_1.onDocumentCreated)({ document: `${types_1.COLLECTIONS.EVENTS}/{eventId}`, region: runtime_1.FUNCTION_REGION, secrets: secrets_1.ASSESSMENT_SECRETS }, async (trigger) => {
+exports.onEventCreated = (0, firestore_2.onDocumentCreated)({ document: `${types_1.COLLECTIONS.EVENTS}/{eventId}`, region: runtime_1.FUNCTION_REGION, secrets: secrets_1.ASSESSMENT_SECRETS }, async (trigger) => {
     const eventId = trigger.params.eventId;
     const createdData = trigger.data?.data();
     const legacyM3FixtureIds = new Set([
@@ -1357,17 +1365,17 @@ exports.onEventCreated = (0, firestore_1.onDocumentCreated)({ document: `${types
         && createdData?.sterasTest?.datasetId === sterasTestFixtures_1.STERAS_TEST_DATASET_ID
         && createdData?.sterasTest?.managedBy === 'seed:steras:test';
     if (legacyM3FixtureIds.has(eventId) || isManagedUatFixture) {
-        firebase_functions_1.logger.info(`[onEventCreated] skipped M3 test fixture: ${eventId}`);
+        logger_1.logger.info(`[onEventCreated] skipped M3 test fixture: ${eventId}`);
         return;
     }
     try {
         await runRiskAndResourcePipeline(eventId);
     }
     catch (error) {
-        firebase_functions_1.logger.error('[onEventCreated] failed', error);
+        logger_1.logger.error('[onEventCreated] failed', error);
     }
 });
-exports.onEventUpdated = (0, firestore_1.onDocumentUpdated)({ document: `${types_1.COLLECTIONS.EVENTS}/{eventId}`, region: runtime_1.FUNCTION_REGION, secrets: secrets_1.ASSESSMENT_SECRETS }, async (trigger) => {
+exports.onEventUpdated = (0, firestore_2.onDocumentUpdated)({ document: `${types_1.COLLECTIONS.EVENTS}/{eventId}`, region: runtime_1.FUNCTION_REGION, secrets: secrets_1.ASSESSMENT_SECRETS }, async (trigger) => {
     const before = trigger.data?.before.data();
     const after = trigger.data?.after.data();
     if (!before || !after || after.status !== 'Pending')
@@ -1378,7 +1386,7 @@ exports.onEventUpdated = (0, firestore_1.onDocumentUpdated)({ document: `${types
         await runRiskAndResourcePipeline(trigger.params.eventId);
     }
     catch (error) {
-        firebase_functions_1.logger.error('[onEventUpdated] failed', error);
+        logger_1.logger.error('[onEventUpdated] failed', error);
     }
 });
 //# sourceMappingURL=onEventCreated.js.map

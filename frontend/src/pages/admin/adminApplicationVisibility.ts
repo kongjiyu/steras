@@ -6,6 +6,7 @@ export const ADMIN_VISIBLE_EVENT_STATUSES = [
   'UnderReview',
   'Approved',
   'Rejected',
+  'Cancelled',
   'Withdrawn',
   'Manual Review Required',
 ] as const satisfies readonly EventStatus[];

@@ -8,7 +8,7 @@ describe('admin application visibility', () => {
   });
 
   it('allows submitted and terminal application states', () => {
-    for (const status of ['Pending', 'UnderReview', 'Manual Review Required', 'Approved', 'Rejected', 'Withdrawn'] as const) {
+    for (const status of ['Pending', 'UnderReview', 'Manual Review Required', 'Approved', 'Rejected', 'Cancelled', 'Withdrawn'] as const) {
       expect(isAdminVisibleEvent({ status })).toBe(true);
       expect(adminStatusFromQuery(status)).toBe(status);
     }

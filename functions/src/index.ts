@@ -27,7 +27,11 @@ export { onEventStatusChanged } from './triggers/onEventStatusChanged';
 // HTTP-callable functions (e.g. for manual authority re-trigger, seed runs)
 export { manualRecompute } from './http/manualRecompute';
 export { submitEvent } from './http/submitEvent';
+export { extractApplicationDocuments } from './http/extractApplicationDocuments';
 export { withdrawEvent } from './http/withdrawEvent';
+export { prepareApplicationRevision, cancelEvent } from './http/applicationLifecycle';
+export { createPrivilegedAccount } from './http/adminUserManagement';
+export { saveVenue, verifyVenue, deactivateVenue } from './http/adminVenueManagement';
 export { makeAuthorityDecision } from './http/authorityDecision';
 export { submitAuthorityScoreReview, resolveAuthorityScoreConflict, retryOfficialFinalisation } from './http/authorityScoreReview';
 export { submitAdminManualAssessment, retryManualOfficialFinalisation } from './http/adminManualAssessment';

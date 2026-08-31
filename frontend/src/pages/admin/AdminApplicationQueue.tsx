@@ -25,6 +25,7 @@ const STATUS_FILTERS: Array<{ value: AdminVisibleEventStatus | 'all'; label: str
   { value: 'UnderReview', label: 'Under review' },
   { value: 'Approved', label: 'Approved' },
   { value: 'Rejected', label: 'Rejected' },
+  { value: 'Cancelled', label: 'Cancelled' },
   { value: 'Withdrawn', label: 'Withdrawn' },
 ];
 
@@ -34,6 +35,7 @@ const STATUS_BADGE: Record<EventStatus, string> = {
   UnderReview: 'admin-badge admin-badge--warn',
   Approved: 'admin-badge admin-badge--good',
   Rejected: 'admin-badge admin-badge--bad',
+  Cancelled: 'admin-badge admin-badge--default',
   Withdrawn: 'admin-badge admin-badge--default',
   'Manual Review Required': 'admin-badge admin-badge--warn',
 };

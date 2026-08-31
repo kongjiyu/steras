@@ -12,8 +12,9 @@ exports.applyM4ReportOutcome = applyM4ReportOutcome;
  * the private control document and its sanitised public projection.
  */
 const firebase_admin_1 = require("firebase-admin");
-const firebase_functions_1 = require("firebase-functions");
-const firestore_1 = require("firebase-functions/v2/firestore");
+const firestore_1 = require("firebase-admin/firestore");
+const logger_1 = require("firebase-functions/logger");
+const firestore_2 = require("firebase-functions/v2/firestore");
 const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
 const publishStage2Doc_1 = require("../http/publishStage2Doc");
@@ -21,7 +22,7 @@ const notifications_1 = require("../utils/notifications");
 function isM4TerminalOutcome(value) {
     return value === 'confirmed_true' || value === 'dismissed_fake';
 }
-exports.onM4ReportOutcome = (0, firestore_1.onDocumentUpdated)({ document: `${types_1.COLLECTIONS.PUBLIC_REPORTS}/{ticketId}`, region: runtime_1.FUNCTION_REGION }, async (change) => {
+exports.onM4ReportOutcome = (0, firestore_2.onDocumentUpdated)({ document: `${types_1.COLLECTIONS.PUBLIC_REPORTS}/{ticketId}`, region: runtime_1.FUNCTION_REGION }, async (change) => {
     const before = change.data?.before.data();
     const after = change.data?.after.data();
     if (!after || !isM4TerminalOutcome(after.outcome) || before?.outcome === after.outcome)
@@ -30,7 +31,7 @@ exports.onM4ReportOutcome = (0, firestore_1.onDocumentUpdated)({ document: `${ty
         await applyM4ReportOutcome(after, after.outcome, after.outcomeSetAt ?? Date.now());
     }
     catch (error) {
-        firebase_functions_1.logger.error('[onM4ReportOutcome] failed to apply M4 outcome', {
+        logger_1.logger.error('[onM4ReportOutcome] failed to apply M4 outcome', {
             ticketId: after.ticketId,
             error: error instanceof Error ? error.message : String(error),
         });
@@ -54,7 +55,7 @@ async function applyM4ReportOutcome(report, outcome, now = Date.now()) {
             tx.get(publicRef),
         ]);
         if (!eventSnap.exists || !controlSnap.exists || !stage2Snap.exists) {
-            firebase_functions_1.logger.warn('[onM4ReportOutcome] referenced control no longer exists', {
+            logger_1.logger.warn('[onM4ReportOutcome] referenced control no longer exists', {
                 ticketId: report.ticketId,
                 eventId: report.eventId,
                 controlId: report.controlId,
@@ -72,8 +73,8 @@ async function applyM4ReportOutcome(report, outcome, now = Date.now()) {
             // replacement upload is now the next workflow step.
             tx.update(stage2Ref, {
                 published: false,
-                m4TicketId: firebase_admin_1.firestore.FieldValue.delete(),
-                reportedAt: firebase_admin_1.firestore.FieldValue.delete(),
+                m4TicketId: firestore_1.FieldValue.delete(),
+                reportedAt: firestore_1.FieldValue.delete(),
                 rejectionReason: 'M4 confirmed the public discrepancy; submit a corrected Stage 2 image.',
                 rejectionAt: now,
                 rejectedBy: 'm4',
@@ -93,11 +94,11 @@ async function applyM4ReportOutcome(report, outcome, now = Date.now()) {
                 published: true,
                 publishedAt: stage2.publishedAt ?? now,
                 publishedBy: stage2.publishedBy ?? 'm4',
-                m4TicketId: firebase_admin_1.firestore.FieldValue.delete(),
-                reportedAt: firebase_admin_1.firestore.FieldValue.delete(),
-                rejectionReason: firebase_admin_1.firestore.FieldValue.delete(),
-                rejectionAt: firebase_admin_1.firestore.FieldValue.delete(),
-                rejectedBy: firebase_admin_1.firestore.FieldValue.delete(),
+                m4TicketId: firestore_1.FieldValue.delete(),
+                reportedAt: firestore_1.FieldValue.delete(),
+                rejectionReason: firestore_1.FieldValue.delete(),
+                rejectionAt: firestore_1.FieldValue.delete(),
+                rejectedBy: firestore_1.FieldValue.delete(),
             });
             tx.update(controlRef, {
                 label: 'approved',
@@ -167,7 +168,7 @@ async function applyM4ReportOutcome(report, outcome, now = Date.now()) {
             });
         }
         catch (error) {
-            firebase_functions_1.logger.warn('[onM4ReportOutcome] notification failed (non-fatal)', {
+            logger_1.logger.warn('[onM4ReportOutcome] notification failed (non-fatal)', {
                 recipientUid,
                 ticketId: report.ticketId,
                 error: error instanceof Error ? error.message : String(error),

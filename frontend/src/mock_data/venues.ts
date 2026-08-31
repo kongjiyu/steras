@@ -260,7 +260,9 @@ const rawMockVenues: Array<Omit<Venue, 'active'>> = [
   },
 ];
 
-export const mockVenues: Venue[] = rawMockVenues.map((venue) => ({ ...venue, active: true }));
+export const mockVenues: Venue[] = rawMockVenues.map((venue) => ({
+  ...venue, active: true, verificationStatus: 'verified', revision: 1,
+}));
 
 // ============================================================================
 // Lookups

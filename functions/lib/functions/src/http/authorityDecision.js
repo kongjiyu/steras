@@ -7,6 +7,7 @@ exports.validateDecisionRequest = validateDecisionRequest;
 exports.aggregateDecisionStatus = aggregateDecisionStatus;
 const node_crypto_1 = require("node:crypto");
 const firebase_admin_1 = require("firebase-admin");
+const firestore_1 = require("firebase-admin/firestore");
 const https_1 = require("firebase-functions/v2/https");
 const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
@@ -185,8 +186,8 @@ async function makeAuthorityDecisionForUser(uid, request, now = Date.now()) {
         transaction.create(historyReference, { ...authorityDecision, decisionId: historyId, current: false });
         transaction.update(eventReference, {
             status: aggregateStatus,
-            authorityReviewCompletedAt: allOfficersCompleted ? now : firebase_admin_1.firestore.FieldValue.delete(),
-            authorityReviewCompletedVersionId: allOfficersCompleted ? versionId : firebase_admin_1.firestore.FieldValue.delete(),
+            authorityReviewCompletedAt: allOfficersCompleted ? now : firestore_1.FieldValue.delete(),
+            authorityReviewCompletedVersionId: allOfficersCompleted ? versionId : firestore_1.FieldValue.delete(),
             updatedAt: now,
         });
         transaction.create(auditReference, {

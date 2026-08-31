@@ -50,6 +50,7 @@ const STATUS_TONE: Record<EventStatus, string> = {
   UnderReview: 'admin-badge admin-badge--warn',
   Approved: 'admin-badge admin-badge--good',
   Rejected: 'admin-badge admin-badge--bad',
+  Cancelled: 'admin-badge admin-badge--default',
   Withdrawn: 'admin-badge admin-badge--default',
   'Manual Review Required': 'admin-badge admin-badge--warn',
 };

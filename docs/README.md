@@ -43,6 +43,7 @@ Replace “Module N teammate” with names after the team confirms assignments. 
 | `STERAS_DESIGN_GUIDELINES.md` | Shared visual and interaction rules |
 | `ASSET_GUIDE.md` | Asset usage and generation guidance |
 | `BACKUP_RESTORE.md` | Firebase backup and recovery operations |
+| `templates/m1/` | Versioned Module 1 Core and category/venue-specific Word application templates |
 | `team-handoffs/M3_LEGACY_MIGRATION.md` | Linkos Module 3 legacy fixture migration, manifest, rollback and verification |
 | `steras-design-language.png` | Visual direction reference |
 

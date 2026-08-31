@@ -7,6 +7,7 @@ const STATUS_COLOR: Record<EventStatus, 'amber' | 'blue' | 'orange' | 'green' | 
   UnderReview: 'blue',
   Approved: 'green',
   Rejected: 'red',
+  Cancelled: 'gray',
   Withdrawn: 'gray',
   'Manual Review Required': 'orange',
 };
@@ -17,6 +18,7 @@ const STATUS_LABEL: Record<EventStatus, string> = {
   UnderReview: 'Under Review',
   Approved: 'Approved',
   Rejected: 'Rejected',
+  Cancelled: 'Cancelled',
   Withdrawn: 'Withdrawn',
   'Manual Review Required': 'Manual review required',
 };

@@ -44,6 +44,7 @@ export type EventStatus =
   | 'UnderReview'
   | 'Approved'
   | 'Rejected'
+  | 'Cancelled'
   | 'Withdrawn'
   | 'Manual Review Required';
 
@@ -53,6 +54,7 @@ export const EVENT_STATUSES: { value: EventStatus; label: string; color: string 
   { value: 'UnderReview', label: 'Under Review', color: 'blue' },
   { value: 'Approved', label: 'Approved', color: 'green' },
   { value: 'Rejected', label: 'Rejected', color: 'red' },
+  { value: 'Cancelled', label: 'Cancelled', color: 'gray' },
   { value: 'Withdrawn', label: 'Withdrawn', color: 'gray' },
   { value: 'Manual Review Required', label: 'Manual Review Required', color: 'purple' },
 ];
@@ -65,6 +67,103 @@ export interface VenueLocation {
 export type EventEnvironment = 'indoor' | 'outdoor' | 'mixed';
 export type VenueCoverage = 'covered' | 'partially_covered' | 'uncovered';
 export type SeatingType = 'seated' | 'standing' | 'mixed';
+
+export const M1_TEMPLATE_REGISTRY_VERSION = '2026-08-28-v1';
+export const M1_DOCUMENT_SCHEMA_VERSION = '2026-08-28-document-v1';
+export const M1_EXTRACTION_SCHEMA_VERSION = '2026-08-29-document-fields-v2';
+export const M1_EVIDENCE_MANIFEST_SCHEMA_VERSION = '2026-08-28-evidence-v1';
+
+export type M1EventCategory =
+  | 'entertainment_performance'
+  | 'sports_recreational'
+  | 'cultural_heritage_festival'
+  | 'exhibition_convention_promotional'
+  | 'carnival_public_celebration';
+
+export type M1VenueSetting = 'indoor' | 'outdoor_fixed_site' | 'outdoor_route_based';
+
+/** Organizer-owned snapshot of the two-template recommendation used by a Draft. */
+export interface M1TemplateSelection {
+  eventCategory: M1EventCategory;
+  venueSetting: M1VenueSetting;
+  coreTemplateId: 'STERAS-CORE';
+  scenarioTemplateId: string;
+  templateRegistryVersion: typeof M1_TEMPLATE_REGISTRY_VERSION;
+  selectedAt: number;
+}
+
+export type M1DocumentRole = 'core_template' | 'scenario_template' | 'combined_application' | 'supporting_evidence';
+
+/** Organizer upload metadata. Storage bytes remain immutable after upload. */
+export interface M1DraftDocument {
+  path: string;
+  role: M1DocumentRole;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  uploadedAt: number;
+  schemaVersion: typeof M1_DOCUMENT_SCHEMA_VERSION;
+}
+
+export type M1AutoFillField =
+  | 'name'
+  | 'description'
+  | 'venueAddress'
+  | 'venueCapacity'
+  | 'expectedAttendance'
+  | 'startDatetime'
+  | 'endDatetime'
+  | 'emergencyPlanSummary'
+  | 'organizerName'
+  | 'organizerEmail'
+  | 'organizerPhone'
+  | 'riskProfile.pyrotechnics'
+  | 'riskProfile.temporaryStructures'
+  | 'riskProfile.foodServed'
+  | 'riskProfile.alcoholServed'
+  | 'riskProfile.ticketedEntry';
+
+export interface M1ExtractedField {
+  target: M1AutoFillField;
+  value: string | number | boolean;
+  sourceFieldIds: string[];
+  confidence: 'high' | 'medium' | 'low';
+}
+
+export interface M1DocumentExtraction {
+  extractionId: string;
+  eventId: string;
+  editableVersionId: string;
+  status: 'ready' | 'needs_review' | 'failed';
+  schemaVersion: typeof M1_EXTRACTION_SCHEMA_VERSION;
+  templateRegistryVersion: typeof M1_TEMPLATE_REGISTRY_VERSION;
+  coreTemplateId: string;
+  scenarioTemplateId: string;
+  sourceDocuments: Array<{
+    path: string;
+    role: 'core_template' | 'scenario_template' | 'combined_application';
+    originalName: string;
+    mimeType: string;
+    sizeBytes: number;
+    sha256: string;
+  }>;
+  extractedFields: M1ExtractedField[];
+  rawFieldIds: string[];
+  warnings: string[];
+  completionPercent: number;
+  createdAt: number;
+  createdBy: string;
+}
+
+export type M1EvidenceApplicability = 'required' | 'not_applicable';
+
+/** Organizer declaration that binds one canonical evidence requirement to an immutable Storage object. */
+export interface M1EvidenceRequirementResponse {
+  requirementId: string;
+  applicability: M1EvidenceApplicability;
+  documentPath?: string;
+  notApplicableReason?: string;
+}
 
 export interface EventRiskProfile {
   vulnerableAttendeesPercent?: number;
@@ -113,6 +212,8 @@ export interface EventRecord {
   eventId: string;
   organizerId: string;
   eventDetails: EventDetails;
+  /** Absent only on legacy records created before the M1 recommendation flow. */
+  templateSelection?: M1TemplateSelection;
   status: EventStatus;
   currentVersionId?: string;
   currentVersionNumber: number;
@@ -120,6 +221,21 @@ export interface EventRecord {
   currentResourceId?: string;
   editableVersionId?: string | null;
   draftDocumentPaths: string[];
+  /** Structured roles for current-version uploads. Legacy records may omit it. */
+  draftDocuments?: M1DraftDocument[];
+  documentSchemaVersion?: typeof M1_DOCUMENT_SCHEMA_VERSION;
+  /** Latest server-produced DOCX extraction for this editable generation. */
+  currentExtractionId?: string;
+  /** Requirement-by-requirement evidence state for the current editable generation. */
+  draftEvidenceManifest?: M1EvidenceRequirementResponse[];
+  evidenceManifestSchemaVersion?: typeof M1_EVIDENCE_MANIFEST_SCHEMA_VERSION;
+  /** Current editable generation and its immutable submitted-version origin. */
+  activeRevision?: M1ApplicationRevisionSource;
+  cancelledAt?: number;
+  cancelledFromVersionId?: string;
+  withdrawnAt?: number;
+  withdrawnFromStatus?: Exclude<EventStatus, 'Withdrawn'>;
+  withdrawalRationale?: string;
   requiredAuthorities: AuthorityType[];
   /** M3 named-officer authorization. Populated atomically with assignments. */
   assignedOfficerUids?: string[];
@@ -188,12 +304,27 @@ export interface EventRecord {
   authorityReviewCompletedVersionId?: string;
 }
 
+export interface M1ApplicationRevisionSource {
+  kind: 'pending_edit' | 'rejected_revision';
+  sourceVersionId: string;
+  startedAt: number;
+  rejectionReason?: string;
+  rejectionSuggestion?: string;
+}
+
 export interface EventVersion {
   versionId: string;
   eventId: string;
   versionNumber: number;
   eventDetails: EventDetails;
+  /** Required for new submissions; optional only for immutable legacy versions. */
+  templateSelection?: M1TemplateSelection;
   documentPaths: string[];
+  documentUploads?: M1DraftDocument[];
+  extractionId?: string;
+  evidenceManifest?: M1EvidenceRequirementResponse[];
+  evidenceManifestSchemaVersion?: typeof M1_EVIDENCE_MANIFEST_SCHEMA_VERSION;
+  revisionSource?: M1ApplicationRevisionSource;
   submittedBy: string;
   submittedAt: number;
   inputHash: string;
@@ -1040,7 +1171,11 @@ export interface AuthorityDecision {
 export type AuditAction =
   | 'event_created'
   | 'event_updated'
+  | 'application_documents_extracted'
   | 'event_submitted'
+  | 'application_edit_started'
+  | 'application_revision_started'
+  | 'application_cancelled'
   | 'event_withdrawn'
   | 'status_changed'
   | 'risk_score_computed'
@@ -1082,6 +1217,7 @@ export type AuditAction =
   | 'deployment_migration';
 
 export type NotificationType =
+  | 'application_submitted_for_review'
   | 'decision_made'
   | 'application_approved'
   | 'application_rejected'
@@ -1168,6 +1304,17 @@ export interface Venue {
   datasetVersion?: string;
   riskNotes?: string;
   incidentCount?: number;
+  /** M1 registry lifecycle. Legacy seeded venues may omit these fields. */
+  verificationStatus?: 'unverified' | 'verified';
+  revision?: number;
+  createdBy?: string;
+  createdAt?: number;
+  updatedBy?: string;
+  updatedAt?: number;
+  verifiedBy?: string;
+  verifiedAt?: number;
+  deactivatedBy?: string;
+  deactivatedAt?: number;
 }
 
 export interface Incident {
@@ -1255,6 +1402,7 @@ export const COLLECTIONS = {
   USERS: 'users',
   EVENTS: 'events',
   VERSIONS: 'versions',
+  DOCUMENT_EXTRACTIONS: 'document_extractions',
   ASSESSMENTS: 'assessments',
   ASSESSMENT_SUMMARIES: 'assessment_summaries',
   SCORE_REVIEWS: 'score_reviews',
@@ -1286,6 +1434,8 @@ export const COLLECTIONS = {
   PUBLIC_EVENT_CONTROLS: 'public_event_controls',
   PUBLIC_EVENT_CONTROL_ITEMS: 'items',
   PUBLIC_REPORTS: 'public_reports',
+  ADMIN_OPERATIONS: 'admin_operations',
+  ADMIN_AUDIT_LOGS: 'admin_audit_logs',
 } as const;
 
 export const CATEGORY_SCHEMA_VERSION = '2026-07-24-all-hazards-v2';

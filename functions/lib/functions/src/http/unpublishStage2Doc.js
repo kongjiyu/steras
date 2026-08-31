@@ -34,6 +34,7 @@ exports.unpublishStage2DocForUser = unpublishStage2DocForUser;
  *   - Notifies the organizer with the reason in the message.
  */
 const firebase_admin_1 = require("firebase-admin");
+const firestore_1 = require("firebase-admin/firestore");
 const https_1 = require("firebase-functions/v2/https");
 const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
@@ -131,8 +132,8 @@ async function unpublishStage2DocForUser(uid, data, now = Date.now()) {
             update.rejectedBy = uid;
         }
         // Clear the published fields so the doc looks "pending" again.
-        update.publishedAt = firebase_admin_1.firestore.FieldValue.delete();
-        update.publishedBy = firebase_admin_1.firestore.FieldValue.delete();
+        update.publishedAt = firestore_1.FieldValue.delete();
+        update.publishedBy = firestore_1.FieldValue.delete();
         tx.update(docRef, update);
         // Remove the sanitised public projection at the same atomic boundary so
         // an unpublished or rejected image can never remain publicly visible.

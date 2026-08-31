@@ -18,6 +18,7 @@ import RegisterPage from './pages/auth/RegisterPage';
 // Organizer pages
 import OrganizerDashboard from './pages/organizer/OrganizerDashboard';
 import NewEvent from './pages/organizer/NewEvent';
+import TemplateRecommendationPage from './pages/organizer/TemplateRecommendationPage';
 import MyEvents from './pages/organizer/MyEvents';
 import EventDetail from './pages/organizer/EventDetail';
 
@@ -72,7 +73,8 @@ export default function App() {
         }
       >
         <Route path="/organizer" element={<OrganizerDashboard />} />
-        <Route path="/organizer/events/new" element={<NewEvent />} />
+        <Route path="/organizer/events/new" element={<TemplateRecommendationPage />} />
+        <Route path="/organizer/events/new/details" element={<NewEvent />} />
         <Route path="/organizer/events/:eventId/edit" element={<NewEvent />} />
         <Route path="/organizer/events" element={<MyEvents />} />
         <Route path="/organizer/events/:eventId" element={<EventDetail />} />

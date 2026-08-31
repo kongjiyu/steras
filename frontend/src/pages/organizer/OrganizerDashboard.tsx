@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, CalendarPlus, ClipboardList, FileCheck2, ShieldCheck } from 'lucide-react';
 import PageHeader from '../../components/ui/PageHeader';
 import { useAuth } from '../../contexts/AuthContext';
+import OrganizerNotificationsPanel from './OrganizerNotificationsPanel';
 
 export default function OrganizerDashboard() {
   const { profile } = useAuth();
@@ -30,6 +31,10 @@ export default function OrganizerDashboard() {
           </div>
         </div>
       </section>
+
+      <div className="mt-8">
+        <OrganizerNotificationsPanel />
+      </div>
 
       <section className="mt-8 grid gap-6 border-t border-[#ded5c5] pt-8 md:grid-cols-[0.72fr_1.28fr]">
         <div>
