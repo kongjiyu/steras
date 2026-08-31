@@ -38,7 +38,7 @@ test.describe('@M3 verified-control workflow', () => {
   });
 
   test('PDRM verifies a declared Stage-1 document', async ({ api, loginAs }) => {
-    await loginAs('pdrm');
+    await loginAs('pdrmKl');
     const eventId = EVENTS.controlVerification;
     const controlId = `${eventId}-ctrl-pdrm-v1`;
     const docId = `${controlId}-s1-application`;
@@ -67,14 +67,14 @@ test.describe('@M3 organiser notifications', () => {
   test('organiser receives a notification after the event is Approved', async ({ api, loginAs }) => {
     const eventId = EVENTS.foodFair;
     const rationales: Array<[string, string]> = [
-      ['pdrm', 'PDRM approval: traffic management plan and crowd ingress accepted.'],
-      ['bomba', 'Bomba approval: fire safety officer signed off on egress routes.'],
-      ['kkm', 'KKM approval: medical plan meets mass-gathering guideline.'],
+      ['pdrmKl', 'PDRM approval: traffic management plan and crowd ingress accepted.'],
+      ['bombaKl', 'Bomba approval: fire safety officer signed off on egress routes.'],
+      ['kkmKl', 'KKM approval: medical plan meets mass-gathering guideline.'],
       ['dbkl', 'DBKL approval: venue capacity and emergency access verified.'],
     ];
     for (const [key, rationale] of rationales) {
       await api.signOut();
-      await loginAs(key as 'pdrm' | 'bomba' | 'kkm' | 'dbkl');
+      await loginAs(key as 'pdrmKl' | 'bombaKl' | 'kkmKl' | 'dbkl');
       await api.callFunction('recordOfficerProposal', {
         eventId,
         decision: 'Approved',
@@ -117,10 +117,10 @@ test.describe('@M3 organiser notifications', () => {
     // reason + suggestion. The featured officer is the first one
     // matching the aggregate (Approved), so the BOMBA reason will be
     // surfaced.
-    const proposals: Array<['pdrm' | 'bomba' | 'kkm' | 'dbkl', string, string]> = [
-      ['pdrm', 'PDRM notification-split — traffic plan accepted.', 'PDRM E2E — fine.'],
-      ['bomba', 'Bomba notification-split — fire safety signed off.', 'Bomba E2E — egress routes clear.'],
-      ['kkm', 'KKM notification-split — medical plan approved.', 'KKM E2E — medical coverage OK.'],
+    const proposals: Array<['pdrmKl' | 'bombaKl' | 'kkmKl' | 'dbkl', string, string]> = [
+      ['pdrmKl', 'PDRM notification-split — traffic plan accepted.', 'PDRM E2E — fine.'],
+      ['bombaKl', 'Bomba notification-split — fire safety signed off.', 'Bomba E2E — egress routes clear.'],
+      ['kkmKl', 'KKM notification-split — medical plan approved.', 'KKM E2E — medical coverage OK.'],
       ['dbkl', 'DBKL notification-split — venue capacity verified.', 'DBKL E2E — venue OK.'],
     ];
     for (const [key, reason, suggestion] of proposals) {

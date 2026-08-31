@@ -331,6 +331,10 @@ async function loadPlaywrightIdentityUids(ctx: SterasTestContext): Promise<Ident
     ['organizer', STERAS_TEST_ACCOUNT_EMAILS.organizer],
     ['public', STERAS_TEST_ACCOUNT_EMAILS.public],
     ...(['PDRM', 'BOMBA', 'KKM', 'DBKL', 'MOTAC'] as const).map((authority) => [authority, STERAS_TEST_ACCOUNT_EMAILS[authority]] as const),
+    ...(['PDRM', 'BOMBA', 'KKM'] as const).flatMap((authority) => [
+      [`${authority}:Kuala Lumpur`, `${authority.toLowerCase()}.kuala-lumpur@steras.test`] as const,
+      [`${authority}:Kedah`, `${authority.toLowerCase()}.kedah@steras.test`] as const,
+    ]),
   ].map(async ([key, email]) => [key, (await ctx.auth.getUserByEmail(email)).uid] as const));
   const byKey = Object.fromEntries(entries) as Record<string, string>;
   const uids: IdentityUids = { admin: byKey.admin, organizer: byKey.organizer, public: byKey.public, authorities: {} };
@@ -338,6 +342,10 @@ async function loadPlaywrightIdentityUids(ctx: SterasTestContext): Promise<Ident
     uids.authorities[authority] = byKey[authority];
     uids.authorities[`${authority}:Selangor`] = byKey[authority];
     if (authority === 'DBKL') uids.authorities[`${authority}:Kuala Lumpur`] = byKey[authority];
+  }
+  for (const authority of ['PDRM', 'BOMBA', 'KKM'] as const) {
+    uids.authorities[`${authority}:Kuala Lumpur`] = byKey[`${authority}:Kuala Lumpur`];
+    uids.authorities[`${authority}:Kedah`] = byKey[`${authority}:Kedah`];
   }
   return uids;
 }
@@ -1020,9 +1028,14 @@ export async function prepareSterasTestForPlaywright(ctx: SterasTestContext): Pr
   const adminUid = (await ctx.auth.getUserByEmail(STERAS_TEST_ACCOUNT_EMAILS.admin)).uid;
   const releaseForOfficerTests = async (eventId: SterasTestEventId, authorities: AuthorityType[]) => {
     const eventRef = ctx.db.collection('events').doc(eventId);
+    const scenario = SCENARIOS.find((candidate) => candidate.id === eventId);
+    if (!scenario) throw new Error(`Missing fixture scenario ${eventId}.`);
     const officerUids: Partial<Record<AuthorityType, string>> = {};
     for (const authority of authorities) {
-      const user = await ctx.auth.getUserByEmail(STERAS_TEST_ACCOUNT_EMAILS[authority]);
+      const email = authority === 'DBKL'
+        ? STERAS_TEST_ACCOUNT_EMAILS.DBKL
+        : `${authority.toLowerCase()}.${stateSlug(scenario.state)}@steras.test`;
+      const user = await ctx.auth.getUserByEmail(email);
       officerUids[authority] = user.uid;
       const assignmentId = `${VERSION_ID}_${authority}`;
       await eventRef.collection('assignments').doc(assignmentId).set({ assignmentId, eventId, versionId: VERSION_ID, authorityType: authority, officerUid: user.uid, assignedBy: adminUid, assignedAt: now, status: 'pending', sterasTest: marker(eventId) });

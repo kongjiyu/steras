@@ -21,7 +21,7 @@ test.describe('@M3 PDRM decision flow', () => {
   test('PDRM approves an assigned event', async ({ page, api, loginAs }) => {
     // Global setup (tests/m3/global-setup.ts) has already reset evt-002 to
     // a clean UnderReview state with a mock resource doc written.
-    await loginAs('pdrm');
+    await loginAs('pdrmKl');
     const pdrmUid = await api.currentUid();
     expect(pdrmUid).toBeTruthy();
 

@@ -11,6 +11,11 @@ export const ACCOUNTS = {
   kkm: { email: process.env.STERAS_E2E_KKM_EMAIL ?? STERAS_TEST_ACCOUNT_EMAILS.KKM, password: E2E_PASSWORD },
   dbkl: { email: process.env.STERAS_E2E_DBKL_EMAIL ?? STERAS_TEST_ACCOUNT_EMAILS.DBKL, password: E2E_PASSWORD },
   motac: { email: process.env.STERAS_E2E_MOTAC_EMAIL ?? STERAS_TEST_ACCOUNT_EMAILS.MOTAC, password: E2E_PASSWORD },
+  pdrmKl: { email: 'pdrm.kuala-lumpur@steras.test', password: E2E_PASSWORD },
+  bombaKl: { email: 'bomba.kuala-lumpur@steras.test', password: E2E_PASSWORD },
+  kkmKl: { email: 'kkm.kuala-lumpur@steras.test', password: E2E_PASSWORD },
+  pdrmKedah: { email: 'pdrm.kedah@steras.test', password: E2E_PASSWORD },
+  bombaKedah: { email: 'bomba.kedah@steras.test', password: E2E_PASSWORD },
   public: { email: process.env.STERAS_E2E_PUBLIC_EMAIL ?? STERAS_TEST_ACCOUNT_EMAILS.public, password: E2E_PASSWORD },
 } as const;
 

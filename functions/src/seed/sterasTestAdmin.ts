@@ -63,7 +63,12 @@ async function resetFoodFair(context: SterasTestContext): Promise<void> {
   await context.db.collection('public_events').doc(eventId).delete().catch(() => undefined);
   await resetOfficerWorkloads(context);
   const now = Date.now();
-  const officerByAuthority = { PDRM: ids.PDRM, BOMBA: ids.BOMBA, KKM: ids.KKM, MOTAC: ids.MOTAC };
+  const [pdrm, bomba, kkm] = await Promise.all([
+    context.auth.getUserByEmail('pdrm.kuala-lumpur@steras.test'),
+    context.auth.getUserByEmail('bomba.kuala-lumpur@steras.test'),
+    context.auth.getUserByEmail('kkm.kuala-lumpur@steras.test'),
+  ]);
+  const officerByAuthority = { PDRM: pdrm.uid, BOMBA: bomba.uid, KKM: kkm.uid, DBKL: ids.DBKL };
   const batch = context.db.batch();
   for (const [authorityType, officerUid] of Object.entries(officerByAuthority)) {
     const assignmentId = `v1_${authorityType}`;
