@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { assertFails, assertSucceeds, initializeTestEnvironment, RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, setDoc, updateDoc, where } from 'firebase/firestore';
 import { App, deleteApp, initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
@@ -157,6 +157,41 @@ async function seedProfilesAndEvent() {
 }
 
 describe('Firestore security rules', () => {
+  it('keeps organizer drafts private from Admin until submission', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, 'users/admin-1'), { role: 'admin' });
+      await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer' });
+      await setDoc(doc(db, 'users/public-1'), { role: 'public' });
+      await setDoc(doc(db, 'events/draft-private'), {
+        organizerId: 'organizer-1', eventDetails: validDetails, status: 'Draft', currentVersionNumber: 0,
+        editableVersionId: 'v1', draftDocumentPaths: [], requiredAuthorities: [], createdAt: 1, updatedAt: 1,
+      });
+      await setDoc(doc(db, 'events/draft-private/versions/v1'), { eventId: 'draft-private', versionId: 'v1' });
+      await setDoc(doc(db, 'events/draft-private/event_controls/control-1'), { controlId: 'control-1' });
+    });
+    const adminDb = environment.authenticatedContext('admin-1').firestore();
+    const organizerDb = environment.authenticatedContext('organizer-1').firestore();
+    const publicDb = environment.authenticatedContext('public-1').firestore();
+    await assertFails(getDoc(doc(adminDb, 'events/draft-private')));
+    await assertFails(getDoc(doc(adminDb, 'events/draft-private/versions/v1')));
+    await assertFails(getDoc(doc(adminDb, 'events/draft-private/event_controls/control-1')));
+    await assertSucceeds(getDoc(doc(organizerDb, 'events/draft-private')));
+    await assertSucceeds(getDoc(doc(organizerDb, 'events/draft-private/versions/v1')));
+    await assertSucceeds(getDoc(doc(organizerDb, 'events/draft-private/event_controls/control-1')));
+    await assertFails(getDoc(doc(publicDb, 'events/draft-private/event_controls/control-1')));
+    await environment.withSecurityRulesDisabled((context) => setDoc(doc(context.firestore(), 'events/submitted-visible'), {
+      organizerId: 'organizer-1', eventDetails: validDetails, status: 'Pending', currentVersionNumber: 1,
+      requiredAuthorities: ['PDRM'], createdAt: 2, updatedAt: 2,
+    }));
+    const submittedQuery = query(collection(adminDb, 'events'), where('status', 'in', [
+      'Pending', 'UnderReview', 'Approved', 'Rejected', 'Withdrawn', 'Manual Review Required',
+    ]));
+    const submitted = await assertSucceeds(getDocs(submittedQuery));
+    expect(submitted.docs.map((item) => item.id)).toEqual(['submitted-visible']);
+    await assertFails(getDocs(collection(adminDb, 'events')));
+  });
+
   it('keeps privileged accounts, venue mutations, and admin operation records backend-only', async () => {
     await environment.withSecurityRulesDisabled(async (context) => {
       const db = context.firestore();

@@ -18,7 +18,7 @@ const node_path_1 = require("node:path");
 const app_1 = require("firebase-admin/app");
 const firestore_1 = require("firebase-admin/firestore");
 const types_1 = require("../../../shared/types");
-const m3UatFixtures_1 = require("../../../shared/m3UatFixtures");
+const sterasTestFixtures_1 = require("../../../shared/sterasTestFixtures");
 const DEFAULT_MIGRATION_ID = 'm3-deployment-v1';
 const DEFAULT_MANIFEST_FILENAME = 'm3-legacy-migration-manifest.json';
 const DEFAULT_ARTIFACT_DIR = 'artifacts/m3-migration';
@@ -117,8 +117,8 @@ function validateMigrationManifest(manifest, projectId) {
     if (new Set(manifest.eventIds).size !== manifest.eventIds.length) {
         throw new Error('Migration manifest contains duplicate event IDs.');
     }
-    if (manifest.eventIds.some((eventId) => m3UatFixtures_1.M3_UAT_EVENT_IDS.includes(eventId))) {
-        throw new Error('Migration manifest cannot include m3-linkos-v1 UAT fixture IDs.');
+    if (manifest.eventIds.some((eventId) => sterasTestFixtures_1.STERAS_TEST_EVENT_IDS.includes(eventId))) {
+        throw new Error('Migration manifest cannot include STERAS managed test fixture IDs.');
     }
     const excluded = manifest.excludedEventIds ?? [];
     if (new Set(excluded).size !== excluded.length)
@@ -573,10 +573,10 @@ async function commitOperations(db, operations, snapshot) {
     });
 }
 function assertProductionGuard(projectId, action) {
-    if (projectId === m3UatFixtures_1.M3_UAT_SHARED_PROJECT_ID && action !== 'dry-run' && process.env.M3_MIGRATION_ALLOW_PRODUCTION !== 'true') {
+    if (projectId === sterasTestFixtures_1.STERAS_TEST_SHARED_PROJECT_ID && action !== 'dry-run' && process.env.M3_MIGRATION_ALLOW_PRODUCTION !== 'true') {
         throw new Error(`Refusing to ${action} the shared ${projectId} project without M3_MIGRATION_ALLOW_PRODUCTION=true.`);
     }
-    if (projectId === m3UatFixtures_1.M3_UAT_SHARED_PROJECT_ID && action !== 'dry-run' && process.env.M3_MIGRATION_CONFIRM_ID !== 'm3-legacy-linkos-2026-08') {
+    if (projectId === sterasTestFixtures_1.STERAS_TEST_SHARED_PROJECT_ID && action !== 'dry-run' && process.env.M3_MIGRATION_CONFIRM_ID !== 'm3-legacy-linkos-2026-08') {
         throw new Error('Set M3_MIGRATION_CONFIRM_ID=m3-legacy-linkos-2026-08 for this exact migration.');
     }
 }
@@ -619,7 +619,7 @@ async function runRollback(db, projectId, snapshotPath) {
     console.info(JSON.stringify({ projectId, action: 'rollback', migrationId: snapshot.migrationId, documentsRestored: snapshot.documents.length }, null, 2));
 }
 async function runMigration(options) {
-    const projectId = process.env.FIREBASE_PROJECT_ID ?? process.env.GCLOUD_PROJECT ?? m3UatFixtures_1.M3_UAT_SHARED_PROJECT_ID;
+    const projectId = process.env.FIREBASE_PROJECT_ID ?? process.env.GCLOUD_PROJECT ?? sterasTestFixtures_1.STERAS_TEST_SHARED_PROJECT_ID;
     assertProductionGuard(projectId, options.action);
     if (options.action === 'rollback') {
         const app = (0, app_1.initializeApp)({ credential: (0, app_1.applicationDefault)(), projectId });

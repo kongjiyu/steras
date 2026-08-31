@@ -97,7 +97,7 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
     if (submissionFingerprint(event) !== preflightFingerprint) throw new HttpsError('aborted', 'The draft changed during submission. Review it and retry.');
     if (event.organizerId !== uid) throw new HttpsError('permission-denied', 'You do not own this event.');
     if (event.status !== 'Draft') {
-      throw new HttpsError('failed-precondition', 'Only draft applications can be submitted. Rejected applications are final.');
+      throw new HttpsError('failed-precondition', 'Only a Draft application or prepared revision can be submitted.');
     }
     if (!isValidM1TemplateSelection(event.templateSelection)) {
       throw new HttpsError('failed-precondition', 'Choose a valid Core and scenario template before submitting.');

@@ -22,7 +22,7 @@ const aiPredictor_1 = require("../engines/aiPredictor");
 const assessmentValidator_1 = require("../engines/assessmentValidator");
 const authorityFinalisation_1 = require("../engines/authorityFinalisation");
 const manualFinalisation_1 = require("../engines/manualFinalisation");
-const m3UatFixtures_1 = require("../../../shared/m3UatFixtures");
+const sterasTestFixtures_1 = require("../../../shared/sterasTestFixtures");
 const resourceCalculator_1 = require("../engines/resourceCalculator");
 const resourceContract_1 = require("../engines/resourceContract");
 const ruleBased_1 = require("../engines/ruleBased");
@@ -1361,9 +1361,9 @@ exports.onEventCreated = (0, firestore_2.onDocumentCreated)({ document: `${types
         'evt-provisional-readiness',
         'evt-control-verification',
     ]);
-    const isManagedUatFixture = m3UatFixtures_1.M3_UAT_EVENT_IDS.includes(eventId)
-        && createdData?.m3Uat?.datasetId === m3UatFixtures_1.M3_UAT_DATASET_ID
-        && createdData?.m3Uat?.managedBy === 'seed:m3:uat';
+    const isManagedUatFixture = sterasTestFixtures_1.STERAS_TEST_EVENT_IDS.includes(eventId)
+        && createdData?.sterasTest?.datasetId === sterasTestFixtures_1.STERAS_TEST_DATASET_ID
+        && createdData?.sterasTest?.managedBy === 'seed:steras:test';
     if (legacyM3FixtureIds.has(eventId) || isManagedUatFixture) {
         logger_1.logger.info(`[onEventCreated] skipped M3 test fixture: ${eventId}`);
         return;

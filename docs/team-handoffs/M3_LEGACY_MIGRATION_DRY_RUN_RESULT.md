@@ -1,8 +1,9 @@
 # M3 legacy migration result
 
-Date: 2026-08-23  
-Project: `linkos-496505`  
-Initial mode: read-only (`--dry-run`); followed by the approved, manifest-only apply
+Date: 2026-08-24  
+Product: STERAS  
+Firebase project: `linkos-496505`  
+Initial mode: read-only (`--dry-run`); no broad migration apply
 
 ## Manifest result
 
@@ -12,33 +13,30 @@ seven legacy fixture IDs and returned:
 | Metric | Result |
 |---|---:|
 | Events scanned | 7 |
-| Events with planned changes | 2 |
+| Events with planned changes | 1 |
 | Assignment denormalisations | 1 |
-| Review stages initialised | 1 |
+| Review stages initialised | 0 |
 | Public projections created/repaired | 0 |
 | Stale public projections deleted | 0 |
 | Anomalies | 0 |
 | Manual-review requirements | 0 |
-| Planned Firestore operations | 4 |
+| Planned Firestore operations | 2 |
 
-The two planned event updates are:
+The current dry-run planned one event update:
 
 - `evt-004-kl-marathon`: `assignedOfficerUids` and
   `assignedOfficerByAuthority` from active version `v2` assignments.
-- `evt-control-verification`: `reviewStage: initial` only.
+- The other six legacy IDs are semantic no-ops. The decision-contract migration
+  for `evt-004-kl-marathon` is a separate exact-ID tool.
 
-The other five legacy IDs are semantic no-ops. Every operation is paired with
-one migration audit log. No event status, decision, assignment document,
-control document, public projection, Storage object, Auth identity, or
-notification is planned to change.
+No broad event status, decision, control document, public projection, Storage
+object, Auth identity, or notification migration is planned.
 
 ## Full inventory result
 
-A separate unscoped read-only scan found 20 events and 11 total candidate
-operations, including five public projection operations, involving the current
-`m3-uat-*` fixtures. This confirms that broad
-`--apply` remains unsafe; only the exact manifest may be used for a production
-apply.
+A separate inventory now contains 32 STERAS test events and eight historical
+`evt-*` records. The 32 exact STERAS IDs are excluded from the migration
+manifest, so broad `--apply` remains disabled.
 
 ## Safety check
 
@@ -51,35 +49,22 @@ Refusing to apply the shared linkos-496505 project without M3_MIGRATION_ALLOW_PR
 
 At the time of this guard test, no migration apply or rollback had been executed.
 
-## Approved apply result
+## Decision-contract result
 
-Before applying, a complete Firestore managed export was created and verified:
-
-```text
-gs://linkos-496505.firebasestorage.app/backups/m3-legacy-20260823-0035
-```
-
-The two manifest-approved updates were then applied one at a time:
-
-- `evt-004-kl-marathon`: two event fields plus one audit log; snapshot verify passed.
-- `evt-control-verification`: `reviewStage: initial` plus one audit log; snapshot verify passed.
-
-The final seven-event manifest verify returned zero pending operations, zero
-anomalies, zero projection operations and zero manual-review requirements.
-The 13 explicitly excluded event trees retained their pre-apply fingerprints.
-
-The earlier safety-check sentence refers to the pre-approval guard test. No
-rollback has been executed.
+The separate decision-contract dry-run, snapshot, idempotent apply, and verify
+completed for the exact `evt-004-kl-marathon` record. Its snapshot contains one
+event tree only; no broad migration was applied.
 
 ## Post-apply deployed validation
 
-After the migration, the deployed Linkos suites were run against the
-manifest-managed UAT dataset:
+The deployed STERAS suites were run against the manifest-managed test dataset:
 
 - `m3-smoke`: passed after one transient network timeout was recovered by the configured retry.
 - `m3-full`: 32/32 passed.
 - `m3-workstream1`: 7/7 passed.
 
-The final legacy manifest dry-run after these suites returned seven events,
-zero changes, zero projections, zero anomalies and zero operations. The UAT
-suite is intentionally allowed to mutate only its own `m3-linkos-v1` records.
+The old ten-record test dataset, eight dedicated accounts, one managed venue,
+and exact old projections/reports were removed after ownership-marker and
+reference checks. No Storage files existed. The suite is intentionally allowed
+to mutate only its own `steras-module3-test-v2` records.
+

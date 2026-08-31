@@ -7,7 +7,7 @@ const baseManifest = () => ({
     migrationId: 'm3-legacy-linkos-2026-08',
     projectId: 'linkos-496505',
     eventIds: ['evt-legacy-one'],
-    excludedEventIds: ['m3-uat-01-initial-ready'],
+    excludedEventIds: ['steras-test-johor-01'],
     allowedEventFields: { 'evt-legacy-one': ['reviewStage'] },
     allowProjectionChanges: false,
 });
@@ -33,8 +33,8 @@ const baseManifest = () => ({
         (0, vitest_1.expect)(() => (0, migrateM3Deployment_1.parseMigrationArgs)(['--verify'])).toThrow(/requires --manifest/);
         (0, vitest_1.expect)((0, migrateM3Deployment_1.parseMigrationArgs)(['--rollback', 'snapshot.json'])).toEqual({ action: 'rollback', snapshotPath: 'snapshot.json' });
     });
-    (0, vitest_1.it)('rejects UAT event IDs and unsupported fields in a migration manifest', () => {
-        (0, vitest_1.expect)(() => (0, migrateM3Deployment_1.validateMigrationManifest)({ ...baseManifest(), eventIds: ['m3-uat-01-initial-ready'] }, 'linkos-496505')).toThrow(/UAT fixture/);
+    (0, vitest_1.it)('rejects STERAS test event IDs and unsupported fields in a migration manifest', () => {
+        (0, vitest_1.expect)(() => (0, migrateM3Deployment_1.validateMigrationManifest)({ ...baseManifest(), eventIds: ['steras-test-johor-01'] }, 'linkos-496505')).toThrow(/fixture IDs/);
         (0, vitest_1.expect)(() => (0, migrateM3Deployment_1.validateMigrationManifest)({ ...baseManifest(), allowedEventFields: { 'evt-legacy-one': ['status'] } }, 'linkos-496505')).toThrow(/Unsupported migration field/);
         (0, vitest_1.expect)(() => (0, migrateM3Deployment_1.validateMigrationManifest)(baseManifest(), 'another-project')).toThrow(/credentials target/);
     });

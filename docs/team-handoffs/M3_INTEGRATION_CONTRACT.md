@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-21
 **Owner:** M3 teammate (Chia Yu Xin)
-**Status:** Implemented against the locked FR/UC contract. Initial/manual review, named-officer proposals, admin final review, Stage 1/Stage 2 controls, sanitised public Stage 2 projections, public confirm/report, M4 outcome handling, withdrawal cleanup, score review, durable notifications, and deployment migration tooling are wired. Control-list proposals use a schema-validated MiniMax request with an explicit deterministic fallback and provenance metadata. The live `linkos-496505` deployment is stale relative to this branch; use the staging-only release workflow before any production promotion.
+**Status:** Implemented against the locked FR/UC contract. Initial/manual review, named-officer proposals, admin final review, Stage 1/Stage 2 controls, sanitised public Stage 2 projections, public confirm/report, M4 outcome handling, withdrawal cleanup, score review, durable notifications, and deployment migration tooling are wired. Control-list proposals use a schema-validated MiniMax request with an explicit deterministic fallback and provenance metadata. The current STERAS build is deployed to Firebase project `linkos-496505`; Firebase is an infrastructure target, not the product name.
 **For:** M1, M2, M4, M5 owners — and future-M3
 
 This document is the **handoff contract** for cross-module integration. It tells every other module:
@@ -48,7 +48,7 @@ This document is the **handoff contract** for cross-module integration. It tells
 
 > **If you're another module and you need any of these, CALL THEM DIRECTLY. Don't re-implement.**
 
-The intended region is `asia-southeast1`. The current UAT target is the shared `linkos-496505` project. Mutating tests are permitted only for the manifest-owned `m3-linkos-v1` dataset with the explicit shared-project safety flags; reset and cleanup must never scan or modify unrelated events. Callable from any signed-in client only where the function's role/assignment check permits it (or via Admin SDK with auth context).
+The intended region is `asia-southeast1`. The current UAT target is the shared `linkos-496505` project. Mutating tests are permitted only for the manifest-owned `steras-module3-test-v2` dataset with the explicit shared-project safety flags; reset and cleanup must never scan or modify unrelated events. Callable from any signed-in client only where the function's role/assignment check permits it (or via Admin SDK with auth context).
 
 | Function | Signature | Notes for callers |
 |---|---|---|
@@ -549,3 +549,4 @@ Everything else is M3's own work; you can ignore it until you need to consume th
 
 **Document version:** 1.1 (deployment-readiness update 2026-08-21)
 **Next review:** before staging promotion, after M1/M2/M4 confirm the cross-module field contracts in §12.
+

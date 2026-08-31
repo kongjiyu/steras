@@ -23,18 +23,19 @@ import { dedicatedOfficerUids, resetMarathon } from './admin-reset';
 
 const MARATHON = EVENTS.marathon;
 let OFFICERS: Awaited<ReturnType<typeof dedicatedOfficerUids>>;
-const allAssigned = () => ({ PDRM: OFFICERS.pdrm, BOMBA: OFFICERS.bomba, KKM: OFFICERS.kkm, DBKL: OFFICERS.dbkl });
+const allAssigned = () => ({ PDRM: OFFICERS.pdrm, BOMBA: OFFICERS.bomba, KKM: OFFICERS.kkm, MOTAC: OFFICERS.motac });
 
 test.describe('@M3 unassign / backup officer swap', () => {
-  test.setTimeout(60_000);
+  // Firebase Auth can occasionally take over a minute to resolve the
+  // managed officer identities after the shared dataset reset.
+  test.setTimeout(180_000);
 
   test.beforeEach(async () => {
     await resetMarathon();
     OFFICERS = await dedicatedOfficerUids();
   });
 
-  // Helper — read the event's actual currentVersionId (evt-004 is
-  // seeded as v2, not v1) so the assignment paths match the function's
+  // Helper — read the event's actual currentVersionId so the assignment paths match the
   // writes. Falls back to 'v1' if the field is unexpectedly missing.
   async function readVersionId(api: { getDoc: <T = Record<string, unknown>>(path: string) => Promise<T | null> }): Promise<string> {
     const ev = await api.getDoc<{ currentVersionId?: string }>(`events/${MARATHON}`);
@@ -65,7 +66,7 @@ test.describe('@M3 unassign / backup officer swap', () => {
     expect(pdrmAssignment?.revokedBy).toBeTruthy();
 
     // The other 3 are still pending.
-    for (const auth of ['BOMBA', 'KKM', 'DBKL'] as const) {
+    for (const auth of ['BOMBA', 'KKM', 'MOTAC'] as const) {
       const a = await api.getDoc<{ status: string }>(`events/${MARATHON}/assignments/${versionId}_${auth}`);
       expect(a?.status).toBe('pending');
     }
@@ -73,7 +74,7 @@ test.describe('@M3 unassign / backup officer swap', () => {
     // PDRM workload back to 0; the other 3 stay at 1.
     for (const [auth, uid] of Object.entries(OFFICERS)) {
       const o = await api.getDoc<{ workloadCount: number }>(`officers/${uid}`);
-      expect(o?.workloadCount).toBe(auth === 'pdrm' || auth === 'motac' ? 0 : 1);
+      expect(o?.workloadCount).toBe(auth === 'pdrm' || auth === 'dbkl' ? 0 : 1);
     }
 
     // Event reviewStage stays at 'authority' (still has active assignments).
@@ -108,7 +109,7 @@ test.describe('@M3 unassign / backup officer swap', () => {
     expect(result.reviewStageReset).toBe(true);
 
     // All assignments revoked.
-    for (const auth of ['PDRM', 'BOMBA', 'KKM', 'DBKL'] as const) {
+    for (const auth of ['PDRM', 'BOMBA', 'KKM', 'MOTAC'] as const) {
       const a = await api.getDoc<{ status: string }>(`events/${MARATHON}/assignments/${versionId}_${auth}`);
       expect(a?.status).toBe('revoked');
     }

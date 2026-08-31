@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { collection, doc, getDoc, getDocs, onSnapshot } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import toast from 'react-hot-toast';
 import {
@@ -12,6 +12,7 @@ import {
 } from '@shared/types';
 import { db, functions, isFirebaseConfigured } from '../../config/firebase';
 import { isAuthorityReviewState, isAuthorityScoreReview, isCurrentEventRecord, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
+import { ADMIN_VISIBLE_EVENT_STATUSES } from './adminApplicationVisibility';
 
 export { isAuthorityScoreReview };
 
@@ -30,7 +31,8 @@ export default function ScoreConflictQueue() {
 
   useEffect(() => {
     if (!isFirebaseConfigured) { setLoading(false); return; }
-    const unsubscribe = onSnapshot(collection(db, COLLECTIONS.EVENTS), async (snapshot) => {
+    const eventsQuery = query(collection(db, COLLECTIONS.EVENTS), where('status', 'in', ADMIN_VISIBLE_EVENT_STATUSES));
+    const unsubscribe = onSnapshot(eventsQuery, async (snapshot) => {
       const generation = ++loadGeneration.current;
       try {
         const loaded = await Promise.all(snapshot.docs.map(async (eventDoc) => {

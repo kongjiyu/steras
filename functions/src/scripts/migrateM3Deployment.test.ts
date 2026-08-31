@@ -17,7 +17,7 @@ const baseManifest = (): MigrationManifest => ({
   migrationId: 'm3-legacy-linkos-2026-08',
   projectId: 'linkos-496505',
   eventIds: ['evt-legacy-one'],
-  excludedEventIds: ['m3-uat-01-initial-ready'],
+  excludedEventIds: ['steras-test-johor-01'],
   allowedEventFields: { 'evt-legacy-one': ['reviewStage'] },
   allowProjectionChanges: false,
 });
@@ -46,8 +46,8 @@ describe('M3 migration CLI safety', () => {
     expect(parseMigrationArgs(['--rollback', 'snapshot.json'])).toEqual({ action: 'rollback', snapshotPath: 'snapshot.json' });
   });
 
-  it('rejects UAT event IDs and unsupported fields in a migration manifest', () => {
-    expect(() => validateMigrationManifest({ ...baseManifest(), eventIds: ['m3-uat-01-initial-ready'] }, 'linkos-496505')).toThrow(/UAT fixture/);
+  it('rejects STERAS test event IDs and unsupported fields in a migration manifest', () => {
+    expect(() => validateMigrationManifest({ ...baseManifest(), eventIds: ['steras-test-johor-01'] }, 'linkos-496505')).toThrow(/fixture IDs/);
     expect(() => validateMigrationManifest({ ...baseManifest(), allowedEventFields: { 'evt-legacy-one': ['status'] } }, 'linkos-496505')).toThrow(/Unsupported migration field/);
     expect(() => validateMigrationManifest(baseManifest(), 'another-project')).toThrow(/credentials target/);
   });
@@ -80,3 +80,4 @@ describe('M3 migration snapshot values', () => {
     expect(fingerprint({ b: 2, a: 1 })).toBe(fingerprint({ a: 1, b: 2 }));
   });
 });
+

@@ -7,7 +7,7 @@ rules_version = '2';
 //   - organizer:  self-signup; can edit own Draft applications only
 //   - authority:  server-provisioned only; reviews applications assigned to their agency
 //   - public:     self-signup; reads public_events (same as logged-out users)
-//   - admin:      server-provisioned only; full read across users/events for ops
+//   - admin:      server-provisioned only; reads submitted events for ops, never organizer Drafts
 // =====================================================================
 
 service cloud.firestore {
@@ -48,6 +48,11 @@ service cloud.firestore {
              && (event.keys().hasAny(['assignedOfficerUids'])
                  ? event.assignedOfficerUids.hasAny([request.auth.uid])
                  : false);
+    }
+
+    function isAdminReviewableEvent(eventId) {
+      return isAdmin()
+             && get(/databases/$(database)/documents/events/$(eventId)).data.status != 'Draft';
     }
 
     function isEditable(status) {
@@ -127,13 +132,14 @@ service cloud.firestore {
       // Organizer can read their own event.
       // Only the named officer assigned to the active event version can read
       // an application. Authority membership alone is not sufficient.
-      // Admins can read all events (ops view).
+      // Admin workflows start only after organizer submission. Drafts remain
+      // private to their organizer until the server advances the status.
       // Public viewers should query `public_events` instead — not `events`.
-      allow read: if isAdmin()
+      allow read: if (isAdmin() && resource.data.status != 'Draft')
                   || isAssignedAuthority(eventId)
                   || (isSignedIn() && isOwner(resource.data.organizerId));
 
-      // Drafts are client-created. Submission is server-only; Rejected applications cannot be resubmitted.
+      // Drafts are client-created. Submission and revision preparation are server-owned.
       allow create: if isOrganizer()
                     && request.resource.data.organizerId == request.auth.uid
                     && request.resource.data.status == 'Draft'
@@ -187,46 +193,46 @@ service cloud.firestore {
       allow delete: if false;
 
       match /versions/{versionId} {
-        allow read: if isAdmin()
+        allow read: if isAdminReviewableEvent(eventId)
                     || (isSignedIn() && isAssignedAuthority(eventId))
                     || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
         allow write: if false;
       }
 
       match /document_extractions/{extractionId} {
-        allow read: if isAdmin()
+        allow read: if isAdminReviewableEvent(eventId)
                     || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId))
                     || (isSignedIn() && isAssignedAuthority(eventId));
         allow write: if false;
       }
 
       match /assessments/{assessmentId} {
-        allow read: if isAdmin()
+        allow read: if isAdminReviewableEvent(eventId)
                     || (isSignedIn() && isAssignedAuthority(eventId));
         allow write: if false;
 
         match /score_reviews/{reviewId} {
-          allow read: if isAdmin()
+          allow read: if isAdminReviewableEvent(eventId)
                       || (isSignedIn() && isAssignedAuthority(eventId)
                           && resource.data.authorityType == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.authorityType);
           allow write: if false;
         }
 
         match /score_resolutions/{resolutionId} {
-          allow read: if isAdmin()
+          allow read: if isAdminReviewableEvent(eventId)
                       || (isSignedIn() && isAssignedAuthority(eventId));
           allow write: if false;
         }
 
         match /manual_assessments/{manualAssessmentId} {
-          allow read: if isAdmin()
+          allow read: if isAdminReviewableEvent(eventId)
                       || (isSignedIn() && isAssignedAuthority(eventId));
           allow write: if false;
         }
       }
 
       match /assessment_summaries/{assessmentId} {
-        allow read: if isAdmin()
+        allow read: if isAdminReviewableEvent(eventId)
                     || (isSignedIn() && isAssignedAuthority(eventId))
                     || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
         allow write: if false;
@@ -235,25 +241,25 @@ service cloud.firestore {
       // ---- Sub-collection: resources ----
       // Written by Cloud Functions only.
       match /resources/{resourceId} {
-        allow read: if isAdmin()
+        allow read: if isAdminReviewableEvent(eventId)
                     || (isSignedIn() && isAssignedAuthority(eventId));
         allow write: if false; // server-only
       }
 
       match /decisions/{decisionId} {
-        allow read: if isAdmin()
+        allow read: if isAdminReviewableEvent(eventId)
                     || (isSignedIn() && isAssignedAuthority(eventId));
         allow write: if false;
       }
 
       match /decision_history/{historyId} {
-        allow read: if isAdmin()
+        allow read: if isAdminReviewableEvent(eventId)
                     || (isSignedIn() && isAssignedAuthority(eventId));
         allow write: if false;
       }
 
       match /resource_overrides/{overrideId} {
-        allow read: if isAdmin()
+        allow read: if isAdminReviewableEvent(eventId)
                     || (isSignedIn() && isAssignedAuthority(eventId));
         allow write: if false;
       }
@@ -261,23 +267,21 @@ service cloud.firestore {
       // Authority score confirmations/overrides. Server-written and visible
       // only to admins, the named authority, or the event owner.
       match /assessment_reviews/{reviewId} {
-        allow read: if isAdmin()
+        allow read: if isAdminReviewableEvent(eventId)
                     || (isSignedIn() && isAssignedAuthority(eventId))
                     || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
         allow write: if false;
       }
 
       // ---- Sub-collection: event_controls (Stage-1 controls, M3) ----
-      // Read by admin, assigned authority, event owner, OR any signed-in
-      // public viewer (the Workstream 4 public EventDetail page renders
-      // the per-control Stage 2 cards and needs the metadata).
+      // Private controls are visible only to the review participants and
+      // organizer. Public viewers use the sanitised projection below.
       // Writes server-only (organisers populate via Cloud Function;
       // verifications via verifyStage1Doc).
       match /event_controls/{controlId} {
-        allow read: if isAdmin()
+        allow read: if isAdminReviewableEvent(eventId)
                     || (isSignedIn() && isAssignedAuthority(eventId))
-                    || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId))
-                    || isSignedIn();
+                    || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
         allow write: if false; // server-only
       }
 
@@ -285,7 +289,7 @@ service cloud.firestore {
       // Read by assigned authority + event owner + admin. Writes server-only
       // (verifyEventControl Cloud Function is the only writer).
       match /control_verifications/{verificationId} {
-        allow read: if isAdmin()
+        allow read: if isAdminReviewableEvent(eventId)
                     || (isSignedIn() && isAssignedAuthority(eventId))
                     || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
         allow write: if false; // server-only
@@ -296,7 +300,7 @@ service cloud.firestore {
       // `assignAuthorityOfficers`; read by the assigned officer, the
       // admin, and the event owner. Writes server-only.
       match /assignments/{assignmentId} {
-        allow read: if isAdmin()
+        allow read: if isAdminReviewableEvent(eventId)
                     || (isSignedIn() && isAssignedAuthority(eventId))
                     || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
         allow write: if false; // server-only
@@ -307,7 +311,7 @@ service cloud.firestore {
       // Read by assigned authority + event owner + admin. Writes server-only
       // (verifyStage1Doc + submitStage1Doc Cloud Functions).
       match /event_controls/{controlId}/stage1_docs/{docId} {
-        allow read: if isAdmin()
+        allow read: if isAdminReviewableEvent(eventId)
                     || (isSignedIn() && isAssignedAuthority(eventId))
                     || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
         allow write: if false; // server-only
@@ -319,7 +323,7 @@ service cloud.firestore {
       // Writes are server-only (submitStage2Doc / publishStage2Doc /
       // unpublishStage2Doc Cloud Functions).
       match /event_controls/{controlId}/stage2_docs/{docId} {
-        allow read: if isAdmin()
+        allow read: if isAdminReviewableEvent(eventId)
                     || (isSignedIn() && isAssignedAuthority(eventId))
                     || (isSignedIn() && isOwner(get(/databases/$(database)/documents/events/$(eventId)).data.organizerId));
         allow write: if false; // server-only
@@ -329,12 +333,12 @@ service cloud.firestore {
       // Server-only writes (confirmStage2Doc / reportStage2Doc). Client
       // reads for the UI to show "You confirmed" / "You reported" states.
       match /event_controls/{controlId}/stage2_confirms/{userId} {
-        allow read: if isAdmin()
+        allow read: if isAdminReviewableEvent(eventId)
                     || (isSignedIn() && request.auth.uid == userId);
         allow write: if false; // server-only
       }
       match /event_controls/{controlId}/stage2_reports/{userId} {
-        allow read: if isAdmin()
+        allow read: if isAdminReviewableEvent(eventId)
                     || (isSignedIn() && request.auth.uid == userId);
         allow write: if false; // server-only
       }
@@ -342,7 +346,7 @@ service cloud.firestore {
       // ---- Sub-collection: audit_logs ----
       // Append-only. Read by authorities + admins. Never client-writable.
       match /audit_logs/{logId} {
-        allow read: if isAdmin() || (isSignedIn() && isAssignedAuthority(eventId));
+        allow read: if isAdminReviewableEvent(eventId) || (isSignedIn() && isAssignedAuthority(eventId));
         allow write: if false; // server-only
       }
     }

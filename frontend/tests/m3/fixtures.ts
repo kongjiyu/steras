@@ -1,30 +1,33 @@
 import { test as base, type Page, expect } from '@playwright/test';
-import { M3_UAT_ACCOUNT_EMAILS, M3_UAT_EVENTS } from '../../../shared/m3UatFixtures';
+import { STERAS_TEST_ACCOUNT_EMAILS, STERAS_TEST_EVENTS } from '../../../shared/sterasTestFixtures';
 
 /** Credentials are supplied by the isolated staging environment/CI secrets. */
 const E2E_PASSWORD = process.env.STERAS_E2E_PASSWORD ?? '';
 export const ACCOUNTS = {
-  admin: { email: process.env.STERAS_E2E_ADMIN_EMAIL ?? M3_UAT_ACCOUNT_EMAILS.admin, password: E2E_PASSWORD },
-  organizer: { email: process.env.STERAS_E2E_ORGANIZER_EMAIL ?? M3_UAT_ACCOUNT_EMAILS.organizer, password: E2E_PASSWORD },
-  pdrm: { email: process.env.STERAS_E2E_PDRM_EMAIL ?? M3_UAT_ACCOUNT_EMAILS.PDRM, password: E2E_PASSWORD },
-  bomba: { email: process.env.STERAS_E2E_BOMBA_EMAIL ?? M3_UAT_ACCOUNT_EMAILS.BOMBA, password: E2E_PASSWORD },
-  kkm: { email: process.env.STERAS_E2E_KKM_EMAIL ?? M3_UAT_ACCOUNT_EMAILS.KKM, password: E2E_PASSWORD },
-  dbkl: { email: process.env.STERAS_E2E_DBKL_EMAIL ?? M3_UAT_ACCOUNT_EMAILS.DBKL, password: E2E_PASSWORD },
-  public: { email: process.env.STERAS_E2E_PUBLIC_EMAIL ?? M3_UAT_ACCOUNT_EMAILS.public, password: E2E_PASSWORD },
+  admin: { email: process.env.STERAS_E2E_ADMIN_EMAIL ?? STERAS_TEST_ACCOUNT_EMAILS.admin, password: E2E_PASSWORD },
+  organizer: { email: process.env.STERAS_E2E_ORGANIZER_EMAIL ?? STERAS_TEST_ACCOUNT_EMAILS.organizer, password: E2E_PASSWORD },
+  pdrm: { email: process.env.STERAS_E2E_PDRM_EMAIL ?? STERAS_TEST_ACCOUNT_EMAILS.PDRM, password: E2E_PASSWORD },
+  bomba: { email: process.env.STERAS_E2E_BOMBA_EMAIL ?? STERAS_TEST_ACCOUNT_EMAILS.BOMBA, password: E2E_PASSWORD },
+  kkm: { email: process.env.STERAS_E2E_KKM_EMAIL ?? STERAS_TEST_ACCOUNT_EMAILS.KKM, password: E2E_PASSWORD },
+  dbkl: { email: process.env.STERAS_E2E_DBKL_EMAIL ?? STERAS_TEST_ACCOUNT_EMAILS.DBKL, password: E2E_PASSWORD },
+  motac: { email: process.env.STERAS_E2E_MOTAC_EMAIL ?? STERAS_TEST_ACCOUNT_EMAILS.MOTAC, password: E2E_PASSWORD },
+  public: { email: process.env.STERAS_E2E_PUBLIC_EMAIL ?? STERAS_TEST_ACCOUNT_EMAILS.public, password: E2E_PASSWORD },
 } as const;
 
 export type AccountKey = keyof typeof ACCOUNTS;
 
-/** UAT event IDs seeded by the mock seeder. */
+/** STERAS test event IDs seeded by the managed Firebase fixture seeder. */
 export const EVENTS = {
-  musicFestival: M3_UAT_EVENTS.controlVerification,
-  foodFair: M3_UAT_EVENTS.authorityPartial,
-  mountainRun: M3_UAT_EVENTS.initialReady,
-  marathon: M3_UAT_EVENTS.awaitingAssignment,
-  complianceBlocked: M3_UAT_EVENTS.complianceBlocked,
-  provisionalReview: M3_UAT_EVENTS.provisionalReview,
-  controlVerification: M3_UAT_EVENTS.controlVerification,
-  publicStage2: M3_UAT_EVENTS.publicStage2,
+  draftPrimary: STERAS_TEST_EVENTS.draftPrimary,
+  draftSecondary: STERAS_TEST_EVENTS.draftSecondary,
+  musicFestival: STERAS_TEST_EVENTS.controlVerification,
+  foodFair: STERAS_TEST_EVENTS.authorityPartial,
+  mountainRun: STERAS_TEST_EVENTS.initialReady,
+  marathon: STERAS_TEST_EVENTS.awaitingAssignment,
+  complianceBlocked: STERAS_TEST_EVENTS.complianceBlocked,
+  provisionalReview: STERAS_TEST_EVENTS.provisionalReview,
+  controlVerification: STERAS_TEST_EVENTS.controlVerification,
+  publicStage2: STERAS_TEST_EVENTS.publicStage2,
 } as const;
 
 export type EventKey = keyof typeof EVENTS;
@@ -159,3 +162,4 @@ export { expect };
 // Make the helper available globally so any test file can import without
 // needing the fixture (e.g. for one-off API calls in beforeAll).
 export { makeApiHelper };
+

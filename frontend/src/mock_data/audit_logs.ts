@@ -66,7 +66,7 @@ const auditByEvent: Record<string, AuditOverrides[]> = {
     { eventId: EVENT_IDS.E003, action: 'event_submitted', actorId: USER_IDS.U_ORG_003, actorRole: 'organizer', timestamp: hoursAgo(6), versionId: 'v1', newStatus: 'Pending' },
   ],
 
-  // E004 - Rejected (terminal application decision)
+  // E004 - Rejected current version (a correction would create a new version)
   [EVENT_IDS.E004]: [
     { eventId: EVENT_IDS.E004, action: 'event_created', actorId: USER_IDS.U_ORG_004, actorRole: 'organizer', timestamp: daysAgo(21) },
     { eventId: EVENT_IDS.E004, action: 'event_submitted', actorId: USER_IDS.U_ORG_004, actorRole: 'organizer', timestamp: daysAgo(18), versionId: 'v1', newStatus: 'Pending' },
@@ -75,7 +75,7 @@ const auditByEvent: Record<string, AuditOverrides[]> = {
     { eventId: EVENT_IDS.E004, action: 'decision_made', actorId: USER_IDS.U_OFC_PDRM_KL_01, actorRole: 'authority', timestamp: daysAgo(15), versionId: 'v1', notes: 'Traffic plan approved.', metadata: { authorityType: 'PDRM', decision: 'Approved' } },
     { eventId: EVENT_IDS.E004, action: 'decision_made', actorId: USER_IDS.U_OFC_BOMBA_KL_01, actorRole: 'authority', timestamp: daysAgo(12), versionId: 'v1', notes: 'Insufficient medical plan.', metadata: { authorityType: 'BOMBA', decision: 'Rejected' } },
     { eventId: EVENT_IDS.E004, action: 'decision_made', actorId: USER_IDS.U_OFC_KKM_KL_01, actorRole: 'authority', timestamp: daysAgo(11), versionId: 'v1', notes: 'Medical staffing plan is insufficient for this event scale.', metadata: { authorityType: 'KKM', decision: 'Rejected' } },
-    { eventId: EVENT_IDS.E004, action: 'status_changed', actorId: 'system', actorRole: 'system', timestamp: daysAgo(11), versionId: 'v1', previousStatus: 'UnderReview', newStatus: 'Rejected', notes: 'Application decisions are terminal; organiser must submit a new application if needed.' },
+    { eventId: EVENT_IDS.E004, action: 'status_changed', actorId: 'system', actorRole: 'system', timestamp: daysAgo(11), versionId: 'v1', previousStatus: 'UnderReview', newStatus: 'Rejected', notes: 'Version v1 is rejected and immutable; any correction must be submitted as a new application version.' },
   ],
 
   // E005 - Rejected

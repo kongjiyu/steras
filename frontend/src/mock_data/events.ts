@@ -170,7 +170,7 @@ export const mockEvents: EventRecord[] = [
   }),
 
   // =======================================================================
-  // E004 - KL Marathon - Rejected (terminal application decision)
+  // E004 - KL Marathon - Rejected current version
   // =======================================================================
   mkEvent({
     eventId: EVENT_IDS.E004,

@@ -8,13 +8,18 @@ import {
   ShieldCheck,
   UserCheck,
 } from 'lucide-react';
-import { collection, getDocs, orderBy, query } from 'firebase/firestore';
+import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
 import { db, isFirebaseConfigured } from '../../config/firebase';
 import { COLLECTIONS, EventRecord, EventStatus } from '@shared/types';
 import { WorkspaceTopBar } from '../../components/layout/Sidebar';
 import { useAuth } from '../../contexts/AuthContext';
+import {
+  ADMIN_VISIBLE_EVENT_STATUSES,
+  adminStatusFromQuery,
+  type AdminVisibleEventStatus,
+} from './adminApplicationVisibility';
 
-const STATUS_FILTERS: Array<{ value: EventStatus | 'all'; label: string }> = [
+const STATUS_FILTERS: Array<{ value: AdminVisibleEventStatus | 'all'; label: string }> = [
   { value: 'all', label: 'All' },
   { value: 'Pending', label: 'Pending' },
   { value: 'UnderReview', label: 'Under review' },
@@ -22,7 +27,6 @@ const STATUS_FILTERS: Array<{ value: EventStatus | 'all'; label: string }> = [
   { value: 'Rejected', label: 'Rejected' },
   { value: 'Cancelled', label: 'Cancelled' },
   { value: 'Withdrawn', label: 'Withdrawn' },
-  { value: 'Draft', label: 'Draft' },
 ];
 
 const STATUS_BADGE: Record<EventStatus, string> = {
@@ -53,9 +57,7 @@ export default function AdminApplicationQueue() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<EventStatus | 'all'>(
-    (params.get('status') as EventStatus) || 'all',
-  );
+  const [statusFilter, setStatusFilter] = useState<AdminVisibleEventStatus | 'all'>(() => adminStatusFromQuery(params.get('status')));
 
   useEffect(() => {
     if (!isFirebaseConfigured) {
@@ -65,7 +67,11 @@ export default function AdminApplicationQueue() {
     let cancelled = false;
     (async () => {
       try {
-        const snap = await getDocs(query(collection(db, COLLECTIONS.EVENTS), orderBy('updatedAt', 'desc')));
+        const snap = await getDocs(query(
+          collection(db, COLLECTIONS.EVENTS),
+          where('status', 'in', ADMIN_VISIBLE_EVENT_STATUSES),
+          orderBy('updatedAt', 'desc'),
+        ));
         if (cancelled) return;
         setEvents(snap.docs.map((d) => ({ ...(d.data() as EventRecord), eventId: d.id })));
         setLoading(false);
@@ -93,7 +99,7 @@ export default function AdminApplicationQueue() {
     });
   }, [events, search, statusFilter]);
 
-  const setStatus = (s: EventStatus | 'all') => {
+  const setStatus = (s: AdminVisibleEventStatus | 'all') => {
     setStatusFilter(s);
     if (s === 'all') params.delete('status');
     else params.set('status', s);

@@ -83,6 +83,7 @@ function formatRelative(ts: number) {
 }
 import ScoreConflictQueue from './ScoreConflictQueue';
 import ManualAssessmentQueue from './ManualAssessmentQueue';
+import { ADMIN_VISIBLE_EVENT_STATUSES } from './adminApplicationVisibility';
 
 export default function AdminDashboard() {
   const { profile } = useAuth();
@@ -101,7 +102,12 @@ export default function AdminDashboard() {
     (async () => {
       try {
         const [eventsSnap, usersSnap, officersSnap] = await Promise.all([
-          getDocs(query(collection(db, COLLECTIONS.EVENTS), orderBy('updatedAt', 'desc'), limit(50))),
+          getDocs(query(
+            collection(db, COLLECTIONS.EVENTS),
+            where('status', 'in', ADMIN_VISIBLE_EVENT_STATUSES),
+            orderBy('updatedAt', 'desc'),
+            limit(50),
+          )),
           getDocs(collection(db, COLLECTIONS.USERS)),
           getDocs(query(collection(db, COLLECTIONS.USERS), where('role', '==', 'authority'))),
         ]);
