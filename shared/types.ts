@@ -4,6 +4,28 @@ export type UserRole = 'organizer' | 'authority' | 'public' | 'admin';
 
 export type AuthorityType = 'PDRM' | 'BOMBA' | 'KKM' | 'DBKL' | 'MOTAC';
 
+/** Privacy-safe taxonomy for M3 decision analytics. Free-text rationale stays private. */
+export const REJECTION_REASON_CATEGORIES = [
+  'incomplete_application',
+  'insufficient_evidence',
+  'risk_controls_inadequate',
+  'regulatory_non_compliance',
+  'resource_plan_inadequate',
+  'venue_or_capacity_issue',
+  'other',
+] as const;
+export type RejectionReasonCategory = typeof REJECTION_REASON_CATEGORIES[number];
+
+export const RESOURCE_OVERRIDE_REASON_CATEGORIES = [
+  'attendance_change',
+  'venue_constraint',
+  'risk_score_change',
+  'authority_operational_requirement',
+  'resource_availability',
+  'other',
+] as const;
+export type ResourceOverrideReasonCategory = typeof RESOURCE_OVERRIDE_REASON_CATEGORIES[number];
+
 export interface UserProfile {
   uid: string;
   name: string;
@@ -236,6 +258,7 @@ export interface EventRecord {
   withdrawnAt?: number;
   withdrawnFromStatus?: Exclude<EventStatus, 'Withdrawn'>;
   withdrawalRationale?: string;
+  withdrawalCleanupCompletedAt?: number;
   requiredAuthorities: AuthorityType[];
   /** M3 named-officer authorization. Populated atomically with assignments. */
   assignedOfficerUids?: string[];
@@ -253,6 +276,8 @@ export interface EventRecord {
   initialReview?: {
     decision: 'Approved' | 'Rejected';
     reason: string;
+    reviewStage?: 'initial';
+    rejectionReasonCategory?: RejectionReasonCategory;
     suggestion?: string;
     reviewerUid: string;
     reviewedAt: number;
@@ -265,6 +290,19 @@ export interface EventRecord {
       suggestion?: string;
       decidedAt?: number;
     }>;
+  };
+  /** Admin's terminal second-review decision and organizer correction feedback. */
+  secondReview?: {
+    reviewerUid: string;
+    decidedAt: number;
+    confirmedDecision: DecisionValue;
+    aggregateDecision?: DecisionValue;
+    reviewStage?: 'second';
+    rejectionReasonCategory?: RejectionReasonCategory | null;
+    reason?: string | null;
+    suggestion?: string | null;
+    adminNote?: string | null;
+    featuredOfficerUid?: string | null;
   };
   /** Human assessment captured when AI-assisted assessment is unavailable. */
   manualAssessment?: {
@@ -1120,6 +1158,8 @@ export interface ResourceOverrideRecord {
   authorityType: AuthorityType;
   reviewerId: string;
   rationale: string;
+  /** Required on new M3 records; absent only on legacy revisions. */
+  overrideReasonCategory?: ResourceOverrideReasonCategory;
   previousQuantities: ResourceQuantities;
   quantities: ResourceQuantities;
   idempotencyKey: string;
@@ -1162,6 +1202,8 @@ export interface AuthorityDecision {
   decision: DecisionValue;
   rationale: string;
   suggestion?: string;
+  reviewStage?: 'authority';
+  rejectionReasonCategory?: RejectionReasonCategory;
   materialsReviewed?: boolean;
   reviewerId: string;
   decidedAt: number;
@@ -1608,6 +1650,8 @@ export interface Assignment {
   status: 'pending' | 'in_progress' | 'completed' | 'revoked';
   decision?: DecisionValue;
   reason?: string;
+  reviewStage?: 'authority';
+  rejectionReasonCategory?: RejectionReasonCategory;
   suggestion?: string;
   decidedAt?: number;
   revokedAt?: number;
@@ -1623,6 +1667,9 @@ export interface PublicReport {
   eventId: string;
   controlId: string;
   docId: string;
+  /** Immutable M3 generation binding consumed and revalidated by M4. */
+  versionId: string;
+  stage2PublishedAt: number;
   reporterUid: string;
   category: string;
   description: string;

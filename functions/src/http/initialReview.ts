@@ -20,11 +20,13 @@ import {
   EventRecord,
   ResourceRecommendation,
   RiskAssessment,
+  REJECTION_REASON_CATEGORIES,
+  RejectionReasonCategory,
   UserProfile,
 } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
 import { validateResourceRecommendation } from '../engines/resourceContract';
-import { createNotification, resolveAuthUid } from '../utils/notifications';
+import { resolveAuthUid } from '../utils/notifications';
 
 type InitialDecision = 'Approved' | 'Rejected';
 
@@ -35,6 +37,7 @@ interface InitialReviewRequest {
   suggestion?: string;
   /** Include completed named-officer feedback in an initial rejection. */
   attachOfficerFeedback?: boolean;
+  rejectionReasonCategory?: RejectionReasonCategory;
 }
 
 const REASON_MIN = 10;
@@ -52,6 +55,7 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
   const reason = (data.reason ?? '').trim();
   const suggestion = (data.suggestion ?? '').trim();
   const attachOfficerFeedback = data.attachOfficerFeedback === true;
+  const rejectionReasonCategory = data.rejectionReasonCategory;
   if (!eventId) throw new HttpsError('invalid-argument', 'eventId is required.');
   if (decision !== 'Approved' && decision !== 'Rejected') {
     throw new HttpsError('invalid-argument', 'decision must be Approved or Rejected.');
@@ -64,6 +68,9 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
   }
   if (decision === 'Rejected' && suggestion.length === 0) {
     throw new HttpsError('invalid-argument', 'A suggestion is required when rejecting.');
+  }
+  if (decision === 'Rejected' && !REJECTION_REASON_CATEGORIES.includes(rejectionReasonCategory as RejectionReasonCategory)) {
+    throw new HttpsError('invalid-argument', 'A valid rejectionReasonCategory is required when rejecting.');
   }
   if (Object.prototype.hasOwnProperty.call(data, 'manualAssessment')) {
     throw new HttpsError(
@@ -148,12 +155,15 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
   const initialReview = {
     decision,
     reason,
+    reviewStage: 'initial' as const,
+    ...(decision === 'Rejected' ? { rejectionReasonCategory } : {}),
     ...(suggestion ? { suggestion } : {}),
     reviewerUid: uid,
     reviewedAt: now,
     manualAssessmentRecorded: manualOfficial,
     ...(officerFeedback && officerFeedback.length > 0 ? { officerFeedback } : {}),
   };
+  const organizerRecipientUid = decision === 'Rejected' ? await resolveAuthUid(event.organizerId) : null;
 
   const result = await db.runTransaction(async (tx) => {
     const currentEventSnap = await tx.get(eventRef);
@@ -198,33 +208,31 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
         reviewStage: 'initial',
         decision,
         suggestion: suggestion || null,
+        rejectionReasonCategory: decision === 'Rejected' ? rejectionReasonCategory : null,
         attachedOfficerFeedback: officerFeedback?.length ?? 0,
         manualAssessmentRecorded: manualOfficial,
       },
     });
+    if (organizerRecipientUid) {
+      const notificationId = `initial_review_${versionId}`;
+      tx.set(db.collection(COLLECTIONS.NOTIFICATIONS).doc(notificationId), {
+        notificationId,
+        recipientUid: organizerRecipientUid,
+        eventId,
+        versionId,
+        type: 'application_rejected',
+        title: 'Application rejected at initial review',
+        message: `${reason}${suggestion ? `. ${suggestion}` : ''}`,
+        sourceActionId: notificationId,
+        reason,
+        suggestion,
+        read: false,
+        createdAt: now,
+      }, { merge: false });
+    }
     return { eventId, versionId, status: nextStatus, organizerId: event.organizerId };
   });
 
-  if (decision === 'Rejected' && result.organizerId) {
-    try {
-      const recipientUid = await resolveAuthUid(result.organizerId);
-      if (recipientUid) {
-        await createNotification({
-          recipientUid,
-          eventId,
-          versionId,
-          type: 'application_rejected',
-          title: 'Application rejected at initial review',
-          message: `${reason}${suggestion ? `. ${suggestion}` : ''}`,
-          sourceActionId: `initial_review_${versionId}`,
-          reason,
-          suggestion,
-        });
-      }
-    } catch (error) {
-      console.warn('[makeInitialReviewDecision] organiser notification failed (non-fatal):', error);
-    }
-  }
   return { eventId, versionId, assessmentId, status: result.status, decision, manualAssessmentRecorded: manualOfficial };
 }
 

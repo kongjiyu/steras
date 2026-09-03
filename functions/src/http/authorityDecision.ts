@@ -16,6 +16,8 @@ import {
   EventRecord,
   EventVersion,
   PublicEvent,
+  REJECTION_REASON_CATEGORIES,
+  RejectionReasonCategory,
   RiskAssessment,
   ManualReviewRiskAssessment,
   RESOURCE_CONFIG_VERSION,
@@ -55,6 +57,7 @@ interface AuthorityDecisionRequest {
   confirmedReview?: boolean;
   suggestion?: string;
   materialsReviewed?: boolean;
+  rejectionReasonCategory?: RejectionReasonCategory;
 }
 
 /** Minimum rationale length when the assessment is provisional / insufficient. */
@@ -82,7 +85,7 @@ export async function makeAuthorityDecisionForUser(
   request: AuthorityDecisionRequest,
   now = Date.now(),
 ) {
-  const { eventId, decision, rationale, suggestion, materialsReviewed } = validateDecisionRequest(request);
+  const { eventId, decision, rationale, suggestion, materialsReviewed, rejectionReasonCategory } = validateDecisionRequest(request);
 
   const db = firestore();
   const eventReference = db.collection(COLLECTIONS.EVENTS).doc(eventId);
@@ -237,6 +240,8 @@ export async function makeAuthorityDecisionForUser(
       decision,
       rationale,
       ...(suggestion ? { suggestion } : {}),
+      reviewStage: 'authority',
+      ...(decision === 'Rejected' ? { rejectionReasonCategory } : {}),
       ...(decision === 'Approved' ? { materialsReviewed: true } : {}),
       reviewerId: uid,
       decidedAt: now,
@@ -599,6 +604,7 @@ export function validateDecisionRequest(request: unknown): {
   rationale: string;
   suggestion?: string;
   materialsReviewed?: boolean;
+  rejectionReasonCategory?: RejectionReasonCategory;
 } {
   const value = typeof request === 'object' && request !== null ? request as Record<string, unknown> : {};
   const eventId = typeof value.eventId === 'string' ? value.eventId.trim() : '';
@@ -617,11 +623,15 @@ export function validateDecisionRequest(request: unknown): {
   if (decision !== 'Approved' && (suggestion.length < 10 || suggestion.length > 1_000)) {
     throw new HttpsError('invalid-argument', 'A suggestion between 10 and 1,000 characters is required.');
   }
+  const rejectionReasonCategory = value.rejectionReasonCategory;
+  if (decision === 'Rejected' && !REJECTION_REASON_CATEGORIES.includes(rejectionReasonCategory as RejectionReasonCategory)) {
+    throw new HttpsError('invalid-argument', 'A valid rejectionReasonCategory is required when rejecting.');
+  }
   return {
     eventId,
     decision,
     rationale,
-    ...(decision === 'Approved' ? { materialsReviewed: true } : { suggestion }),
+    ...(decision === 'Approved' ? { materialsReviewed: true } : { suggestion, rejectionReasonCategory: rejectionReasonCategory as RejectionReasonCategory }),
   };
 }
 

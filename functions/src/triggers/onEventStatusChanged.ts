@@ -33,6 +33,7 @@ export async function cleanupWithdrawnEvent(eventId: string, now = Date.now()): 
   ]);
   if (!eventSnap.exists) return;
   const event = eventSnap.data() as EventRecord;
+  if (event.status !== 'Withdrawn') return;
 
   // Keep each batch comfortably below Firestore's 500-write limit. All
   // operations are updates/deletes, so running them again is safe.
@@ -73,32 +74,30 @@ export async function cleanupWithdrawnEvent(eventId: string, now = Date.now()): 
     await batch.commit();
   }
 
-  const finalBatch = db.batch();
-  finalBatch.set(eventRef, {
-    reviewStage: 'closed',
-    assignedOfficerUids: [],
-    assignedOfficerByAuthority: {},
-    updatedAt: now,
-  }, { merge: true });
-  finalBatch.delete(db.collection(COLLECTIONS.PUBLIC_EVENTS).doc(eventId));
   const cleanupAuditId = `withdrawn_cleanup_${event.currentVersionId ?? 'unversioned'}`;
-  finalBatch.set(eventRef.collection(COLLECTIONS.AUDIT_LOGS).doc(cleanupAuditId), {
-    id: cleanupAuditId,
-    eventId,
-    versionId: event.currentVersionId,
-    action: 'withdrawn_cleanup',
-    actorId: 'system',
-    actorRole: 'system',
-    timestamp: now,
-    previousStatus: event.withdrawnFromStatus ?? event.status,
-    newStatus: 'Withdrawn',
-    notes: 'Closed pending assignments and unpublished event-control projections after withdrawal.',
-    metadata: {
-      assignmentsClosed: assignmentsSnap.size,
-      controlsClosed: controlsSnap.size,
-      publicItemsRemoved: publicItemsSnap.size,
-    },
-  }, { merge: true });
-  await finalBatch.commit();
+  await db.runTransaction(async (transaction) => {
+    const current = await transaction.get(eventRef);
+    const currentEvent = current.data() as EventRecord | undefined;
+    if (!current.exists || currentEvent?.status !== 'Withdrawn'
+      || currentEvent.currentVersionId !== event.currentVersionId) return;
+    transaction.set(eventRef, {
+      reviewStage: 'closed', assignedOfficerUids: [], assignedOfficerByAuthority: {}, updatedAt: now,
+      withdrawalCleanupCompletedAt: now,
+    }, { merge: true });
+    transaction.delete(db.collection(COLLECTIONS.PUBLIC_EVENTS).doc(eventId));
+    transaction.set(eventRef.collection(COLLECTIONS.AUDIT_LOGS).doc(cleanupAuditId), {
+      id: cleanupAuditId,
+      eventId,
+      versionId: event.currentVersionId,
+      action: 'withdrawn_cleanup',
+      actorId: 'system',
+      actorRole: 'system',
+      timestamp: now,
+      previousStatus: event.withdrawnFromStatus ?? event.status,
+      newStatus: 'Withdrawn',
+      notes: 'Closed pending assignments and unpublished event-control projections after withdrawal.',
+      metadata: { assignmentsClosed: assignmentsSnap.size, controlsClosed: controlsSnap.size, publicItemsRemoved: publicItemsSnap.size },
+    }, { merge: true });
+  });
   logger.info('[onEventStatusChanged] withdrawal cleanup complete', { eventId, assignments: assignmentsSnap.size, controls: controlsSnap.size });
 }

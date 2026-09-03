@@ -103,6 +103,32 @@ export async function proposeControlListWithMiniMax(
 
 export function buildAllowedControlListInput(input: ControlListProposalInput): string {
   const details = input.event.eventDetails;
+  const assessment = isRecord(input.assessment) ? input.assessment : undefined;
+  const officialResult = assessment && assessment.status === 'official_ready' && isRecord(assessment.officialResult)
+    ? assessment.officialResult : undefined;
+  const resource = isRecord(input.resource) && input.resource.stage === 'official' && isRecord(input.resource.items)
+    ? input.resource : undefined;
+  const categories = officialResult && Array.isArray(officialResult.categories)
+    ? officialResult.categories.filter(isRecord).map((category) => ({
+      categoryId: category.categoryId,
+      likelihood: category.validatedLikelihood ?? category.officialLikelihood,
+      severity: category.validatedSeverity ?? category.officialSeverity,
+      riskLevel: category.riskLevel,
+      matrixScore: category.matrixScore,
+    })) : [];
+  const hazards = officialResult && Array.isArray(officialResult.manualHazards)
+    ? officialResult.manualHazards.filter(isRecord).map((hazard) => ({
+      hazardId: hazard.hazardId, categoryId: hazard.categoryId, hazardName: hazard.hazardName,
+    }))
+    : assessment && isRecord(assessment.aiProposal) && Array.isArray(assessment.aiProposal.hazards)
+      ? assessment.aiProposal.hazards.filter(isRecord).map((hazard) => ({
+        hazardId: hazard.hazardId, categoryId: hazard.categoryId, hazardName: hazard.hazardName,
+      })) : [];
+  const resourceItems = resource
+    ? Object.fromEntries(Object.entries(resource.items as Record<string, unknown>).flatMap(([key, value]) => {
+      if (!isRecord(value)) return [];
+      return [[key, { baseline: value.baseline, planningRange: value.planningRange }]];
+    })) : null;
   return JSON.stringify({
     event: {
       type: details.type,
@@ -114,24 +140,20 @@ export function buildAllowedControlListInput(input: ControlListProposalInput): s
       durationHours: Math.max(0, details.endDatetime - details.startDatetime) / 3_600_000,
     },
     requiredAuthorities: input.requiredAuthorities,
-    assessment: input.assessment ? {
-      officialScore: input.assessment.officialScore,
-      officialRiskLevel: input.assessment.officialRiskLevel,
-      assessmentReadiness: input.assessment.assessmentReadiness,
-      complianceStatus: input.assessment.complianceStatus,
-      hazards: input.assessment.hazards,
-      categoryAssignments: input.assessment.categoryAssignments,
+    assessment: officialResult ? {
+      overallScore: officialResult.overallScore,
+      overallRiskLevel: officialResult.overallRiskLevel,
+      assessmentReadiness: assessment?.assessmentReadiness,
+      complianceStatus: assessment?.complianceStatus,
+      sourceKind: assessment?.sourceKind ?? 'ai_authority',
+      hazards,
+      categories,
     } : null,
-    resources: input.resource ? {
-      police: input.resource.police,
-      security: input.resource.security,
-      medicalTeams: input.resource.medicalTeams,
-      ambulances: input.resource.ambulances,
-      toilets: input.resource.toilets,
-      wasteBins: input.resource.wasteBins,
-      fireOfficers: input.resource.fireOfficers,
-      confidenceLevel: input.resource.confidenceLevel,
-      guidelineStatus: input.resource.guidelineStatus,
+    resources: resource ? {
+      stage: resource.stage,
+      confidenceLevel: resource.confidenceLevel,
+      validationScope: resource.validationScope,
+      items: resourceItems,
     } : null,
   });
 }

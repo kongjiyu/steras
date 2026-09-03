@@ -106,6 +106,12 @@ export async function proposeControlItemsForEventWithMetadata(eventId: string, v
   if (event.currentVersionId && event.currentVersionId !== versionId) {
     throw new Error(`Version ${versionId} is not the current version for event ${eventId}.`);
   }
+  if (event.status !== 'Approved') {
+    throw new Error('The Admin second review must approve the current application before generating controls.');
+  }
+  if (!event.currentAssessmentId || !event.currentResourceId) {
+    throw new Error('The current official assessment/resource pointers are missing.');
+  }
   const required = event.requiredAuthorities ?? [];
 
   const fallbackItems: ProposedControlItem[] = required.map((authority) => ({
@@ -124,6 +130,15 @@ export async function proposeControlItemsForEventWithMetadata(eventId: string, v
       ? firestore().collection(COLLECTIONS.EVENTS).doc(eventId).collection(COLLECTIONS.RESOURCES).doc(event.currentResourceId).get()
       : Promise.resolve(null),
   ]);
+  const assessment = assessmentSnap?.data() as Record<string, unknown> | undefined;
+  const resource = resourceSnap?.data() as Record<string, unknown> | undefined;
+  if (!assessmentSnap?.exists || assessment?.status !== 'official_ready'
+    || assessment.eventId !== eventId || assessment.versionId !== versionId
+    || !resourceSnap?.exists || resource?.stage !== 'official'
+    || resource.eventId !== eventId || resource.versionId !== versionId
+    || resource.assessmentId !== event.currentAssessmentId) {
+    throw new Error('The control list requires a current bound M2 V3 official assessment and official resource.');
+  }
 
   let apiKey = '';
   try {
@@ -137,8 +152,8 @@ export async function proposeControlItemsForEventWithMetadata(eventId: string, v
     {
       event,
       requiredAuthorities: required,
-      assessment: assessmentSnap?.exists ? assessmentSnap.data() : undefined,
-      resource: resourceSnap?.exists ? resourceSnap.data() : undefined,
+      assessment,
+      resource,
     },
     fallbackItems,
   );

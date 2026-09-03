@@ -31,6 +31,7 @@ import {
   EventRecord,
   PublicReport,
   Stage2Doc,
+  UserProfile,
 } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
 import { createNotification, resolveAuthUid } from '../utils/notifications';
@@ -101,13 +102,18 @@ export async function reportStage2DocForUser(
 
   const { ticketId, alreadyReported, reportedAt, controlName, authorityType, versionId, eventOrganizerUid } = await db.runTransaction(async (tx) => {
     // Reads first.
-    const [docSnap, counterSnap, controlSnap, eventSnap, publicSnap] = await Promise.all([
+    const [docSnap, counterSnap, controlSnap, eventSnap, publicSnap, userSnap] = await Promise.all([
       tx.get(docRef),
       tx.get(counterRef),
       tx.get(controlRef),
       tx.get(eventRef),
       tx.get(publicRef),
+      tx.get(db.collection(COLLECTIONS.USERS).doc(uid)),
     ]);
+    const viewer = userSnap.data() as UserProfile | undefined;
+    if (!viewer || viewer.uid !== uid || viewer.role !== 'public') {
+      throw new HttpsError('permission-denied', 'Only registered public viewer accounts can report published evidence.');
+    }
     if (!docSnap.exists) {
       throw new HttpsError('not-found', `Stage 2 image not found for control ${controlId}.`);
     }
@@ -121,7 +127,14 @@ export async function reportStage2DocForUser(
     const control = controlSnap.data() as EventControl;
     if (!eventSnap.exists) throw new HttpsError('not-found', 'Event not found.');
     const event = eventSnap.data() as EventRecord;
-    const versionIdInner = event.currentVersionId ?? 'v1';
+    const versionIdInner = event.currentVersionId;
+    const projection = publicSnap.data() as { eventId?: string; versionId?: string; controlId?: string; docId?: string } | undefined;
+    if (!versionIdInner || control.eventId !== eventId || control.versionId !== versionIdInner
+      || control.activityClosed === true || !publicSnap.exists || projection?.eventId !== eventId
+      || projection.versionId !== versionIdInner || projection.controlId !== controlId || projection.docId !== docId
+      || typeof stage2.publishedAt !== 'number') {
+      throw new HttpsError('failed-precondition', 'This published evidence is not bound to the current application generation.');
+    }
 
     if (counterSnap.exists) {
       // Already reported — return the existing ticket info.
@@ -146,6 +159,8 @@ export async function reportStage2DocForUser(
       eventId,
       controlId,
       docId,
+      versionId: versionIdInner,
+      stage2PublishedAt: stage2.publishedAt,
       reporterUid: uid,
       category,
       description,

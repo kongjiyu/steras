@@ -29,10 +29,12 @@ import {
   EventRecord,
   NotificationType,
   PublicEvent,
+  REJECTION_REASON_CATEGORIES,
+  RejectionReasonCategory,
   UserProfile,
 } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
-import { createNotification, resolveAuthUid } from '../utils/notifications';
+import { resolveAuthUid } from '../utils/notifications';
 
 interface MakeSecondReviewDecisionRequest {
   eventId?: string;
@@ -46,6 +48,7 @@ interface MakeSecondReviewDecisionRequest {
   suggestion?: string;
   /** Optional note retained for approval context and backwards compatibility. */
   adminNote?: string;
+  rejectionReasonCategory?: RejectionReasonCategory;
 }
 
 const ADMIN_NOTE_MAX = 1000;
@@ -69,6 +72,7 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
   const reason = (request.data?.reason ?? '').trim();
   const suggestion = (request.data?.suggestion ?? '').trim();
   const adminNote = (request.data?.adminNote ?? '').trim();
+  const rejectionReasonCategory = request.data?.rejectionReasonCategory;
   if (reason.length > REASON_MAX || (reason.length > 0 && reason.length < REASON_MIN)) {
     throw new HttpsError('invalid-argument', `reason must be ${REASON_MIN}-${REASON_MAX} characters when provided.`);
   }
@@ -77,6 +81,9 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
   }
   if (finalDecision === 'Rejected' && (reason.length < REASON_MIN || suggestion.length === 0)) {
     throw new HttpsError('invalid-argument', 'A rejection requires both a reason and a suggestion.');
+  }
+  if (finalDecision === 'Rejected' && !REJECTION_REASON_CATEGORIES.includes(rejectionReasonCategory as RejectionReasonCategory)) {
+    throw new HttpsError('invalid-argument', 'A valid rejectionReasonCategory is required when rejecting.');
   }
   if (adminNote.length > ADMIN_NOTE_MAX) {
     throw new HttpsError('invalid-argument', `adminNote must be at most ${ADMIN_NOTE_MAX} characters.`);
@@ -125,8 +132,25 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
   const notifType: NotificationType =
     finalDecision === 'Approved' ? 'application_approved'
     : 'application_rejected';
+  const organizerRecipientUid = await resolveAuthUid(event.organizerId);
 
   return db.runTransaction(async (tx) => {
+    const [currentEventSnap, currentAssignmentsSnap, currentVersionSnap] = await Promise.all([
+      tx.get(eventRef),
+      tx.get(eventRef.collection(COLLECTIONS.ASSIGNMENTS)),
+      tx.get(eventRef.collection(COLLECTIONS.VERSIONS).doc(versionId)),
+    ]);
+    const currentEvent = currentEventSnap.data() as EventRecord | undefined;
+    const currentAssignments = currentAssignmentsSnap.docs
+      .map((document) => document.data() as Assignment)
+      .filter((assignment) => assignment.versionId === versionId);
+    if (!currentEventSnap.exists || currentEvent?.currentVersionId !== versionId
+      || currentEvent.reviewStage !== 'second' || !currentVersionSnap.exists
+      || (currentEvent as EventRecord & { secondReview?: unknown }).secondReview
+      || required.some((authority) => !currentAssignments.some((assignment) => assignment.authorityType === authority && assignment.status === 'completed'))
+      || aggregateFromAssignments(currentAssignments, required) !== aggregate) {
+      throw new HttpsError('aborted', 'The second-review inputs changed or another Admin already finalized this application.');
+    }
     tx.update(eventRef, {
       status: finalDecision,
       reviewStage: finalDecision === 'Rejected' ? 'closed' : null,
@@ -138,10 +162,22 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
         decidedAt: now,
         confirmedDecision: finalDecision,
         aggregateDecision: aggregate,
-        reason: reason || null,
-        suggestion: suggestion || null,
+        reviewStage: 'second',
+        rejectionReasonCategory: finalDecision === 'Rejected' ? rejectionReasonCategory : null,
+        reason: reason || (finalDecision === 'Rejected' ? reasonOfficer?.reason : undefined) || null,
+        suggestion: suggestion || (finalDecision === 'Rejected' ? reasonOfficer?.suggestion : undefined) || null,
         adminNote: adminNote || null,
         featuredOfficerUid: reasonOfficer?.officerUid ?? null,
+        officerFeedback: assignments
+          .filter((assignment) => assignment.status === 'completed' && assignment.decision && assignment.reason)
+          .map((assignment) => ({
+            authorityType: assignment.authorityType,
+            officerUid: assignment.officerUid,
+            decision: assignment.decision,
+            reason: assignment.reason,
+            suggestion: assignment.suggestion ?? null,
+            decidedAt: assignment.decidedAt ?? null,
+          })),
       },
       updatedAt: now,
     });
@@ -168,6 +204,7 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
         featuredSuggestion: reasonOfficer?.suggestion ?? null,
         reason: reason || null,
         suggestion: suggestion || null,
+        rejectionReasonCategory: finalDecision === 'Rejected' ? rejectionReasonCategory : null,
       },
     });
 
@@ -214,37 +251,28 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
       }
     }
 
+    if (organizerRecipientUid) {
+      const notificationId = `second_review_${versionId}`;
+      const notificationReason = reason || reasonOfficer?.reason || adminNote || undefined;
+      const notificationSuggestion = suggestion || reasonOfficer?.suggestion || undefined;
+      tx.set(db.collection(COLLECTIONS.NOTIFICATIONS).doc(notificationId), {
+        notificationId,
+        recipientUid: organizerRecipientUid,
+        eventId,
+        versionId,
+        type: notifType,
+        title: finalDecision === 'Approved' ? 'Application approved' : 'Application rejected',
+        message: notificationReason ?? `The admin recorded ${finalDecision} after second review.`,
+        sourceActionId: notificationId,
+        read: false,
+        createdAt: now,
+        ...(notificationReason ? { reason: notificationReason } : {}),
+        ...(notificationSuggestion ? { suggestion: notificationSuggestion } : {}),
+      }, { merge: false });
+    }
+
     return { aggregate, finalDecision, notifType, reasonOfficer };
   }).then(async (result) => {
-    if (event.organizerId) {
-      try {
-        const recipientUid = await resolveAuthUid(event.organizerId);
-        if (recipientUid) {
-          const title = result.finalDecision === 'Approved' ? 'Application approved' : 'Application rejected';
-          const message = reason || adminNote
-            ? (reason || adminNote)
-            : result.reasonOfficer
-              ? `${result.reasonOfficer.authorityType} ${result.reasonOfficer.reason}${result.reasonOfficer.suggestion ? '. ' + result.reasonOfficer.suggestion : ''}`
-              : `The admin recorded ${result.finalDecision} after second review.`;
-          // FR-M3-08: surface the featured officer's reason + suggestion
-          // as separate fields so the bell UI can render them on
-          // separate lines (instead of concatenating into the message).
-          await createNotification({
-            recipientUid,
-            eventId,
-            versionId,
-            type: result.notifType,
-            title,
-            message,
-            sourceActionId: `second_review_${versionId}`,
-            ...(reason ? { reason } : result.reasonOfficer?.reason ? { reason: result.reasonOfficer.reason } : adminNote ? { reason: adminNote } : {}),
-            ...(suggestion ? { suggestion } : result.reasonOfficer?.suggestion ? { suggestion: result.reasonOfficer.suggestion } : {}),
-          });
-        }
-      } catch (err) {
-        console.warn('[makeSecondReviewDecision] organiser notification failed (non-fatal):', err);
-      }
-    }
     return { eventId, status: result.finalDecision, aggregate: result.aggregate };
   });
 });

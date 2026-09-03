@@ -90,8 +90,15 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
   // Load all active officers grouped by authorityType. In a real
   // production system this would be indexed / sharded; for the
   // prototype the officer pool is small.
-  const allOfficers = (await db.collection(COLLECTIONS.OFFICERS).where('active', '==', true).get())
-    .docs.map((d) => d.data() as OfficerProfile);
+  const officerDocs = (await db.collection(COLLECTIONS.OFFICERS).where('active', '==', true).get()).docs;
+  const officerUsers = officerDocs.length > 0
+    ? await db.getAll(...officerDocs.map((document) => db.collection(COLLECTIONS.USERS).doc(document.id)))
+    : [];
+  const allOfficers = officerDocs
+    .map((document, index) => ({ officer: document.data() as OfficerProfile, user: officerUsers[index]?.data() as UserProfile | undefined }))
+    .filter(({ officer, user }, index) => officer.uid === officerDocs[index].id
+      && user?.uid === officer.uid && user.role === 'authority' && user.authorityType === officer.authorityType)
+    .map(({ officer }) => officer);
 
   // Filter by state scope (A4).
   const isEligible = (o: OfficerProfile) => {
@@ -149,6 +156,11 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
   if (!assignmentMap || typeof assignmentMap !== 'object') {
     throw new HttpsError('invalid-argument', 'assignmentMap is required when dryRun=false.');
   }
+  const submittedAuthorities = Object.keys(assignmentMap);
+  if (submittedAuthorities.length !== required.length
+    || submittedAuthorities.some((authority) => !required.includes(authority as AuthorityType))) {
+    throw new HttpsError('invalid-argument', 'assignmentMap must contain exactly the event requiredAuthorities.');
+  }
   for (const item of checklist) {
     if (!assignmentMap[item.authorityType]) {
       throw new HttpsError(
@@ -175,20 +187,27 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
     }
 
     // Pre-fetch all officer refs in the read phase.
-    const officerEntries: Array<[string, string, FirebaseFirestore.DocumentReference, OfficerProfile | null]> = [];
+    const officerEntries: Array<[string, string, FirebaseFirestore.DocumentReference, OfficerProfile | null, UserProfile | null]> = [];
     for (const [auth, officerUid] of Object.entries(assignmentMap) as Array<[AuthorityType, string]>) {
       if (!officerUid) {
         throw new HttpsError('invalid-argument', `Empty officerUid for ${auth}.`);
       }
       const officerRef = db.collection(COLLECTIONS.OFFICERS).doc(officerUid);
+      const officerUserRef = db.collection(COLLECTIONS.USERS).doc(officerUid);
       const officerSnap = await tx.get(officerRef);
-      officerEntries.push([auth, officerUid, officerRef, officerSnap.exists ? officerSnap.data() as OfficerProfile : null]);
+      const officerUserSnap = await tx.get(officerUserRef);
+      officerEntries.push([auth, officerUid, officerRef, officerSnap.exists ? officerSnap.data() as OfficerProfile : null,
+        officerUserSnap.exists ? officerUserSnap.data() as UserProfile : null]);
     }
 
     // Validate all entries (no writes yet).
-    for (const [auth, officerUid, , officer] of officerEntries) {
+    for (const [auth, officerUid, , officer, officerUser] of officerEntries) {
       if (!officer) {
         throw new HttpsError('not-found', `Officer ${officerUid} not found.`);
+      }
+      if (officer.uid !== officerUid || !officerUser || officerUser.uid !== officerUid
+        || officerUser.role !== 'authority' || officerUser.authorityType !== auth) {
+        throw new HttpsError('failed-precondition', `Officer ${officerUid} is not bound to an active authority user profile for ${auth}.`);
       }
       if (officer.authorityType !== auth) {
         throw new HttpsError(

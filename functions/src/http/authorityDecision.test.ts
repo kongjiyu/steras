@@ -197,7 +197,7 @@ describe('officer decision boundary', () => {
     expect(() => validateDecisionRequest({ eventId: 'event-1', decision: 'Approved', rationale: 'Reviewed all required materials.' })).toThrow(HttpsError);
     expect(validateDecisionRequest({ eventId: 'event-1', decision: 'Approved', rationale: 'Reviewed all required materials.', materialsReviewed: true })).toMatchObject({ materialsReviewed: true });
     expect(() => validateDecisionRequest({ eventId: 'event-1', decision: 'Rejected', rationale: 'Evidence is not sufficient.' })).toThrow(HttpsError);
-    expect(validateDecisionRequest({ eventId: 'event-1', decision: 'Rejected', rationale: 'Evidence is not sufficient.', suggestion: 'Provide verified evidence and submit the application again.' })).toMatchObject({ decision: 'Rejected' });
+    expect(validateDecisionRequest({ eventId: 'event-1', decision: 'Rejected', rationale: 'Evidence is not sufficient.', suggestion: 'Provide verified evidence and submit the application again.', rejectionReasonCategory: 'insufficient_evidence' })).toMatchObject({ decision: 'Rejected', rejectionReasonCategory: 'insufficient_evidence' });
   });
 
   it('rejects event IDs that could escape the event document path', () => {

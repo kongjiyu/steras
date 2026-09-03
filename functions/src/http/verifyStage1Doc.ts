@@ -114,7 +114,7 @@ export async function verifyStage1DocForUser(
       .find((candidate) => candidate.versionId === event.currentVersionId
         && candidate.authorityType === profile.authorityType
         && candidate.officerUid === uid
-        && (candidate.status === 'pending' || candidate.status === 'in_progress'));
+        && (candidate.status === 'pending' || candidate.status === 'in_progress' || candidate.status === 'completed'));
     if (!assignment) {
       throw new HttpsError('permission-denied', 'You are not the named officer assigned to this application.');
     }
@@ -122,6 +122,10 @@ export async function verifyStage1DocForUser(
       throw new HttpsError('not-found', `Control ${controlId} was not found for this event.`);
     }
     const control = controlSnap.data() as EventControl;
+    if (!event.currentVersionId || control.eventId !== eventId || control.versionId !== event.currentVersionId
+      || control.activityClosed === true || event.status === 'Withdrawn' || event.status === 'Rejected') {
+      throw new HttpsError('failed-precondition', 'This control is not active for the current application version.');
+    }
     if (control.authority !== profile.authorityType) {
       throw new HttpsError('permission-denied', `This control belongs to ${control.authority}, not ${profile.authorityType}.`);
     }

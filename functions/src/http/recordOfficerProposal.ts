@@ -31,6 +31,9 @@ import {
   COLLECTIONS,
   DecisionValue,
   EventRecord,
+  OfficialRiskAssessment,
+  REJECTION_REASON_CATEGORIES,
+  RejectionReasonCategory,
   ResourceRecommendation,
   RiskAssessment,
   UserProfile,
@@ -44,6 +47,7 @@ interface RecordOfficerProposalRequest {
   decision?: DecisionValue;
   reason?: string;
   suggestion?: string;
+  rejectionReasonCategory?: RejectionReasonCategory;
   /**
    * FR-M3-16: when approving, the officer must tick a checkbox
    * confirming review of the assessment, advisory, evidence, and
@@ -64,6 +68,7 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
   const reason = (request.data?.reason ?? '').trim();
   const suggestion = (request.data?.suggestion ?? '').trim();
   const confirmedReview = request.data?.confirmedReview === true;
+  const rejectionReasonCategory = request.data?.rejectionReasonCategory;
 
   if (!eventId) throw new HttpsError('invalid-argument', 'eventId is required.');
   if (!isDecision(decision)) throw new HttpsError('invalid-argument', 'A valid decision is required.');
@@ -75,6 +80,9 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
   }
   if (decision === 'Rejected' && suggestion.length === 0) {
     throw new HttpsError('invalid-argument', 'A suggestion is required when rejecting.');
+  }
+  if (decision === 'Rejected' && !REJECTION_REASON_CATEGORIES.includes(rejectionReasonCategory as RejectionReasonCategory)) {
+    throw new HttpsError('invalid-argument', 'A valid rejectionReasonCategory is required when rejecting.');
   }
   // FR-M3-16: officer must confirm review of all listed materials
   // before approving. The UI checkbox drives this — server-side gate
@@ -127,6 +135,19 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
     || resource.versionId !== versionId
     || resource.assessmentId !== assessmentId) {
     throw new HttpsError('failed-precondition', 'Risk assessment and resources must be ready before recording a proposal.');
+  }
+  if (assessment.status !== 'official_ready' || resource.stage !== 'official') {
+    throw new HttpsError('failed-precondition', 'Officer decisions require the current official assessment and official resource revision.');
+  }
+  const manualOfficial = 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual';
+  if (!manualOfficial) {
+    const aiOfficial = assessment as OfficialRiskAssessment;
+    const head = aiOfficial.authorityReviewState?.activeReviewHeads?.[profile.authorityType];
+    const officialReviewIds = Array.isArray(aiOfficial.officialResult.reviewIds)
+      ? aiOfficial.officialResult.reviewIds : [];
+    if (!head?.reviewId || !officialReviewIds.includes(head.reviewId)) {
+      throw new HttpsError('failed-precondition', 'Submit and finalize your eight-category score review before recording an application proposal.');
+    }
   }
   if (assessment?.complianceStatus === 'blocked' && decision === 'Approved') {
     throw new HttpsError('failed-precondition', 'This application cannot be approved while compliance checks are blocked.');
@@ -184,6 +205,8 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
       status: 'completed',
       decision,
       reason,
+      reviewStage: 'authority',
+      ...(decision === 'Rejected' ? { rejectionReasonCategory } : {}),
       suggestion: suggestion || null,
       decidedAt: now,
     });
