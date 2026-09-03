@@ -2378,6 +2378,7 @@ describe('Firestore security rules', () => {
       await setDoc(doc(context.firestore(), 'incidents/incident-1'), { schemaVersion: '2026-09-03-m4-v1' });
       await setDoc(doc(context.firestore(), 'incidents/incident-1/history/history-1'), { action: 'submitted' });
       await setDoc(doc(context.firestore(), 'authority_directory/pdrm-kl'), { active: true });
+      await setDoc(doc(context.firestore(), 'incident_notification_outbox/outbox-1'), { deliveredAt: null });
     });
     const reporter = environment.authenticatedContext('reporter-1').firestore();
     const admin = environment.authenticatedContext('admin-1').firestore();
@@ -2385,6 +2386,8 @@ describe('Firestore security rules', () => {
     await assertFails(setDoc(doc(reporter, 'incidents/incident-2'), { reporterUid: 'reporter-1' }));
     await assertFails(getDoc(doc(admin, 'incidents/incident-1/history/history-1')));
     await assertFails(getDoc(doc(admin, 'authority_directory/pdrm-kl')));
+    await assertFails(getDoc(doc(admin, 'incident_notification_outbox/outbox-1')));
+    await assertFails(setDoc(doc(admin, 'incident_notification_outbox/outbox-2'), { deliveredAt: null }));
   });
 });
 

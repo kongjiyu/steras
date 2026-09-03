@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EventRecord } from '@shared/types';
 import {
-  assertEvidencePath, assertReportableEvent, assertResolutionReady, buildIncidentAiPayload,
-  canPerformIncidentAction, safeIncident, sameSubmission, validateSubmission,
+  assertEvidencePath, assertReportableEvent, assertResolutionReady, assertSubmissionGeneration, buildIncidentAiPayload,
+  actionRequestHash, canPerformIncidentAction, safeIncident, sameSubmission, validateSubmission,
 } from './m4Incidents';
 
 const now = Date.UTC(2026, 8, 3, 12);
@@ -79,12 +79,16 @@ describe('M4 incident input boundary', () => {
   });
 
   it('allows only the owning organizer or exactly assigned matching authority to act', () => {
-    const record = { organizerId: 'organizer-1', referredAuthorityType: 'PDRM', assignedAuthorityOfficerUid: 'pdrm-1' } as Parameters<typeof canPerformIncidentAction>[0];
+    const record = { organizerId: 'organizer-1', status: 'authority_investigation', referredAuthorityId: 'pdrm-kl', referredAuthorityType: 'PDRM', assignedAuthorityOfficerUid: 'pdrm-1' } as Parameters<typeof canPerformIncidentAction>[0];
     const organizer = { role: 'organizer' } as Parameters<typeof canPerformIncidentAction>[1];
     const authority = { role: 'authority', authorityType: 'PDRM' } as Parameters<typeof canPerformIncidentAction>[1];
-    expect(canPerformIncidentAction(record, organizer, 'organizer-1', 'record_response')).toBe(true);
+    expect(canPerformIncidentAction({ ...record, status: 'responding', referredAuthorityId: undefined }, organizer, 'organizer-1', 'record_response')).toBe(true);
+    expect(canPerformIncidentAction(record, organizer, 'organizer-1', 'record_response')).toBe(false);
+    expect(canPerformIncidentAction(record, organizer, 'organizer-1', 'assign_internal')).toBe(false);
+    expect(canPerformIncidentAction(record, organizer, 'organizer-1', 'refer_authority')).toBe(false);
     expect(canPerformIncidentAction(record, organizer, 'organizer-2', 'resolve')).toBe(false);
     expect(canPerformIncidentAction(record, authority, 'pdrm-1', 'record_investigation')).toBe(true);
+    expect(canPerformIncidentAction({ ...record, status: 'awaiting_resolution' }, authority, 'pdrm-1', 'record_investigation')).toBe(false);
     expect(canPerformIncidentAction(record, authority, 'pdrm-2', 'record_investigation')).toBe(false);
     expect(canPerformIncidentAction(record, { role: 'authority', authorityType: 'BOMBA' } as typeof authority, 'pdrm-1', 'record_investigation')).toBe(false);
   });
@@ -93,5 +97,20 @@ describe('M4 incident input boundary', () => {
     expect(() => assertResolutionReady({ status: 'responding' } as Parameters<typeof assertResolutionReady>[0])).toThrow();
     expect(() => assertResolutionReady({ status: 'authority_investigation' } as Parameters<typeof assertResolutionReady>[0])).toThrow();
     expect(() => assertResolutionReady({ status: 'awaiting_resolution' } as Parameters<typeof assertResolutionReady>[0])).not.toThrow();
+  });
+
+  it('binds an action idempotency replay to the complete action payload and evidence', () => {
+    const input = { note: 'Completed crowd response.', team: 'Venue operations' };
+    expect(actionRequestHash('record_response', input, ['a.pdf'])).toBe(actionRequestHash('record_response', input, ['a.pdf']));
+    expect(actionRequestHash('record_response', input, ['a.pdf'])).not.toBe(actionRequestHash('record_response', { ...input, note: 'Different response.' }, ['a.pdf']));
+    expect(actionRequestHash('record_response', input, ['a.pdf'])).not.toBe(actionRequestHash('record_response', input, ['b.pdf']));
+  });
+
+  it('fails closed if the event is withdrawn or changes generation during AI assessment', () => {
+    const input = { occurredAt: now - 1_000 };
+    const current = { ...event(now - 10_000, now + 10_000), currentVersionId: 'v1', currentVersionNumber: 1 };
+    expect(() => assertSubmissionGeneration(current, 'v1', input, now)).not.toThrow();
+    expect(() => assertSubmissionGeneration({ ...current, currentVersionId: 'v2' }, 'v1', input, now)).toThrow();
+    expect(() => assertSubmissionGeneration({ ...current, status: 'Withdrawn' }, 'v1', input, now)).toThrow();
   });
 });

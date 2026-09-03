@@ -38,5 +38,5 @@ export interface M4AuthorityDirectoryEntry {
 
 export interface M4IncidentHistoryEntry {
   historyId: string; incidentId: string; action: string; actorUid: string; actorRole: UserRole | 'system';
-  timestamp: number; summary: string; evidence: M4EvidenceRef[];
+  timestamp: number; summary: string; evidence: M4EvidenceRef[]; idempotencyKey?: string; requestHash?: string;
 }

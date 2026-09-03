@@ -428,6 +428,10 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /incident_notification_outbox/{outboxId} {
+      allow read, write: if false;
+    }
+
     // Historical outcomes are evidence for server-side M2 retrieval. Synthetic
     // records remain visible to authority reviewers for provenance inspection.
     match /historical_events/{historicalEventId} {

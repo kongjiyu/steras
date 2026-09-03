@@ -22,6 +22,7 @@ declare module 'firebase/storage' {
   export function connectStorageEmulator(storage: FirebaseStorage, host: string, port: number): void;
   export function ref(storage: FirebaseStorage, path: string): StorageReference;
   export function uploadBytesResumable(reference: StorageReference, data: Blob, metadata?: { contentType?: string }): UploadTask;
+  export function getMetadata(reference: StorageReference): Promise<{ size: number; contentType?: string }>;
   export function deleteObject(reference: StorageReference): Promise<void>;
   export function getBlob(reference: StorageReference, maxDownloadSizeBytes?: number): Promise<Blob>;
 }
