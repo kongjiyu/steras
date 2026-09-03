@@ -409,7 +409,7 @@ export default function AdminControlListEditor() {
         <section className="card mt-6">
           <div className="card-header">
             <h2 className="font-semibold">Committed list</h2>
-            <span className="text-xs text-ink-500">Stored on the event doc; organizer sees this in OrganizerEventControls</span>
+            <span className="text-xs text-ink-500">Saved to this application and shown in the organizer&apos;s Event Controls page.</span>
           </div>
           <div className="card-body">
             <p className="text-xs text-ink-500">

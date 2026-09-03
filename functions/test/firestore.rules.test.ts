@@ -809,6 +809,15 @@ describe('Firestore security rules', () => {
     await assertFails(getDoc(doc(environment.authenticatedContext('authority-2').firestore(), 'events/event-1/assessments/v1')));
   });
 
+  it('allows an authority to list only events assigned to their account', async () => {
+    await seedProfilesAndEvent();
+    const assignedDb = environment.authenticatedContext('authority-1').firestore();
+    const assignedQuery = query(collection(assignedDb, 'events'), where('assignedOfficerUids', 'array-contains', 'authority-1'));
+    const assigned = await assertSucceeds(getDocs(assignedQuery));
+    expect(assigned.docs.map((document) => document.id)).toEqual(['event-1']);
+    await assertFails(getDocs(collection(assignedDb, 'events')));
+  });
+
   it('UC-M2-17 restricts full AI analysis to assigned authorities and admins', async () => {
     await seedProfilesAndEvent();
     await environment.withSecurityRulesDisabled(async (context) => {

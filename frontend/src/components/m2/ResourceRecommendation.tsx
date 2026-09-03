@@ -6,6 +6,7 @@ interface ResourceRecommendationProps {
   showRationales?: boolean;
   showOverrideProvenance?: boolean;
   latestOverride?: ResourceOverrideRecord;
+  reviewerDisplayName?: string;
 }
 
 export default function ResourceRecommendation({
@@ -13,6 +14,7 @@ export default function ResourceRecommendation({
   showRationales = true,
   showOverrideProvenance = false,
   latestOverride,
+  reviewerDisplayName,
 }: ResourceRecommendationProps) {
   const manualOfficial = recommendation.stage === 'official'
     && recommendation.assessmentReference.sourceKind === 'admin_manual';
@@ -54,7 +56,7 @@ export default function ResourceRecommendation({
       {showOverrideProvenance && override?.reviewerId && (
         <div className="rounded-md border border-brand-200 bg-brand-50/50 p-3 text-xs leading-5 text-ink-700">
           <p className="font-semibold text-brand-800">Authority resource adjustment recorded</p>
-          <p className="mt-1">Adjusted by <span className="font-mono">{override.reviewerId}</span>{override.overriddenAt ? ` on ${formatM2Timestamp(override.overriddenAt)}` : ''}.</p>
+          <p className="mt-1">Adjusted by <span className="font-semibold">{reviewerDisplayName ?? 'Authority officer'}</span>{override.overriddenAt ? ` on ${formatM2Timestamp(override.overriddenAt)}` : ''}.</p>
           {override.rationale && <p className="mt-1">Reason: {override.rationale}</p>}
         </div>
       )}
