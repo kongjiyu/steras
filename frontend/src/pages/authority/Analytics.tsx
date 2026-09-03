@@ -48,6 +48,7 @@ import {
   buildReportModel,
   filterAnalyticsRecords,
   MetricDefinition,
+  parseAnalyticsPortfolioResponse,
   REPORT_CATALOG,
   ReportMetric,
   ReportModel,
@@ -115,7 +116,13 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
   const [error, setError] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [reportRecords, setReportRecords] = useState<AnalyticsRecord[]>([]);
-  const [backendMeta, setBackendMeta] = useState<{ syntheticExcluded: number; unavailableSections: string[] }>({ syntheticExcluded: 0, unavailableSections: [] });
+  const [backendMeta, setBackendMeta] = useState<{
+    syntheticExcluded: number;
+    unavailableSections: string[];
+    totalMatched: number;
+    truncated: boolean;
+    coverageLimitations: string[];
+  }>({ syntheticExcluded: 0, unavailableSections: [], totalMatched: 0, truncated: false, coverageLimitations: [] });
   const [report, setReport] = useState<ReportModel>(() => buildReportModel('risk-incident', 'overall', undefined, { preview: previewMode }));
 
   useEffect(() => {
@@ -134,10 +141,15 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
         const callable = httpsCallable<AnalyticsPortfolioRequest, AnalyticsPortfolioResponse>(functions, 'getAnalyticsPortfolio');
         const response = await callable({ limit: 500, includeSynthetic: false });
         if (!active) return;
-        const nextRecords = response.data.records;
+        const validated = parseAnalyticsPortfolioResponse(response.data);
+        if (!validated) throw new Error('Invalid analytics response');
+        const nextRecords = validated.records;
         const nextMeta = {
-          syntheticExcluded: response.data.syntheticExcluded,
-          unavailableSections: response.data.unavailableSections,
+          syntheticExcluded: validated.syntheticExcluded,
+          unavailableSections: validated.unavailableSections,
+          totalMatched: validated.totalMatched,
+          truncated: validated.truncated || validated.coverage.eventScan === 'truncated' || validated.coverage.childCollections === 'truncated',
+          coverageLimitations: validated.coverage.limitations,
         };
         setRecords(nextRecords);
         setBackendMeta(nextMeta);
@@ -146,6 +158,9 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
           records: nextRecords,
           syntheticExcluded: nextMeta.syntheticExcluded,
           unavailableSections: nextMeta.unavailableSections,
+          totalMatched: nextMeta.totalMatched,
+          truncated: nextMeta.truncated,
+          coverageLimitations: nextMeta.coverageLimitations,
         }));
         setError('');
         setLoading(false);
@@ -178,6 +193,9 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
       to,
       syntheticExcluded: backendMeta.syntheticExcluded,
       unavailableSections: backendMeta.unavailableSections,
+      totalMatched: backendMeta.totalMatched,
+      truncated: backendMeta.truncated,
+      coverageLimitations: backendMeta.coverageLimitations,
     });
     setReport(nextReport);
     setReportRecords(previewMode ? [] : selectedRecords);
@@ -364,6 +382,12 @@ function ReportOutput({
         <span>Latest valid source records only. Personal information, private evidence paths, incident descriptions, and internal authority notes are excluded.</span>
         <span className="report-notice__coverage"><CalendarDays size={14} /> {model.coverage.label}</span>
       </div>
+      {model.truncated && (
+        <div className="report-callout report-callout--warning mt-4" role="status">
+          <TriangleAlert size={16} />
+          <span>This report contains {formatNumber(model.eligibleRecords)} returned records from {formatNumber(model.totalMatched)} matched records. Coverage is partial; totals and rates may be incomplete.</span>
+        </div>
+      )}
 
       <section className="summary-grid" aria-label="Report summary">
         {model.summary.map((metric) => <SummaryCard key={metric.label} metric={metric} />)}
@@ -406,9 +430,9 @@ function RiskIncidentView({ model }: { model: ReportModel }) {
         {incidentUnavailable ? <UnavailableSection label="Incident patterns" /> : (
           <div className="metric-stack">
             <MetricLine label="Events with incidents" value={formatNumber(model.incidents.eventsWithIncidents)} />
-            <MetricLine label="Incident rate" value={percent(model.incidents.incidentRate)} />
-            <MetricLine label="Average per event" value={model.incidents.averagePerEvent.toFixed(1)} />
-            <MetricLine label="Action required" value={percent(findRow(model.incidents.immediateAction, 'Action required')?.percentage ?? 0)} tone="warning" />
+            <MetricLine label="Events with incident rate" value={model.incidents.incidentRate === null ? 'Data Not Available' : percent(model.incidents.incidentRate)} />
+            <MetricLine label="Average per affected event" value={model.incidents.averagePerEvent === null ? 'Data Not Available' : model.incidents.averagePerEvent.toFixed(1)} />
+            <MetricLine label="Action required" value={percentageForRow(model.incidents.immediateAction, 'Action required')} tone="warning" />
           </div>
         )}
       </Panel>
@@ -461,7 +485,7 @@ function ApplicationOutcomeView({ model }: { model: ReportModel }) {
       </Panel>
       <Panel className="report-panel--span-8" eyebrow="Rejection analysis" title="Why applications did not reach approval" subtitle="Reason taxonomy is only shown when supplied by the source workflow">
         {model.unavailableSections.includes('Rejection taxonomy') ? <UnavailableSection label="Rejection reasons" /> : (
-          <DataTable headers={['Reason', 'Count', 'Share']} rows={model.outcomes.rejections.map((item) => [item.label, formatNumber(item.value), percent(item.percentage)])} />
+          <DataTable headers={['Reason', 'Count', 'Share']} rows={model.outcomes.rejections.map((item) => [item.label, formatNumber(item.value), item.percentage === undefined ? 'Data Not Available' : percent(item.percentage)])} />
         )}
       </Panel>
       <Panel className="report-panel--span-12" eyebrow="Review speed" title="Turnaround by review stage" subtitle="Durations are calculated only where both timestamps exist">
@@ -504,32 +528,33 @@ function RiskAssessmentView({ model }: { model: ReportModel }) {
 }
 
 function ResourceOverrideView({ model }: { model: ReportModel }) {
-  const unavailable = model.unavailableSections.includes('Resource overrides');
+  const overrideUnavailable = model.unavailableSections.includes('Resource overrides');
+  const recommendationUnavailable = model.unavailableSections.includes('Resource recommendations');
   return (
     <div className="report-content-grid">
       <Panel className="report-panel--span-8" eyebrow="Override signal" title="Resource override rate by category" subtitle="Authority changes compared with the M2 baseline">
-        {unavailable ? <UnavailableSection label="Resource override rates" /> : (
+        {overrideUnavailable ? <UnavailableSection label="Resource override rates" /> : (
           <ChartFrame>
             <Bar
               options={{ ...chartOptions, indexAxis: 'y', scales: { x: { beginAtZero: true, max: 1, ticks: { callback: (value: number) => Math.round(value * 100) + '%' } }, y: { grid: { display: false } } } }}
-              data={{ labels: model.resources.map((item) => item.label), datasets: [{ label: 'Override rate', data: model.resources.map((item) => item.overrideRate), backgroundColor: '#d3a32e', borderRadius: 5, barThickness: 18 }] }}
+              data={{ labels: model.resources.map((item) => item.label), datasets: [{ label: 'Override rate', data: model.resources.map((item) => item.overrideRate ?? 0), backgroundColor: '#d3a32e', borderRadius: 5, barThickness: 18 }] }}
             />
           </ChartFrame>
         )}
       </Panel>
       <Panel className="report-panel--span-4" eyebrow="Source boundary" title="Planning assumptions" subtitle="Baseline and range remain traceable to M2 source records">
-        {unavailable ? <UnavailableSection label="Resource planning data" /> : (
+        {recommendationUnavailable ? <UnavailableSection label="Resource planning data" /> : (
           <div className="metric-stack">
             <MetricLine label="Planning items" value={formatNumber(model.resources.length)} />
-            <MetricLine label="Total overrides" value={formatNumber(model.resources.reduce((sum, item) => sum + item.overrides, 0))} tone="warning" />
+            <MetricLine label="Total overrides" value={overrideUnavailable ? 'Data Not Available' : formatNumber(model.resources.reduce((sum, item) => sum + (item.overrides ?? 0), 0))} tone="warning" />
             <MetricLine label="Source-owned range" value="M2" />
             <div className="report-callout report-callout--warning"><TriangleAlert size={16} /><span>M5 reports overrides; it does not recalculate recommended quantities.</span></div>
           </div>
         )}
       </Panel>
       <Panel className="report-panel--span-12" eyebrow="Resource detail" title="Baseline, planning range & override reasons" subtitle="No private authority notes are included">
-        {unavailable ? <UnavailableSection label="Resource override detail" /> : (
-          <DataTable headers={['Resource', 'Baseline', 'Planning range', 'Overrides', 'Rate', 'Reason']} rows={model.resources.map((item) => [item.label, formatNumber(item.baseline), item.range, formatNumber(item.overrides), percent(item.overrideRate), item.reason])} />
+        {recommendationUnavailable ? <UnavailableSection label="Resource recommendation detail" /> : (
+          <DataTable headers={['Resource', 'Baseline', 'Planning range', 'Overrides', 'Rate', 'Reason']} rows={model.resources.map((item) => [item.label, formatNumber(item.baseline), item.range, item.overrides === null ? 'Data Not Available' : formatNumber(item.overrides), item.overrideRate === null ? 'Data Not Available' : percent(item.overrideRate), item.reason])} />
         )}
       </Panel>
     </div>
@@ -537,7 +562,7 @@ function ResourceOverrideView({ model }: { model: ReportModel }) {
 }
 
 function ControlComplianceView({ model }: { model: ReportModel }) {
-  const unavailable = model.unavailableSections.includes('Event-control verification');
+  const unavailable = model.unavailableSections.includes('Stage 1 document verification');
   return (
     <div className="report-content-grid">
       <Panel className="report-panel--span-4" eyebrow="Control state" title="Verification status" subtitle="Current M3 event-control records">
@@ -554,7 +579,7 @@ function ControlComplianceView({ model }: { model: ReportModel }) {
       </Panel>
       <Panel className="report-panel--span-12" eyebrow="Control detail" title="Status counts" subtitle="Missing control state remains unavailable rather than being treated as pending">
         {unavailable ? <UnavailableSection label="Control status counts" /> : (
-          <DataTable headers={['Status', 'Items', 'Share']} rows={model.controls.statuses.map((item) => [item.label, formatNumber(item.value), percent(item.percentage)])} />
+          <DataTable headers={['Status', 'Items', 'Share']} rows={model.controls.statuses.map((item) => [item.label, formatNumber(item.value), item.percentage === undefined ? 'Data Not Available' : percent(item.percentage)])} />
         )}
       </Panel>
       <Panel className="report-panel--span-12" eyebrow="Interpretation" title="How to read this report" subtitle="Module 5 remains descriptive and read-only">
@@ -700,9 +725,14 @@ function doughnutData(rows: BreakdownRow[]) {
 }
 
 function ratioFor(row: BreakdownRow, rows: BreakdownRow[]) {
-  if (row.percentage >= 0 && row.percentage <= 1) return row.percentage;
+  if (row.percentage !== undefined && row.percentage >= 0 && row.percentage <= 1) return row.percentage;
   const total = rows.reduce((sum, item) => sum + item.value, 0);
   return total === 0 ? 0 : row.value / total;
+}
+
+function percentageForRow(rows: BreakdownRow[], label: string) {
+  const value = findRow(rows, label)?.percentage;
+  return value === undefined ? 'Data Not Available' : percent(value);
 }
 
 function findRow(rows: BreakdownRow[], label: string) {

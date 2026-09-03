@@ -5,6 +5,11 @@ import {
   RESOURCE_KEYS,
 } from '@shared/types';
 import type { AnalyticsPortfolioRecord } from '@shared/analytics';
+import {
+  ANALYTICS_METRIC_DEFINITION_VERSION,
+  ANALYTICS_SCHEMA_VERSION,
+  AnalyticsPortfolioResponse,
+} from '@shared/analytics';
 
 export type ReportType =
   | 'risk-incident'
@@ -80,7 +85,7 @@ export interface MonthlyAnalytics {
 export interface BreakdownRow {
   label: string;
   value: number;
-  percentage: number;
+  percentage?: number;
   color?: string;
   detail?: string;
 }
@@ -103,8 +108,8 @@ export interface DurationMetric {
 export interface IncidentReportData {
   total: number;
   eventsWithIncidents: number;
-  incidentRate: number;
-  averagePerEvent: number;
+  incidentRate: number | null;
+  averagePerEvent: number | null;
   severity: BreakdownRow[];
   immediateAction: BreakdownRow[];
   escalation: BreakdownRow[];
@@ -133,8 +138,8 @@ export interface ResourceReportItem {
   label: string;
   baseline: number;
   range: string;
-  overrides: number;
-  overrideRate: number;
+  overrides: number | null;
+  overrideRate: number | null;
   reason: string;
 }
 
@@ -165,6 +170,8 @@ export interface ReportModel {
   population: number;
   eligibleRecords: number;
   syntheticExcluded: number;
+  totalMatched: number;
+  truncated: boolean;
   summary: ReportMetric[];
   monthlyTrend: MonthlyAnalytics[];
   riskDistribution: BreakdownRow[];
@@ -266,11 +273,15 @@ export function reportCsv(model: ReportModel, records: AnalyticsRecord[] = []): 
     ['generation_date', new Date(model.generatedAt).toISOString()],
     ['data_coverage_period', model.coverage.label],
     ['data_source', model.dataSource === 'demo' ? 'Synthetic design-preview data' : 'Live Firestore records'],
+    ['data_status', model.dataStatus],
+    ['eligible_records_returned', model.eligibleRecords],
+    ['total_records_matched', model.totalMatched],
+    ['truncated', model.truncated],
     ['privacy_note', 'Organiser personal information, private evidence paths, detailed incident descriptions, and internal authority notes excluded'],
     [],
   ];
   const summary = [['summary_metric', 'value', 'detail'], ...model.summary.map((metric) => [metric.label, metric.value, metric.detail])];
-  const rows = records.map((record) => [
+  const eventRows = records.map((record) => [
     record.eventId,
     record.eventName,
     record.eventType,
@@ -279,7 +290,8 @@ export function reportCsv(model: ReportModel, records: AnalyticsRecord[] = []): 
     record.assessment?.officialRiskLevel ?? 'Data Not Available',
     record.assessment?.officialScore ?? 'Data Not Available',
   ]);
-  return [...metadata, [], ...summary, [], ['event_id', 'event_name', 'event_type', 'status', 'created_at', 'official_risk', 'official_score'], ...rows]
+  const sections = reportSections(model);
+  return [...metadata, [], ...summary, [], ...sections, [], ['event_id', 'event_name', 'event_type', 'status', 'created_at', 'official_risk', 'official_score'], ...eventRows]
     .map((row) => row.map((value) => csvCell(value as string | number | boolean)).join(','))
     .join('\n');
 }
@@ -288,10 +300,10 @@ export function buildReportModel(
   reportType: ReportType,
   scope: AnalysisScope,
   eventType: EventType | undefined,
-  options: { preview?: boolean; records?: AnalyticsRecord[]; from?: string; to?: string; syntheticExcluded?: number; unavailableSections?: string[] } = {},
+  options: { preview?: boolean; records?: AnalyticsRecord[]; from?: string; to?: string; syntheticExcluded?: number; unavailableSections?: string[]; totalMatched?: number; truncated?: boolean; coverageLimitations?: string[] } = {},
 ): ReportModel {
   if (options.preview) return buildDemoReport(reportType, scope, eventType);
-  return buildLiveReport(reportType, scope, eventType, options.records ?? [], options.from, options.to, options.syntheticExcluded, options.unavailableSections);
+  return buildLiveReport(reportType, scope, eventType, options.records ?? [], options.from, options.to, options.syntheticExcluded, options.unavailableSections, options.totalMatched, options.truncated, options.coverageLimitations);
 }
 
 function buildDemoReport(reportType: ReportType, scope: AnalysisScope, eventType?: EventType): ReportModel {
@@ -336,6 +348,8 @@ function buildDemoReport(reportType: ReportType, scope: AnalysisScope, eventType
     population,
     eligibleRecords,
     syntheticExcluded,
+    totalMatched: eligibleRecords,
+    truncated: false,
     summary: demoSummary(reportType, factor, population, eligibleRecords),
     monthlyTrend,
     riskDistribution: risk,
@@ -387,6 +401,9 @@ function buildLiveReport(
   to?: string,
   backendSyntheticExcluded = 0,
   backendUnavailable: string[] = [],
+  backendTotalMatched?: number,
+  backendTruncated = false,
+  coverageLimitations: string[] = [],
 ): ReportModel {
   const selected = REPORT_CATALOG.find((item) => item.id === reportType) ?? REPORT_CATALOG[0];
   const scoped = filterAnalyticsRecords(records, from, to).filter((record) => scope === 'overall' || record.eventType === eventType);
@@ -401,28 +418,52 @@ function buildLiveReport(
   const incidentTotal = incidentRecords.reduce((sum, record) => sum + record.incidents.total, 0);
   const incidentSeverity = countRows(['low', 'medium', 'high'], (key) => incidentRecords.reduce((sum, record) => sum + record.incidents.bySeverity[key as 'low' | 'medium' | 'high'], 0));
   const incidentResolution = countRows(['verified', 'under_review', 'rejected', 'unknown'], (key) => incidentRecords.reduce((sum, record) => sum + record.incidents.byStatus[key as keyof AnalyticsRecord['incidents']['byStatus']], 0));
+  const immediateAction = availabilityBreakdown(incidentRecords.map((record) => ({ ...record.incidents.immediateActionRequired, total: record.incidents.total })), 'Action required', 'No immediate action');
+  const escalation = availabilityBreakdown(incidentRecords.map((record) => ({ ...record.incidents.externalEscalations, total: record.incidents.total })), 'Escalated', 'No external escalation');
   const assessedRecords = filtered.filter((record) => record.assessment);
   const resourceRecords = filtered.filter((record) => record.resources);
+  const overrideRecords = resourceRecords.filter((record) => record.sourceCoverage.overrides !== 'unavailable');
   const controlRecords = filtered.filter((record) => record.controls.available);
   const resources = RESOURCE_KEYS.map((key) => {
     const values = resourceRecords.map((record) => record.resources?.items[key]).filter(Boolean) as NonNullable<NonNullable<AnalyticsRecord['resources']>['items'][typeof key]>[];
-    const overrideCount = values.reduce((sum, item) => sum + item.overrideCount, 0);
+    const overrideValues = overrideRecords.map((record) => record.resources?.items[key]).filter(Boolean) as typeof values;
+    const overrideCount = overrideValues.reduce((sum, item) => sum + item.overrideCount, 0);
+    const overriddenItems = overrideValues.filter((item) => item.overrideCount > 0).length;
     return {
       label: resourceLabel(key),
       baseline: values.length ? Math.round(average(values.map((item) => item.baseline))) : 0,
       range: values.length ? `${Math.round(average(values.map((item) => item.minimum)))}–${Math.round(average(values.map((item) => item.maximum)))}` : 'Data Not Available',
-      overrides: overrideCount,
-      overrideRate: values.length ? overrideCount / values.length : 0,
-      reason: 'Detailed authority rationale excluded from analytics output',
+      overrides: overrideValues.length ? overrideCount : null,
+      overrideRate: overrideValues.length ? overriddenItems / overrideValues.length : null,
+      reason: 'Data Not Available',
     };
   }).filter((item) => item.range !== 'Data Not Available');
   const controlTotal = controlRecords.reduce((sum, record) => sum + record.controls.total, 0);
+  const stage1Records = filtered.filter((record) => record.controls.stage1.available);
+  const stage1Total = stage1Records.reduce((sum, record) => sum + record.controls.stage1.total, 0);
+  const durationMetrics = [
+    durationMetric('Initial review', filtered.map((record) => record.lifecycle.submissionToInitialReviewMs)),
+    durationMetric('Authority review', filtered.map((record) => record.lifecycle.initialToAuthorityReviewMs)),
+    durationMetric('Second review', filtered.map((record) => record.lifecycle.authorityToSecondReviewMs)),
+    durationMetric('Complete process', filtered.map((record) => record.lifecycle.submissionToTerminalDecisionMs)),
+  ].filter((item): item is DurationMetric => item !== undefined);
   const unavailable = [...new Set([
     ...backendUnavailable,
+    ...(backendTruncated ? ['Portfolio results truncated'] : []),
+    ...coverageLimitations,
     ...(incidentRecords.length ? [] : ['Incident patterns']),
+    ...(immediateAction.length ? [] : ['Immediate-action signals']),
+    ...(escalation.length ? [] : ['External-escalation signals']),
     ...(resourceRecords.length ? [] : ['Resource recommendations']),
+    ...(overrideRecords.length ? [] : ['Resource overrides']),
+    ...(resourceRecords.some((record) => record.resources?.overrideReasonCategoriesAvailable === false) ? ['Resource override reasons'] : []),
     ...(controlRecords.length ? [] : ['Event-control verification']),
+    ...(stage1Records.length ? [] : ['Stage 1 document verification']),
+    ...(!filtered.some((record) => record.sourceCoverage.decisionHistory === 'complete') ? ['Rejection taxonomy'] : []),
+    ...(durationMetrics.length ? [] : ['Review durations']),
+    ...(assessedRecords.length ? [] : ['Risk assessments']),
   ])];
+  const relevantUnavailable = unavailable.filter((section) => isRelevantUnavailableSection(reportType, section));
   return {
     reportType,
     title: selected.title,
@@ -433,10 +474,12 @@ function buildLiveReport(
     generatedAt: Date.now(),
     coverage: { from: from ?? '', to: to ?? '', label: formatCoverage(from, to) },
     dataSource: 'live',
-    dataStatus: total === 0 ? 'unavailable' : unavailable.length ? 'partial' : 'complete',
+    dataStatus: total === 0 ? 'unavailable' : relevantUnavailable.length ? 'partial' : 'complete',
     population: total,
     eligibleRecords: total,
     syntheticExcluded: backendSyntheticExcluded + syntheticInScope,
+    totalMatched: backendTotalMatched ?? total,
+    truncated: backendTruncated,
     summary: [
       metric('Eligible applications', total, 'Latest records in selected scope', total === 0 ? 'muted' : 'neutral'),
       metric('Approved', total === 0 ? 'Data Not Available' : `${Math.round((summary.approved / total) * 100)}%`, `${summary.approved} approved records`, total === 0 ? 'muted' : 'positive'),
@@ -452,19 +495,21 @@ function buildLiveReport(
     incidents: {
       total: incidentTotal,
       eventsWithIncidents: incidentRecords.filter((record) => record.incidents.total > 0).length,
-      incidentRate: incidentRecords.length ? incidentTotal / incidentRecords.length : 0,
-      averagePerEvent: incidentRecords.length ? incidentTotal / incidentRecords.length : 0,
+      incidentRate: incidentRecords.length ? incidentRecords.filter((record) => record.incidents.total > 0).length / incidentRecords.length : null,
+      averagePerEvent: incidentRecords.some((record) => record.incidents.total > 0)
+        ? incidentTotal / incidentRecords.filter((record) => record.incidents.total > 0).length
+        : null,
       severity: incidentSeverity,
-      immediateAction: [],
-      escalation: [],
+      immediateAction,
+      escalation,
       resolution: incidentResolution,
     },
     outcomes: {
       statuses: statusRows(filtered),
       riskCrossSection: [row('Low', risks.Low), row('Medium', risks.Medium), row('High', risks.High)],
       revisions: [row('Re-application', filtered.filter((record) => record.reapplication).length), row('No recorded re-application', filtered.filter((record) => !record.reapplication).length)],
-      rejections: [row('Rejected', filtered.filter((record) => record.status === 'Rejected').length)],
-      durations: summary.averageTurnaroundHours ? [{ label: 'Submission to terminal decision', average: `${summary.averageTurnaroundHours.toFixed(1)}h`, min: 'Privacy-safe aggregate', max: 'Privacy-safe aggregate', sample: filtered.filter((record) => record.submittedAt && record.terminalDecisionAt).length }] : [],
+      rejections: [],
+      durations: durationMetrics,
     },
     assessment: {
       riskDistribution: [row('Low', risks.Low, '#5e9b70'), row('Medium', risks.Medium, '#d3a32e'), row('High', risks.High, '#cf6259')],
@@ -477,19 +522,38 @@ function buildLiveReport(
     },
     resources,
     controls: {
-      statuses: countRows(['Approved', 'Pending', 'Reported under review', 'Resubmit required', 'Use Previous'], (key) => controlRecords.reduce((sum, record) => sum + ({
-        'Approved': record.controls.approved,
-        'Pending': record.controls.pending,
-        'Reported under review': record.controls.reportedUnderReview,
-        'Resubmit required': record.controls.resubmitRequired,
-        'Use Previous': record.controls.usePrevious,
+      statuses: countRows(['Verified', 'Pending verification', 'Pending submission', 'Rejected / resubmit', 'Use Previous'], (key) => stage1Records.reduce((sum, record) => sum + ({
+        'Verified': record.controls.stage1.verified,
+        'Pending verification': record.controls.stage1.pendingVerification,
+        'Pending submission': record.controls.stage1.pendingSubmission,
+        'Rejected / resubmit': record.controls.stage1.rejected,
+        'Use Previous': record.controls.stage1.usePrevious,
       }[key] ?? 0), 0)),
-      totalItems: controlTotal,
-      verifiedRate: controlTotal ? controlRecords.reduce((sum, record) => sum + record.controls.approved, 0) / controlTotal : 0,
+      totalItems: stage1Total || controlTotal,
+      verifiedRate: stage1Total
+        ? stage1Records.reduce((sum, record) => sum + record.controls.stage1.verified, 0) / stage1Total
+        : 0,
     },
     unavailableSections: total === 0 ? ['All report sections'] : unavailable,
     definitions: definitionsFor(reportType),
   };
+}
+
+function isRelevantUnavailableSection(reportType: ReportType, section: string): boolean {
+  if (section === 'Portfolio results truncated' || ![
+    'Incident patterns', 'Immediate-action signals', 'External-escalation signals',
+    'Resource recommendations', 'Resource overrides', 'Resource override reasons',
+    'Event-control verification', 'Stage 1 document verification',
+    'Rejection taxonomy', 'Review durations', 'Risk assessments',
+  ].includes(section)) return true;
+  const relevant: Record<ReportType, string[]> = {
+    'risk-incident': ['Incident patterns', 'Immediate-action signals', 'External-escalation signals'],
+    'application-outcome': ['Rejection taxonomy', 'Review durations'],
+    'risk-assessment': ['Risk assessments'],
+    'resource-override': ['Resource recommendations', 'Resource overrides', 'Resource override reasons'],
+    'control-compliance': ['Event-control verification', 'Stage 1 document verification'],
+  };
+  return relevant[reportType].includes(section);
 }
 
 function countValues(values: Array<string | undefined>): BreakdownRow[] {
@@ -503,6 +567,130 @@ function countRows(labels: string[], valueFor: (label: string) => number): Break
   const values = labels.map((label) => ({ label, value: valueFor(label) }));
   const total = values.reduce((sum, item) => sum + item.value, 0) || 1;
   return values.map((item) => row(item.label, item.value, undefined, item.value / total));
+}
+
+function availabilityBreakdown(
+  values: Array<{ available: boolean; count?: number; total: number }>,
+  positiveLabel: string,
+  negativeLabel: string,
+): BreakdownRow[] {
+  const available = values.filter((value) => value.available && value.count !== undefined);
+  if (available.length === 0) return [];
+  const positive = available.reduce((sum, value) => sum + (value.count ?? 0), 0);
+  const total = available.reduce((sum, value) => sum + value.total, 0);
+  return countRows([positiveLabel, negativeLabel], (label) => label === positiveLabel ? positive : Math.max(0, total - positive));
+}
+
+function durationMetric(label: string, rawValues: Array<number | undefined>): DurationMetric | undefined {
+  const values = rawValues.filter((value): value is number => value !== undefined && Number.isFinite(value) && value >= 0);
+  if (values.length === 0) return undefined;
+  const format = (value: number) => `${(value / 3_600_000).toFixed(1)}h`;
+  return {
+    label,
+    average: format(average(values)),
+    min: format(Math.min(...values)),
+    max: format(Math.max(...values)),
+    sample: values.length,
+  };
+}
+
+export function parseAnalyticsPortfolioResponse(value: unknown): AnalyticsPortfolioResponse | null {
+  if (!isObject(value)
+    || value.schemaVersion !== ANALYTICS_SCHEMA_VERSION
+    || value.metricDefinitionVersion !== ANALYTICS_METRIC_DEFINITION_VERSION
+    || !Array.isArray(value.records)
+    || !Number.isFinite(value.generatedAt)
+    || !Number.isFinite(value.sourceCutoff)
+    || !isNonNegativeInteger(value.totalMatched)
+    || !isNonNegativeInteger(value.syntheticExcluded)
+    || typeof value.truncated !== 'boolean'
+    || !Array.isArray(value.unavailableSections)
+    || !value.unavailableSections.every((item) => typeof item === 'string')
+    || !isObject(value.coverage)
+    || !['complete', 'truncated'].includes(String(value.coverage.eventScan))
+    || !['complete', 'truncated'].includes(String(value.coverage.childCollections))
+    || typeof value.coverage.totalMatchedExact !== 'boolean'
+    || !Array.isArray(value.coverage.limitations)
+    || !value.coverage.limitations.every((item) => typeof item === 'string')
+    || !value.records.every(isAnalyticsRecord)) return null;
+  return value as unknown as AnalyticsPortfolioResponse;
+}
+
+function isAnalyticsRecord(value: unknown): boolean {
+  if (!isObject(value)
+    || typeof value.eventId !== 'string'
+    || typeof value.eventName !== 'string'
+    || typeof value.eventType !== 'string'
+    || typeof value.status !== 'string'
+    || typeof value.venueName !== 'string'
+    || !Array.isArray(value.requiredAuthorities)
+    || !isNonNegativeInteger(value.currentVersionNumber)
+    || !Number.isFinite(value.createdAt)
+    || !Number.isFinite(value.updatedAt)
+    || typeof value.synthetic !== 'boolean'
+    || !isObject(value.incidents)
+    || typeof value.incidents.available !== 'boolean'
+    || !isNonNegativeInteger(value.incidents.total)
+    || !isNonNegativeInteger(value.incidents.verified)
+    || !isCountRecord(value.incidents.bySeverity, ['low', 'medium', 'high'])
+    || !isCountRecord(value.incidents.byStatus, ['verified', 'under_review', 'rejected', 'unknown'])
+    || !isObject(value.incidents.immediateActionRequired)
+    || !isAvailabilityCount(value.incidents.immediateActionRequired)
+    || !isObject(value.incidents.externalEscalations)
+    || !isAvailabilityCount(value.incidents.externalEscalations)
+    || !isControls(value.controls)
+    || !isObject(value.lifecycle)
+    || !Object.values(value.lifecycle).every((item) => typeof item === 'number' && Number.isFinite(item) && item >= 0)
+    || !isSourceCoverage(value.sourceCoverage)
+    || (value.resources !== undefined && !isResourceSummary(value.resources))) return false;
+  return true;
+}
+
+function isControls(value: unknown): boolean {
+  if (!isObject(value)
+    || typeof value.available !== 'boolean'
+    || !['total', 'approved', 'pending', 'reportedUnderReview', 'resubmitRequired', 'usePrevious'].every((key) => isNonNegativeInteger(value[key]))
+    || !isObject(value.stage1)) return false;
+  const stage1 = value.stage1;
+  return typeof stage1.available === 'boolean'
+    && ['total', 'pendingSubmission', 'pendingVerification', 'verified', 'rejected', 'usePrevious'].every((key) => isNonNegativeInteger(stage1[key]));
+}
+
+function isSourceCoverage(value: unknown): boolean {
+  return isObject(value)
+    && ['overrides', 'incidents', 'controls', 'decisionHistory', 'stage1Documents']
+      .every((key) => ['complete', 'truncated', 'unavailable'].includes(String(value[key])));
+}
+
+function isAvailabilityCount(value: Record<string, unknown>): boolean {
+  return typeof value.available === 'boolean'
+    && (value.available ? isNonNegativeInteger(value.count) : value.count === undefined);
+}
+
+function isCountRecord(value: unknown, keys: string[]): boolean {
+  return isObject(value) && keys.every((key) => isNonNegativeInteger(value[key]));
+}
+
+function isResourceSummary(value: unknown): boolean {
+  if (!isObject(value)
+    || typeof value.schemaVersion !== 'string'
+    || typeof value.formulaVersion !== 'string'
+    || !isNonNegativeInteger(value.overrideCount)
+    || value.overrideReasonCategoriesAvailable !== false
+    || !isObject(value.items)) return false;
+  return Object.entries(value.items).every(([key, item]) => RESOURCE_KEYS.includes(key as typeof RESOURCE_KEYS[number])
+    && isObject(item)
+    && ['baseline', 'minimum', 'maximum', 'effective', 'overrideCount'].every((field) => isNonNegativeInteger(item[field]))
+    && Number(item.minimum) <= Number(item.baseline)
+    && Number(item.baseline) <= Number(item.maximum));
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
 function resourceLabel(key: typeof RESOURCE_KEYS[number]): string {
@@ -584,13 +772,65 @@ function statusRows(records: AnalyticsRecord[]): BreakdownRow[] {
 }
 
 function row(label: string, value: number, color?: string, percentage?: number): BreakdownRow {
-  return { label, value, percentage: percentage ?? value, color };
+  return { label, value, percentage, color };
 }
 
 function scaleRows(rows: BreakdownRow[], factor: number): BreakdownRow[] {
   const scaled = rows.map((item) => ({ ...item, value: Math.round(item.value * factor) }));
   const total = scaled.reduce((sum, item) => sum + item.value, 0) || 1;
-  return scaled.map((item) => ({ ...item, percentage: item.percentage <= 1 ? item.percentage : item.value / total }));
+  return scaled.map((item) => ({ ...item, percentage: item.percentage !== undefined ? item.percentage : item.value / total }));
+}
+
+function reportSections(model: ReportModel): Array<Array<string | number | boolean>> {
+  const breakdown = (title: string, rows: BreakdownRow[]) => [
+    ['section', title],
+    ['label', 'count', 'share'],
+    ...rows.map((item) => [item.label, item.value, item.percentage === undefined ? 'Data Not Available' : item.percentage]),
+    [],
+  ];
+  if (model.reportType === 'risk-incident') return [
+    ['section', 'incident_summary'],
+    ['metric', 'value'],
+    ['total_incidents', model.incidents.total],
+    ['events_with_incidents', model.incidents.eventsWithIncidents],
+    ['incident_event_rate', model.incidents.incidentRate ?? 'Data Not Available'],
+    ['average_incidents_per_affected_event', model.incidents.averagePerEvent ?? 'Data Not Available'],
+    [],
+    ...breakdown('incident_severity', model.incidents.severity),
+    ...breakdown('immediate_action', model.incidents.immediateAction),
+    ...breakdown('external_escalation', model.incidents.escalation),
+    ...breakdown('incident_resolution', model.incidents.resolution),
+  ];
+  if (model.reportType === 'application-outcome') return [
+    ...breakdown('application_status', model.outcomes.statuses),
+    ...breakdown('risk_cross_section', model.outcomes.riskCrossSection),
+    ...breakdown('application_revision', model.outcomes.revisions),
+    ...breakdown('rejection_reason', model.outcomes.rejections),
+    ['section', 'review_duration'],
+    ['stage', 'average', 'minimum', 'maximum', 'sample'],
+    ...model.outcomes.durations.map((item) => [item.label, item.average, item.min, item.max, item.sample]),
+  ];
+  if (model.reportType === 'risk-assessment') return [
+    ...breakdown('official_risk', model.assessment.riskDistribution),
+    ...breakdown('hazard', model.assessment.hazards),
+    ...breakdown('readiness', model.assessment.readiness),
+    ...breakdown('compliance', model.assessment.compliance),
+    ...breakdown('confidence', model.assessment.confidence),
+    ['section', 'review_signals'],
+    ['hard_rule_adjustments', model.assessment.hardRuleAdjustments],
+    ['manual_reviews', model.assessment.manualReviews],
+  ];
+  if (model.reportType === 'resource-override') return [
+    ['section', 'resource_recommendation_and_override'],
+    ['resource', 'average_baseline', 'average_planning_range', 'override_actions', 'overridden_item_rate', 'privacy_safe_reason_category'],
+    ...model.resources.map((item) => [item.label, item.baseline, item.range, item.overrides ?? 'Data Not Available', item.overrideRate ?? 'Data Not Available', item.reason]),
+  ];
+  return [
+    ...breakdown('control_status', model.controls.statuses),
+    ['section', 'control_summary'],
+    ['eligible_control_items', model.controls.totalItems],
+    ['verified_rate', model.controls.totalItems ? model.controls.verifiedRate : 'Data Not Available'],
+  ];
 }
 
 function metric(label: string, value: string | number, detail: string, tone: ReportMetric['tone'] = 'neutral'): ReportMetric {
