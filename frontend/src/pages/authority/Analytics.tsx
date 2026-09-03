@@ -120,9 +120,10 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
     syntheticExcluded: number;
     unavailableSections: string[];
     totalMatched: number;
+    totalMatchedExact: boolean;
     truncated: boolean;
     coverageLimitations: string[];
-  }>({ syntheticExcluded: 0, unavailableSections: [], totalMatched: 0, truncated: false, coverageLimitations: [] });
+  }>({ syntheticExcluded: 0, unavailableSections: [], totalMatched: 0, totalMatchedExact: true, truncated: false, coverageLimitations: [] });
   const [report, setReport] = useState<ReportModel>(() => buildReportModel('risk-incident', 'overall', undefined, { preview: previewMode }));
 
   useEffect(() => {
@@ -148,6 +149,7 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
           syntheticExcluded: validated.syntheticExcluded,
           unavailableSections: validated.unavailableSections,
           totalMatched: validated.totalMatched,
+          totalMatchedExact: validated.coverage.totalMatchedExact,
           truncated: validated.truncated || validated.coverage.eventScan === 'truncated' || validated.coverage.childCollections === 'truncated',
           coverageLimitations: validated.coverage.limitations,
         };
@@ -159,6 +161,7 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
           syntheticExcluded: nextMeta.syntheticExcluded,
           unavailableSections: nextMeta.unavailableSections,
           totalMatched: nextMeta.totalMatched,
+          totalMatchedExact: nextMeta.totalMatchedExact,
           truncated: nextMeta.truncated,
           coverageLimitations: nextMeta.coverageLimitations,
         }));
@@ -194,6 +197,7 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
       syntheticExcluded: backendMeta.syntheticExcluded,
       unavailableSections: backendMeta.unavailableSections,
       totalMatched: backendMeta.totalMatched,
+      totalMatchedExact: backendMeta.totalMatchedExact,
       truncated: backendMeta.truncated,
       coverageLimitations: backendMeta.coverageLimitations,
     });
@@ -237,7 +241,7 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
             <div className="reports-hero__meta relative z-[1]">
               <MetaStat icon={<Database size={17} />} label="Eligible responses" value={formatNumber(report.eligibleRecords)} />
               <MetaStat icon={<CalendarDays size={17} />} label="Coverage" value={<CoverageValue label={report.coverage.label} />} />
-              <MetaStat icon={<ShieldCheck size={17} />} label="Synthetic reports" value={formatNumber(report.syntheticExcluded)} />
+              <MetaStat icon={<ShieldCheck size={17} />} label="Synthetic reports" value={report.syntheticExcluded === null ? 'Data Not Available' : formatNumber(report.syntheticExcluded)} />
             </div>
           </div>
         </section>
@@ -385,7 +389,15 @@ function ReportOutput({
       {model.truncated && (
         <div className="report-callout report-callout--warning mt-4" role="status">
           <TriangleAlert size={16} />
-          <span>This report contains {formatNumber(model.eligibleRecords)} returned records from {formatNumber(model.totalMatched)} matched records. Coverage is partial; totals and rates may be incomplete.</span>
+          <span>This report contains {formatNumber(model.eligibleRecords)} returned records from {model.totalMatchedExact ? '' : 'at least '}{formatNumber(model.totalMatched)} matched records. Coverage is partial; totals and rates may be incomplete.</span>
+        </div>
+      )}
+      {model.coverageLimitations.length > 0 && (
+        <div className="report-callout report-callout--warning mt-3" aria-label="Coverage limitations">
+          <TriangleAlert size={16} className="shrink-0" />
+          <ul className="list-disc space-y-1 pl-4">
+            {model.coverageLimitations.map((limitation) => <li key={limitation}>{limitation}</li>)}
+          </ul>
         </div>
       )}
 
@@ -430,8 +442,9 @@ function RiskIncidentView({ model }: { model: ReportModel }) {
         {incidentUnavailable ? <UnavailableSection label="Incident patterns" /> : (
           <div className="metric-stack">
             <MetricLine label="Events with incidents" value={formatNumber(model.incidents.eventsWithIncidents)} />
-            <MetricLine label="Events with incident rate" value={model.incidents.incidentRate === null ? 'Data Not Available' : percent(model.incidents.incidentRate)} />
-            <MetricLine label="Average per affected event" value={model.incidents.averagePerEvent === null ? 'Data Not Available' : model.incidents.averagePerEvent.toFixed(1)} />
+            <MetricLine label="Events with incidents rate" value={model.incidents.eventsWithIncidentRate === null ? 'Data Not Available' : percent(model.incidents.eventsWithIncidentRate)} />
+            <MetricLine label="Average incidents per event" value={model.incidents.averageIncidentsPerEvent === null ? 'Data Not Available' : model.incidents.averageIncidentsPerEvent.toFixed(1)} />
+            <MetricLine label="Average per affected event" value={model.incidents.averageIncidentsPerAffectedEvent === null ? 'Data Not Available' : model.incidents.averageIncidentsPerAffectedEvent.toFixed(1)} />
             <MetricLine label="Action required" value={percentageForRow(model.incidents.immediateAction, 'Action required')} tone="warning" />
           </div>
         )}
@@ -460,7 +473,7 @@ function ApplicationOutcomeView({ model }: { model: ReportModel }) {
   const dataUnavailable = model.dataStatus === 'unavailable';
   return (
     <div className="report-content-grid">
-      <Panel className="report-panel--span-8" eyebrow="Outcome movement" title="Applications and terminal decisions" subtitle="Latest valid records grouped by created month">
+      <Panel className="report-panel--span-8" eyebrow="Outcome movement" title="Applications and terminal decisions" subtitle="Applications by creation month; approvals and rejections by terminal-decision month">
         <ChartFrame>
           {dataUnavailable ? <UnavailableSection label="Application outcome trend" /> : (
             <Line
@@ -504,8 +517,11 @@ function RiskAssessmentView({ model }: { model: ReportModel }) {
       <Panel className="report-panel--span-4" eyebrow="Official result" title="Risk distribution" subtitle="Latest valid assessment band; missing is not classified as Low">
         {assessment.riskDistribution.every((item) => item.value === 0) ? <UnavailableSection label="Risk distribution" /> : <ChartFrame><Doughnut options={doughnutOptions} data={doughnutData(assessment.riskDistribution)} /></ChartFrame>}
       </Panel>
-      <Panel className="report-panel--span-8" eyebrow="Hazard signals" title="Most frequent hazard categories" subtitle="Category counts across eligible assessments">
+      <Panel className="report-panel--span-4" eyebrow="Hazard signals" title="Most frequent hazard categories" subtitle="All identified hazard-category occurrences across eligible assessments">
         {assessment.hazards.length === 0 ? <UnavailableSection label="Hazard categories" /> : <BreakdownList rows={assessment.hazards} showValues />}
+      </Panel>
+      <Panel className="report-panel--span-4" eyebrow="Dominant signal" title="Dominant hazard categories" subtitle="Highest-scoring category per eligible official assessment">
+        {assessment.dominantHazards.length === 0 ? <UnavailableSection label="Dominant hazard categories" /> : <BreakdownList rows={assessment.dominantHazards} showValues />}
       </Panel>
       <Panel className="report-panel--span-3" eyebrow="Readiness gate" title="Assessment readiness" subtitle="Evidence and context completeness">
         {assessment.readiness.length === 0 ? <UnavailableSection label="Assessment readiness" /> : <BreakdownList rows={assessment.readiness} />}
@@ -546,7 +562,7 @@ function ResourceOverrideView({ model }: { model: ReportModel }) {
         {recommendationUnavailable ? <UnavailableSection label="Resource planning data" /> : (
           <div className="metric-stack">
             <MetricLine label="Planning items" value={formatNumber(model.resources.length)} />
-            <MetricLine label="Total overrides" value={overrideUnavailable ? 'Data Not Available' : formatNumber(model.resources.reduce((sum, item) => sum + (item.overrides ?? 0), 0))} tone="warning" />
+            <MetricLine label="Total override records" value={overrideUnavailable || model.resourceOverrideRecords === null ? 'Data Not Available' : formatNumber(model.resourceOverrideRecords)} tone="warning" />
             <MetricLine label="Source-owned range" value="M2" />
             <div className="report-callout report-callout--warning"><TriangleAlert size={16} /><span>M5 reports overrides; it does not recalculate recommended quantities.</span></div>
           </div>
@@ -554,7 +570,7 @@ function ResourceOverrideView({ model }: { model: ReportModel }) {
       </Panel>
       <Panel className="report-panel--span-12" eyebrow="Resource detail" title="Baseline, planning range & override reasons" subtitle="No private authority notes are included">
         {recommendationUnavailable ? <UnavailableSection label="Resource recommendation detail" /> : (
-          <DataTable headers={['Resource', 'Baseline', 'Planning range', 'Overrides', 'Rate', 'Reason']} rows={model.resources.map((item) => [item.label, formatNumber(item.baseline), item.range, item.overrides === null ? 'Data Not Available' : formatNumber(item.overrides), item.overrideRate === null ? 'Data Not Available' : percent(item.overrideRate), item.reason])} />
+          <DataTable headers={['Resource', 'Recommendation baseline', 'Comparable baseline', 'Effective quantity', 'Planning range', 'Overrides', 'Rate', 'Reason']} rows={model.resources.map((item) => [item.label, `${formatNumber(item.baseline)} (n=${formatNumber(item.recommendationSample)})`, item.comparableBaseline === null ? 'Data Not Available' : `${formatNumber(item.comparableBaseline)} (n=${formatNumber(item.overrideSample)})`, item.effective === null ? 'Data Not Available' : `${formatNumber(item.effective)} (n=${formatNumber(item.overrideSample)})`, item.range, item.overrides === null ? 'Data Not Available' : formatNumber(item.overrides), item.overrideRate === null ? 'Data Not Available' : percent(item.overrideRate), item.reason])} />
         )}
       </Panel>
     </div>

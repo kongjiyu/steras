@@ -1,9 +1,21 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
-import IncidentReportingPrototype from './IncidentReportingPrototype';
+import IncidentReportingPrototype, { isEventReportable, isIncidentOccurrencePlausible } from './IncidentReportingPrototype';
 
 describe('IncidentReportingPrototype integration boundary', () => {
+  it('gates reporting by event eligibility while allowing an older occurrence for an ongoing event', () => {
+    const now = Date.UTC(2026, 8, 3, 12);
+    const ongoing = { name: 'Ongoing', status: 'ongoing' as const, startedAt: Date.UTC(2026, 6, 1) };
+    const exactBoundary = { name: 'Recent', status: 'completed' as const, startedAt: Date.UTC(2026, 7, 26), endedAt: now - 7 * 24 * 60 * 60 * 1_000 };
+    const expired = { name: 'Expired', status: 'completed' as const, startedAt: Date.UTC(2026, 7, 25), endedAt: now - 7 * 24 * 60 * 60 * 1_000 - 1 };
+    expect(isEventReportable(exactBoundary, now)).toBe(true);
+    expect(isEventReportable(expired, now)).toBe(false);
+    expect(isIncidentOccurrencePlausible(ongoing, '2026-08-01T12:00:00.000Z', now)).toBe(true);
+    expect(isIncidentOccurrencePlausible(expired, '2026-09-03T11:00:00.000Z', now)).toBe(false);
+    expect(isIncidentOccurrencePlausible(ongoing, '2026-09-03T12:00:00.001Z', now)).toBe(false);
+  });
+
   it('stays visibly synthetic while all three role previews remain reachable', () => {
     render(<MemoryRouter><IncidentReportingPrototype /></MemoryRouter>);
 
@@ -15,6 +27,17 @@ describe('IncidentReportingPrototype integration boundary', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Authority view' }));
     expect(screen.getByRole('heading', { name: 'Incident investigation queue' })).toBeInTheDocument();
+  });
+
+  it('shows reporters a privacy-safe progress trail and final resolution without internal action notes', () => {
+    render(<MemoryRouter><IncidentReportingPrototype /></MemoryRouter>);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'My submitted reports' }));
+    fireEvent.click(screen.getByText('Runner treated for heat exhaustion').closest('button')!);
+    expect(screen.getByText('Progress milestones')).toBeInTheDocument();
+    expect(screen.getAllByText('Final resolution').length).toBeGreaterThan(0);
+    expect(screen.getByText(/participant recovered after on-site treatment and observation/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Cooling, hydration and observation were completed/i)).not.toBeInTheDocument();
   });
 
   it('rejects incomplete or future-dated prototype submissions', () => {
@@ -33,6 +56,19 @@ describe('IncidentReportingPrototype integration boundary', () => {
       target: { value: '2999-01-01T12:00' },
     });
     expect(submit).toBeDisabled();
+  });
+
+  it('does not mark organizer review complete immediately after reporter submission', () => {
+    render(<MemoryRouter><IncidentReportingPrototype /></MemoryRouter>);
+
+    fireEvent.change(screen.getByLabelText(/What happened/i), {
+      target: { value: 'A barrier blocked the marked emergency access route.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit incident report' }));
+
+    expect(screen.getByLabelText('Report submitted: Complete')).toBeInTheDocument();
+    expect(screen.getByLabelText('Organizer review: Waiting')).toBeInTheDocument();
+    expect(screen.getByLabelText('Response in progress: Waiting')).toBeInTheDocument();
   });
 
   it('returns authority findings to the organizer and reserves closure for the organizer', () => {

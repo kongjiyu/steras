@@ -7,6 +7,7 @@ import {
   Building2,
   CalendarDays,
   CheckCircle2,
+  CircleDashed,
   ChevronRight,
   ClipboardCheck,
   Clock3,
@@ -188,6 +189,7 @@ const INITIAL_INCIDENTS: Incident[] = [
     evidence: 'Medical post record available',
     responseTeam: 'On-site medical team',
     responsePath: 'internal',
+    finalResolution: 'The participant recovered after on-site treatment and observation. No further action was required.',
     actions: [
       {
         id: 'ACT-0005-01',
@@ -271,10 +273,40 @@ const AUTHORITY_DIRECTORY = [
   { name: 'DBKL event operations', service: 'Venue, access and public-space issues', area: 'Kuala Lumpur', contact: '+60 3 2617 9000' },
 ];
 
+const INCIDENT_REPORT_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
+type ReportableEvent = { name: string; status: 'ongoing' | 'completed' | 'upcoming'; startedAt: number; endedAt?: number };
+
+const PROTOTYPE_EVENTS: ReportableEvent[] = [
+  { name: 'Merdeka Cultural Festival', status: 'ongoing', startedAt: Date.now() - 14 * 24 * 60 * 60 * 1_000 },
+  { name: 'River of Life Night Market', status: 'completed', startedAt: Date.now() - 3 * 24 * 60 * 60 * 1_000, endedAt: Date.now() - 2 * 24 * 60 * 60 * 1_000 },
+  { name: 'KL Heritage Run 2026', status: 'completed', startedAt: Date.now() - 11 * 24 * 60 * 60 * 1_000, endedAt: Date.now() - 10 * 24 * 60 * 60 * 1_000 },
+  { name: 'Batik Design Showcase', status: 'upcoming', startedAt: Date.now() + 24 * 60 * 60 * 1_000 },
+];
+
+function recentLocalDateTimeInput(now = Date.now()): string {
+  const date = new Date(now - 60 * 60 * 1_000);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
+export function isEventReportable(event: ReportableEvent, now = Date.now()): boolean {
+  return event.status === 'ongoing'
+    || (event.status === 'completed' && Number.isFinite(event.endedAt)
+      && Number(event.endedAt) <= now && Number(event.endedAt) >= now - INCIDENT_REPORT_WINDOW_MS);
+}
+
+export function isIncidentOccurrencePlausible(event: ReportableEvent | undefined, value: string, now = Date.now()): boolean {
+  const occurredAt = new Date(value).getTime();
+  return Boolean(event && isEventReportable(event, now)
+    && Number.isFinite(occurredAt)
+    && occurredAt >= event.startedAt
+    && occurredAt <= now
+    && (event.status !== 'completed' || occurredAt <= Number(event.endedAt)));
+}
+
 const INITIAL_FORM: FormState = {
   event: 'Merdeka Cultural Festival',
   category: 'Crowd & capacity',
-  occurredAt: '2026-08-21T18:42',
+  occurredAt: recentLocalDateTimeInput(),
   location: 'Dataran Merdeka · North entrance',
   description: '',
   evidence: '',
@@ -708,6 +740,13 @@ function AuthorityActionPanel({ incident, onRecordInvestigation }: { incident: I
 }
 
 function ReporterProgress({ incident }: { incident: Incident }) {
+  const responseStarted = ['Investigating', 'Under review', 'Resolved'].includes(incident.status);
+  const milestones = [
+    { label: 'Report submitted', complete: true },
+    { label: 'Organizer review', complete: responseStarted },
+    { label: 'Response in progress', complete: responseStarted },
+    { label: 'Final resolution', complete: incident.status === 'Resolved' },
+  ];
   return (
     <section className="card">
       <div className="card-header"><div><p className="section-title">Report progress</p><p className="mt-1 text-xs text-ink-500">Participant view is read-only after submission.</p></div><Activity size={19} className="text-brand-600" /></div>
@@ -717,6 +756,20 @@ function ReporterProgress({ incident }: { incident: Incident }) {
           <div className="rounded-md bg-cream-50 p-3"><span className="text-xs text-ink-500">Submitted</span><p className="mt-1 text-sm font-semibold text-ink-800">{incident.submittedAt}</p></div>
           <div className="rounded-md bg-cream-50 p-3"><span className="text-xs text-ink-500">Assigned response</span><p className="mt-1 truncate text-sm font-semibold text-ink-800">{incident.authority ?? incident.responseTeam ?? 'Pending organizer action'}</p></div>
         </div>
+        <div className="mt-4 rounded-md border border-[#e3dacb] bg-[#fffdf8] p-4">
+          <p className="text-xs font-bold uppercase tracking-[0.06em] text-ink-500">Progress milestones</p>
+          <ol className="mt-3 grid gap-2 sm:grid-cols-4">
+            {milestones.map((milestone) => <li key={milestone.label} aria-label={`${milestone.label}: ${milestone.complete ? 'Complete' : 'Waiting'}`} className="flex items-center gap-2 text-xs text-ink-700">
+              {milestone.complete ? <CheckCircle2 size={14} className="shrink-0 text-brand-600" /> : <CircleDashed size={14} className="shrink-0 text-ink-400" />}
+              <span>{milestone.label}</span>
+            </li>)}
+          </ol>
+        </div>
+        {incident.finalResolution && <div className="mt-4 rounded-md border border-brand-200 bg-brand-50 p-4">
+          <p className="text-xs font-bold uppercase tracking-[0.06em] text-brand-700">Final resolution</p>
+          <p className="mt-2 text-sm leading-6 text-ink-700">{incident.finalResolution}</p>
+          {incident.discrepancyOutcome && <p className="mt-2 text-xs text-ink-600">Reported control outcome: <strong>{incident.discrepancyOutcome}</strong></p>}
+        </div>}
         <div className="mt-4 rounded-md border border-brand-200 bg-brand-50 px-3 py-3 text-xs leading-5 text-brand-800"><strong>Participant access:</strong> You can track progress and resolution. Organizer and authority actions are recorded by permitted staff.</div>
       </div>
     </section>
@@ -769,8 +822,8 @@ function IncidentDetail({ incident, role, onAssignInternalTeam, onRequestExterna
 }
 
 function SubmissionForm({ form, onChange, onSubmit }: { form: FormState; onChange: (key: keyof FormState, value: string | boolean) => void; onSubmit: () => void }) {
-  const occurrenceTime = new Date(form.occurredAt).getTime();
-  const occurrenceIsValid = Number.isFinite(occurrenceTime) && occurrenceTime <= Date.now();
+  const selectedEvent = PROTOTYPE_EVENTS.find((event) => event.name === form.event);
+  const occurrenceIsValid = isIncidentOccurrencePlausible(selectedEvent, form.occurredAt);
   const canSubmit = Boolean(
     form.event.trim()
     && form.category.trim()
@@ -785,7 +838,7 @@ function SubmissionForm({ form, onChange, onSubmit }: { form: FormState; onChang
         <div className="mb-5 flex items-start gap-3 rounded-md border border-brand-200 bg-brand-50 px-3 py-3 text-xs leading-5 text-brand-800"><UserRound size={17} className="mt-0.5 shrink-0 text-brand-600" /><span><strong>Signed in as participant.</strong> This report will be associated with the current participant profile and the selected event.</span></div>
         <div className="mb-5 rounded-md border border-brand-200 bg-brand-50 px-3 py-3 text-xs leading-5 text-brand-800"><strong>Required information:</strong> category, description, occurrence date and time, location, and any available supporting evidence.</div>
         <div className="grid gap-4 sm:grid-cols-2">
-          <label className="sm:col-span-2"><span className="field-label">Event <span className="text-risk-high-text">*</span></span><select value={form.event} onChange={(event) => onChange('event', event.target.value)} className="input"><option>Merdeka Cultural Festival</option><option>River of Life Night Market</option><option>KL Heritage Run 2026</option><option>Batik Design Showcase</option></select></label>
+          <label className="sm:col-span-2"><span className="field-label">Event <span className="text-risk-high-text">*</span></span><select value={form.event} onChange={(event) => onChange('event', event.target.value)} className="input">{PROTOTYPE_EVENTS.map((event) => <option key={event.name} value={event.name} disabled={!isEventReportable(event)}>{event.name}{isEventReportable(event) ? '' : ' · not eligible for incident reporting'}</option>)}</select></label>
           <label><span className="field-label">Incident category <span className="text-risk-high-text">*</span></span><select value={form.category} onChange={(event) => onChange('category', event.target.value)} className="input">{CATEGORY_OPTIONS.map((category) => <option key={category}>{category}</option>)}</select></label>
           <label><span className="field-label">Occurrence date & time <span className="text-risk-high-text">*</span></span><input type="datetime-local" value={form.occurredAt} onChange={(event) => onChange('occurredAt', event.target.value)} className="input" /></label>
           <label className="sm:col-span-2"><span className="field-label">Incident location <span className="text-risk-high-text">*</span></span><div className="relative"><MapPin size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-400" /><input value={form.location} onChange={(event) => onChange('location', event.target.value)} className="input !pl-9" placeholder="Venue, zone or nearby landmark" /></div></label>
@@ -796,7 +849,7 @@ function SubmissionForm({ form, onChange, onSubmit }: { form: FormState; onChang
           <label className="flex cursor-pointer items-start gap-3"><input type="checkbox" checked={form.eventControl} onChange={(event) => onChange('eventControl', event.target.checked)} className="mt-1 h-4 w-4 rounded border-ink-300 text-brand-600 focus:ring-brand-500" /><span><span className="block text-sm font-semibold text-ink-800">This concerns a published Event Control item</span><span className="mt-1 block text-xs leading-5 text-ink-500">Use this for inaccurate signage, documentation or other published control discrepancies.</span></span></label>
         </div>
         <div className="mt-4 rounded-md border border-dashed border-ink-300 bg-cream-50 px-4 py-5 text-center"><Upload size={20} className="mx-auto text-brand-600" /><p className="mt-2 text-sm font-semibold text-ink-800">Add supporting evidence</p><p className="mt-1 text-xs text-ink-500">Photos, PDF or other permitted evidence · prototype only</p><button type="button" className="btn-secondary mt-3 !min-h-9 !px-3 text-xs"><Paperclip size={14} /> Choose files</button></div>
-        {!canSubmit && <div role="status" className="mt-4 rounded-md border border-gold-200 bg-gold-50 px-3 py-3 text-xs leading-5 text-gold-700">Complete every required field, use a valid occurrence time that is not in the future, provide a location of at least 3 characters and describe the incident in at least 20 characters.</div>}
+        {!canSubmit && <div role="status" className="mt-4 rounded-md border border-gold-200 bg-gold-50 px-3 py-3 text-xs leading-5 text-gold-700">Complete every required field, select an ongoing event or one completed within seven days, use a plausible occurrence time, provide a location of at least 3 characters and describe the incident in at least 20 characters.</div>}
         <div className="mt-5 flex flex-wrap justify-end gap-2"><button type="button" className="btn-secondary !min-h-10">Save draft</button><button type="button" disabled={!canSubmit} onClick={onSubmit} className="btn-primary !min-h-10"><Send size={15} /> Submit incident report</button></div>
       </div>
     </div>

@@ -4,14 +4,18 @@ import {
   COLLECTIONS,
   EVENT_STATUSES,
   EVENT_TYPES,
+  OFFICIAL_FORMULA_VERSION,
   RESOURCE_KEYS,
   type AuthorityDecision,
+  type AISuccessfulProposal,
   type AuthorityType,
   type EventControl,
   type EventRecord,
   type EventStatus,
   type EventType,
   type Incident,
+  type ManualOfficialAssessmentResult,
+  type OfficialAssessmentResult,
   type ResourceKey,
   type ResourceOverrideRecord,
   type ResourceRecommendation,
@@ -34,6 +38,11 @@ import {
 import { FUNCTION_REGION } from '../config/runtime';
 import { ACTIVE_CATEGORY_SCHEMA } from '../config/categorySchema';
 import { validateResourceRecommendation } from '../engines/resourceContract';
+import {
+  validateAssessmentResultAgainstProposal,
+  validateManualOfficialAssessmentResult,
+  validateProvisionalAssessmentResult,
+} from '../engines/resourceCalculator';
 
 const DEFAULT_LIMIT = 250;
 const MAX_LIMIT = 500;
@@ -78,12 +87,9 @@ export const getAnalyticsPortfolio = onCall<AnalyticsPortfolioRequest | undefine
     if (input.from !== undefined) query = query.where('createdAt', '>=', input.from);
     if (input.to !== undefined) query = query.where('createdAt', '<=', input.to);
 
-    const [eventSnapshot, incidentCoverageSnapshot] = await Promise.all([
-      query.limit(fetchLimit).get(),
-      db.collection(COLLECTIONS.INCIDENTS).limit(1).get(),
-    ]);
+    const eventSnapshot = await query.limit(fetchLimit).get();
     const eventCandidates = eventSnapshot.docs
-      .map((snapshot) => ({ eventId: snapshot.id, ...snapshot.data() }) as EventRecord & Record<string, unknown>)
+      .map((snapshot) => canonicalEventDocument(snapshot.id, snapshot.data()))
       .filter((event) => eventMatchesBaseFilters(event, input));
 
     const records = await mapWithConcurrency(eventCandidates, 10, async (event) => {
@@ -103,66 +109,58 @@ export const getAnalyticsPortfolio = onCall<AnalyticsPortfolioRequest | undefine
         eventReference.collection(COLLECTIONS.DECISION_HISTORY).limit(DECISION_LIMIT + 1).get(),
       ]);
       const currentControls = controlSnapshot.docs.slice(0, CONTROL_LIMIT)
-        .map((document) => document.data()).filter(isAnalyticsControl)
+        .map((document) => canonicalControlDocument(document.id, document.data())).filter(isAnalyticsControl)
         .filter((control) => control.versionId === event.currentVersionId);
       const stage1Snapshots = await mapWithConcurrency(currentControls, 10, (control) => eventReference
         .collection(COLLECTIONS.EVENT_CONTROLS).doc(control.controlId)
         .collection(COLLECTIONS.STAGE1_DOCS).limit(STAGE1_DOC_LIMIT + 1).get());
       const stage1Truncated = stage1Snapshots.some((snapshot) => snapshot.size > STAGE1_DOC_LIMIT);
-      const rawStage1Docs = stage1Snapshots.flatMap((snapshot) => snapshot.docs.slice(0, STAGE1_DOC_LIMIT)
-        .map((document) => document.data()));
+      const stage1DocsByControl = stage1Snapshots.map((snapshot) => snapshot.docs.slice(0, STAGE1_DOC_LIMIT)
+        .map((document) => canonicalStage1Document(document.id, document.data())));
+      const rawStage1Docs = stage1DocsByControl.flat();
       const persistedStage1Docs = rawStage1Docs.filter(isAnalyticsStage1Doc);
       const pendingStage1Docs: Stage1Doc[] = currentControls.flatMap((control, controlIndex) => {
-        const submitted = stage1Snapshots[controlIndex].docs.slice(0, STAGE1_DOC_LIMIT)
-          .map((document) => document.data()).filter(isAnalyticsStage1Doc);
-        const remaining = [...submitted];
-        return control.stage1Requirements.flatMap((requirement, requirementIndex) => {
-          const matchIndex = remaining.findIndex((document) => document.docType === requirement.docType
-            && document.label === requirement.label);
-          if (matchIndex >= 0) {
-            remaining.splice(matchIndex, 1);
-            return [];
-          }
-          return [{
-            docId: `pending-${control.controlId}-${requirementIndex}`,
-            docType: requirement.docType,
-            label: requirement.label,
-            status: 'pending_submission' as const,
-          }];
-        });
+        const submitted = stage1DocsByControl[controlIndex].filter(isAnalyticsStage1Doc);
+        return deriveMissingStage1Docs(control, submitted);
       });
       const stage1Docs = [...persistedStage1Docs, ...pendingStage1Docs];
-      const rawOverrides = overrideSnapshot.docs.slice(0, OVERRIDE_LIMIT).map((document) => document.data());
+      const rawOverrides = overrideSnapshot.docs.slice(0, OVERRIDE_LIMIT)
+        .map((document) => ({ ...document.data(), overrideId: document.id }));
       const rawIncidents = incidentSnapshot.docs.slice(0, INCIDENT_LIMIT).map((document) => document.data());
       const rawDecisions = decisionHistorySnapshot.docs.slice(0, DECISION_LIMIT).map((document) => document.data());
-      const rawCurrentControls = controlSnapshot.docs.slice(0, CONTROL_LIMIT).map((document) => document.data())
+      const rawCurrentControls = controlSnapshot.docs.slice(0, CONTROL_LIMIT)
+        .map((document) => canonicalControlDocument(document.id, document.data()))
         .filter((control) => isRecord(control) && control.versionId === event.currentVersionId);
       const coverage = (truncated: boolean, rawCount: number, validCount: number) => truncated
         ? 'truncated' as const : rawCount === validCount ? 'complete' as const : 'unavailable' as const;
       const assessmentValue = assessmentSnapshot?.data();
       const resourceValue = resourceSnapshot?.data();
       const validOverrides = rawOverrides.filter(isAnalyticsOverride);
-      const validIncidents = rawIncidents.filter(isAnalyticsIncident)
-        .filter((incident) => incident.eventVersionId === undefined || incident.eventVersionId === event.currentVersionId);
+      const validIncidents = selectValidAnalyticsIncidents(rawIncidents);
       const validDecisions = rawDecisions.filter(isAnalyticsDecision);
+      const sourceCoverage: AnalyticsPortfolioRecord['sourceCoverage'] = {
+        overrides: coverage(overrideSnapshot.size > OVERRIDE_LIMIT, rawOverrides.length, validOverrides.length),
+        incidents: coverage(incidentSnapshot.size > INCIDENT_LIMIT, rawIncidents.length, rawIncidents.filter(isAnalyticsIncident).length),
+        controls: coverage(controlSnapshot.size > CONTROL_LIMIT, rawCurrentControls.length, currentControls.length),
+        decisionHistory: coverage(decisionHistorySnapshot.size > DECISION_LIMIT, rawDecisions.length, validDecisions.length),
+        stage1Documents: coverage(controlSnapshot.size > CONTROL_LIMIT || stage1Truncated, rawStage1Docs.length, persistedStage1Docs.length),
+      };
+      const assessment = isAnalyticsAssessment(assessmentValue)
+        && assessmentMatchesCurrentEvent(assessmentValue, event) ? assessmentValue : undefined;
+      const resource = isAnalyticsResource(resourceValue)
+        && resourceMatchesCurrentEvent(resourceValue, event) ? resourceValue : undefined;
       return buildAnalyticsPortfolioRecord({
         event,
-        assessment: isAnalyticsAssessment(assessmentValue) ? assessmentValue : undefined,
-        resource: isAnalyticsResource(resourceValue) ? resourceValue : undefined,
+        assessment,
+        resource,
         overrides: validOverrides,
         incidents: validIncidents,
         controls: currentControls,
         stage1Docs,
         decisionHistory: validDecisions,
-        incidentCoverageAvailable: !incidentCoverageSnapshot.empty,
+        incidentCoverageAvailable: sourceCoverage.incidents !== 'unavailable',
         includeSynthetic: input.includeSynthetic,
-        sourceCoverage: {
-          overrides: coverage(overrideSnapshot.size > OVERRIDE_LIMIT, rawOverrides.length, validOverrides.length),
-          incidents: coverage(incidentSnapshot.size > INCIDENT_LIMIT, rawIncidents.length, rawIncidents.filter(isAnalyticsIncident).length),
-          controls: coverage(controlSnapshot.size > CONTROL_LIMIT, rawCurrentControls.length, currentControls.length),
-          decisionHistory: coverage(decisionHistorySnapshot.size > DECISION_LIMIT, rawDecisions.length, validDecisions.length),
-          stage1Documents: coverage(controlSnapshot.size > CONTROL_LIMIT || stage1Truncated, rawStage1Docs.length, persistedStage1Docs.length),
-        },
+        sourceCoverage,
       });
     });
 
@@ -178,7 +176,7 @@ export const getAnalyticsPortfolio = onCall<AnalyticsPortfolioRequest | undefine
     const selected = operationalRecords.slice(0, input.limit);
     const unavailableSections: string[] = [];
     if (!selected.some((record) => record.assessment)) unavailableSections.push('Risk assessments');
-    if (!incidentCoverageSnapshot.size) unavailableSections.push('Incident patterns');
+    if (!selected.some((record) => record.incidents.available)) unavailableSections.push('Incident patterns');
     if (!selected.some((record) => record.resources)) unavailableSections.push('Resource recommendations');
     if (!selected.some((record) => record.controls.available)) unavailableSections.push('Event-control verification');
 
@@ -215,6 +213,27 @@ export function assertAnalyticsAdmin(profile: UserProfile | undefined): void {
   if (!profile || profile.role !== 'admin') {
     throw new HttpsError('permission-denied', 'Only administrators can view cross-agency analytics.');
   }
+}
+
+export function canonicalEventDocument(
+  documentId: string,
+  data: FirebaseFirestore.DocumentData,
+): EventRecord & Record<string, unknown> {
+  return { ...data, eventId: documentId } as EventRecord & Record<string, unknown>;
+}
+
+export function canonicalControlDocument(
+  documentId: string,
+  data: FirebaseFirestore.DocumentData,
+): FirebaseFirestore.DocumentData & { controlId: string } {
+  return { ...data, controlId: documentId };
+}
+
+export function canonicalStage1Document(
+  documentId: string,
+  data: FirebaseFirestore.DocumentData,
+): FirebaseFirestore.DocumentData & { docId: string } {
+  return { ...data, docId: documentId };
 }
 
 export function validateAnalyticsPortfolioRequest(value: unknown): Required<Pick<AnalyticsPortfolioRequest, 'includeSynthetic' | 'limit'>> & AnalyticsPortfolioRequest {
@@ -273,10 +292,35 @@ export function buildAnalyticsPortfolioRecord(bundle: AnalyticsSourceBundle): An
     synthetic,
     reapplication: event.currentVersionNumber >= 2 && priorRejectedVersion,
     ...(assessment ? { assessment: buildAssessmentSummary(assessment) } : {}),
-    ...(resource ? { resources: buildResourceSummary(resource, overrides) } : {}),
+    ...(resource ? { resources: buildResourceSummary(resource, overrides, bundle.sourceCoverage.overrides) } : {}),
     incidents: buildIncidentSummary(incidents, bundle.incidentCoverageAvailable),
-    controls: buildControlSummary(controls, stage1Docs, Boolean(event.controlListGenerated), bundle.sourceCoverage.stage1Documents),
+    controls: buildControlSummary(
+      controls,
+      stage1Docs,
+      Boolean(event.controlListGenerated),
+      bundle.sourceCoverage.controls,
+      bundle.sourceCoverage.stage1Documents,
+    ),
   };
+}
+
+export function deriveMissingStage1Docs(control: EventControl, submitted: Stage1Doc[]): Stage1Doc[] {
+  const remaining = [...submitted];
+  return control.stage1Requirements.flatMap((requirement, requirementIndex) => {
+    const matchIndex = remaining.findIndex((document) => document.docType === requirement.docType
+      && document.label === requirement.label);
+    if (matchIndex >= 0) {
+      remaining.splice(matchIndex, 1);
+      return [];
+    }
+    if (!requirement.required) return [];
+    return [{
+      docId: `pending-${control.controlId}-${requirementIndex}`,
+      docType: requirement.docType,
+      label: requirement.label,
+      status: 'pending_submission' as const,
+    }];
+  });
 }
 
 function buildAssessmentSummary(assessment: RiskAssessment): AnalyticsAssessmentSummary {
@@ -284,6 +328,9 @@ function buildAssessmentSummary(assessment: RiskAssessment): AnalyticsAssessment
     ? assessment.officialResult
     : undefined;
   const categories = result?.categories ?? [];
+  const hazards = result
+    ? ('manualHazards' in result ? result.manualHazards : result.validatedHazards)
+    : [];
   const dominant = [...categories].sort((left, right) => right.normalizedScore - left.normalizedScore)[0];
   const comparable = assessment.aiProposal?.status === 'success'
     && categories.length > 0
@@ -300,6 +347,7 @@ function buildAssessmentSummary(assessment: RiskAssessment): AnalyticsAssessment
     compliance: assessment.complianceStatus,
     confidence: assessment.dataConfidenceLevel,
     ...(dominant ? { dominantHazard: dominant.categoryId as AnalyticsAssessmentSummary['dominantHazard'] } : {}),
+    identifiedHazardCategories: hazards.map((hazard) => hazard.categoryId),
     schemaVersion: assessment.schemaVersion,
     ...(result?.categorySchemaVersion ? { categorySchemaVersion: result.categorySchemaVersion } : {}),
     ...(result?.formulaVersion ? { formulaVersion: result.formulaVersion } : {}),
@@ -312,7 +360,11 @@ function buildAssessmentSummary(assessment: RiskAssessment): AnalyticsAssessment
   };
 }
 
-function buildResourceSummary(resource: ResourceRecommendation, overrides: ResourceOverrideRecord[]): AnalyticsResourceSummary {
+function buildResourceSummary(
+  resource: ResourceRecommendation,
+  overrides: ResourceOverrideRecord[],
+  overrideCoverage: AnalyticsPortfolioRecord['sourceCoverage']['overrides'],
+): AnalyticsResourceSummary {
   const validOverrides = overrides
     .filter((override) => override.baseResourceId === resource.resourceId
       && override.eventId === resource.eventId && override.versionId === resource.versionId
@@ -327,7 +379,7 @@ function buildResourceSummary(resource: ResourceRecommendation, overrides: Resou
       baseline: item.baseline,
       minimum: item.planningRange.min,
       maximum: item.planningRange.max,
-      effective: latest?.quantities[key] ?? item.baseline,
+      ...(overrideCoverage === 'complete' ? { effective: latest?.quantities[key] ?? item.baseline } : {}),
       overrideCount,
     }];
   }).filter((entry) => entry[1] !== undefined)) as Partial<Record<ResourceKey, AnalyticsResourceSummary['items'][ResourceKey]>>;
@@ -362,10 +414,11 @@ function buildControlSummary(
   controls: EventControl[],
   stage1Docs: Stage1Doc[],
   declaredAvailable: boolean,
+  controlCoverage: AnalyticsPortfolioRecord['sourceCoverage']['controls'],
   stage1Coverage: AnalyticsPortfolioRecord['sourceCoverage']['stage1Documents'],
 ): AnalyticsControlSummary {
   const summary: AnalyticsControlSummary = {
-    available: declaredAvailable || controls.length > 0,
+    available: controlCoverage !== 'unavailable' && (declaredAvailable || controls.length > 0),
     total: controls.length,
     approved: 0,
     pending: 0,
@@ -373,7 +426,7 @@ function buildControlSummary(
     resubmitRequired: 0,
     usePrevious: 0,
     stage1: {
-      available: stage1Coverage === 'complete' && declaredAvailable,
+      available: controlCoverage === 'complete' && stage1Coverage === 'complete' && declaredAvailable,
       total: stage1Docs.length,
       pendingSubmission: 0,
       pendingVerification: 0,
@@ -479,6 +532,25 @@ function safeFilterValue(value: unknown): value is string {
   return typeof value === 'string' && value.length >= 1 && value.length <= 128 && !/[/\\]/.test(value);
 }
 
+export function assessmentMatchesCurrentEvent(
+  assessment: RiskAssessment,
+  event: EventRecord,
+): boolean {
+  return assessment.assessmentId === event.currentAssessmentId
+    && assessment.eventId === event.eventId
+    && assessment.versionId === event.currentVersionId;
+}
+
+export function resourceMatchesCurrentEvent(
+  resource: ResourceRecommendation,
+  event: EventRecord,
+): boolean {
+  return resource.resourceId === event.currentResourceId
+    && resource.eventId === event.eventId
+    && resource.versionId === event.currentVersionId
+    && resource.assessmentId === event.currentAssessmentId;
+}
+
 export function isAnalyticsAssessment(value: unknown): value is RiskAssessment {
   if (!isRecord(value)
     || typeof value.schemaVersion !== 'string'
@@ -489,10 +561,29 @@ export function isAnalyticsAssessment(value: unknown): value is RiskAssessment {
     || !['low', 'medium', 'high'].includes(String(value.dataConfidenceLevel))
     || (value.contextEvidence !== undefined && (!Array.isArray(value.contextEvidence)
       || !value.contextEvidence.every((item) => isRecord(item) && typeof item.synthetic === 'boolean')))) return false;
-  return value.status !== 'official_ready' || isAnalyticsOfficialResult(value.officialResult);
+  if (value.status !== 'official_ready' || !isAnalyticsOfficialResult(value.officialResult)) {
+    return value.status !== 'official_ready';
+  }
+  if (value.officialResult.sourceKind === 'admin_manual') {
+    return value.sourceKind === 'admin_manual'
+      && safeDocumentId(value.activeManualAssessmentId)
+      && value.activeManualAssessmentId === value.officialResult.manualAssessmentId;
+  }
+  return value.sourceKind === undefined
+    && isRecord(value.aiProposal)
+    && value.aiProposal.status === 'success'
+    && value.aiProposal.proposalId === value.officialResult.proposalId
+    && value.officialResult.officialFormulaVersion === OFFICIAL_FORMULA_VERSION
+    && validateProvisionalAssessmentResult(value.officialResult).length === 0
+    && validateAssessmentResultAgainstProposal(
+      value.officialResult,
+      value.aiProposal as unknown as AISuccessfulProposal,
+    ).length === 0;
 }
 
-function isAnalyticsOfficialResult(value: unknown): boolean {
+function isAnalyticsOfficialResult(
+  value: unknown,
+): value is OfficialAssessmentResult | ManualOfficialAssessmentResult {
   if (!isRecord(value) || !Number.isFinite(value.overallScore)
     || Number(value.overallScore) < 0 || Number(value.overallScore) > 100
     || !RISK_LEVEL_VALUES.has(value.overallRiskLevel as RiskLevel)
@@ -500,12 +591,21 @@ function isAnalyticsOfficialResult(value: unknown): boolean {
     || !RISK_LEVEL_VALUES.has(value.highestCategoryRiskLevel as RiskLevel)
     || typeof value.categorySchemaVersion !== 'string' || typeof value.formulaVersion !== 'string'
     || typeof value.hardRuleVersion !== 'string' || typeof value.officialInputHash !== 'string'
-    || value.officialInputHash.length < 8 || !validTimestamp(value.finalizedAt)
+    || !/^[a-f0-9]{64}$/.test(value.officialInputHash) || !validTimestamp(value.finalizedAt)
     || typeof value.finalizedBy !== 'string' || value.finalizedBy.length === 0
     || !Array.isArray(value.categories)) return false;
   if (value.sourceKind === 'admin_manual') {
-    if (!safeDocumentId(value.manualAssessmentId)) return false;
-  } else if (!Array.isArray(value.reviewIds) || !value.reviewIds.every(safeDocumentId)) return false;
+    if (!safeDocumentId(value.manualAssessmentId)
+      || validateManualOfficialAssessmentResult(value as unknown as ManualOfficialAssessmentResult).length > 0) return false;
+  } else if ((value.sourceKind !== undefined && value.sourceKind !== 'ai_authority')
+    || !safeDocumentId(value.proposalId)
+    || !Array.isArray(value.validatedHazards)
+    || !value.validatedHazards.every((hazard) => isRecord(hazard)
+      && ACTIVE_CATEGORY_SCHEMA.categories.some((category) => category.id === hazard.categoryId))
+    || !Array.isArray(value.reviewIds) || value.reviewIds.length === 0
+    || new Set(value.reviewIds).size !== value.reviewIds.length
+    || !value.reviewIds.every(safeDocumentId)) return false;
+  const reviewIds = value.sourceKind === 'admin_manual' ? undefined : new Set(value.reviewIds as string[]);
   const expected = new Set(ACTIVE_CATEGORY_SCHEMA.categories.map((category) => category.id));
   const seen = new Set<string>();
   for (const category of value.categories) {
@@ -516,6 +616,11 @@ function isAnalyticsOfficialResult(value: unknown): boolean {
       || !RISK_LEVEL_VALUES.has(category.riskLevel as RiskLevel)
       || !Number.isFinite(category.weightedContribution)
       || !Array.isArray(category.appliedHardRules)) return false;
+    if (reviewIds && (!scoreRating(category.authorityLikelihood)
+      || !scoreRating(category.authoritySeverity)
+      || !Array.isArray(category.sourceReviewIds) || category.sourceReviewIds.length === 0
+      || new Set(category.sourceReviewIds).size !== category.sourceReviewIds.length
+      || !category.sourceReviewIds.every((reviewId) => safeDocumentId(reviewId) && reviewIds.has(reviewId)))) return false;
     seen.add(category.categoryId);
   }
   return seen.size === expected.size;
@@ -543,8 +648,17 @@ export function isAnalyticsEvent(value: unknown): value is EventRecord & Record<
     && typeof details.venueName === 'string' && details.venueName.trim().length > 0;
 }
 
-function isAnalyticsOverride(value: unknown): value is ResourceOverrideRecord {
-  if (!isRecord(value) || typeof value.baseResourceId !== 'string' || !Number.isFinite(value.overriddenAt)
+export function isAnalyticsOverride(value: unknown): value is ResourceOverrideRecord {
+  if (!isRecord(value)
+    || !safeDocumentId(value.overrideId) || !safeDocumentId(value.eventId)
+    || !safeDocumentId(value.versionId) || !safeDocumentId(value.assessmentId)
+    || !safeDocumentId(value.baseResourceId) || value.resourceId !== value.baseResourceId
+    || !AUTHORITY_VALUES.has(value.authorityType as AuthorityType)
+    || typeof value.reviewerId !== 'string' || value.reviewerId.length === 0
+    || typeof value.rationale !== 'string' || value.rationale.trim().length === 0
+    || typeof value.idempotencyKey !== 'string' || value.idempotencyKey.length === 0
+    || (value.supersedesOverrideId !== undefined && !safeDocumentId(value.supersedesOverrideId))
+    || !Number.isFinite(value.overriddenAt)
     || !isRecord(value.previousQuantities) || !isRecord(value.quantities)) return false;
   const previous = value.previousQuantities;
   const quantities = value.quantities;
@@ -561,6 +675,10 @@ function isAnalyticsIncident(value: unknown): value is Incident {
   return isRecord(value) && typeof value.incidentId === 'string'
     && ['low', 'medium', 'high'].includes(String(value.severity))
     && (value.status === undefined || ['verified', 'under_review', 'rejected'].includes(String(value.status)));
+}
+
+export function selectValidAnalyticsIncidents(values: unknown[]): Incident[] {
+  return values.filter(isAnalyticsIncident);
 }
 
 function isAnalyticsControl(value: unknown): value is EventControl {

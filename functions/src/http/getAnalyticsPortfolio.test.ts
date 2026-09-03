@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { HttpsError } from 'firebase-functions/v2/https';
 import {
   ASSESSMENT_SCHEMA_VERSION,
+  CATEGORY_SCHEMA_VERSION,
+  HARD_RULE_VERSION,
+  OFFICIAL_FORMULA_VERSION,
+  PROVISIONAL_FORMULA_VERSION,
   RESOURCE_KEYS,
   RESOURCE_SCHEMA_VERSION,
   type EventControl,
@@ -10,13 +14,23 @@ import {
   type ResourceOverrideRecord,
   type ResourceRecommendation,
   type RiskAssessment,
+  type Stage1Doc,
   type UserProfile,
 } from '@shared/types';
+import { ACTIVE_CATEGORY_SCHEMA } from '../config/categorySchema';
 import {
   assertAnalyticsAdmin,
+  assessmentMatchesCurrentEvent,
   buildAnalyticsPortfolioRecord,
+  canonicalControlDocument,
+  canonicalEventDocument,
+  canonicalStage1Document,
+  deriveMissingStage1Docs,
   isAnalyticsAssessment,
   isAnalyticsEvent,
+  isAnalyticsOverride,
+  resourceMatchesCurrentEvent,
+  selectValidAnalyticsIncidents,
   validateAnalyticsPortfolioRequest,
 } from './getAnalyticsPortfolio';
 
@@ -34,6 +48,12 @@ describe('Module 5 analytics backend', () => {
     expect(() => validateAnalyticsPortfolioRequest({ from: 20, to: 10 })).toThrow(HttpsError);
     expect(() => validateAnalyticsPortfolioRequest({ limit: 501 })).toThrow(HttpsError);
     expect(() => validateAnalyticsPortfolioRequest({ venueIds: ['../../private'] })).toThrow(HttpsError);
+  });
+
+  it('uses canonical Firestore document IDs instead of mutable stored identity fields', () => {
+    expect(canonicalEventDocument('event-a', { eventId: 'event-b' }).eventId).toBe('event-a');
+    expect(canonicalControlDocument('control-a', { controlId: 'control-b' }).controlId).toBe('control-a');
+    expect(canonicalStage1Document('stage1-a', { docId: 'stage1-b' }).docId).toBe('stage1-a');
   });
 
   it('returns an aggregated PII-safe record with no private notes', () => {
@@ -67,7 +87,8 @@ describe('Module 5 analytics backend', () => {
     });
 
     expect(output.reapplication).toBe(true);
-    expect(output.assessment).toMatchObject({ officialScore: 62, officialRiskLevel: 'Medium', aiStatus: 'success', aiAgreement: true });
+    expect(output.assessment).toMatchObject({ officialScore: 36, officialRiskLevel: 'Medium', aiStatus: 'success', aiAgreement: true });
+    expect(output.assessment?.identifiedHazardCategories).toEqual(['crowd']);
     expect(output.resources?.items.police).toMatchObject({ baseline: 10, effective: 12, overrideCount: 1 });
     expect(output.incidents).toMatchObject({ available: true, total: 1, verified: 1 });
     expect(output.controls).toMatchObject({ available: true, total: 1, approved: 1 });
@@ -92,6 +113,30 @@ describe('Module 5 analytics backend', () => {
     expect(output.synthetic).toBe(true);
   });
 
+  it('distinguishes an authoritative zero-incident result from unavailable incident data', () => {
+    const available = buildAnalyticsPortfolioRecord({
+      event: sampleEvent(), overrides: [], incidents: [], controls: [], stage1Docs: [], decisionHistory: [],
+      incidentCoverageAvailable: true, includeSynthetic: false, sourceCoverage: completeCoverage(),
+    });
+    expect(available.incidents).toMatchObject({ available: true, total: 0 });
+
+    const unavailable = buildAnalyticsPortfolioRecord({
+      event: sampleEvent(), overrides: [], incidents: [], controls: [], stage1Docs: [], decisionHistory: [],
+      incidentCoverageAvailable: false, includeSynthetic: false,
+      sourceCoverage: { ...completeCoverage(), incidents: 'unavailable' },
+    });
+    expect(unavailable.incidents).toMatchObject({ available: false, total: 0 });
+  });
+
+  it('retains valid incident history across application versions of the same event', () => {
+    const incidents = selectValidAnalyticsIncidents([
+      { incidentId: 'incident-v1', eventId: 'event-1', eventVersionId: 'v1', severity: 'low', status: 'verified' },
+      { incidentId: 'incident-v2', eventId: 'event-1', eventVersionId: 'v2', severity: 'medium', status: 'under_review' },
+      { incidentId: 'broken', eventId: 'event-1', severity: 'critical' },
+    ]);
+    expect(incidents.map((incident) => incident.incidentId)).toEqual(['incident-v1', 'incident-v2']);
+  });
+
   it('never labels a provisional result as official analytics', () => {
     const provisional = sampleAssessment() as RiskAssessment & { status: 'provisional_ready'; officialResult?: never };
     delete (provisional as unknown as Record<string, unknown>).officialResult;
@@ -109,7 +154,41 @@ describe('Module 5 analytics backend', () => {
     expect(isAnalyticsAssessment(valid)).toBe(true);
     expect(isAnalyticsAssessment({ ...valid, officialResult: { overallScore: Number.NaN, categories: [] } })).toBe(false);
     expect(isAnalyticsAssessment({ ...valid, officialResult: { ...(valid as never as { officialResult: object }).officialResult, categories: [] } })).toBe(false);
+    expect(isAnalyticsAssessment({ ...valid, sourceKind: 'admin_manual' })).toBe(false);
+    expect(isAnalyticsAssessment({
+      ...valid,
+      officialResult: { ...(valid as never as { officialResult: object }).officialResult, sourceKind: 'unexpected' },
+    })).toBe(false);
     expect(isAnalyticsAssessment({ ...valid, contextEvidence: {} })).toBe(false);
+    const badOverall = structuredClone(valid) as unknown as { officialResult: { overallScore: number } };
+    badOverall.officialResult.overallScore = 99;
+    expect(isAnalyticsAssessment(badOverall)).toBe(false);
+    const proposalMismatch = structuredClone(valid) as unknown as { aiProposal: { categories: Array<{ likelihood: number }> } };
+    proposalMismatch.aiProposal.categories[0].likelihood = 4;
+    expect(isAnalyticsAssessment(proposalMismatch)).toBe(false);
+  });
+
+  it('rejects quantities-shaped overrides that omit current binding identity', () => {
+    expect(isAnalyticsOverride(sampleOverride())).toBe(true);
+    const missingEventBinding = { ...sampleOverride() } as Partial<ResourceOverrideRecord>;
+    delete missingEventBinding.eventId;
+    expect(isAnalyticsOverride(missingEventBinding)).toBe(false);
+    expect(isAnalyticsOverride({ ...sampleOverride(), resourceId: 'different-resource' })).toBe(false);
+  });
+
+  it('accepts assessment and resource documents only from the current event generation', () => {
+    const event = sampleEvent();
+    const assessment = sampleAssessment();
+    const resource = sampleResource();
+    expect(assessmentMatchesCurrentEvent(assessment, event)).toBe(true);
+    expect(resourceMatchesCurrentEvent(resource, event)).toBe(true);
+    expect(assessmentMatchesCurrentEvent({ ...assessment, assessmentId: 'stale' }, event)).toBe(false);
+    expect(assessmentMatchesCurrentEvent({ ...assessment, eventId: 'other-event' }, event)).toBe(false);
+    expect(assessmentMatchesCurrentEvent({ ...assessment, versionId: 'v1' }, event)).toBe(false);
+    expect(resourceMatchesCurrentEvent({ ...resource, resourceId: 'stale' }, event)).toBe(false);
+    expect(resourceMatchesCurrentEvent({ ...resource, eventId: 'other-event' }, event)).toBe(false);
+    expect(resourceMatchesCurrentEvent({ ...resource, versionId: 'v1' }, event)).toBe(false);
+    expect(resourceMatchesCurrentEvent({ ...resource, assessmentId: 'stale' }, event)).toBe(false);
   });
 
   it('uses immutable review timestamps and refuses negative lifecycle durations', () => {
@@ -145,6 +224,16 @@ describe('Module 5 analytics backend', () => {
     expect(JSON.stringify(output)).not.toContain('PRIVATE OVERRIDE RATIONALE');
   });
 
+  it('does not fabricate an effective quantity when override history is unavailable', () => {
+    const output = buildAnalyticsPortfolioRecord({
+      event: sampleEvent(), resource: sampleResource(), overrides: [], incidents: [], controls: [], stage1Docs: [],
+      decisionHistory: [], incidentCoverageAvailable: true, includeSynthetic: false,
+      sourceCoverage: { ...completeCoverage(), overrides: 'unavailable' },
+    });
+    expect(output.resources?.items.police).toMatchObject({ baseline: 10 });
+    expect(output.resources?.items.police).not.toHaveProperty('effective');
+  });
+
   it('represents missing required Stage 1 uploads only when authoritative coverage is supplied', () => {
     const control: EventControl = {
       controlId: 'control-1', eventId: 'event-1', versionId: 'v2', controlName: 'Licence check', authority: 'DBKL',
@@ -164,6 +253,46 @@ describe('Module 5 analytics backend', () => {
       incidentCoverageAvailable: false, includeSynthetic: false, sourceCoverage: unavailableCoverage,
     });
     expect(unavailable.controls.stage1).toMatchObject({ available: false, total: 0 });
+  });
+
+  it('does not report an unsubmitted optional Stage 1 requirement as pending', () => {
+    const control: EventControl = {
+      controlId: 'control-1', eventId: 'event-1', versionId: 'v2', controlName: 'Licence check', authority: 'DBKL',
+      stageRequirement: 'stage1_only',
+      stage1Requirements: [
+        { docType: 'license', label: 'Required licence', required: true },
+        { docType: 'other', label: 'Optional note', required: false },
+      ],
+      stage2Requirement: null, controlItemVersion: 1, label: 'pending', createdAt: 1, updatedAt: 2,
+    };
+    expect(deriveMissingStage1Docs(control, [])).toEqual([{
+      docId: 'pending-control-1-0',
+      docType: 'license',
+      label: 'Required licence',
+      status: 'pending_submission',
+    }]);
+  });
+
+  it('does not duplicate a submitted Stage 1 document whose embedded ID is stale', () => {
+    const control: EventControl = {
+      controlId: 'control-1', eventId: 'event-1', versionId: 'v2', controlName: 'Licence check', authority: 'DBKL',
+      stageRequirement: 'stage1_only', stage1Requirements: [{ docType: 'license', label: 'Current licence', required: true }],
+      stage2Requirement: null, controlItemVersion: 1, label: 'pending', createdAt: 1, updatedAt: 2,
+    };
+    const canonical = canonicalStage1Document('stage1-canonical', {
+      docId: 'stale-id', docType: 'license', label: 'Current licence', status: 'verified',
+    }) as Stage1Doc;
+    expect(deriveMissingStage1Docs(control, [canonical])).toEqual([]);
+  });
+
+  it('does not present Stage 1 zeroes as authoritative when current controls are malformed', () => {
+    const output = buildAnalyticsPortfolioRecord({
+      event: sampleEvent(), overrides: [], incidents: [], controls: [], stage1Docs: [], decisionHistory: [],
+      incidentCoverageAvailable: true, includeSynthetic: false,
+      sourceCoverage: { ...completeCoverage(), controls: 'unavailable' },
+    });
+    expect(output.controls.available).toBe(false);
+    expect(output.controls.stage1.available).toBe(false);
   });
 
   it('skips malformed source events without crashing a portfolio report', () => {
@@ -192,18 +321,32 @@ function sampleEvent(): EventRecord & Record<string, unknown> {
 }
 
 function sampleAssessment(): RiskAssessment {
-  const categoryIds = ['crowd', 'venue_fire', 'weather_environment', 'public_health', 'food_water_sanitation', 'medical_capacity', 'security_cbrn', 'transport_accessibility'];
+  const hazard = { hazardId: 'hazard-1', hazardName: 'Crowd pressure', categoryId: 'crowd' as const, evidenceReferences: ['crowd' as const], rationale: 'Recorded crowd risk.' };
+  const proposalCategories = ACTIVE_CATEGORY_SCHEMA.categories.map((category) => ({
+    categoryId: category.id, likelihood: 3 as const, severity: 3 as const, evidenceReferences: ['crowd' as const],
+    rationale: `Assessment rationale for ${category.name}.`, confidence: 'high' as const, concerns: [], missingInformation: [],
+  }));
   return {
     assessmentId: 'assessment-1', eventId: 'event-1', versionId: 'v2', schemaVersion: ASSESSMENT_SCHEMA_VERSION,
     status: 'official_ready', assessmentReadiness: 'complete', complianceStatus: 'pass', dataConfidenceScore: 0.9,
-    dataConfidenceLevel: 'high', contextEvidence: [{ synthetic: false }], aiProposal: { status: 'success' },
+    dataConfidenceLevel: 'high', contextEvidence: [{ synthetic: false }],
+    aiProposal: {
+      status: 'success', proposalId: 'proposal-1', model: 'test-model', promptVersion: 'test-prompt',
+      responseSchemaVersion: 'test-schema', hazards: [hazard], categories: proposalCategories,
+      cacheStatus: 'miss', generatedAt: 3,
+    },
     officialResult: {
-      overallScore: 62, overallRiskLevel: 'Medium', categorySchemaVersion: 'categories-v1', formulaVersion: 'formula-v1',
-      weightedRiskLevel: 'Medium', highestCategoryRiskLevel: 'Medium', officialInputHash: 'official-input-hash',
-      finalizedAt: 4, finalizedBy: 'admin-1', reviewIds: ['review-1'],
-      hardRuleVersion: 'hard-v1', categories: categoryIds.map((categoryId) => ({ categoryId, normalizedScore: 62, proposedLikelihood: 3,
-        proposedSeverity: 3, validatedLikelihood: 3, validatedSeverity: 3, riskLevel: 'Medium', weightedContribution: 7.75,
-        appliedHardRules: [] })),
+      proposalId: 'proposal-1', validatedHazards: [hazard], overallScore: 36, overallRiskLevel: 'Medium', categorySchemaVersion: CATEGORY_SCHEMA_VERSION, formulaVersion: PROVISIONAL_FORMULA_VERSION,
+      weightedRiskLevel: 'Low', highestCategoryRiskLevel: 'Medium', officialInputHash: 'a'.repeat(64),
+      officialFormulaVersion: OFFICIAL_FORMULA_VERSION, calculatedAt: 4,
+      finalizedAt: 4, finalizedBy: 'admin-1', reviewIds: ['review-1'], hardRuleVersion: HARD_RULE_VERSION,
+      categories: ACTIVE_CATEGORY_SCHEMA.categories.map((category) => ({
+        categoryId: category.id, categoryName: category.name, normalizedScore: 36, matrixScore: 9, weight: category.weight,
+        proposedLikelihood: 3, proposedSeverity: 3, authorityLikelihood: 3, authoritySeverity: 3, sourceReviewIds: ['review-1'],
+        validatedLikelihood: 3, validatedSeverity: 3, riskLevel: 'Medium', weightedContribution: 4.5,
+        evidenceReferences: ['crowd'], rationale: `Assessment rationale for ${category.name}.`, confidence: 'high',
+        concerns: [], missingInformation: [], appliedHardRules: [], guidelineChecks: [...category.guidelineChecks],
+      })),
     },
   } as unknown as RiskAssessment;
 }

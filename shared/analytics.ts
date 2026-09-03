@@ -43,6 +43,7 @@ export interface AnalyticsAssessmentSummary {
   compliance: ComplianceStatus;
   confidence: ConfidenceLevel;
   dominantHazard?: HazardDomain;
+  identifiedHazardCategories: HazardDomain[];
   schemaVersion: string;
   categorySchemaVersion?: string;
   formulaVersion?: string;
@@ -57,7 +58,7 @@ export interface AnalyticsResourceItemSummary {
   baseline: number;
   minimum: number;
   maximum: number;
-  effective: number;
+  effective?: number;
   overrideCount: number;
 }
 
