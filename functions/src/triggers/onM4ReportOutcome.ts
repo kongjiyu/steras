@@ -78,7 +78,15 @@ export async function applyM4ReportOutcome(
     const event = eventSnap.data() as EventRecord;
     const control = controlSnap.data() as EventControl;
     const stage2 = stage2Snap.data() as Stage2Doc;
-    const versionId = event.currentVersionId ?? control.versionId ?? 'v1';
+    if (!isCurrentM4ReportBinding(report, event, control, stage2)) {
+      logger.warn('[onM4ReportOutcome] stale or mismatched report binding', {
+        ticketId: report.ticketId,
+        eventId: report.eventId,
+        controlId: report.controlId,
+      });
+      return null;
+    }
+    const versionId = report.versionId;
     const auditAction = outcome === 'confirmed_true' ? 'control_resubmit_required' : 'control_restored';
 
     if (outcome === 'confirmed_true') {
@@ -191,4 +199,16 @@ export async function applyM4ReportOutcome(
   }));
 
   return { eventId: result.eventId, controlId: result.controlId, outcome };
+}
+
+export function isCurrentM4ReportBinding(
+  report: PublicReport,
+  event: EventRecord,
+  control: EventControl,
+  stage2: Stage2Doc,
+): boolean {
+  return event.status === 'Approved' && event.currentVersionId === report.versionId
+    && control.controlId === report.controlId && control.eventId === report.eventId
+    && control.versionId === report.versionId && stage2.docId === report.docId
+    && stage2.m4TicketId === report.ticketId && stage2.publishedAt === report.stage2PublishedAt;
 }

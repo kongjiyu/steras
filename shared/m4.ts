@@ -28,6 +28,7 @@ export interface M4IncidentRecord {
   publicReportTicketId?: string; finalResolution?: string; discrepancyOutcome?: 'confirmed_true' | 'dismissed_fake';
   recommendedAuthorityIds?: string[]; assignedAuthorityOfficerUid?: string;
   assessmentEligible: boolean; synthetic: false; date: number; createdAt: number; updatedAt: number; resolvedAt?: number;
+  activityClosed?: boolean; closureReason?: 'event_withdrawn'; closedAt?: number;
 }
 
 export interface M4AuthorityDirectoryEntry {

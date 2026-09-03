@@ -3,7 +3,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { firestore } from 'firebase-admin';
 import { getStorage } from 'firebase-admin/storage';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
-import { COLLECTIONS, type EventRecord, type OfficerProfile, type UserProfile } from '@shared/types';
+import { COLLECTIONS, type EventRecord, type OfficerProfile, type PublicReport, type UserProfile } from '@shared/types';
 import {
   INCIDENT_CATEGORIES, M4_AI_PROMPT_VERSION, M4_EVIDENCE_MAX_BYTES, M4_SCHEMA_VERSION,
   type M4AIAssessment, type M4AuthorityDirectoryEntry, type M4EvidenceRef,
@@ -26,7 +26,7 @@ export const submitIncident = onCall({ region: FUNCTION_REGION, timeoutSeconds: 
   if (!eventSnap.exists) throw new HttpsError('not-found', 'Event not found.');
   const event = eventSnap.data() as EventRecord;
   assertReportableEvent(event, Date.now());
-  if (input.occurredAt < event.eventDetails.startDatetime || input.occurredAt > event.eventDetails.endDatetime + 300_000) {
+  if (input.occurredAt < event.eventDetails.startDatetime || input.occurredAt > event.eventDetails.endDatetime) {
     throw new HttpsError('invalid-argument', 'Occurrence time must fall within the selected event.');
   }
   if (input.linkedControlId) {
@@ -156,6 +156,13 @@ export const manageIncident = onCall({ region: FUNCTION_REGION }, async (request
       return;
     }
     const record = snap.data() as M4IncidentRecord;
+    const currentEventSnap = await tx.get(db.collection(COLLECTIONS.EVENTS).doc(record.eventId));
+    const currentEvent = currentEventSnap.data() as EventRecord | undefined;
+    if (!currentEventSnap.exists || currentEvent?.status !== 'Approved'
+      || (currentEvent.currentVersionId ?? `v${currentEvent.currentVersionNumber}`) !== record.eventVersionId
+      || record.activityClosed === true) {
+      throw new HttpsError('failed-precondition', 'Incident activity is closed because the event is no longer active.');
+    }
     if (record.status === 'resolved') throw new HttpsError('failed-precondition', 'Resolved incidents are immutable.');
     const evidence = actionEvidence;
     let patch: Partial<M4IncidentRecord> = { updatedAt: now };
@@ -198,11 +205,22 @@ export const manageIncident = onCall({ region: FUNCTION_REGION }, async (request
       if (record.linkedControlId && input.discrepancyOutcome !== 'confirmed_true' && input.discrepancyOutcome !== 'dismissed_fake') throw new HttpsError('invalid-argument', 'Event Control discrepancy outcome is required.');
       assertResolutionReady(record);
       const discrepancyOutcome = input.discrepancyOutcome as 'confirmed_true' | 'dismissed_fake' | undefined;
+      let publicReportRef: FirebaseFirestore.DocumentReference | undefined;
+      if (record.publicReportTicketId) {
+        publicReportRef = db.collection(COLLECTIONS.PUBLIC_REPORTS).doc(record.publicReportTicketId);
+        const publicReport = (await tx.get(publicReportRef)).data() as PublicReport | undefined;
+        if (!publicReport || publicReport.ticketId !== record.publicReportTicketId
+          || publicReport.eventId !== record.eventId || publicReport.versionId !== record.eventVersionId
+          || publicReport.controlId !== record.linkedControlId || publicReport.docId !== record.linkedStage2DocId
+          || (publicReport.outcome !== undefined && publicReport.outcome !== 'under_review')) {
+          throw new HttpsError('failed-precondition', 'The linked Event Control report is missing, stale, or already resolved.');
+        }
+      }
       patch = { ...patch, severity, status: 'resolved', finalResolution: resolution,
         assessmentEligible: record.linkedControlId ? discrepancyOutcome === 'confirmed_true' : true, resolvedAt: now,
         ...(record.linkedControlId ? { discrepancyOutcome: discrepancyOutcome! } : {}) };
       summary = `Final resolution: ${resolution}`;
-      if (record.publicReportTicketId) tx.update(db.collection(COLLECTIONS.PUBLIC_REPORTS).doc(record.publicReportTicketId), { outcome: input.discrepancyOutcome, outcomeSetAt: now, outcomeSetBy: uid, updatedAt: now });
+      if (publicReportRef) tx.update(publicReportRef, { outcome: input.discrepancyOutcome, outcomeSetAt: now, outcomeSetBy: uid, updatedAt: now });
       notify = { uid: record.reporterUid, record, summary: 'Your incident report has been resolved.' };
     } else throw new HttpsError('invalid-argument', 'Unsupported incident action.');
     tx.update(ref, patch);
@@ -262,7 +280,7 @@ export const saveAuthorityDirectoryEntry = onCall({ region: FUNCTION_REGION }, a
 async function requireProfile(uid?: string) { if (!uid) throw new HttpsError('unauthenticated', 'Sign in required.'); const snap = await firestore().collection(COLLECTIONS.USERS).doc(uid).get(); const profile = snap.data() as UserProfile | undefined; if (!profile) throw new HttpsError('permission-denied', 'Registered profile required.'); return { uid, profile }; }
 export function validateSubmission(value: unknown) { const v = value as Record<string, unknown>; const category = String(v?.category ?? '') as M4IncidentCategory; if (!INCIDENT_CATEGORIES.includes(category)) throw new HttpsError('invalid-argument', 'Invalid incident category.'); const occurredAt = Number(v.occurredAt); if (!Number.isFinite(occurredAt) || occurredAt <= 0 || occurredAt > Date.now() + 300_000) throw new HttpsError('invalid-argument', 'Invalid occurrence time.'); return { eventId: identifier(v.eventId, 'eventId'), category, description: text(v.description, 'description', 20, 2000), location: text(v.location, 'location', 3, 300), occurredAt, idempotencyKey: identifier(v.idempotencyKey, 'idempotencyKey'), evidencePaths: Array.isArray(v.evidencePaths) ? v.evidencePaths.map(String) : [], linkedControlId: v.linkedControlId ? identifier(v.linkedControlId, 'linkedControlId') : undefined, linkedStage2DocId: v.linkedStage2DocId ? identifier(v.linkedStage2DocId, 'linkedStage2DocId') : undefined }; }
 export function assertReportableEvent(event: EventRecord, now: number) { if (event.status !== 'Approved' || event.eventDetails.startDatetime > now || event.eventDetails.endDatetime < now - 7 * DAY) throw new HttpsError('failed-precondition', 'Incidents may only be reported for ongoing events or events completed within seven days.'); }
-export function assertSubmissionGeneration(event: EventRecord, capturedVersionId: string, input: Pick<ReturnType<typeof validateSubmission>, 'occurredAt'>, now: number) { assertReportableEvent(event, now); if ((event.currentVersionId ?? `v${event.currentVersionNumber}`) !== capturedVersionId) throw new HttpsError('aborted', 'Event generation changed while the incident was being assessed.'); if (input.occurredAt < event.eventDetails.startDatetime || input.occurredAt > event.eventDetails.endDatetime + 300_000) throw new HttpsError('failed-precondition', 'Occurrence is no longer valid for the current event generation.'); }
+export function assertSubmissionGeneration(event: EventRecord, capturedVersionId: string, input: Pick<ReturnType<typeof validateSubmission>, 'occurredAt'>, now: number) { assertReportableEvent(event, now); if ((event.currentVersionId ?? `v${event.currentVersionNumber}`) !== capturedVersionId) throw new HttpsError('aborted', 'Event generation changed while the incident was being assessed.'); if (input.occurredAt < event.eventDetails.startDatetime || input.occurredAt > event.eventDetails.endDatetime) throw new HttpsError('failed-precondition', 'Occurrence is no longer valid for the current event generation.'); }
 async function validateEvidence(uid: string, paths: string[]): Promise<M4EvidenceRef[]> { if (paths.length > 10 || new Set(paths).size !== paths.length) throw new HttpsError('invalid-argument', 'Up to 10 unique evidence files are allowed.'); return Promise.all(paths.map(async (path) => { assertEvidencePath(uid, path); const [metadata] = await getStorage().bucket().file(path).getMetadata(); const size = Number(metadata.size); const mimeType = metadata.contentType ?? ''; if (!Number.isFinite(size) || size <= 0 || size > M4_EVIDENCE_MAX_BYTES || !ALLOWED_EVIDENCE.has(mimeType)) throw new HttpsError('failed-precondition', 'Evidence metadata is invalid.'); return { path, name: path.split('/').pop()!, mimeType, size, uploadedBy: uid, uploadedAt: Date.parse(metadata.timeCreated ?? '') || Date.now() }; })); }
 export async function assessIncident(input: Pick<ReturnType<typeof validateSubmission>, 'category' | 'description' | 'location' | 'occurredAt'> & { evidence: M4EvidenceRef[] }, event: EventRecord): Promise<M4AIAssessment> { const now = Date.now(); const key = process.env.MINIMAX_API_KEY ?? ''; if (!key) return { status: 'unavailable', promptVersion: M4_AI_PROMPT_VERSION, reason: 'MiniMax is not configured.', assessedAt: now }; try { const client = new Anthropic({ apiKey: key, baseURL: process.env.MINIMAX_BASE_URL ?? DEFAULT_MINIMAX_BASE_URL, timeout: 20_000, maxRetries: 0 }); const response = await client.messages.create({ model: process.env.MINIMAX_MODEL ?? DEFAULT_MINIMAX_MODEL, max_tokens: 300, temperature: 0, system: 'Return strict JSON only: {"severity":"low|medium|high","immediateActionRequired":boolean,"rationale":string}. Do not invent facts.', messages: [{ role: 'user', content: JSON.stringify(buildIncidentAiPayload(input, event)) }] }); const raw = response.content.filter((block): block is Anthropic.TextBlock => block.type === 'text').map((block) => block.text).join(''); const parsed = JSON.parse(raw) as Record<string, unknown>; if (!['low', 'medium', 'high'].includes(String(parsed.severity)) || typeof parsed.immediateActionRequired !== 'boolean' || typeof parsed.rationale !== 'string' || parsed.rationale.length < 10) throw new Error('Invalid response'); return { status: 'success', model: process.env.MINIMAX_MODEL ?? DEFAULT_MINIMAX_MODEL, promptVersion: M4_AI_PROMPT_VERSION, severity: parsed.severity as M4IncidentSeverity, immediateActionRequired: parsed.immediateActionRequired, rationale: parsed.rationale.slice(0, 1000), assessedAt: now }; } catch (error) { return { status: 'invalid', promptVersion: M4_AI_PROMPT_VERSION, reason: error instanceof Error ? error.message.slice(0, 300) : 'Invalid AI response.', assessedAt: now }; } }
 function appendHistory(tx: FirebaseFirestore.Transaction, ref: FirebaseFirestore.DocumentReference, incidentId: string, actorUid: string, actorRole: UserProfile['role'] | 'system', action: string, summary: string, evidence: M4EvidenceRef[], timestamp: number, dedupe?: { historyId: string; idempotencyKey: string; requestHash: string }) { const historyId = dedupe?.historyId ?? createHash('sha256').update(`${incidentId}:${action}:${actorUid}:${timestamp}`).digest('hex').slice(0, 24); const entry: M4IncidentHistoryEntry = { historyId, incidentId, action, actorUid, actorRole, timestamp, summary, evidence, ...(dedupe ? { idempotencyKey: dedupe.idempotencyKey, requestHash: dedupe.requestHash } : {}) }; tx.create(ref.collection(HISTORY).doc(historyId), entry); }
@@ -273,6 +291,7 @@ export function safeIncident(record: M4IncidentRecord, role: UserProfile['role']
     category, incidentType, description, location, occurredAt, evidence, aiAssessment, severity,
     immediateActionRequired, status, linkedControlId, linkedStage2DocId, publicReportTicketId,
     finalResolution, discrepancyOutcome, assessmentEligible, synthetic, date, createdAt, updatedAt, resolvedAt,
+    activityClosed, closureReason, closedAt,
   } = record;
   return {
     schemaVersion, incidentId, eventId, eventVersionId, eventType, eventName, reporterUid, reporterRole,
@@ -286,6 +305,7 @@ export function safeIncident(record: M4IncidentRecord, role: UserProfile['role']
     ...(finalResolution ? { finalResolution } : {}),
     ...(discrepancyOutcome ? { discrepancyOutcome } : {}),
     ...(resolvedAt ? { resolvedAt } : {}),
+    ...(activityClosed ? { activityClosed, closureReason, closedAt } : {}),
   };
 }
 function identifier(value: unknown, field: string) { const result = String(value ?? '').trim(); if (!/^[A-Za-z0-9_-]{8,128}$/.test(result)) throw new HttpsError('invalid-argument', `${field} is invalid.`); return result; }
@@ -300,6 +320,7 @@ export function sameSubmission(record: M4IncidentRecord, uid: string, input: Ret
 }
 export function assertEvidencePath(uid: string, path: string) { if (!new RegExp(`^incident_evidence/${uid}/[A-Za-z0-9._-]{1,200}$`).test(path)) throw new HttpsError('invalid-argument', 'Invalid evidence path.'); }
 export function canPerformIncidentAction(record: M4IncidentRecord, profile: UserProfile, uid: string, action: string) {
+  if (record.activityClosed === true) return false;
   const organizer = profile.role === 'organizer' && record.organizerId === uid;
   if (action === 'assign_internal' || action === 'refer_authority') return organizer && ['submitted', 'manual_review_required', 'organizer_review'].includes(record.status);
   if (action === 'record_response') return organizer && !record.referredAuthorityId && ['submitted', 'manual_review_required', 'organizer_review', 'responding'].includes(record.status);

@@ -47,7 +47,17 @@ export const onPublicReportCreated = onDocumentCreated(
     };
     const incidentRef = db.collection(COLLECTIONS.INCIDENTS).doc(incidentId);
     await db.runTransaction(async (tx) => {
-      if ((await tx.get(incidentRef)).exists) return;
+      const [existingIncident, currentEventSnap, currentVersionSnap] = await Promise.all([
+        tx.get(incidentRef),
+        tx.get(db.collection(COLLECTIONS.EVENTS).doc(report.eventId)),
+        tx.get(db.collection(COLLECTIONS.EVENTS).doc(report.eventId).collection(COLLECTIONS.VERSIONS).doc(report.versionId)),
+      ]);
+      if (existingIncident.exists) return;
+      const currentEvent = currentEventSnap.data() as EventRecord | undefined;
+      const currentVersion = currentVersionSnap.data() as EventVersion | undefined;
+      if (!currentEventSnap.exists || !currentVersionSnap.exists
+        || currentEvent?.status !== 'Approved' || currentEvent.currentVersionId !== report.versionId
+        || currentVersion?.eventId !== report.eventId || currentVersion.versionId !== report.versionId) return;
       const history: M4IncidentHistoryEntry = {
         historyId: `${incidentId}_submitted`, incidentId, action: 'incident_submitted', actorUid: report.reporterUid,
         actorRole: reporter.role, timestamp: now, summary: 'Event Control discrepancy report submitted.', evidence: [],

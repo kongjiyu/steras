@@ -10,6 +10,7 @@ import { firestore } from 'firebase-admin';
 import { logger } from 'firebase-functions/logger';
 import { onDocumentUpdated } from 'firebase-functions/v2/firestore';
 import { COLLECTIONS, EventControl, EventRecord, Stage2Doc } from '@shared/types';
+import { M4_SCHEMA_VERSION, type M4IncidentHistoryEntry, type M4IncidentRecord } from '@shared/m4';
 import { FUNCTION_REGION } from '../config/runtime';
 
 export const onEventStatusChanged = onDocumentUpdated(
@@ -25,11 +26,12 @@ export const onEventStatusChanged = onDocumentUpdated(
 export async function cleanupWithdrawnEvent(eventId: string, now = Date.now()): Promise<void> {
   const db = firestore();
   const eventRef = db.collection(COLLECTIONS.EVENTS).doc(eventId);
-  const [eventSnap, controlsSnap, assignmentsSnap, publicItemsSnap] = await Promise.all([
+  const [eventSnap, controlsSnap, assignmentsSnap, publicItemsSnap, incidentsSnap] = await Promise.all([
     eventRef.get(),
     eventRef.collection(COLLECTIONS.EVENT_CONTROLS).get(),
     eventRef.collection(COLLECTIONS.ASSIGNMENTS).get(),
     db.collection(COLLECTIONS.PUBLIC_EVENT_CONTROLS).doc(eventId).collection(COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS).get(),
+    db.collection(COLLECTIONS.INCIDENTS).where('eventId', '==', eventId).get(),
   ]);
   if (!eventSnap.exists) return;
   const event = eventSnap.data() as EventRecord;
@@ -67,6 +69,28 @@ export async function cleanupWithdrawnEvent(eventId: string, now = Date.now()): 
     }
   }
   for (const publicItem of publicItemsSnap.docs) operations.push((batch) => batch.delete(publicItem.ref));
+  for (const incidentDocument of incidentsSnap.docs) {
+    const incident = incidentDocument.data() as M4IncidentRecord;
+    if (incident.schemaVersion !== M4_SCHEMA_VERSION || incident.status === 'resolved' || incident.activityClosed === true) continue;
+    const historyId = `${incidentDocument.id}_event_withdrawn`;
+    const history: M4IncidentHistoryEntry = {
+      historyId,
+      incidentId: incidentDocument.id,
+      action: 'event_withdrawn',
+      actorUid: 'system',
+      actorRole: 'system',
+      timestamp: now,
+      summary: 'Incident activity closed because the associated event was withdrawn.',
+      evidence: [],
+    };
+    operations.push((batch) => batch.set(incidentDocument.ref, {
+      activityClosed: true,
+      closureReason: 'event_withdrawn',
+      closedAt: now,
+      updatedAt: now,
+    }, { merge: true }));
+    operations.push((batch) => batch.set(incidentDocument.ref.collection('history').doc(historyId), history, { merge: false }));
+  }
 
   for (let index = 0; index < operations.length; index += 400) {
     const batch = db.batch();
@@ -96,7 +120,15 @@ export async function cleanupWithdrawnEvent(eventId: string, now = Date.now()): 
       previousStatus: event.withdrawnFromStatus ?? event.status,
       newStatus: 'Withdrawn',
       notes: 'Closed pending assignments and unpublished event-control projections after withdrawal.',
-      metadata: { assignmentsClosed: assignmentsSnap.size, controlsClosed: controlsSnap.size, publicItemsRemoved: publicItemsSnap.size },
+      metadata: {
+        assignmentsClosed: assignmentsSnap.size,
+        controlsClosed: controlsSnap.size,
+        publicItemsRemoved: publicItemsSnap.size,
+        incidentsClosed: incidentsSnap.docs.filter((document) => {
+          const incident = document.data() as M4IncidentRecord;
+          return incident.schemaVersion === M4_SCHEMA_VERSION && incident.status !== 'resolved' && incident.activityClosed !== true;
+        }).length,
+      },
     }, { merge: true });
   });
   logger.info('[onEventStatusChanged] withdrawal cleanup complete', { eventId, assignments: assignmentsSnap.size, controls: controlsSnap.size });

@@ -32,6 +32,7 @@ import {
   RESOURCE_CONFIG_VERSION, RESOURCE_FORMULA_VERSION, RESOURCE_KEYS, RESOURCE_SCHEMA_VERSION, RESOURCE_SOURCE_REGISTRY_VERSION,
 } from '@shared/types';
 import { ACTIVE_CATEGORY_SCHEMA } from '../src/config/categorySchema';
+import { M4_SCHEMA_VERSION } from '@shared/m4';
 import { computeResources } from '../src/engines/resourceCalculator';
 import { buildAuthorityReviewState, buildOfficialAssessmentResult } from '../src/engines/authorityFinalisation';
 import { m1EvidenceRequirementsFor } from '@shared/m1EvidenceContract';
@@ -345,11 +346,20 @@ describe('Firestore security rules', () => {
     await adminDb.doc('events/withdraw-1').set({ ...base, status: 'Approved', reviewStage: 'closed' });
     await adminDb.doc('events/withdraw-1/versions/v1').set({ eventId: 'withdraw-1', versionId: 'v1', versionNumber: 1 });
     await adminDb.doc('public_events/withdraw-1').set({ eventName: 'Public event' });
+    await adminDb.doc('incidents/withdraw-incident').set({
+      schemaVersion: M4_SCHEMA_VERSION, incidentId: 'withdraw-incident', eventId: 'withdraw-1',
+      eventVersionId: 'v1', status: 'responding', activityClosed: false,
+    });
     await withdrawEventForUser('organizer-1', 'withdraw-1', 'The venue is no longer available.', 40);
     expect((await adminDb.doc('events/withdraw-1').get()).data()).toMatchObject({
       status: 'Withdrawn', withdrawnAt: 40, withdrawnFromStatus: 'Approved', withdrawalRationale: 'The venue is no longer available.',
     });
     expect((await adminDb.doc('public_events/withdraw-1').get()).exists).toBe(false);
+    expect((await adminDb.doc('incidents/withdraw-incident').get()).data()).toMatchObject({
+      status: 'responding', activityClosed: true, closureReason: 'event_withdrawn', closedAt: 40,
+    });
+    expect((await adminDb.doc('incidents/withdraw-incident/history/withdraw-incident_event_withdrawn').get()).data())
+      .toMatchObject({ action: 'event_withdrawn', actorRole: 'system', timestamp: 40 });
     await adminDb.doc('events/withdraw-missing-history').set({ ...base, status: 'Approved', reviewStage: 'closed' });
     await expect(withdrawEventForUser('organizer-1', 'withdraw-missing-history', 'The venue is no longer available.', 41))
       .rejects.toThrow('immutable submitted application version');

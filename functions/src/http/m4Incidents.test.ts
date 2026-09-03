@@ -108,6 +108,7 @@ describe('M4 incident input boundary', () => {
     expect(canPerformIncidentAction({ ...record, status: 'awaiting_resolution' }, authority, 'pdrm-1', 'record_investigation')).toBe(false);
     expect(canPerformIncidentAction(record, authority, 'pdrm-2', 'record_investigation')).toBe(false);
     expect(canPerformIncidentAction(record, { role: 'authority', authorityType: 'BOMBA' } as typeof authority, 'pdrm-1', 'record_investigation')).toBe(false);
+    expect(canPerformIncidentAction({ ...record, activityClosed: true }, authority, 'pdrm-1', 'record_investigation')).toBe(false);
   });
 
   it('prevents early closure before a completed response or investigation', () => {
