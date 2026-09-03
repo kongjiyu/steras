@@ -26,10 +26,10 @@ import EventDetail from './pages/organizer/EventDetail';
 import AuthorityDashboard from './pages/authority/AuthorityDashboard';
 import ReviewQueue from './pages/authority/ReviewQueue';
 import AuthorityEventReview from './pages/authority/AuthorityEventReview';
-import Analytics from './pages/authority/Analytics';
 import RiskAssessments from './pages/authority/RiskAssessments';
 import ResourceRecommendations from './pages/authority/ResourceRecommendations';
 import DashboardPreview from './pages/DashboardPreview';
+import IncidentReportingPrototype from './pages/IncidentReportingPrototype';
 
 // Admin pages
 import AdminLayout from './components/layout/AdminLayout';
@@ -64,6 +64,9 @@ export default function App() {
       {/* No-auth preview of the Authority Dashboard — for design review */}
       <Route path="/dashboard-preview" element={<DashboardPreview />} />
 
+      {/* No-auth preview of the M4 incident reporting workflow */}
+      <Route path="/incident-preview" element={<IncidentReportingPrototype />} />
+
       {/* Organizer routes (auth + role=organizer) */}
       <Route
         element={
@@ -93,7 +96,8 @@ export default function App() {
         <Route path="/authority/applications" element={<ReviewQueue />} />
         <Route path="/authority/risk" element={<RiskAssessments />} />
         <Route path="/authority/resources" element={<ResourceRecommendations />} />
-        <Route path="/authority/reports" element={<Analytics />} />
+        {/* M5 is Admin-only. Keep the legacy authority URL inside its own workspace. */}
+        <Route path="/authority/reports" element={<Navigate to="/authority" replace />} />
         <Route path="/authority/calendar" element={<Navigate to="/calendar" replace />} />
         <Route path="/authority/audit" element={<Navigate to="/authority/applications" replace />} />
         <Route path="/authority/users" element={<Navigate to="/authority" replace />} />

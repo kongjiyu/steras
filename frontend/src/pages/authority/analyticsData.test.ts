@@ -2,9 +2,22 @@ import { describe, expect, it } from 'vitest';
 import { AnalyticsRecord, analyticsCsv, analyticsSummary, buildMonthlyAnalytics, filterAnalyticsRecords } from './analyticsData';
 
 const records: AnalyticsRecord[] = [
-  { eventId: 'one', eventName: '=Unsafe name', eventType: 'conference', status: 'Approved', createdAt: Date.UTC(2026, 0, 2), submittedAt: Date.UTC(2026, 0, 3), updatedAt: Date.UTC(2026, 1, 3) },
-  { eventId: 'two', eventName: 'Second', eventType: 'festival', status: 'Pending', createdAt: Date.UTC(2026, 1, 2), updatedAt: Date.UTC(2026, 1, 2) },
+  record({ eventId: 'one', eventName: '=Unsafe name', eventType: 'conference', status: 'Approved', createdAt: Date.UTC(2026, 0, 2), submittedAt: Date.UTC(2026, 0, 3), terminalDecisionAt: Date.UTC(2026, 1, 3), updatedAt: Date.UTC(2026, 1, 3) }),
+  record({ eventId: 'two', eventName: 'Second', eventType: 'festival', status: 'Pending', createdAt: Date.UTC(2026, 1, 2), updatedAt: Date.UTC(2026, 1, 2) }),
 ];
+
+function record(value: Partial<AnalyticsRecord> & Pick<AnalyticsRecord, 'eventId' | 'eventName' | 'eventType' | 'status' | 'createdAt' | 'updatedAt'>): AnalyticsRecord {
+  return {
+    venueName: 'Test venue',
+    requiredAuthorities: ['PDRM'],
+    currentVersionNumber: 1,
+    synthetic: false,
+    reapplication: false,
+    incidents: { available: false, total: 0, verified: 0, bySeverity: { low: 0, medium: 0, high: 0 }, byStatus: { verified: 0, under_review: 0, rejected: 0, unknown: 0 } },
+    controls: { available: false, total: 0, approved: 0, pending: 0, reportedUnderReview: 0, resubmitRequired: 0, usePrevious: 0 },
+    ...value,
+  };
+}
 
 describe('analyticsData', () => {
   it('groups applications and approvals by their respective months', () => {
