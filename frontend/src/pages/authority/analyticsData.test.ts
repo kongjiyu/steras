@@ -22,10 +22,13 @@ function record(value: Partial<AnalyticsRecord> & Pick<AnalyticsRecord, 'eventId
     requiredAuthorities: ['PDRM'],
     currentVersionNumber: 1,
     lifecycle: {},
-    sourceCoverage: { overrides: 'complete', incidents: 'complete', controls: 'complete', decisionHistory: 'unavailable', stage1Documents: 'unavailable' },
+    sourceCoverage: { overrides: 'complete', incidents: 'complete', controls: 'complete', decisionHistory: 'unavailable', assignments: 'unavailable', reviewDecisions: 'complete', currentVersion: 'complete', stage1Documents: 'unavailable' },
     synthetic: false,
     reapplication: false,
-    incidents: { available: false, total: 0, verified: 0, bySeverity: { low: 0, medium: 0, high: 0 }, byStatus: { verified: 0, under_review: 0, rejected: 0, unknown: 0 }, immediateActionRequired: { available: false }, externalEscalations: { available: false } },
+    revisionOutcome: 'initial_submission',
+    rejectionTaxonomyAvailable: true,
+    rejections: [],
+    incidents: { available: false, total: 0, verified: 0, severityAvailable: false, bySeverity: { low: 0, medium: 0, high: 0 }, byStatus: { verified: 0, under_review: 0, rejected: 0, unknown: 0 }, immediateActionRequired: { available: false }, externalEscalations: { available: false } },
     controls: { available: false, total: 0, approved: 0, pending: 0, reportedUnderReview: 0, resubmitRequired: 0, usePrevious: 0, stage1: { available: false, total: 0, pendingSubmission: 0, pendingVerification: 0, verified: 0, rejected: 0, usePrevious: 0 } },
     ...value,
   };
@@ -107,8 +110,8 @@ describe('analyticsData', () => {
   });
 
   it('separates affected-event rate, all-event average and affected-event average', () => {
-    const withIncidents = record({ ...records[0], incidents: { available: true, total: 4, verified: 4, bySeverity: { low: 1, medium: 2, high: 1 }, byStatus: { verified: 4, under_review: 0, rejected: 0, unknown: 0 }, immediateActionRequired: { available: false }, externalEscalations: { available: false } } });
-    const withoutIncidents = record({ ...records[1], incidents: { available: true, total: 0, verified: 0, bySeverity: { low: 0, medium: 0, high: 0 }, byStatus: { verified: 0, under_review: 0, rejected: 0, unknown: 0 }, immediateActionRequired: { available: false }, externalEscalations: { available: false } } });
+    const withIncidents = record({ ...records[0], incidents: { available: true, total: 4, verified: 4, severityAvailable: true, bySeverity: { low: 1, medium: 2, high: 1 }, byStatus: { verified: 4, under_review: 0, rejected: 0, unknown: 0 }, immediateActionRequired: { available: false }, externalEscalations: { available: false } } });
+    const withoutIncidents = record({ ...records[1], incidents: { available: true, total: 0, verified: 0, severityAvailable: true, bySeverity: { low: 0, medium: 0, high: 0 }, byStatus: { verified: 0, under_review: 0, rejected: 0, unknown: 0 }, immediateActionRequired: { available: false }, externalEscalations: { available: false } } });
     const model = buildReportModel('risk-incident', 'overall', undefined, { records: [withIncidents, withoutIncidents] });
     expect(model.incidents.eventsWithIncidentRate).toBe(0.5);
     expect(model.incidents.averageIncidentsPerEvent).toBe(2);
@@ -129,7 +132,7 @@ describe('analyticsData', () => {
       ...records[1],
       sourceCoverage: { ...records[1].sourceCoverage, incidents: 'unavailable' },
       incidents: {
-        available: false, total: 99, verified: 99,
+        available: false, total: 99, verified: 99, severityAvailable: true,
         bySeverity: { low: 99, medium: 0, high: 0 },
         byStatus: { verified: 99, under_review: 0, rejected: 0, unknown: 0 },
         immediateActionRequired: { available: false }, externalEscalations: { available: false },
@@ -192,7 +195,8 @@ describe('analyticsData', () => {
   it('caps override rates to overridden items rather than counting every historical action', () => {
     const resourceRecord = record({ ...records[0], resources: {
       schemaVersion: 'v', formulaVersion: 'v', overrideCount: 7, overrideReasonCategoriesAvailable: false,
-      items: { police: { baseline: 1, minimum: 1, maximum: 2, effective: 2, overrideCount: 7 } },
+      overrideReasonCategories: {},
+      items: { police: { baseline: 1, minimum: 1, maximum: 2, effective: 2, overrideCount: 7, overrideReasonCategories: {} } },
     } });
     const model = buildReportModel('resource-override', 'overall', undefined, { records: [resourceRecord] });
     expect(model.resources[0]).toMatchObject({ baseline: 1, effective: 2, overrides: 7, overrideRate: 1, reason: 'Data Not Available' });
@@ -204,9 +208,10 @@ describe('analyticsData', () => {
   it('counts a multi-category override once at the resource-record level', () => {
     const resourceRecord = record({ ...records[0], resources: {
       schemaVersion: 'v', formulaVersion: 'v', overrideCount: 1, overrideReasonCategoriesAvailable: false,
+      overrideReasonCategories: {},
       items: {
-        police: { baseline: 1, minimum: 1, maximum: 2, effective: 2, overrideCount: 1 },
-        security: { baseline: 4, minimum: 4, maximum: 6, effective: 5, overrideCount: 1 },
+        police: { baseline: 1, minimum: 1, maximum: 2, effective: 2, overrideCount: 1, overrideReasonCategories: {} },
+        security: { baseline: 4, minimum: 4, maximum: 6, effective: 5, overrideCount: 1, overrideReasonCategories: {} },
       },
     } });
     const model = buildReportModel('resource-override', 'overall', undefined, { records: [resourceRecord] });
@@ -221,7 +226,8 @@ describe('analyticsData', () => {
       sourceCoverage: { ...records[0].sourceCoverage, overrides: 'unavailable' },
       resources: {
         schemaVersion: 'v', formulaVersion: 'v', overrideCount: 0, overrideReasonCategoriesAvailable: false,
-        items: { police: { baseline: 2, minimum: 1, maximum: 3, effective: 2, overrideCount: 0 } },
+        overrideReasonCategories: {},
+        items: { police: { baseline: 2, minimum: 1, maximum: 3, effective: 2, overrideCount: 0, overrideReasonCategories: {} } },
       },
     });
     const model = buildReportModel('resource-override', 'overall', undefined, { records: [resourceRecord] });
@@ -257,28 +263,51 @@ describe('analyticsData', () => {
     expect(model.controls.statuses.every((item) => item.value === 0)).toBe(true);
   });
 
-  it('uses exact lifecycle durations and does not invent a rejection taxonomy', () => {
+  it('uses exact lifecycle durations and a privacy-safe rejection taxonomy', () => {
     const lifecycleRecord = record({ ...records[0], lifecycle: {
       submissionToInitialReviewMs: 3_600_000,
       initialToAuthorityReviewMs: 7_200_000,
       authorityToSecondReviewMs: 10_800_000,
       submissionToTerminalDecisionMs: 21_600_000,
-    } });
+    }, rejections: [{ reviewStage: 'initial', reasonCategory: 'insufficient_evidence' }] });
     const model = buildReportModel('application-outcome', 'overall', undefined, { records: [lifecycleRecord] });
     expect(model.outcomes.durations.map((item) => item.average)).toEqual(['1.0h', '2.0h', '3.0h', '6.0h']);
-    expect(model.outcomes.rejections).toEqual([]);
-    expect(model.unavailableSections).toContain('Rejection taxonomy');
+    expect(model.outcomes.rejections).toMatchObject([{ label: 'Initial review · Insufficient evidence', value: 1 }]);
+    expect(model.unavailableSections).not.toContain('Rejection taxonomy');
   });
 
-  it('keeps rejection taxonomy unavailable even when decision-history reads are complete', () => {
+  it('keeps rejection taxonomy unavailable when a rejected legacy record lacks a safe category', () => {
     const completeDecisionHistory = record({
       ...records[0],
       sourceCoverage: { ...records[0].sourceCoverage, decisionHistory: 'complete' },
+      rejectionTaxonomyAvailable: false,
     });
     const model = buildReportModel('application-outcome', 'overall', undefined, { records: [completeDecisionHistory] });
     expect(model.outcomes.rejections).toEqual([]);
     expect(model.unavailableSections).toContain('Rejection taxonomy');
     expect(model.dataStatus).toBe('partial');
+  });
+
+  it('reports revision outcomes without treating every version two record as a rejected re-application', () => {
+    const revised = record({ ...records[0], currentVersionNumber: 2, revisionOutcome: 'revised_without_recorded_rejection' });
+    const rejected = record({ ...records[1], currentVersionNumber: 2, revisionOutcome: 'resubmitted_after_rejection', reapplication: true });
+    const model = buildReportModel('application-outcome', 'overall', undefined, { records: [revised, rejected] });
+    expect(model.outcomes.revisions.map(({ label, value }) => ({ label, value }))).toEqual([
+      { label: 'Initial submission', value: 0 },
+      { label: 'Resubmitted after rejection', value: 1 },
+      { label: 'Revised without recorded rejection', value: 1 },
+    ]);
+  });
+
+  it('renders only predefined resource override reason categories', () => {
+    const resourceRecord = record({ ...records[0], resources: {
+      schemaVersion: 'v', formulaVersion: 'v', overrideCount: 1, overrideReasonCategoriesAvailable: true,
+      overrideReasonCategories: { attendance_change: 1 },
+      items: { police: { baseline: 1, minimum: 1, maximum: 2, effective: 2, overrideCount: 1, overrideReasonCategories: { attendance_change: 1 } } },
+    } });
+    const model = buildReportModel('resource-override', 'overall', undefined, { records: [resourceRecord] });
+    expect(model.resources[0].reason).toBe('Attendance change (1)');
+    expect(model.unavailableSections).not.toContain('Resource override reasons');
   });
 
   it('rejects malformed callable payloads before rendering nested report data', () => {

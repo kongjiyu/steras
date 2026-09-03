@@ -8,12 +8,14 @@ import type {
   EventStatus,
   EventType,
   HazardDomain,
+  RejectionReasonCategory,
   ResourceKey,
+  ResourceOverrideReasonCategory,
   RiskLevel,
 } from './types';
 
-export const ANALYTICS_SCHEMA_VERSION = '2026-09-03-m5-v2';
-export const ANALYTICS_METRIC_DEFINITION_VERSION = '2026-09-03-m5-metrics-v2';
+export const ANALYTICS_SCHEMA_VERSION = '2026-09-03-m5-v3';
+export const ANALYTICS_METRIC_DEFINITION_VERSION = '2026-09-03-m5-metrics-v3';
 
 export type AnalyticsCoverageStatus = 'complete' | 'truncated' | 'unavailable';
 
@@ -60,6 +62,7 @@ export interface AnalyticsResourceItemSummary {
   maximum: number;
   effective?: number;
   overrideCount: number;
+  overrideReasonCategories: Partial<Record<ResourceOverrideReasonCategory, number>>;
 }
 
 export interface AnalyticsResourceSummary {
@@ -67,14 +70,16 @@ export interface AnalyticsResourceSummary {
   formulaVersion: string;
   items: Partial<Record<ResourceKey, AnalyticsResourceItemSummary>>;
   overrideCount: number;
-  /** Free-text rationale is deliberately excluded and no safe taxonomy exists yet. */
-  overrideReasonCategoriesAvailable: false;
+  /** Privacy-safe predefined categories only; free-text rationale is never exposed. */
+  overrideReasonCategoriesAvailable: boolean;
+  overrideReasonCategories: Partial<Record<ResourceOverrideReasonCategory, number>>;
 }
 
 export interface AnalyticsIncidentSummary {
   available: boolean;
   total: number;
   verified: number;
+  severityAvailable: boolean;
   bySeverity: Record<'low' | 'medium' | 'high', number>;
   byStatus: Record<'verified' | 'under_review' | 'rejected' | 'unknown', number>;
   immediateActionRequired: AnalyticsAvailabilityCount;
@@ -115,8 +120,24 @@ export interface AnalyticsRecordSourceCoverage {
   incidents: AnalyticsCoverageStatus;
   controls: AnalyticsCoverageStatus;
   decisionHistory: AnalyticsCoverageStatus;
+  assignments: AnalyticsCoverageStatus;
+  reviewDecisions: AnalyticsCoverageStatus;
+  currentVersion: AnalyticsCoverageStatus;
   stage1Documents: AnalyticsCoverageStatus;
 }
+
+export type AnalyticsReviewStage = 'initial' | 'authority' | 'second';
+
+export interface AnalyticsRejectionSummary {
+  reasonCategory: RejectionReasonCategory;
+  reviewStage: AnalyticsReviewStage;
+}
+
+export type AnalyticsRevisionOutcome =
+  | 'initial_submission'
+  | 'resubmitted_after_rejection'
+  | 'revised_without_recorded_rejection'
+  | 'unavailable';
 
 export interface AnalyticsPortfolioRecord {
   eventId: string;
@@ -135,6 +156,9 @@ export interface AnalyticsPortfolioRecord {
   sourceCoverage: AnalyticsRecordSourceCoverage;
   synthetic: boolean;
   reapplication: boolean;
+  revisionOutcome: AnalyticsRevisionOutcome;
+  rejectionTaxonomyAvailable: boolean;
+  rejections: AnalyticsRejectionSummary[];
   assessment?: AnalyticsAssessmentSummary;
   resources?: AnalyticsResourceSummary;
   incidents: AnalyticsIncidentSummary;

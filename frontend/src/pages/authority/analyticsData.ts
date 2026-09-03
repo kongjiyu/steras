@@ -1,6 +1,11 @@
 import {
   EVENT_TYPES,
+  EVENT_STATUSES,
   EventType,
+  REJECTION_REASON_CATEGORIES,
+  RejectionReasonCategory,
+  RESOURCE_OVERRIDE_REASON_CATEGORIES,
+  ResourceOverrideReasonCategory,
   RiskLevel,
   RESOURCE_KEYS,
 } from '@shared/types';
@@ -454,6 +459,19 @@ function buildLiveReport(
       .filter((value): value is number => value !== undefined);
     const overrideCount = overrideValues.reduce((sum, item) => sum + item.overrideCount, 0);
     const overriddenItems = overrideValues.filter((item) => item.overrideCount > 0).length;
+    const reasonCounts = overrideRecords.reduce<Partial<Record<ResourceOverrideReasonCategory, number>>>((counts, record) => {
+      if (!record.resources?.overrideReasonCategoriesAvailable) return counts;
+      for (const [reason, count] of Object.entries(record.resources.items[key]?.overrideReasonCategories ?? {})) {
+        const category = reason as ResourceOverrideReasonCategory;
+        counts[category] = (counts[category] ?? 0) + (count ?? 0);
+      }
+      return counts;
+    }, {});
+    const reason = Object.entries(reasonCounts)
+      .filter(([, count]) => (count ?? 0) > 0)
+      .sort((left, right) => (right[1] ?? 0) - (left[1] ?? 0))
+      .map(([category, count]) => `${resourceOverrideReasonLabel(category as ResourceOverrideReasonCategory)} (${count})`)
+      .join(', ');
     return {
       label: resourceLabel(key),
       baseline: values.length ? Math.round(average(values.map((item) => item.baseline))) : 0,
@@ -465,7 +483,7 @@ function buildLiveReport(
       range: values.length ? `${Math.round(average(values.map((item) => item.minimum)))}–${Math.round(average(values.map((item) => item.maximum)))}` : 'Data Not Available',
       overrides: overrideValues.length ? overrideCount : null,
       overrideRate: overrideValues.length ? overriddenItems / overrideValues.length : null,
-      reason: 'Data Not Available',
+      reason: reason || 'Data Not Available',
     };
   }).filter((item) => item.range !== 'Data Not Available');
   const stage1Records = filtered.filter((record) => record.controls.stage1.available);
@@ -481,6 +499,7 @@ function buildLiveReport(
     ...(backendTruncated ? ['Portfolio results truncated'] : []),
     ...coverageLimitations,
     ...(incidentRecords.length ? [] : ['Incident patterns']),
+    ...(incidentRecords.some((record) => !record.incidents.severityAvailable) ? ['Incident severity'] : []),
     ...(immediateAction.length ? [] : ['Immediate-action signals']),
     ...(escalation.length ? [] : ['External-escalation signals']),
     ...(resourceRecords.length ? [] : ['Resource recommendations']),
@@ -488,9 +507,8 @@ function buildLiveReport(
     ...(resourceRecords.some((record) => record.resources?.overrideReasonCategoriesAvailable === false) ? ['Resource override reasons'] : []),
     ...(controlRecords.length ? [] : ['Event-control verification']),
     ...(stage1Records.length ? [] : ['Stage 1 document verification']),
-    // The source contract does not yet expose a privacy-safe predefined reason + review-stage taxonomy.
-    // Keep this required section explicit rather than treating an empty array as a complete result.
-    'Rejection taxonomy',
+    ...(filtered.some((record) => record.revisionOutcome === 'unavailable') ? ['Revision lineage'] : []),
+    ...(filtered.some((record) => !record.rejectionTaxonomyAvailable) ? ['Rejection taxonomy'] : []),
     ...(durationMetrics.length ? [] : ['Review durations']),
     ...(assessedRecords.length ? [] : ['Risk assessments']),
   ])];
@@ -544,8 +562,12 @@ function buildLiveReport(
     outcomes: {
       statuses: statusRows(filtered),
       riskCrossSection: [row('Low', risks.Low), row('Medium', risks.Medium), row('High', risks.High)],
-      revisions: [row('Re-application', filtered.filter((record) => record.reapplication).length), row('No recorded re-application', filtered.filter((record) => !record.reapplication).length)],
-      rejections: [],
+      revisions: countRows(
+        ['Initial submission', 'Resubmitted after rejection', 'Revised without recorded rejection'],
+        (label) => filtered.filter((record) => revisionOutcomeLabel(record.revisionOutcome) === label).length,
+      ),
+      rejections: countValues(filtered.flatMap((record) => record.rejections.map((rejection) =>
+        `${reviewStageLabel(rejection.reviewStage)} · ${rejectionReasonLabel(rejection.reasonCategory)}`))),
       durations: durationMetrics,
     },
     assessment: {
@@ -581,14 +603,14 @@ function buildLiveReport(
 
 function isRelevantUnavailableSection(reportType: ReportType, section: string): boolean {
   if (section === 'Portfolio results truncated' || ![
-    'Incident patterns', 'Immediate-action signals', 'External-escalation signals',
+    'Incident patterns', 'Incident severity', 'Immediate-action signals', 'External-escalation signals',
     'Resource recommendations', 'Resource overrides', 'Resource override reasons',
     'Event-control verification', 'Stage 1 document verification',
-    'Rejection taxonomy', 'Review durations', 'Risk assessments',
+    'Rejection taxonomy', 'Revision lineage', 'Review durations', 'Risk assessments',
   ].includes(section)) return true;
   const relevant: Record<ReportType, string[]> = {
-    'risk-incident': ['Incident patterns', 'Immediate-action signals', 'External-escalation signals'],
-    'application-outcome': ['Rejection taxonomy', 'Review durations'],
+    'risk-incident': ['Incident patterns', 'Incident severity', 'Immediate-action signals', 'External-escalation signals'],
+    'application-outcome': ['Rejection taxonomy', 'Revision lineage', 'Review durations'],
     'risk-assessment': ['Risk assessments'],
     'resource-override': ['Resource recommendations', 'Resource overrides', 'Resource override reasons'],
     'control-compliance': ['Event-control verification', 'Stage 1 document verification'],
@@ -660,24 +682,36 @@ function isAnalyticsRecord(value: unknown): boolean {
   if (!isObject(value)
     || typeof value.eventId !== 'string'
     || typeof value.eventName !== 'string'
-    || typeof value.eventType !== 'string'
-    || typeof value.status !== 'string'
+    || !EVENT_TYPES.some((eventType) => eventType.value === value.eventType)
+    || !EVENT_STATUSES.some((status) => status.value === value.status)
     || typeof value.venueName !== 'string'
     || !Array.isArray(value.requiredAuthorities)
+    || !value.requiredAuthorities.every((authority) => ['PDRM', 'BOMBA', 'KKM', 'DBKL', 'MOTAC'].includes(String(authority)))
     || !isNonNegativeInteger(value.currentVersionNumber)
     || !Number.isFinite(value.createdAt)
     || !Number.isFinite(value.updatedAt)
     || typeof value.synthetic !== 'boolean'
+    || typeof value.reapplication !== 'boolean'
+    || !['initial_submission', 'resubmitted_after_rejection', 'revised_without_recorded_rejection', 'unavailable'].includes(String(value.revisionOutcome))
+    || typeof value.rejectionTaxonomyAvailable !== 'boolean'
+    || !Array.isArray(value.rejections)
+    || !value.rejections.every(isRejectionSummary)
     || !isObject(value.incidents)
     || typeof value.incidents.available !== 'boolean'
     || !isNonNegativeInteger(value.incidents.total)
     || !isNonNegativeInteger(value.incidents.verified)
+    || typeof value.incidents.severityAvailable !== 'boolean'
     || !isCountRecord(value.incidents.bySeverity, ['low', 'medium', 'high'])
     || !isCountRecord(value.incidents.byStatus, ['verified', 'under_review', 'rejected', 'unknown'])
     || !isObject(value.incidents.immediateActionRequired)
     || !isAvailabilityCount(value.incidents.immediateActionRequired)
     || !isObject(value.incidents.externalEscalations)
     || !isAvailabilityCount(value.incidents.externalEscalations)
+    || value.incidents.verified > value.incidents.total
+    || (value.incidents.severityAvailable && sumCountRecord(value.incidents.bySeverity) !== value.incidents.total)
+    || sumCountRecord(value.incidents.byStatus) !== value.incidents.total
+    || (value.incidents.immediateActionRequired.available && Number(value.incidents.immediateActionRequired.count) > value.incidents.total)
+    || (value.incidents.externalEscalations.available && Number(value.incidents.externalEscalations.count) > value.incidents.total)
     || !isControls(value.controls)
     || !isObject(value.lifecycle)
     || !Object.values(value.lifecycle).every((item) => typeof item === 'number' && Number.isFinite(item) && item >= 0)
@@ -718,13 +752,21 @@ function isControls(value: unknown): boolean {
     || !isObject(value.stage1)) return false;
   const stage1 = value.stage1;
   return typeof stage1.available === 'boolean'
-    && ['total', 'pendingSubmission', 'pendingVerification', 'verified', 'rejected', 'usePrevious'].every((key) => isNonNegativeInteger(stage1[key]));
+    && ['total', 'pendingSubmission', 'pendingVerification', 'verified', 'rejected', 'usePrevious'].every((key) => isNonNegativeInteger(stage1[key]))
+    && Number(stage1.pendingSubmission) + Number(stage1.pendingVerification) + Number(stage1.verified)
+      + Number(stage1.rejected) + Number(stage1.usePrevious) === Number(stage1.total);
 }
 
 function isSourceCoverage(value: unknown): boolean {
   return isObject(value)
-    && ['overrides', 'incidents', 'controls', 'decisionHistory', 'stage1Documents']
+    && ['overrides', 'incidents', 'controls', 'decisionHistory', 'assignments', 'reviewDecisions', 'currentVersion', 'stage1Documents']
       .every((key) => ['complete', 'truncated', 'unavailable'].includes(String(value[key])));
+}
+
+function isRejectionSummary(value: unknown): boolean {
+  return isObject(value)
+    && REJECTION_REASON_CATEGORIES.includes(value.reasonCategory as RejectionReasonCategory)
+    && ['initial', 'authority', 'second'].includes(String(value.reviewStage));
 }
 
 function isAvailabilityCount(value: Record<string, unknown>): boolean {
@@ -741,11 +783,21 @@ function isResourceSummary(value: unknown): boolean {
     || typeof value.schemaVersion !== 'string'
     || typeof value.formulaVersion !== 'string'
     || !isNonNegativeInteger(value.overrideCount)
-    || value.overrideReasonCategoriesAvailable !== false
+    || typeof value.overrideReasonCategoriesAvailable !== 'boolean'
+    || !isObject(value.overrideReasonCategories)
+    || !Object.entries(value.overrideReasonCategories).every(([key, count]) =>
+      RESOURCE_OVERRIDE_REASON_CATEGORIES.includes(key as ResourceOverrideReasonCategory) && isNonNegativeInteger(count))
     || !isObject(value.items)) return false;
+  if (value.overrideReasonCategoriesAvailable
+    && sumCountRecord(value.overrideReasonCategories) !== value.overrideCount) return false;
   return Object.entries(value.items).every(([key, item]) => RESOURCE_KEYS.includes(key as typeof RESOURCE_KEYS[number])
     && isObject(item)
     && ['baseline', 'minimum', 'maximum', 'overrideCount'].every((field) => isNonNegativeInteger(item[field]))
+    && isObject(item.overrideReasonCategories)
+    && Object.entries(item.overrideReasonCategories).every(([reason, count]) =>
+      RESOURCE_OVERRIDE_REASON_CATEGORIES.includes(reason as ResourceOverrideReasonCategory) && isNonNegativeInteger(count))
+    && (!value.overrideReasonCategoriesAvailable
+      || sumCountRecord(item.overrideReasonCategories) === item.overrideCount)
     && (item.effective === undefined || isNonNegativeInteger(item.effective))
     && Number(item.minimum) <= Number(item.baseline)
     && Number(item.baseline) <= Number(item.maximum));
@@ -755,12 +807,52 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function sumCountRecord(value: unknown): number {
+  return isObject(value) ? Object.values(value).reduce<number>((sum, count) => sum + Number(count), 0) : Number.NaN;
+}
+
 function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }
 
 function resourceLabel(key: typeof RESOURCE_KEYS[number]): string {
   return ({ police: 'Police officers', security: 'Security personnel', medicalTeams: 'Medical teams', ambulances: 'Ambulances', fireOfficers: 'Fire-safety officers', toilets: 'Portable toilets', wasteBins: 'Waste bins' })[key];
+}
+
+function rejectionReasonLabel(category: RejectionReasonCategory): string {
+  return ({
+    incomplete_application: 'Incomplete application',
+    insufficient_evidence: 'Insufficient evidence',
+    risk_controls_inadequate: 'Risk controls inadequate',
+    regulatory_non_compliance: 'Regulatory non-compliance',
+    resource_plan_inadequate: 'Resource plan inadequate',
+    venue_or_capacity_issue: 'Venue or capacity issue',
+    other: 'Other',
+  })[category];
+}
+
+function resourceOverrideReasonLabel(category: ResourceOverrideReasonCategory): string {
+  return ({
+    attendance_change: 'Attendance change',
+    venue_constraint: 'Venue constraint',
+    risk_score_change: 'Risk score change',
+    authority_operational_requirement: 'Authority operational requirement',
+    resource_availability: 'Resource availability',
+    other: 'Other',
+  })[category];
+}
+
+function reviewStageLabel(stage: AnalyticsRecord['rejections'][number]['reviewStage']): string {
+  return ({ initial: 'Initial review', authority: 'Authority review', second: 'Second review' })[stage];
+}
+
+function revisionOutcomeLabel(outcome: AnalyticsRecord['revisionOutcome']): string {
+  return ({
+    initial_submission: 'Initial submission',
+    resubmitted_after_rejection: 'Resubmitted after rejection',
+    revised_without_recorded_rejection: 'Revised without recorded rejection',
+    unavailable: 'Data Not Available',
+  })[outcome];
 }
 
 function hazardLabel(category: string): string {

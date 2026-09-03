@@ -10,6 +10,8 @@ import {
   RESOURCE_SCHEMA_VERSION,
   type EventControl,
   type EventRecord,
+  type EventVersion,
+  type Assignment,
   type Incident,
   type ResourceOverrideRecord,
   type ResourceRecommendation,
@@ -18,6 +20,7 @@ import {
   type UserProfile,
 } from '@shared/types';
 import { ACTIVE_CATEGORY_SCHEMA } from '../config/categorySchema';
+import { M4_SCHEMA_VERSION } from '@shared/m4';
 import {
   assertAnalyticsAdmin,
   assessmentMatchesCurrentEvent,
@@ -94,7 +97,8 @@ describe('Module 5 analytics backend', () => {
     expect(output.controls).toMatchObject({ available: true, total: 1, approved: 1 });
     expect(output.controls.stage1).toMatchObject({ available: true, total: 1, verified: 1 });
     expect(output.incidents.immediateActionRequired).toEqual({ available: false });
-    expect(output.resources?.overrideReasonCategoriesAvailable).toBe(false);
+    expect(output.resources?.overrideReasonCategoriesAvailable).toBe(true);
+    expect(output.resources?.overrideReasonCategories).toEqual({ attendance_change: 1 });
     const serialized = JSON.stringify(output);
     expect(serialized).not.toContain('organizer@example.com');
     expect(serialized).not.toContain('+60123456789');
@@ -111,6 +115,34 @@ describe('Module 5 analytics backend', () => {
       sourceCoverage: completeCoverage(),
     });
     expect(output.synthetic).toBe(true);
+  });
+
+  it('derives revision outcome from immutable current-version lineage', () => {
+    const baseVersion = {
+      versionId: 'v2', eventId: 'event-1', versionNumber: 2, eventDetails: sampleEvent().eventDetails,
+      documentPaths: [], submittedBy: 'organizer-1', submittedAt: 2, inputHash: 'a'.repeat(64),
+    } satisfies EventVersion;
+    const rejected = buildAnalyticsPortfolioRecord({
+      event: sampleEvent(), currentVersion: { ...baseVersion, revisionSource: {
+        kind: 'rejected_revision', sourceVersionId: 'v1', startedAt: 1,
+        rejectionReason: 'Not exposed', rejectionSuggestion: 'Not exposed',
+      } }, overrides: [], incidents: [], controls: [], stage1Docs: [], decisionHistory: [],
+      incidentCoverageAvailable: false, includeSynthetic: false, sourceCoverage: completeCoverage(),
+    });
+    expect(rejected.revisionOutcome).toBe('resubmitted_after_rejection');
+    const edited = buildAnalyticsPortfolioRecord({
+      event: sampleEvent(), currentVersion: { ...baseVersion, revisionSource: {
+        kind: 'pending_edit', sourceVersionId: 'v1', startedAt: 1,
+      } }, overrides: [], incidents: [], controls: [], stage1Docs: [], decisionHistory: [],
+      incidentCoverageAvailable: false, includeSynthetic: false, sourceCoverage: completeCoverage(),
+    });
+    expect(edited.revisionOutcome).toBe('revised_without_recorded_rejection');
+    const unavailable = buildAnalyticsPortfolioRecord({
+      event: sampleEvent(), overrides: [], incidents: [], controls: [], stage1Docs: [], decisionHistory: [],
+      incidentCoverageAvailable: false, includeSynthetic: false,
+      sourceCoverage: { ...completeCoverage(), currentVersion: 'unavailable' },
+    });
+    expect(unavailable.revisionOutcome).toBe('unavailable');
   });
 
   it('distinguishes an authoritative zero-incident result from unavailable incident data', () => {
@@ -135,6 +167,31 @@ describe('Module 5 analytics backend', () => {
       { incidentId: 'broken', eventId: 'event-1', severity: 'critical' },
     ]);
     expect(incidents.map((incident) => incident.incidentId)).toEqual(['incident-v1', 'incident-v2']);
+  });
+
+  it('aggregates M4 immediate-action, escalation and resolution signals without inventing missing severity', () => {
+    const incidents = selectValidAnalyticsIncidents([
+      {
+        schemaVersion: M4_SCHEMA_VERSION, incidentId: 'incident-m4-one', eventId: 'event-1', eventVersionId: 'v2',
+        status: 'resolved', severity: 'high', immediateActionRequired: true, referredAuthorityId: 'pdrm-kl-1',
+        discrepancyOutcome: 'confirmed_true', synthetic: false,
+      },
+      {
+        schemaVersion: M4_SCHEMA_VERSION, incidentId: 'incident-m4-two', eventId: 'event-1', eventVersionId: 'v2',
+        status: 'manual_review_required', synthetic: false,
+      },
+    ]);
+    const output = buildAnalyticsPortfolioRecord({
+      event: sampleEvent(), overrides: [], incidents, controls: [], stage1Docs: [], decisionHistory: [],
+      incidentCoverageAvailable: true, includeSynthetic: false, sourceCoverage: completeCoverage(),
+    });
+    expect(output.incidents).toMatchObject({
+      available: true, total: 2, verified: 1, severityAvailable: false,
+      bySeverity: { low: 0, medium: 0, high: 1 },
+      byStatus: { verified: 1, under_review: 1, rejected: 0, unknown: 0 },
+      immediateActionRequired: { available: false },
+      externalEscalations: { available: true, count: 1 },
+    });
   });
 
   it('never labels a provisional result as official analytics', () => {
@@ -221,7 +278,68 @@ describe('Module 5 analytics backend', () => {
     });
     expect(output.resources?.items.police).toMatchObject({ baseline: 10, effective: 12, overrideCount: 1 });
     expect(output.resources?.overrideCount).toBe(1);
+    expect(output.resources?.overrideReasonCategories).toEqual({ attendance_change: 1 });
     expect(JSON.stringify(output)).not.toContain('PRIVATE OVERRIDE RATIONALE');
+  });
+
+  it('exposes only predefined rejection categories and their review stages', () => {
+    const event = Object.assign(sampleEvent(), {
+      initialReview: {
+        decision: 'Rejected', reason: 'PRIVATE INITIAL REASON', suggestion: 'PRIVATE SUGGESTION',
+        rejectionReasonCategory: 'insufficient_evidence', reviewerUid: 'admin-1', reviewedAt: 3,
+      },
+      secondReview: {
+        confirmedDecision: 'Rejected', reason: 'PRIVATE SECOND REASON', suggestion: 'PRIVATE SECOND SUGGESTION',
+        rejectionReasonCategory: 'regulatory_non_compliance', reviewerUid: 'admin-1', decidedAt: 8,
+      },
+    });
+    const assignment: Assignment = {
+      assignmentId: 'v2_PDRM', eventId: 'event-1', versionId: 'v2', authorityType: 'PDRM',
+      officerUid: 'officer-1', assignedBy: 'admin-1', assignedAt: 4, status: 'completed',
+      decision: 'Rejected', reason: 'PRIVATE OFFICER REASON', rejectionReasonCategory: 'risk_controls_inadequate',
+      reviewStage: 'authority', decidedAt: 5,
+    };
+    const output = buildAnalyticsPortfolioRecord({
+      event, assignments: [assignment], overrides: [], incidents: [], controls: [], stage1Docs: [], decisionHistory: [],
+      incidentCoverageAvailable: false, includeSynthetic: false, sourceCoverage: completeCoverage(),
+    });
+    expect(output.rejectionTaxonomyAvailable).toBe(true);
+    expect(output.rejections).toEqual([
+      { reasonCategory: 'insufficient_evidence', reviewStage: 'initial' },
+      { reasonCategory: 'risk_controls_inadequate', reviewStage: 'authority' },
+      { reasonCategory: 'regulatory_non_compliance', reviewStage: 'second' },
+    ]);
+    expect(JSON.stringify(output)).not.toContain('PRIVATE');
+  });
+
+  it('marks legacy rejection taxonomy unavailable without leaking its free-text reason', () => {
+    const event = Object.assign(sampleEvent(), {
+      initialReview: { decision: 'Rejected', reason: 'PRIVATE LEGACY REASON', reviewerUid: 'admin-1', reviewedAt: 3 },
+    });
+    const output = buildAnalyticsPortfolioRecord({
+      event, overrides: [], incidents: [], controls: [], stage1Docs: [], decisionHistory: [],
+      incidentCoverageAvailable: false, includeSynthetic: false, sourceCoverage: completeCoverage(),
+    });
+    expect(output.rejectionTaxonomyAvailable).toBe(false);
+    expect(output.rejections).toEqual([]);
+    expect(JSON.stringify(output)).not.toContain('PRIVATE LEGACY REASON');
+  });
+
+  it('retains privacy-safe rejection history after a rejected version is resubmitted', () => {
+    const output = buildAnalyticsPortfolioRecord({
+      event: sampleEvent(), currentVersion: {
+        versionId: 'v2', eventId: 'event-1', versionNumber: 2, eventDetails: sampleEvent().eventDetails,
+        documentPaths: [], submittedBy: 'organizer-1', submittedAt: 2, inputHash: 'a'.repeat(64),
+        revisionSource: { kind: 'rejected_revision', sourceVersionId: 'v1', startedAt: 2, rejectionReason: 'private', rejectionSuggestion: 'private' },
+      },
+      reviewDecisions: [{ versionId: 'v1', reviewStage: 'second', decision: 'Rejected', rejectionReasonCategory: 'venue_or_capacity_issue' }],
+      overrides: [], incidents: [], controls: [], stage1Docs: [], decisionHistory: [],
+      incidentCoverageAvailable: false, includeSynthetic: false, sourceCoverage: completeCoverage(),
+    });
+    expect(output.reapplication).toBe(true);
+    expect(output.revisionOutcome).toBe('resubmitted_after_rejection');
+    expect(output.rejections).toEqual([{ reasonCategory: 'venue_or_capacity_issue', reviewStage: 'second' }]);
+    expect(JSON.stringify(output)).not.toContain('private');
   });
 
   it('does not fabricate an effective quantity when override history is unavailable', () => {
@@ -352,7 +470,7 @@ function sampleAssessment(): RiskAssessment {
 }
 
 function completeCoverage() {
-  return { overrides: 'complete', incidents: 'complete', controls: 'complete', decisionHistory: 'complete', stage1Documents: 'complete' } as const;
+  return { overrides: 'complete', incidents: 'complete', controls: 'complete', decisionHistory: 'complete', assignments: 'complete', reviewDecisions: 'complete', currentVersion: 'complete', stage1Documents: 'complete' } as const;
 }
 
 function sampleResource(): ResourceRecommendation {
@@ -370,6 +488,7 @@ function sampleOverride(): ResourceOverrideRecord {
   return {
     overrideId: 'override-1', eventId: 'event-1', versionId: 'v2', assessmentId: 'assessment-1',
     baseResourceId: 'resource-1', resourceId: 'resource-1', authorityType: 'PDRM', reviewerId: 'officer-1',
+    overrideReasonCategory: 'attendance_change',
     rationale: 'PRIVATE OVERRIDE RATIONALE', previousQuantities: previous, quantities: { ...previous, police: 12 },
     idempotencyKey: 'override-key', overriddenAt: 4,
   };
