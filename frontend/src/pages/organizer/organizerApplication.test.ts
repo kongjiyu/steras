@@ -94,13 +94,13 @@ describe('organizer application lifecycle helpers', () => {
   });
 
   it('creates new Drafts with the structured document contract required by Firestore rules', () => {
-    expect(createM1DraftRecord('organizer-1', validDetails(), templateSelection, 123)).toMatchObject({
-      organizerId: 'organizer-1', status: 'Draft', editableVersionId: 'v1', currentVersionNumber: 0,
+    expect(createM1DraftRecord('event-1', 'organizer-1', validDetails(), templateSelection, 123)).toMatchObject({
+      eventId: 'event-1', organizerId: 'organizer-1', status: 'Draft', editableVersionId: 'v1', currentVersionNumber: 0,
       draftDocumentPaths: [], draftDocuments: [], documentSchemaVersion: '2026-08-28-document-v1',
       evidenceManifestSchemaVersion: '2026-08-28-evidence-v1',
       requiredAuthorities: [], createdAt: 123, updatedAt: 123,
     });
-    expect(createM1DraftRecord('organizer-1', validDetails(), templateSelection, 123).draftEvidenceManifest).toHaveLength(16);
+    expect(createM1DraftRecord('event-1', 'organizer-1', validDetails(), templateSelection, 123).draftEvidenceManifest).toHaveLength(16);
   });
 
   it('blocks attendance above capacity and missing evidence before submit', () => {

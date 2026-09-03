@@ -153,6 +153,9 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
     const requiredAuthorities = requiredAuthoritiesFor(event.eventDetails);
     transaction.create(versionReference, version);
     transaction.update(eventReference, {
+      // Persist the document identity at the trusted submission boundary.
+      // This also self-heals Drafts created by clients predating this field.
+      eventId,
       status: 'Pending',
       currentVersionId: versionId,
       currentVersionNumber: versionNumber,

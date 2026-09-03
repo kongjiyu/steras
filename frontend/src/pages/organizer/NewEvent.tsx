@@ -1,7 +1,7 @@
 import PageHeader from '../../components/ui/PageHeader';
 import { EVENT_TYPES, EventType, EventDetails, EventRiskProfile, M1_DOCUMENT_SCHEMA_VERSION, M1_EVIDENCE_MANIFEST_SCHEMA_VERSION, M1ApplicationRevisionSource, M1DocumentExtraction, M1DocumentRole, M1DraftDocument, M1EvidenceRequirementResponse, M1TemplateSelection, Venue } from '@shared/types';
 import { useEffect, useState, FormEvent, ChangeEvent } from 'react';
-import { collection, addDoc, doc, getDoc, getDocs, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { getBlob, ref, uploadBytesResumable } from 'firebase/storage';
 import { db, functions, isFirebaseConfigured, storage } from '../../config/firebase';
@@ -186,8 +186,9 @@ export default function NewEvent() {
       return draftId;
     }
     const nextEditableVersionId = nextVersionId(currentVersionNumber);
-    const reference = await addDoc(collection(db, COLLECTIONS.EVENTS), {
-      ...createM1DraftRecord(user.uid, form, templateSelection!, now),
+    const reference = doc(collection(db, COLLECTIONS.EVENTS));
+    await setDoc(reference, {
+      ...createM1DraftRecord(reference.id, user.uid, form, templateSelection!, now),
       _serverCreatedAt: serverTimestamp(),
     });
     setDraftId(reference.id);

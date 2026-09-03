@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { addDoc, collection, doc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { ArrowRight, CircleHelp, Download, FileText, MapPin, ShieldCheck } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
@@ -82,8 +82,9 @@ export default function TemplateRecommendationPage() {
         navigate(`/organizer/events/${editingDraftId}/edit`);
         return;
       }
-      const reference = await addDoc(collection(db, COLLECTIONS.EVENTS), {
-        ...createM1DraftRecord(user.uid, details, selection, now),
+      const reference = doc(collection(db, COLLECTIONS.EVENTS));
+      await setDoc(reference, {
+        ...createM1DraftRecord(reference.id, user.uid, details, selection, now),
         _serverCreatedAt: serverTimestamp(),
       });
       toast.success('Template choice saved. Your Draft is ready.');
