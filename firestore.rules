@@ -176,6 +176,7 @@ service cloud.firestore {
                       'activeRevision',
                       'cancelledAt', 'cancelledFromVersionId',
                       'withdrawnAt', 'withdrawnFromStatus', 'withdrawalRationale',
+                      'initialReview', 'secondReview',
                       'eventId',
                       'requiredAuthorities', 'currentVersionNumber', 'editableVersionId',
                       'submittedAt'

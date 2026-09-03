@@ -116,9 +116,12 @@ export default function EventDetail() {
     && (event.assignedOfficerUids?.length ?? 0) === 0
     && Object.keys(event.assignedOfficerByAuthority ?? {}).length === 0;
   const rejectedWithFeedback = status === 'Rejected'
-    && event.initialReview?.decision === 'Rejected'
-    && event.initialReview.reason.trim().length > 0
-    && Boolean(event.initialReview.suggestion?.trim());
+    && ((event.initialReview?.decision === 'Rejected'
+      && event.initialReview.reason.trim().length > 0
+      && Boolean(event.initialReview.suggestion?.trim()))
+      || (event.secondReview?.confirmedDecision === 'Rejected'
+        && Boolean(event.secondReview.reason?.trim())
+        && Boolean(event.secondReview.suggestion?.trim())));
   const canPrepareEdit = pendingBeforeAdminReview || rejectedWithFeedback;
   const submittedVersionLabel = event.currentVersionId ?? 'Not submitted';
   const editableVersionLabel = event.editableVersionId ?? (editable ? nextVersionId(event.currentVersionNumber) : 'Locked');
@@ -188,6 +191,7 @@ export default function EventDetail() {
           <div className="card-body divide-y divide-[#e3dacb] text-sm">
             <Row label="Type" value={details.type} />
             <Row label="Venue" value={venueName} />
+            <Row label="State" value={details.venueState ?? 'Not recorded'} />
             <Row label="Capacity" value={details.venueCapacity ? details.venueCapacity.toLocaleString() : 'Not set'} />
             <Row label="Attendance" value={details.expectedAttendance ? details.expectedAttendance.toLocaleString() : 'Not set'} />
             <Row label="Environment" value={`${details.environment}, ${details.coverage}, ${details.seating}`} />
@@ -203,7 +207,7 @@ export default function EventDetail() {
             <Row label="Submitted" value={submittedVersionLabel} />
             <Row label="Editable" value={editableVersionLabel} />
             <Row label="Submitted at" value={event.submittedAt ? format(new Date(event.submittedAt), 'PPp') : 'Not submitted'} />
-            <Row label="Assessment" value={event.currentAssessmentId ? 'Available' : status === 'Pending' ? 'Processing' : 'Unavailable'} />
+            <Row label="Assessment" value={summary?.status === 'failed' ? 'Failed — retry required' : summary?.status === 'manual_review_required' ? 'Manual review required' : summary ? 'Available' : event.currentAssessmentId ? 'Assessment record created' : status === 'Pending' ? 'Processing' : 'Unavailable'} />
             <Row label="Admin decision" value={organizerAdminDecisionLabel(event)} />
             <Row label="Public" value={organizerPublicationLabel(publicationState)} />
             <Row label="Authorities" value={event.requiredAuthorities.length > 0 ? event.requiredAuthorities.join(', ') : 'Not assigned yet'} />
@@ -211,7 +215,7 @@ export default function EventDetail() {
         </section>
 
         <section className="card">
-          <div className="card-header"><div><h2 className="section-title">Risk assessment summary</h2><p className="mt-1 text-xs text-ink-500">{summary?.status === 'official_ready' ? 'Official result available for authority decision' : 'Provisional until authority confirmation is complete'}</p></div></div>
+          <div className="card-header"><div><h2 className="section-title">Risk assessment summary</h2><p className="mt-1 text-xs text-ink-500">{summary?.status === 'official_ready' ? 'Official result available for authority decision' : summary?.status === 'failed' ? 'Assessment failed and requires a retry' : summary?.status === 'manual_review_required' ? 'Manual review is required before an official result can be produced' : 'Provisional until authority confirmation is complete'}</p></div></div>
           <div className="card-body">
             {!summary ? <p className="text-sm text-ink-500">{!event.currentVersionId ? 'No assessment has been created for this application.' : legacySummary ? 'This version has a legacy assessment and must be recomputed before the current result can be shown.' : 'Assessment is processing.'}</p> : (
               <OrganizerAssessmentSummaryView summary={summary} />
@@ -222,15 +226,15 @@ export default function EventDetail() {
         <section className="card">
           <div className="card-header"><h2 className="section-title">Correction details</h2></div>
           <div className="card-body text-sm leading-6 text-ink-600">
-            {event.initialReview?.decision === 'Rejected' || revisionFeedback?.kind === 'rejected_revision' ? (
+            {event.initialReview?.decision === 'Rejected' || event.secondReview?.confirmedDecision === 'Rejected' || revisionFeedback?.kind === 'rejected_revision' ? (
               <div className="space-y-4">
                 <div>
                   <p className="text-xs font-bold uppercase tracking-[0.06em] text-ink-500">Reason</p>
-                  <p className="mt-1 text-ink-800">{event.initialReview?.reason || revisionFeedback?.rejectionReason || 'A correction was requested.'}</p>
+                  <p className="mt-1 text-ink-800">{event.secondReview?.reason || event.initialReview?.reason || revisionFeedback?.rejectionReason || 'A correction was requested.'}</p>
                 </div>
                 <div>
                   <p className="text-xs font-bold uppercase tracking-[0.06em] text-ink-500">Suggested correction</p>
-                  <p className="mt-1 text-ink-800">{event.initialReview?.suggestion || revisionFeedback?.rejectionSuggestion || 'Update the application and resubmit a new version.'}</p>
+                  <p className="mt-1 text-ink-800">{event.secondReview?.suggestion || event.initialReview?.suggestion || revisionFeedback?.rejectionSuggestion || 'Update the application and resubmit a new version.'}</p>
                 </div>
               </div>
             ) : (

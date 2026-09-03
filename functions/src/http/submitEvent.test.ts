@@ -7,6 +7,7 @@ const validDetails: EventDetails = {
   type: 'cultural',
   venueName: 'Central Venue',
   venueAddress: 'Kuala Lumpur',
+  venueState: 'Kuala Lumpur',
   venueLocation: { lat: 3.139, lng: 101.687 },
   venueCapacity: 2_000,
   expectedAttendance: 1_500,
@@ -48,6 +49,10 @@ function completeRiskProfile() {
 describe('validateEventDetails', () => {
   it('accepts a complete future event', () => {
     expect(validateEventDetails(validDetails, 1_000)).toEqual([]);
+  });
+
+  it('requires the state for custom and registry-backed venue submissions', () => {
+    expect(validateEventDetails({ ...validDetails, venueState: undefined }, 1_000).join(' ')).toMatch(/Venue state is required/);
   });
 
   it('rejects invalid coordinates, dates, and capacity', () => {
@@ -107,10 +112,11 @@ describe('submission evidence and registry venue integrity', () => {
   });
 
   it('requires exact identity binding to an active canonical venue', () => {
-    const venue = { active: true, verificationStatus: 'verified', name: validDetails.venueName, address: validDetails.venueAddress, capacity: 2_000, location: validDetails.venueLocation };
+    const venue = { active: true, verificationStatus: 'verified', name: validDetails.venueName, address: validDetails.venueAddress, state: validDetails.venueState, capacity: 2_000, location: validDetails.venueLocation };
     expect(validateCanonicalVenueRecord(validDetails, venue)).toEqual([]);
     expect(validateCanonicalVenueRecord(validDetails, { ...venue, active: false })).not.toEqual([]);
     expect(validateCanonicalVenueRecord(validDetails, { ...venue, capacity: 2_001 })).not.toEqual([]);
+    expect(validateCanonicalVenueRecord(validDetails, { ...venue, state: 'Selangor' })).not.toEqual([]);
     expect(validateCanonicalVenueRecord(validDetails, { ...venue, location: { lat: 0, lng: 0 } })).not.toEqual([]);
   });
 });

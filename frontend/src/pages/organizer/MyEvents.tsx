@@ -181,7 +181,7 @@ function versionLabel(event: EventRecord): string {
 }
 
 function assessmentLabel(event: EventRecord): string {
-  if (event.currentAssessmentId) return 'Assessment available';
+  if (event.currentAssessmentId) return 'Assessment record created';
   if (event.status === 'Pending') return 'Assessment processing';
   if (isEditableApplicationStatus(String(event.status))) return 'Not submitted';
   if (event.status === 'Manual Review Required') return 'Manual assessment required';

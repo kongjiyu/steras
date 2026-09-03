@@ -1,8 +1,8 @@
-import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { latestValidHistoricalResource, nextResourceRevision, resourceDocumentId, invalidAiProposalForManualRecovery, __testOnlyManualLockState, isPipelineEventVersion } from './onEventCreated';
 import { isManualAssessmentSourceEligible } from '../engines/manualFinalisation';
 import { AISuccessfulProposal, EventVersion, RESOURCE_KEYS, RESOURCE_SCHEMA_VERSION, ResourceRecommendation } from '@shared/types';
+import { buildSubmittedEventVersion } from '../utils/eventVersionHash';
 
 describe('M1-submitted assessment input integrity', () => {
   it('binds the exact template selection into the immutable version hash', () => {
@@ -17,6 +17,7 @@ describe('M1-submitted assessment input integrity', () => {
     const eventDetails = {
       name: 'KL Cultural Festival', type: 'cultural' as const,
       venueName: 'Central Venue', venueAddress: 'Kuala Lumpur', venueLocation: { lat: 3.139, lng: 101.687 },
+      venueState: 'Kuala Lumpur',
       venueCapacity: 2_000, expectedAttendance: 1_500, environment: 'outdoor' as const,
       coverage: 'partially_covered' as const, seating: 'mixed' as const,
       startDatetime: 2_000, endDatetime: 3_000,
@@ -30,12 +31,24 @@ describe('M1-submitted assessment input integrity', () => {
         vulnerableAttendeesPercent: 10, standingAttendeesPercent: 20, nearestHospitalTravelMinutes: 15,
       },
     };
-    const documentPaths = ['event_documents/event-1/v1/evidence.pdf'];
-    const inputHash = createHash('sha256').update(JSON.stringify({ eventDetails, templateSelection, documentPaths })).digest('hex');
-    const version: EventVersion = {
+    const documentPaths = ['event_documents/event-1/v1/combined.pdf', 'event_documents/event-1/v1/evidence.pdf'];
+    const version = buildSubmittedEventVersion({
       eventId: 'event-1', versionId: 'v1', versionNumber: 1, eventDetails, templateSelection,
-      documentPaths, submittedBy: 'organizer-1', submittedAt: 1_000, inputHash,
-    };
+      documentPaths,
+      documentUploads: [{
+        path: documentPaths[0], role: 'combined_application' as const, originalName: 'combined.pdf',
+        mimeType: 'application/pdf', sizeBytes: 100, uploadedAt: 900,
+        schemaVersion: '2026-08-28-document-v1' as const,
+      }, {
+        path: documentPaths[1], role: 'supporting_evidence' as const, originalName: 'evidence.pdf',
+        mimeType: 'application/pdf', sizeBytes: 100, uploadedAt: 900,
+        schemaVersion: '2026-08-28-document-v1' as const,
+      }],
+      extractionId: 'extract-1',
+      evidenceManifest: [{ requirementId: 'CORE-E01', applicability: 'required' as const, documentPath: documentPaths[1] }],
+      evidenceManifestSchemaVersion: '2026-08-28-evidence-v1' as const,
+      submittedBy: 'organizer-1', submittedAt: 1_000,
+    } satisfies Omit<EventVersion, 'inputHash'>);
 
     expect(isPipelineEventVersion(version, 'event-1', 'v1')).toBe(true);
     expect(isPipelineEventVersion({ ...version, templateSelection: undefined }, 'event-1', 'v1')).toBe(false);

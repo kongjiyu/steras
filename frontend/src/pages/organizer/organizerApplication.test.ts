@@ -12,6 +12,7 @@ function validDetails(overrides: Partial<EventDetails> = {}): EventDetails {
     type: 'conference',
     venueName: 'PICC',
     venueAddress: 'Putrajaya, Malaysia',
+    venueState: 'Putrajaya',
     venueLocation: { lat: 2.9264, lng: 101.6964 },
     venueCapacity: 1000,
     expectedAttendance: 500,
@@ -63,14 +64,14 @@ describe('organizer application lifecycle helpers', () => {
   });
 
   it('reports the actual Admin review stage without conflating authority progress', () => {
-    const initialApproved = { decision: 'Approved' as const, reason: 'Complete', reviewerUid: 'admin-1', reviewedAt: 1 };
+    const initialApproved = { decision: 'Approved' as const, reason: 'Complete', reviewStage: 'initial' as const, reviewerUid: 'admin-1', reviewedAt: 1 };
     expect(organizerAdminDecisionLabel({ status: 'Pending' })).toBe('No Admin decision recorded');
     expect(organizerAdminDecisionLabel({ status: 'UnderReview', initialReview: initialApproved })).toBe('Initial Admin review approved');
     expect(organizerAdminDecisionLabel({ status: 'Approved', initialReview: initialApproved })).toBe('Final Admin review approved');
     expect(organizerAdminDecisionLabel({ status: 'Rejected', initialReview: initialApproved })).toBe('Final Admin review rejected');
     expect(organizerAdminDecisionLabel({
       status: 'Rejected',
-      initialReview: { decision: 'Rejected', reason: 'Incomplete', suggestion: 'Attach evidence', reviewerUid: 'admin-1', reviewedAt: 1 },
+      initialReview: { decision: 'Rejected', reason: 'Incomplete', reviewStage: 'initial', suggestion: 'Attach evidence', reviewerUid: 'admin-1', reviewedAt: 1 },
     })).toBe('Initial Admin review rejected');
   });
 

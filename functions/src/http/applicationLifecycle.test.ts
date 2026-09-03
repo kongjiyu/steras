@@ -14,7 +14,7 @@ function event(status: EventRecord['status'], overrides: Partial<EventRecord> = 
 describe('M1 application lifecycle guards', () => {
   it('allows Pending edit/cancel only before any Admin or officer review state exists', () => {
     expect(isBeforeAdminReview(event('Pending', { reviewStage: 'initial' }))).toBe(true);
-    expect(isBeforeAdminReview(event('Pending', { initialReview: { decision: 'Approved', reason: 'ok', reviewerUid: 'admin', reviewedAt: 2 } }))).toBe(false);
+    expect(isBeforeAdminReview(event('Pending', { initialReview: { decision: 'Approved', reason: 'ok', reviewStage: 'initial', reviewerUid: 'admin', reviewedAt: 2 } }))).toBe(false);
     expect(isBeforeAdminReview(event('Pending', { assignedOfficerUids: ['officer'] }))).toBe(false);
     expect(isBeforeAdminReview(event('Pending', { assignedOfficerByAuthority: { PDRM: 'officer' } }))).toBe(false);
     expect(isBeforeAdminReview(event('UnderReview'))).toBe(false);
@@ -23,12 +23,18 @@ describe('M1 application lifecycle guards', () => {
   it('creates traceable sources for Pending edits and rejected revisions only', () => {
     expect(lifecycleRevisionSource(event('Pending'), 10)).toEqual({ kind: 'pending_edit', sourceVersionId: 'v1', startedAt: 10 });
     expect(lifecycleRevisionSource(event('Rejected', {
-      initialReview: { decision: 'Rejected', reason: 'Missing route plan.', suggestion: 'Attach a signed plan.', reviewerUid: 'admin', reviewedAt: 5 },
+      initialReview: { decision: 'Rejected', reason: 'Missing route plan.', reviewStage: 'initial', suggestion: 'Attach a signed plan.', reviewerUid: 'admin', reviewedAt: 5 },
     }), 10)).toEqual({
       kind: 'rejected_revision', sourceVersionId: 'v1', startedAt: 10,
       rejectionReason: 'Missing route plan.', rejectionSuggestion: 'Attach a signed plan.',
     });
     expect(lifecycleRevisionSource(event('Approved'), 10)).toBeUndefined();
+    expect(lifecycleRevisionSource(event('Rejected', {
+      initialReview: { decision: 'Approved', reason: 'Initial gate passed.', reviewStage: 'initial', reviewerUid: 'admin', reviewedAt: 5 },
+      secondReview: { confirmedDecision: 'Rejected', reason: 'Unsafe final resource plan.', suggestion: 'Revise the deployment plan.', reviewerUid: 'admin', decidedAt: 9 },
+    }), 10)).toMatchObject({
+      kind: 'rejected_revision', rejectionReason: 'Unsafe final resource plan.', rejectionSuggestion: 'Revise the deployment plan.',
+    });
     expect(lifecycleRevisionSource(event('Rejected', { initialReview: undefined }), 10)).toBeUndefined();
     expect(hasCanonicalCurrentVersion(event('Pending', { currentVersionId: 'v2', currentVersionNumber: 1 }))).toBe(false);
     expect(hasValidActiveRevision(event('Draft', {

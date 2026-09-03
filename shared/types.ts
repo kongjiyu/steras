@@ -214,6 +214,8 @@ export interface EventDetails {
   venueId?: string;
   venueName: string;
   venueAddress: string;
+  /** Required for current submissions; optional only on immutable legacy records. */
+  venueState?: string;
   venueLocation?: VenueLocation;
   venueCapacity: number;
   expectedAttendance: number;

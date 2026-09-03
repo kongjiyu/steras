@@ -8,7 +8,6 @@ import {
   EventRecord,
   EventRiskProfile,
   EventType,
-  EventVersion,
   M1_DOCUMENT_SCHEMA_VERSION,
   M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
   M1DocumentExtraction,
@@ -23,6 +22,7 @@ import { inspectStorageEvidence } from '../utils/storageEvidence';
 import { validateDraftDocuments } from './extractApplicationDocuments';
 import { validateM1EvidenceManifest } from '../engines/m1EvidenceManifest';
 import { hasValidActiveRevision } from './applicationLifecycle';
+import { buildSubmittedEventVersion } from '../utils/eventVersionHash';
 
 export { isValidEvidenceMetadata } from '../utils/storageEvidence';
 
@@ -63,15 +63,12 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
     throw new HttpsError('failed-precondition', 'The template recommendation no longer matches the event type or venue setting.');
   }
   const preflightVersionId = `v${(preflight.currentVersionNumber ?? 0) + 1}`;
-  const preflightDocuments = preflight.documentSchemaVersion === M1_DOCUMENT_SCHEMA_VERSION
-    ? validateDraftDocuments(eventId, preflightVersionId, preflight.draftDocuments)
-    : undefined;
-  const preflightExtraction = preflightDocuments
-    ? await loadCurrentExtraction(preflight, eventReference)
-    : undefined;
-  const preflightEvidenceManifest = preflightDocuments
-    ? validateCurrentEvidenceManifest(preflight, preflightDocuments)
-    : undefined;
+  if (preflight.documentSchemaVersion !== M1_DOCUMENT_SCHEMA_VERSION) {
+    throw new HttpsError('failed-precondition', 'Upload and extract the current versioned application documents before submission.');
+  }
+  const preflightDocuments = validateDraftDocuments(eventId, preflightVersionId, preflight.draftDocuments);
+  const preflightExtraction = await loadCurrentExtraction(preflight, eventReference);
+  const preflightEvidenceManifest = validateCurrentEvidenceManifest(preflight, preflightDocuments);
   await validateSubmissionAssets(eventId, preflightVersionId, preflight.draftDocumentPaths ?? []);
   await validateCanonicalVenue(preflight.eventDetails);
   const preflightFingerprint = submissionFingerprint(preflight);
@@ -124,34 +121,22 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
       throw new HttpsError('invalid-argument', 'One or more uploaded document paths do not belong to this application version.');
     }
 
-    const inputHash = createHash('sha256').update(JSON.stringify({
-      eventDetails: event.eventDetails,
-      templateSelection: event.templateSelection,
-      documentPaths,
-      documentUploads: preflightDocuments,
-      extractionId: preflightExtraction?.extractionId,
-      evidenceManifest: preflightEvidenceManifest,
-      evidenceManifestSchemaVersion: preflight.evidenceManifestSchemaVersion,
-      revisionSource: preflight.activeRevision,
-    })).digest('hex');
-    const version: EventVersion = {
+    const version = buildSubmittedEventVersion({
       versionId,
       eventId,
       versionNumber,
       eventDetails: event.eventDetails,
       templateSelection: event.templateSelection,
       documentPaths,
-      ...(preflightDocuments ? { documentUploads: preflightDocuments } : {}),
-      ...(preflightExtraction ? { extractionId: preflightExtraction.extractionId } : {}),
-      ...(preflightEvidenceManifest ? {
-        evidenceManifest: preflightEvidenceManifest,
-        evidenceManifestSchemaVersion: M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
-      } : {}),
+      documentUploads: preflightDocuments,
+      extractionId: preflightExtraction.extractionId,
+      evidenceManifest: preflightEvidenceManifest,
+      evidenceManifestSchemaVersion: M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
       ...(preflight.activeRevision ? { revisionSource: preflight.activeRevision } : {}),
       submittedBy: uid,
       submittedAt: now,
-      inputHash,
-    };
+    });
+    const { inputHash } = version;
     const versionReference = eventReference.collection(COLLECTIONS.VERSIONS).doc(versionId);
     const versionSnapshot = await transaction.get(versionReference);
     if (versionSnapshot.exists) throw new HttpsError('already-exists', 'This application version has already been submitted.');
@@ -181,6 +166,7 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
       assignedOfficerByAuthority: {},
       reviewStage: 'initial',
       initialReview: FieldValue.delete(),
+      secondReview: FieldValue.delete(),
       activeRevision: FieldValue.delete(),
       manualAssessment: FieldValue.delete(),
       verifiedControlIds: [],
@@ -248,6 +234,7 @@ export function validateEventDetails(value: unknown, now = Date.now()): string[]
   requiredText(value.name, 'Event name', 200, errors);
   requiredText(value.venueName, 'Venue name', 200, errors);
   requiredText(value.venueAddress, 'Venue address', 500, errors);
+  requiredText(value.venueState, 'Venue state', 100, errors);
   requiredText(value.organizerName, 'Organizer name', 200, errors);
   requiredText(value.organizerEmail, 'Organizer email', 320, errors);
   if (typeof value.organizerEmail === 'string' && value.organizerEmail.trim() && !isEmail(value.organizerEmail)) {
@@ -339,6 +326,7 @@ export function validateCanonicalVenueRecord(details: EventDetails, value: unkno
   const canonicalCapacity = value.verifiedSafeCapacity ?? value.capacity;
   return normalizeText(details.venueName) !== normalizeText(value.name)
     || normalizeText(details.venueAddress) !== normalizeText(value.address)
+    || normalizeText(details.venueState) !== normalizeText(value.state)
     || details.venueCapacity !== canonicalCapacity
     || !sameCoordinate(details.venueLocation?.lat, location.lat)
     || !sameCoordinate(details.venueLocation?.lng, location.lng)
