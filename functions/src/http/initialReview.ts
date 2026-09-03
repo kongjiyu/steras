@@ -14,6 +14,7 @@ import { firestore } from 'firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import {
+  ASSESSMENT_SCHEMA_VERSION,
   COLLECTIONS,
   AuthorityType,
   Assignment,
@@ -26,6 +27,7 @@ import {
 } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
 import { validateResourceRecommendation } from '../engines/resourceContract';
+import { validateAssessmentResultAgainstProposal, validateProvisionalAssessmentResult } from '../engines/resourceCalculator';
 import { resolveAuthUid } from '../utils/notifications';
 
 type InitialDecision = 'Approved' | 'Rejected';
@@ -117,6 +119,8 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
   const assessment = assessmentSnap.data() as RiskAssessment | undefined;
   const resource = resourceSnap?.data() as ResourceRecommendation | undefined;
   const manualOfficial = isManualOfficialAssessment(assessment, eventId, versionId, assessmentId);
+  const provisionalReady = isReviewableProvisionalAssessment(assessment, eventId, versionId, assessmentId);
+  const aiOfficialReady = isReadyAssessment(assessment, eventId, versionId, assessmentId);
 
   // Feedback is read before the decision transaction so the admin can
   // explicitly attach the completed officer rationale to an initial reject.
@@ -138,13 +142,14 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
       }));
   }
 
-  if (decision === 'Approved' && (!(isReadyAssessment(assessment, eventId, versionId, assessmentId) || manualOfficial)
+  if (decision === 'Approved' && (!(aiOfficialReady || manualOfficial || provisionalReady)
     || !resourceSnap?.exists || !resource || !resourceId
     || !validateResourceRecommendation(resource).ok
     || resource.resourceId !== resourceId
     || resource.eventId !== eventId
     || resource.versionId !== versionId
-    || resource.assessmentId !== assessmentId)) {
+    || resource.assessmentId !== assessmentId
+    || (provisionalReady ? resource.stage !== 'provisional' : resource.stage !== 'official'))) {
     if (event.status === 'Manual Review Required' || assessment?.status === 'manual_review_required') {
       throw new HttpsError('failed-precondition', 'Complete the Admin manual assessment queue before initial approval.');
     }
@@ -234,6 +239,27 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
   });
 
   return { eventId, versionId, assessmentId, status: result.status, decision, manualAssessmentRecorded: manualOfficial };
+}
+
+export function isReviewableProvisionalAssessment(
+  value: unknown,
+  eventId: string,
+  versionId: string,
+  assessmentId: string,
+): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const assessment = value as Record<string, unknown>;
+  if (assessment.status !== 'provisional_ready' || assessment.schemaVersion !== ASSESSMENT_SCHEMA_VERSION
+    || assessment.eventId !== eventId || assessment.versionId !== versionId || assessment.assessmentId !== assessmentId
+    || assessment.authorityReviewRequired !== true) return false;
+  const proposal = assessment.aiProposal as import('@shared/types').AIProposalAttempt | undefined;
+  const provisionalResult = assessment.provisionalResult as import('@shared/types').ProvisionalAssessmentResult | undefined;
+  if (!proposal || proposal.status !== 'success' || !provisionalResult
+    || provisionalResult.proposalId !== proposal.proposalId
+    || !Array.isArray(assessment.evidence) || !Array.isArray(assessment.contextEvidence)
+    || assessment.contextEvidence.length === 0) return false;
+  return validateProvisionalAssessmentResult(provisionalResult).length === 0
+    && validateAssessmentResultAgainstProposal(provisionalResult, proposal).length === 0;
 }
 
 function isReadyAssessment(value: unknown, eventId?: string, versionId?: string, assessmentId?: string): value is RiskAssessment {

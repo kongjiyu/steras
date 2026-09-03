@@ -26,7 +26,8 @@ describe('recordOfficerProposal transactional assignment fence', () => {
     [{ ...assignment, versionId: 'v2' }, 'version changed'],
     [{ ...assignment, assignmentId: 'forged' }, 'non-canonical payload identity'],
     [undefined, 'assignment deleted'],
-  ])('rejects %s (%s)', (candidate) => {
+  ])('rejects %s (%s)', (candidate, label) => {
+    expect(label).toBeTruthy();
     expect(() => assertCurrentOfficerAssignment(candidate, 'v1_PDRM', 'event-1', 'v1', 'PDRM', 'officer-1')).toThrow(/assignment changed/i);
   });
 

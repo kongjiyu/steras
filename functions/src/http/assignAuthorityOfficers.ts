@@ -28,6 +28,7 @@ import {
   AuthorityType,
   COLLECTIONS,
   EventRecord,
+  EventVersion,
   OfficerProfile,
   UserProfile,
   Venue,
@@ -77,15 +78,20 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
     throw new HttpsError('failed-precondition', 'This event has no required authorities.');
   }
 
-  // Resolve the venue state. If the venue has no `state`, fall back to
-  // 'ALL' so federal officers can still match.
-  let venueState = 'ALL';
-  if (event.eventDetails?.venueId) {
-    const venueSnap = await db.collection(COLLECTIONS.VENUES).doc(event.eventDetails.venueId).get();
-    if (venueSnap.exists) {
-      venueState = (venueSnap.data() as Venue).state ?? 'ALL';
-    }
+  const versionRef = eventRef.collection(COLLECTIONS.VERSIONS).doc(versionId);
+  const versionSnap = await versionRef.get();
+  const version = versionSnap.data() as EventVersion | undefined;
+  if (!versionSnap.exists || version?.eventId !== eventId || version.versionId !== versionId) {
+    throw new HttpsError('failed-precondition', 'The immutable current application version is missing.');
   }
+  // Custom venues use the state stored on the immutable submitted version.
+  // Registry venues additionally fence that value against the active registry.
+  let registryVenue: Venue | undefined;
+  if (version.eventDetails.venueId) {
+    const venueSnap = await db.collection(COLLECTIONS.VENUES).doc(version.eventDetails.venueId).get();
+    registryVenue = venueSnap.data() as Venue | undefined;
+  }
+  const venueState = resolveSubmittedVenueState(version, registryVenue);
 
   // Load all active officers grouped by authorityType. In a real
   // production system this would be indexed / sharded; for the
@@ -175,7 +181,14 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
     // Re-read the event + ALL officers inside the transaction to avoid races.
     // Firestore requires all reads to complete before any writes.
     const evSnap = await tx.get(eventRef);
+    const currentVersionSnap = await tx.get(versionRef);
     const ev = evSnap.data() as EventRecord;
+    const currentVersion = currentVersionSnap.data() as EventVersion | undefined;
+    if (!currentVersionSnap.exists || currentVersion?.eventId !== eventId || currentVersion.versionId !== versionId
+      || currentVersion.eventDetails.venueState !== version.eventDetails.venueState
+      || currentVersion.eventDetails.venueId !== version.eventDetails.venueId) {
+      throw new HttpsError('aborted', 'The immutable application venue binding changed. Reload and retry.');
+    }
     if (ev.initialReview?.decision !== 'Approved') {
       throw new HttpsError('failed-precondition', 'Complete and approve the admin initial review before assigning officers.');
     }
@@ -294,3 +307,17 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
     return { checklist: result.checklist, assigned: result.assigned, venueState };
   });
 });
+
+export function resolveSubmittedVenueState(version: EventVersion, registryVenue?: Venue): string {
+  const submittedState = version.eventDetails.venueState?.trim() ?? '';
+  const venueId = version.eventDetails.venueId;
+  if (!venueId) {
+    if (!submittedState) throw new HttpsError('failed-precondition', 'The immutable submitted venue state is required for officer assignment.');
+    return submittedState;
+  }
+  if (!registryVenue || registryVenue.venueId !== venueId || !registryVenue.active || !registryVenue.state
+    || (submittedState && submittedState !== registryVenue.state)) {
+    throw new HttpsError('failed-precondition', 'The submitted registry venue state is stale or invalid.');
+  }
+  return registryVenue.state;
+}

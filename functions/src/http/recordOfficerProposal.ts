@@ -28,6 +28,7 @@ import { firestore } from 'firebase-admin';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import {
   Assignment,
+  AuthorityType,
   COLLECTIONS,
   DecisionValue,
   EventRecord,
@@ -100,6 +101,8 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
   if (!profile || profile.role !== 'authority' || !profile.authorityType) {
     throw new HttpsError('permission-denied', 'Only provisioned authority accounts can record proposals.');
   }
+  const authorityType = profile.authorityType;
+  const callerUid = request.auth.uid;
 
   const eventRef = db.collection(COLLECTIONS.EVENTS).doc(eventId);
   const eventSnap = await eventRef.get();
@@ -188,7 +191,7 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
     if (!currentEventSnap.exists || currentEvent?.currentVersionId !== versionId
       || currentEvent.currentAssessmentId !== assessmentId || currentEvent.currentResourceId !== resourceId
       || currentEvent.status !== 'UnderReview' || currentEvent.reviewStage !== 'authority'
-      || currentEvent.assignedOfficerByAuthority?.[profile.authorityType] !== request.auth.uid) {
+      || currentEvent.assignedOfficerByAuthority?.[authorityType] !== callerUid) {
       throw new HttpsError('aborted', 'The application generation changed before the proposal was recorded.');
     }
     const all = allAssignmentsSnap.docs
@@ -201,8 +204,8 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
       assignmentId,
       eventId,
       versionId,
-      profile.authorityType,
-      request.auth!.uid,
+      authorityType,
+      callerUid,
     );
     // Treat the current assignment as if it's about to be completed
     // (so the last officer's proposal correctly triggers reviewStage='second').
