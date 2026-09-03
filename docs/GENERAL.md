@@ -39,7 +39,8 @@ General ownership does not mean owning every module feature. It means maintainin
 | `/organizer/incidents/new` | M4 incident report form | M4 | Planned |
 | `/authority/incidents` | M4 authority incident queue | M4 | Planned |
 | `/admin/analytics` | `pages/admin/AdminAnalytics.tsx` with `authority/Analytics.tsx` | M5 | Implemented foundation; admin-only, read-only |
-| `/authority/reports` | Compatibility redirect to `/admin/analytics` | M5 | Implemented compatibility route |
+| `/authority/reports` | Compatibility redirect to `/authority` | General | M5 is Admin-only; no Authority analytics access |
+| `/incident-preview` | `IncidentReportingPrototype.tsx` | M4 | Synthetic in-memory workflow preview only; no live persistence |
 
 ## General-Owned Files
 

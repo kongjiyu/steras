@@ -12,12 +12,12 @@ M5 observes source records. It never changes an assessment, resource recommendat
 
 ## Current Progress
 
-- The admin-only, read-only `/admin/analytics` page is implemented inside the shared admin shell; `/authority/reports` remains a compatibility redirect.
+- The admin-only, read-only `/admin/analytics` page is implemented inside the shared admin shell. The retired `/authority/reports` path redirects to the Authority dashboard and does not grant M5 access.
 - `/dashboard-preview?view=reports` provides a design-review version with representative data.
 - `getAnalyticsPortfolio` provides one bounded, admin-only Cloud Functions read model for the live dashboard. It replaces browser-side full collection reads and per-event assessment requests.
 - The API returns only M5-safe fields: event identity and scope, assessment summaries, resource aggregates, incident counters, control counters, terminal timestamps, and re-application signals. It does not return organiser contact details, evidence paths, incident descriptions, authority rationale, or private notes.
 - Synthetic/UAT fixtures are identified and excluded by default. API responses include schema version, metric-definition version, generation timestamp, source cutoff, truncation state, and unavailable-section metadata.
-- The page currently provides five report modes, date filtering, event-type scope, authority-scoped reads, application/approval trends, official-risk distribution, assessment-quality signals, review outcomes, operations summaries, explicit M4 unavailable states, and CSV/PDF export.
+- The page provides five report modes, date filtering, event-type scope, application/approval trends, official-risk distribution, assessment-quality signals, review outcomes, operations summaries, explicit unavailable states, and CSV/PDF export as a foundation for the PRD reports.
 - Analytics calculation helpers and unit tests exist, and CSV cells receive basic spreadsheet-formula neutralisation.
 - Remaining UI gaps are exposing every backend filter in the report builder, richer PDF formatting, and displaying full M4 metrics once Module 4 supplies production incident data.
 
@@ -32,13 +32,13 @@ Turn the existing reports foundation into an auditable, privacy-safe dashboard w
 | `/admin/analytics` | `pages/admin/AdminAnalytics.tsx` with `pages/authority/Analytics.tsx` | Admin-shell integration, filters, KPIs, charts, trends, and CSV/PDF export |
 | `/dashboard-preview?view=reports` | `pages/authority/Analytics.tsx` | Design-review preview with representative data |
 
-`/authority/reports` remains a compatibility redirect. If the page becomes too large, M5 may add nested routes below `/admin/analytics/*`. M5 must update `docs/GENERAL.md` before adding them.
+`/authority/reports` redirects to `/authority`; authenticated Authority users cannot access M5. If the page becomes too large, M5 may add nested routes below `/admin/analytics/*`. M5 must update `docs/GENERAL.md` before adding them.
 
 ## Owned Code and Data
 
 - `frontend/src/pages/authority/Analytics.tsx`
 - `frontend/src/pages/authority/analyticsData.ts` and tests
-- future analytics query/aggregation Cloud Functions
+- `functions/src/http/getAnalyticsPortfolio.ts`
 - future `analyticsSnapshots/{snapshotId}` records
 - metric definitions, schema-version grouping, and export contracts
 
@@ -91,11 +91,11 @@ Agreement metrics are monitoring signals only. They never modify official M2 out
 
 ## Privacy and Access Assumptions
 
-- Every query is filtered to the signed-in authority scope unless a future explicit cross-agency analytics role is added.
+- Only authenticated Admin users may query M5. Authority is an Admin-selectable report filter, not an authorization role for this module.
 - CSV/PDF exports exclude organiser name, email, phone, evidence paths/content, incident descriptions, and private investigation notes.
 - Spreadsheet exports neutralise formula-leading values.
 - Public users cannot access analytics records or exports.
-- Synthetic fixtures are labelled academic test data.
+- Synthetic fixtures are excluded from operational results by default and must be explicitly requested and labelled when shown.
 - Snapshot records store the metric definition/version and source cutoff so results are reproducible.
 
 ## Inputs From Other Modules
@@ -115,8 +115,9 @@ M5 provides read-only metrics and exports. Other modules may link to filtered re
 
 - Keep synthetic demo records excluded from operational KPI defaults and show them only under an explicit demo-data filter.
 - Report assessment coverage and missing-data rates separately from risk distribution; low-confidence or insufficient assessments are not “low risk”.
-
 - Expose the backend venue, risk, status, authority, synthetic-data, and schema-version filters in the report builder UI.
+- Complete every FR-M5-05–13 metric only when its source fields exist; otherwise show `Data Not Available` and document the missing source contract.
+- Make partial/truncated coverage prominent in every affected report and export.
 - Add server-generated `analyticsSnapshots` only if production volume outgrows the bounded callable read model.
 - Add AI agreement coverage for success, fallback, missing, and schema-version cases.
 - Add export tests for privacy and spreadsheet-injection safety.

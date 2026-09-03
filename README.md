@@ -146,7 +146,7 @@ Primary implementation:
 
 ### Module 4 — Incident reporting and handling
 
-Planned M4 scope includes organiser incident reports, admin action-required triage, assignment, authority investigation and verification, private evidence, resolution history, and a verified incident projection for future M2 assessments. Existing `incidents` data is academic seed context, not a completed M4 workflow.
+Planned M4 scope includes registered-reporter submissions, organiser action-required triage and final resolution, internal-team assignment, authority investigation, private evidence, Event Control discrepancy outcomes, resolution history, and a verified incident projection for future M2 assessments. `/incident-preview` demonstrates those role boundaries with synthetic in-memory data only; it is not a deployed M4 workflow and creates no live incident records. Existing `incidents` data is academic seed context.
 
 Working contract:
 
@@ -154,10 +154,12 @@ Working contract:
 
 ### Module 5 — Analytics and reporting
 
-- authority portfolio summaries and monthly charts;
+- Admin-only, read-only analytics foundation;
 - application, approval, official-risk, and AI-versus-deterministic agreement analysis;
-- local date-range filters;
-- PII-free CSV export with spreadsheet-formula neutralization;
+- bounded server-side portfolio reads and local report filters;
+- privacy-safe CSV/PDF export with spreadsheet-formula neutralization;
+
+This is an integration foundation rather than a claim that all FR-M5-01–20 report semantics are complete. Missing source fields and truncated coverage must remain explicit instead of being represented as complete or zero-valued results.
 
 Primary implementation:
 
@@ -185,7 +187,8 @@ Primary implementation:
 | `/authority/risk` | Authority | Official category assessment and evidence portfolio |
 | `/authority/resources` | Authority | Versioned indicative resource recommendation portfolio |
 | `/authority/events/:eventId` | Authority | Full authority review tool |
-| `/authority/reports` | Authority | Analytics and CSV export |
+| `/admin/analytics` | Admin | Read-only analytics and privacy-safe export foundation |
+| `/authority/reports` | Authority compatibility route | Redirects to the authority dashboard; M5 is Admin-only |
 
 Protected routes preserve the requested deep link after sign-in. Cross-role access is redirected to the signed-in user’s own workspace.
 
@@ -217,7 +220,8 @@ steras/
 │   │   ├── pages/
 │   │   │   ├── auth/         Login and organizer registration
 │   │   │   ├── organizer/    Draft, submission, list, and detail screens
-│   │   │   ├── authority/    Dashboard, queue, review, and reports
+│   │   │   ├── authority/    Dashboard, queue, review, plus reused analytics view components
+│   │   │   ├── admin/        Admin workspace and M5 analytics route
 │   │   │   └── public/       Landing page and approved-event register
 │   │   ├── config/           Firebase client and emulator connections
 │   │   └── routing.ts        Role-home and post-login routing policy
@@ -464,7 +468,6 @@ and is not suitable for real permit decisions or accuracy claims.
 4. Download and inspect submitted evidence.
 5. Optionally adjust resources with a rationale of 10–1,000 characters.
 6. Enter a decision rationale and choose **Approve** or **Reject**. A rejection also requires a corrective suggestion.
-7. Use **Reports** for assigned-agency analytics and PII-free CSV export.
 
 ### Public workflow
 
@@ -574,7 +577,7 @@ Hosting rewrites all paths to `frontend/dist/index.html`, allowing React Router 
 - assessment, resource, decision, audit, submission, and publication writes are server controlled;
 - evidence paths are version scoped and cannot be overwritten in place;
 - submitted evidence cannot be changed or deleted;
-- public analytics and CSV exports exclude organizer PII;
+- Admin analytics and exports exclude organizer PII and other restricted source fields;
 - M3 receives only an approved non-PII input allowlist;
 - secrets belong in Secret Manager or `.secret.local`, never committed files.
 

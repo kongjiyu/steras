@@ -39,6 +39,7 @@ type IncidentStatus = 'Submitted' | 'Under review' | 'Action required' | 'Invest
 type Severity = 'Low' | 'Medium' | 'High';
 type ResponsePath = 'internal' | 'external';
 type IncidentActionStatus = 'Assigned' | 'Requested' | 'Recorded' | 'Completed';
+type DiscrepancyOutcome = 'Confirmed True' | 'Dismissed as False';
 
 type HistoryEntry = {
   label: string;
@@ -79,6 +80,8 @@ type Incident = {
   responseTeam?: string;
   responsePath?: ResponsePath;
   recommendedAuthorities?: string[];
+  discrepancyOutcome?: DiscrepancyOutcome;
+  finalResolution?: string;
   actions: IncidentAction[];
   history: HistoryEntry[];
 };
@@ -567,7 +570,7 @@ function OrganizerActionPanel({ incident, onAssignInternalTeam, onRequestExterna
   onAssignInternalTeam: (team: string, note: string) => void;
   onRequestExternalAuthority: (authority: string, note: string) => void;
   onRecordAction: (path: ResponsePath, owner: string, note: string) => void;
-  onResolve: () => void;
+  onResolve: (rationale: string, discrepancyOutcome?: DiscrepancyOutcome) => void;
 }) {
   const [mode, setMode] = useState<'internal' | 'external' | null>(null);
   const [team, setTeam] = useState(incident.responseTeam ?? INTERNAL_TEAMS[0]);
@@ -576,6 +579,8 @@ function OrganizerActionPanel({ incident, onAssignInternalTeam, onRequestExterna
   const [recordPath, setRecordPath] = useState<ResponsePath>(incident.responsePath ?? 'internal');
   const [recordOwner, setRecordOwner] = useState(incident.responseTeam ?? INTERNAL_TEAMS[0]);
   const [actionNote, setActionNote] = useState('');
+  const [resolutionRationale, setResolutionRationale] = useState('');
+  const [discrepancyOutcome, setDiscrepancyOutcome] = useState<DiscrepancyOutcome | undefined>(incident.discrepancyOutcome);
   const aiRecommendedAuthority = incident.recommendedAuthorities?.[0]
     ?? (incident.category.includes('Medical') ? 'KKM medical response' : incident.severity === 'High' ? 'PDRM Kuala Lumpur' : 'DBKL event operations');
 
@@ -583,6 +588,24 @@ function OrganizerActionPanel({ incident, onAssignInternalTeam, onRequestExterna
     setRecordPath(path);
     setRecordOwner(path === 'internal' ? team : authority);
   };
+  const hasCompletedResponse = incident.responsePath === 'external'
+    ? incident.actions.some((action) => action.label === 'Authority investigation finding submitted')
+    : incident.actions.some((action) => action.label === 'Internal incident action recorded');
+  const canResolve = hasCompletedResponse
+    && resolutionRationale.trim().length >= 10
+    && (!incident.eventControl || Boolean(discrepancyOutcome));
+
+  if (incident.status === 'Resolved') {
+    return (
+      <section className="card">
+        <div className="card-header"><div><p className="section-title">Organizer final resolution</p><p className="mt-1 text-xs text-ink-500">Closed incidents are read-only in this prototype.</p></div><CheckCircle2 size={19} className="text-status-approved" /></div>
+        <div className="card-body">
+          <p className="text-sm leading-6 text-ink-700">{incident.finalResolution ?? 'The organizer recorded the final outcome before this synthetic incident was closed.'}</p>
+          {incident.discrepancyOutcome && <p className="mt-2 text-xs text-ink-600">Event Control outcome: <strong>{incident.discrepancyOutcome}</strong></p>}
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="card">
@@ -606,7 +629,8 @@ function OrganizerActionPanel({ incident, onAssignInternalTeam, onRequestExterna
             <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-bold text-ink-800">Assign an internal response team</p><p className="mt-1 text-xs text-ink-600">This assignment will move the report into investigation.</p></div><button type="button" onClick={() => setMode(null)} className="text-ink-400 hover:text-ink-700" aria-label="Close internal assignment"><X size={16} /></button></div>
             <label className="mt-4 block"><span className="field-label">Internal team</span><select value={team} onChange={(event) => { setTeam(event.target.value); if (recordPath === 'internal') setRecordOwner(event.target.value); }} className="input">{INTERNAL_TEAMS.map((option) => <option key={option}>{option}</option>)}</select></label>
             <label className="mt-3 block"><span className="field-label">Assignment instruction or immediate action</span><textarea value={assignmentNote} onChange={(event) => setAssignmentNote(event.target.value)} className="input min-h-20 resize-y" placeholder="Example: reopen north entrance lane and deploy two crowd marshals." /></label>
-            <button type="button" onClick={() => { onAssignInternalTeam(team, assignmentNote); setAssignmentNote(''); }} className="btn-primary mt-3 !min-h-9 !px-3 text-xs"><UsersRound size={14} /> Assign internal team</button>
+            <button type="button" disabled={assignmentNote.trim().length < 10} onClick={() => { onAssignInternalTeam(team, assignmentNote); setAssignmentNote(''); }} className="btn-primary mt-3 !min-h-9 !px-3 text-xs"><UsersRound size={14} /> Assign internal team</button>
+            {assignmentNote.trim().length < 10 && <p className="mt-2 text-xs text-ink-500">Enter at least 10 characters describing the assignment or immediate action.</p>}
           </div>
         )}
 
@@ -628,7 +652,8 @@ function OrganizerActionPanel({ incident, onAssignInternalTeam, onRequestExterna
               })}
             </div>
             <label className="mt-3 block"><span className="field-label">Request details</span><textarea value={assignmentNote} onChange={(event) => setAssignmentNote(event.target.value)} className="input min-h-20 resize-y" placeholder="Example: inspect crowd-control route and advise on immediate access management." /></label>
-            <button type="button" onClick={() => { onRequestExternalAuthority(authority, assignmentNote); setAssignmentNote(''); }} className="btn-primary mt-3 !min-h-9 !px-3 text-xs"><LifeBuoy size={14} /> Request external authority</button>
+            <button type="button" disabled={assignmentNote.trim().length < 10} onClick={() => { onRequestExternalAuthority(authority, assignmentNote); setAssignmentNote(''); }} className="btn-primary mt-3 !min-h-9 !px-3 text-xs"><LifeBuoy size={14} /> Request external authority</button>
+            {assignmentNote.trim().length < 10 && <p className="mt-2 text-xs text-ink-500">Enter at least 10 characters describing the assistance requested.</p>}
           </div>
         )}
 
@@ -639,7 +664,7 @@ function OrganizerActionPanel({ incident, onAssignInternalTeam, onRequestExterna
             <label><span className="field-label">{recordPath === 'internal' ? 'Action owner' : 'Authority involved'}</span>{recordPath === 'internal' ? <select value={recordOwner} onChange={(event) => setRecordOwner(event.target.value)} className="input">{INTERNAL_TEAMS.map((option) => <option key={option}>{option}</option>)}</select> : <select value={recordOwner} onChange={(event) => setRecordOwner(event.target.value)} className="input">{AUTHORITY_DIRECTORY.map((option) => <option key={option.name}>{option.name}</option>)}</select>}</label>
           </div>
           <label className="mt-3 block"><span className="field-label">Action taken and outcome</span><textarea value={actionNote} onChange={(event) => setActionNote(event.target.value)} className="input min-h-24 resize-y" placeholder="Describe what was done, who completed it, evidence reviewed and the current outcome." /></label>
-          <div className="mt-3 flex flex-wrap gap-2"><button type="button" disabled={!actionNote.trim()} onClick={() => { onRecordAction(recordPath, recordOwner, actionNote); setActionNote(''); }} className="btn-primary !min-h-9 !px-3 text-xs"><ClipboardCheck size={14} /> Record incident action</button>{incident.status !== 'Resolved' && <button type="button" onClick={onResolve} className="btn-secondary !min-h-9 !px-3 text-xs"><CheckCircle2 size={14} /> Mark resolved</button>}</div>
+          <div className="mt-3 flex flex-wrap gap-2"><button type="button" disabled={actionNote.trim().length < 10} onClick={() => { onRecordAction(recordPath, recordOwner, actionNote); setActionNote(''); }} className="btn-primary !min-h-9 !px-3 text-xs"><ClipboardCheck size={14} /> Record incident action</button></div>
         </div>
 
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
@@ -648,13 +673,22 @@ function OrganizerActionPanel({ incident, onAssignInternalTeam, onRequestExterna
           <div className="rounded-md bg-cream-50 p-3"><span className="text-xs text-ink-500">Assigned owner</span><p className="mt-1 truncate text-sm font-semibold text-ink-800">{incident.responsePath === 'external' ? incident.authority ?? 'Not assigned' : incident.responseTeam ?? 'Not assigned'}</p></div>
         </div>
 
-        {incident.eventControl && <div className="mt-4 rounded-md border border-[#e3dacb] p-3"><p className="text-xs font-bold uppercase tracking-[0.06em] text-ink-500">Event Control discrepancy outcome</p><p className="mt-1 text-xs leading-5 text-ink-500">Required before closing a report linked to a published control item.</p><div className="mt-3 flex flex-wrap gap-4 text-sm text-ink-700"><label className="flex items-center gap-2"><input type="radio" name={'discrepancy-' + incident.id} defaultChecked className="h-4 w-4 text-brand-600 focus:ring-brand-500" /> Confirmed true</label><label className="flex items-center gap-2"><input type="radio" name={'discrepancy-' + incident.id} className="h-4 w-4 text-brand-600 focus:ring-brand-500" /> Dismissed as false</label></div></div>}
+        <div className="mt-5 border-t border-[#eee8dc] pt-5">
+          <p className="text-sm font-bold text-ink-800">Organizer final resolution</p>
+          <p className="mt-1 text-xs leading-5 text-ink-500">Only the organizer can close an incident after reviewing the completed internal response or authority finding.</p>
+          {incident.eventControl && <fieldset className="mt-4 rounded-md border border-[#e3dacb] p-3"><legend className="px-1 text-xs font-bold uppercase tracking-[0.06em] text-ink-500">Event Control discrepancy outcome</legend><p className="mt-1 text-xs leading-5 text-ink-500">Required before closing a report linked to a published control item.</p><div className="mt-3 flex flex-wrap gap-4 text-sm text-ink-700"><label className="flex items-center gap-2"><input type="radio" name={'discrepancy-' + incident.id} checked={discrepancyOutcome === 'Confirmed True'} onChange={() => setDiscrepancyOutcome('Confirmed True')} className="h-4 w-4 text-brand-600 focus:ring-brand-500" /> Confirmed true</label><label className="flex items-center gap-2"><input type="radio" name={'discrepancy-' + incident.id} checked={discrepancyOutcome === 'Dismissed as False'} onChange={() => setDiscrepancyOutcome('Dismissed as False')} className="h-4 w-4 text-brand-600 focus:ring-brand-500" /> Dismissed as false</label></div></fieldset>}
+          <label className="mt-4 block"><span className="field-label">Final resolution rationale</span><textarea value={resolutionRationale} onChange={(event) => setResolutionRationale(event.target.value)} className="input min-h-24 resize-y" placeholder="Summarise the response, evidence reviewed, outcome and why the incident can be closed." /></label>
+          <button type="button" disabled={!canResolve} onClick={() => onResolve(resolutionRationale.trim(), discrepancyOutcome)} className="btn-secondary mt-3 !min-h-9 !px-3 text-xs"><CheckCircle2 size={14} /> Record final resolution and close</button>
+          {!hasCompletedResponse && <p className="mt-2 text-xs text-risk-high-text">Record a completed internal response or wait for an authority investigation finding before closure.</p>}
+          {hasCompletedResponse && resolutionRationale.trim().length < 10 && <p className="mt-2 text-xs text-ink-500">A final resolution rationale of at least 10 characters is required.</p>}
+          {hasCompletedResponse && incident.eventControl && !discrepancyOutcome && <p className="mt-2 text-xs text-ink-500">Select the Event Control discrepancy outcome.</p>}
+        </div>
       </div>
     </section>
   );
 }
 
-function AuthorityActionPanel({ incident, onRecordInvestigation, onResolve }: { incident: Incident; onRecordInvestigation: (note: string) => void; onResolve: () => void }) {
+function AuthorityActionPanel({ incident, onRecordInvestigation }: { incident: Incident; onRecordInvestigation: (note: string) => void }) {
   const [note, setNote] = useState('');
   return (
     <section className="card">
@@ -666,7 +700,8 @@ function AuthorityActionPanel({ incident, onRecordInvestigation, onResolve }: { 
           <div className="rounded-md bg-cream-50 p-3"><span className="text-xs text-ink-500">Status</span><div className="mt-1"><StatusPill status={incident.status} /></div></div>
         </div>
         <label className="mt-4 block"><span className="field-label">Investigation action, evidence or finding</span><textarea value={note} onChange={(event) => setNote(event.target.value)} className="input min-h-28 resize-y" placeholder="Record what was checked, who was contacted, evidence reviewed and the finding." /></label>
-        <div className="mt-4 flex flex-wrap gap-2"><button type="button" disabled={!note.trim()} onClick={() => { onRecordInvestigation(note); setNote(''); }} className="btn-primary !min-h-9 !px-3 text-xs"><ClipboardCheck size={14} /> Record investigation action</button>{incident.status !== 'Resolved' && <button type="button" onClick={onResolve} className="btn-secondary !min-h-9 !px-3 text-xs"><CheckCircle2 size={14} /> Close with outcome</button>}</div>
+        <div className="mt-4 flex flex-wrap gap-2"><button type="button" disabled={note.trim().length < 10} onClick={() => { onRecordInvestigation(note); setNote(''); }} className="btn-primary !min-h-9 !px-3 text-xs"><ClipboardCheck size={14} /> Submit finding to organizer</button></div>
+        <p className="mt-2 text-xs text-ink-500">The authority records its finding and returns the incident to the organizer. Only the organizer records the final resolution and closes it.</p>
       </div>
     </section>
   );
@@ -695,7 +730,7 @@ function IncidentDetail({ incident, role, onAssignInternalTeam, onRequestExterna
   onRequestExternalAuthority?: (authority: string, note: string) => void;
   onRecordAction?: (path: ResponsePath, owner: string, note: string) => void;
   onRecordInvestigation?: (note: string) => void;
-  onResolve?: () => void;
+  onResolve?: (rationale: string, discrepancyOutcome?: DiscrepancyOutcome) => void;
 }) {
   return (
     <div className="space-y-4">
@@ -721,7 +756,7 @@ function IncidentDetail({ incident, role, onAssignInternalTeam, onRequestExterna
 
       {role === 'reporter' && <ReporterProgress incident={incident} />}
       {role === 'organizer' && onAssignInternalTeam && onRequestExternalAuthority && onRecordAction && onResolve && <OrganizerActionPanel key={incident.id} incident={incident} onAssignInternalTeam={onAssignInternalTeam} onRequestExternalAuthority={onRequestExternalAuthority} onRecordAction={onRecordAction} onResolve={onResolve} />}
-      {role === 'authority' && onRecordInvestigation && onResolve && <AuthorityActionPanel key={incident.id} incident={incident} onRecordInvestigation={onRecordInvestigation} onResolve={onResolve} />}
+      {role === 'authority' && incident.status !== 'Resolved' && onRecordInvestigation && <AuthorityActionPanel key={incident.id} incident={incident} onRecordInvestigation={onRecordInvestigation} />}
 
       {role !== 'reporter' && <IncidentActionList actions={incident.actions} />}
 
@@ -734,7 +769,15 @@ function IncidentDetail({ incident, role, onAssignInternalTeam, onRequestExterna
 }
 
 function SubmissionForm({ form, onChange, onSubmit }: { form: FormState; onChange: (key: keyof FormState, value: string | boolean) => void; onSubmit: () => void }) {
-  const canSubmit = Boolean(form.event.trim() && form.category.trim() && form.occurredAt.trim() && form.location.trim() && form.description.trim());
+  const occurrenceTime = new Date(form.occurredAt).getTime();
+  const occurrenceIsValid = Number.isFinite(occurrenceTime) && occurrenceTime <= Date.now();
+  const canSubmit = Boolean(
+    form.event.trim()
+    && form.category.trim()
+    && occurrenceIsValid
+    && form.location.trim().length >= 3
+    && form.description.trim().length >= 20,
+  );
   return (
     <div className="card">
       <div className="card-header"><div><p className="section-title">Submit incident report</p><p className="mt-1 text-xs text-ink-500">Only a participant can create a report for an ongoing event or an event completed within the past seven days.</p></div><Flag size={19} className="text-brand-600" /></div>
@@ -753,6 +796,7 @@ function SubmissionForm({ form, onChange, onSubmit }: { form: FormState; onChang
           <label className="flex cursor-pointer items-start gap-3"><input type="checkbox" checked={form.eventControl} onChange={(event) => onChange('eventControl', event.target.checked)} className="mt-1 h-4 w-4 rounded border-ink-300 text-brand-600 focus:ring-brand-500" /><span><span className="block text-sm font-semibold text-ink-800">This concerns a published Event Control item</span><span className="mt-1 block text-xs leading-5 text-ink-500">Use this for inaccurate signage, documentation or other published control discrepancies.</span></span></label>
         </div>
         <div className="mt-4 rounded-md border border-dashed border-ink-300 bg-cream-50 px-4 py-5 text-center"><Upload size={20} className="mx-auto text-brand-600" /><p className="mt-2 text-sm font-semibold text-ink-800">Add supporting evidence</p><p className="mt-1 text-xs text-ink-500">Photos, PDF or other permitted evidence · prototype only</p><button type="button" className="btn-secondary mt-3 !min-h-9 !px-3 text-xs"><Paperclip size={14} /> Choose files</button></div>
+        {!canSubmit && <div role="status" className="mt-4 rounded-md border border-gold-200 bg-gold-50 px-3 py-3 text-xs leading-5 text-gold-700">Complete every required field, use a valid occurrence time that is not in the future, provide a location of at least 3 characters and describe the incident in at least 20 characters.</div>}
         <div className="mt-5 flex flex-wrap justify-end gap-2"><button type="button" className="btn-secondary !min-h-10">Save draft</button><button type="button" disabled={!canSubmit} onClick={onSubmit} className="btn-primary !min-h-10"><Send size={15} /> Submit incident report</button></div>
       </div>
     </div>
@@ -828,7 +872,7 @@ function OrganizerView({ incidents, selectedId, setSelectedId, onAssignInternalT
   onAssignInternalTeam: (team: string, note: string) => void;
   onRequestExternalAuthority: (authority: string, note: string) => void;
   onRecordAction: (path: ResponsePath, owner: string, note: string) => void;
-  onResolve: () => void;
+  onResolve: (rationale: string, discrepancyOutcome?: DiscrepancyOutcome) => void;
   notice: string | null;
 }) {
   const [query, setQuery] = useState('');
@@ -860,7 +904,7 @@ function OrganizerView({ incidents, selectedId, setSelectedId, onAssignInternalT
   );
 }
 
-function AuthorityView({ incidents, selectedId, setSelectedId, onRecordInvestigation, onResolve, notice }: { incidents: Incident[]; selectedId: string; setSelectedId: (id: string) => void; onRecordInvestigation: (note: string) => void; onResolve: () => void; notice: string | null }) {
+function AuthorityView({ incidents, selectedId, setSelectedId, onRecordInvestigation, notice }: { incidents: Incident[]; selectedId: string; setSelectedId: (id: string) => void; onRecordInvestigation: (note: string) => void; notice: string | null }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('all');
   const referred = incidents.filter((incident) => incident.authority);
@@ -873,7 +917,7 @@ function AuthorityView({ incidents, selectedId, setSelectedId, onRecordInvestiga
       <div className="mt-7 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><KpiCard icon={LifeBuoy} label="Referred" value={String(referred.length)} detail="Assigned to this authority" /><KpiCard icon={ShieldAlert} label="Immediate action" value={String(referred.filter((incident) => incident.immediateAction).length)} detail="Review response priority" tone="red" /><KpiCard icon={Activity} label="Investigating" value={String(referred.filter((incident) => incident.status === 'Investigating').length)} detail="Open investigation" tone="gold" /><KpiCard icon={CheckCircle2} label="Resolved" value={String(referred.filter((incident) => incident.status === 'Resolved').length)} detail="Outcome available" tone="green" /></div>
       <div className="mt-7 grid gap-5 lg:grid-cols-[minmax(320px,.82fr)_minmax(0,1.18fr)]">
         <IncidentList incidents={referred} selectedId={selected?.id ?? ''} onSelect={(incident) => setSelectedId(incident.id)} query={query} onQueryChange={setQuery} filter={filter} onFilterChange={setFilter} filterOptions={[{ value: 'all', label: 'All referred' }, { value: 'High', label: 'High severity' }, { value: 'Investigating', label: 'Investigating' }, { value: 'Resolved', label: 'Resolved' }]} heading="Authority case list" subheading="Organizer referrals" emptyLabel="No referred incidents match your search." />
-        {selected ? <IncidentDetail incident={selected} role="authority" onRecordInvestigation={onRecordInvestigation} onResolve={onResolve} /> : <div className="card flex min-h-64 items-center justify-center p-8 text-center text-sm text-ink-500">Select an incident to review.</div>}
+        {selected ? <IncidentDetail incident={selected} role="authority" onRecordInvestigation={onRecordInvestigation} /> : <div className="card flex min-h-64 items-center justify-center p-8 text-center text-sm text-ink-500">Select an incident to review.</div>}
       </div>
     </>
   );
@@ -959,14 +1003,25 @@ export default function IncidentReportingPrototype() {
   const recordInvestigationAction = (note: string) => {
     const incident = incidents.find((item) => item.id === selectedId);
     const owner = incident?.authority ?? 'Assigned authority';
-    const action: IncidentAction = { id: 'ACT-' + Date.now(), path: 'external', label: 'Investigation action recorded', owner, note, at: 'Just now', status: 'Recorded' };
-    updateIncident(selectedId, (current) => ({ ...current, status: 'Investigating', actionRequired: false, actions: [...current.actions, action], history: addHistory(current.history, 'Investigation action recorded', note) }));
-    setNotice('Prototype action: investigation record saved for ' + selectedId + '.');
+    const action: IncidentAction = { id: 'ACT-' + Date.now(), path: 'external', label: 'Authority investigation finding submitted', owner, note, at: 'Just now', status: 'Recorded' };
+    updateIncident(selectedId, (current) => ({ ...current, status: 'Under review', actionRequired: true, actions: [...current.actions, action], history: addHistory(current.history, 'Authority finding returned to organizer', note) }));
+    setNotice('Prototype action: investigation finding returned to the organizer for ' + selectedId + '.');
   };
 
-  const resolveIncident = () => {
-    updateIncident(selectedId, (incident) => ({ ...incident, status: 'Resolved', actionRequired: false, actions: incident.actions.map((action) => ({ ...action, status: 'Completed' as const })), history: addHistory(incident.history, 'Incident resolved', 'Final outcome recorded by the permitted staff member.') }));
-    setNotice('Prototype action: ' + selectedId + ' marked resolved.');
+  const resolveIncident = (rationale: string, discrepancyOutcome?: DiscrepancyOutcome) => {
+    updateIncident(selectedId, (incident) => ({
+      ...incident,
+      status: 'Resolved',
+      actionRequired: false,
+      finalResolution: rationale,
+      discrepancyOutcome,
+      actions: incident.actions.map((action) => ({ ...action, status: 'Completed' as const })),
+      history: [
+        ...incident.history.map((entry) => entry.state === 'current' ? { ...entry, state: 'done' as const } : entry),
+        { label: 'Final resolution recorded by organizer', detail: rationale, at: 'Just now', state: 'done' as const },
+      ],
+    }));
+    setNotice('Prototype action: organizer recorded the final resolution for ' + selectedId + '.');
   };
 
   return (
@@ -976,7 +1031,7 @@ export default function IncidentReportingPrototype() {
         <PreviewBanner />
         {role === 'reporter' && <ReporterView incidents={incidents} selectedId={selectedId} setSelectedId={setSelectedId} onSubmit={submitReport} notice={notice} form={form} onFormChange={updateForm} />}
         {role === 'organizer' && <OrganizerView incidents={incidents} selectedId={selectedId} setSelectedId={setSelectedId} onAssignInternalTeam={assignInternalTeam} onRequestExternalAuthority={requestExternalAuthority} onRecordAction={recordIncidentAction} onResolve={resolveIncident} notice={notice} />}
-        {role === 'authority' && <AuthorityView incidents={incidents} selectedId={selectedId} setSelectedId={setSelectedId} onRecordInvestigation={recordInvestigationAction} onResolve={resolveIncident} notice={notice} />}
+        {role === 'authority' && <AuthorityView incidents={incidents} selectedId={selectedId} setSelectedId={setSelectedId} onRecordInvestigation={recordInvestigationAction} notice={notice} />}
       </main>
       <footer className="border-t border-[#ddd3c2] bg-[#fffdf8] py-5"><div className="mx-auto max-w-[1440px] px-5 text-center text-xs text-ink-500">STERAS · M4 Incident Reporting Prototype · Reporter, organizer and authority views · Synthetic data only</div></footer>
     </div>
