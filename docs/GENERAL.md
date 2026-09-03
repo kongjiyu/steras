@@ -15,7 +15,7 @@ General ownership does not mean owning every module feature. It means maintainin
 | Route | Page or behavior | Owner | Status |
 |---|---|---|---|
 | `/` | `PublicHome.tsx` | General | Implemented |
-| `/dashboard-preview` | `DashboardPreview.tsx` | General | Implemented; mock/design-review only; `?view=risk` and `?view=resources` preview M2 pages |
+| `/dashboard-preview` | `DashboardPreview.tsx` | General | Implemented; mock/design-review only; `?view=risk`, `?view=resources`, and `?view=reports` preview module pages |
 | `*` | `RoleAwareFallback.tsx` | General | Implemented |
 | `/login` | `LoginPage.tsx` | M1 | Implemented |
 | `/register` | `RegisterPage.tsx` | M1 | Implemented |
@@ -38,7 +38,8 @@ General ownership does not mean owning every module feature. It means maintainin
 | `/organizer/incidents` | M4 organiser incident list | M4 | Planned |
 | `/organizer/incidents/new` | M4 incident report form | M4 | Planned |
 | `/authority/incidents` | M4 authority incident queue | M4 | Planned |
-| `/authority/reports` | `Analytics.tsx` | M5 | Implemented foundation |
+| `/admin/analytics` | `pages/admin/AdminAnalytics.tsx` with `authority/Analytics.tsx` | M5 | Implemented foundation; admin-only, read-only |
+| `/authority/reports` | Compatibility redirect to `/admin/analytics` | M5 | Implemented compatibility route |
 
 ## General-Owned Files
 

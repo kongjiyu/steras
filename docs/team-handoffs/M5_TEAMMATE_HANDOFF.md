@@ -12,11 +12,16 @@
 
 目前已经实现：
 
-- `/authority/reports`
+- `/admin/analytics`（`/authority/reports` 保留为 compatibility redirect）
+- `/dashboard-preview?view=reports` design-review preview
 - Authority-scope query
 - Date range filter
+- Five report modes with event-type scope
 - Monthly applications/approvals
 - Official-risk distribution
+- Assessment-quality signals
+- Review outcomes and operations summaries
+- Explicit M4 unavailable state
 - Monthly average official score
 - AI-vs-deterministic agreement
 - AI fallback rate
@@ -24,17 +29,19 @@
 - CSV export
 - Basic spreadsheet-formula neutralisation
 - Analytics helper unit tests
+- Admin-only bounded `getAnalyticsPortfolio` Firebase callable backend
+- Privacy-safe shared analytics response contract and input validation
+- Synthetic-data exclusion by default
+- Backend filters for date、event type、venue、risk、status、authority 和 schema version
+- Live resource、override、re-application、incident 和 control aggregates
+- Backend tests for authorization、PII exclusion、filter validation 和 synthetic fixtures
 
 目前主要缺口 - **Main Gaps:**
 
-- Event type、venue、risk、status、authority 和 schema filters
+- Expose venue、risk、status、authority、synthetic 和 schema filters in the report-builder UI
 - Readiness、compliance 和 confidence metrics
-- Resource recommendation 和 override trends
-- Re-application metrics
-- M4 incident triage、verification 和 resolution analytics
-- Synthetic-data exclusion by default
-- Metric definition/version metadata
-- Bounded queries 或 server-generated snapshots
+- Full M4 incident triage、verification 和 resolution analytics after Module 4 supplies production fields
+- Server-generated snapshots only when production volume exceeds the bounded callable model
 - 更完整的 PII/export tests
 
 ## 接下来目标 | Immediate Goal

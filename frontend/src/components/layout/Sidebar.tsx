@@ -171,12 +171,6 @@ export const AUTHORITY_NAV: SidebarNavSection[] = [
       { to: '/authority/resources', label: 'Resources', mobileLabel: 'Plans', icon: Boxes },
     ],
   },
-  {
-    label: 'Insights',
-    items: [
-      { to: '/authority/reports', label: 'Reports', mobileLabel: 'Reports', icon: ChartLine },
-    ],
-  },
 ];
 
 /* ============================================================================
