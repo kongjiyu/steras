@@ -369,25 +369,30 @@ describe('Firestore security rules', () => {
     await environment.withSecurityRulesDisabled((context) => setDoc(doc(context.firestore(), 'users/organizer-1'), { role: 'organizer' }));
     const db = environment.authenticatedContext('organizer-1').firestore();
     const draft = {
-      organizerId: 'organizer-1', eventDetails: validDetails, templateSelection: validTemplateSelection, status: 'Draft', currentVersionNumber: 0,
+      eventId: 'draft-1', organizerId: 'organizer-1', eventDetails: validDetails, templateSelection: validTemplateSelection, status: 'Draft', currentVersionNumber: 0,
       editableVersionId: 'v1', draftDocumentPaths: [], draftDocuments: [], documentSchemaVersion: '2026-08-28-document-v1', requiredAuthorities: [], createdAt: 1, updatedAt: 1,
       evidenceManifestSchemaVersion: '2026-08-28-evidence-v1',
       draftEvidenceManifest: Array.from({ length: 17 }, (_, index) => ({ requirementId: `placeholder-${index}`, applicability: 'not_applicable', notApplicableReason: 'Not applicable to this event.' })),
     };
     await assertSucceeds(setDoc(doc(db, 'events/draft-1'), draft));
+    const { eventId: _missingIdentity, ...draftWithoutIdentity } = draft;
+    await assertFails(setDoc(doc(db, 'events/missing-id-draft'), draftWithoutIdentity));
     await assertFails(setDoc(doc(db, 'events/invalid-template-draft'), {
       ...draft,
+      eventId: 'invalid-template-draft',
       templateSelection: { ...validTemplateSelection, scenarioTemplateId: 'STERAS-T01-ENT-IN-v2.0' },
     }));
     await assertFails(setDoc(doc(db, 'events/mismatched-category-draft'), {
       ...draft,
+      eventId: 'mismatched-category-draft',
       eventDetails: { ...validDetails, type: 'sports' },
     }));
     await assertFails(setDoc(doc(db, 'events/mismatched-venue-draft'), {
       ...draft,
+      eventId: 'mismatched-venue-draft',
       eventDetails: { ...validDetails, environment: 'indoor' },
     }));
-    await assertFails(setDoc(doc(db, 'events/pending-1'), { ...draft, status: 'Pending' }));
+    await assertFails(setDoc(doc(db, 'events/pending-1'), { ...draft, eventId: 'pending-1', status: 'Pending' }));
     await assertFails(setDoc(doc(db, 'events/spoofed-id-draft'), { ...draft, eventId: 'different-event' }));
     await assertFails(setDoc(doc(db, 'events/spoofed-revision-draft'), {
       ...draft, activeRevision: { kind: 'rejected_revision', sourceVersionId: 'v0', startedAt: 1 },

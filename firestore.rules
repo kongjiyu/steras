@@ -141,6 +141,7 @@ service cloud.firestore {
 
       // Drafts are client-created. Submission and revision preparation are server-owned.
       allow create: if isOrganizer()
+                    && request.resource.data.eventId == eventId
                     && request.resource.data.organizerId == request.auth.uid
                     && request.resource.data.status == 'Draft'
                     && request.resource.data.currentVersionNumber == 0
@@ -151,7 +152,7 @@ service cloud.firestore {
                     && request.resource.data.draftEvidenceManifest.size() >= 13
                     && request.resource.data.draftEvidenceManifest.size() <= 19
                     && !request.resource.data.keys().hasAny([
-                      'eventId', 'currentExtractionId', 'activeRevision',
+                      'currentExtractionId', 'activeRevision',
                       'cancelledAt', 'cancelledFromVersionId',
                       'withdrawnAt', 'withdrawnFromStatus', 'withdrawalRationale'
                     ])

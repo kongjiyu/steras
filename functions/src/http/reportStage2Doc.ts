@@ -37,6 +37,7 @@ import { FUNCTION_REGION } from '../config/runtime';
 import { isActiveControlGeneration } from '../utils/controlLifecycle';
 import { counterMatchesStage2 } from '../utils/stage2Counter';
 import { createNotification, resolveAuthUid } from '../utils/notifications';
+import { assertEventReportableAt } from '../utils/eventWindow';
 
 const REPORT_CATEGORIES = ['item_not_at_venue', 'wrong_venue', 'low_quality_image', 'other'] as const;
 type ReportCategory = typeof REPORT_CATEGORIES[number];
@@ -129,6 +130,7 @@ export async function reportStage2DocForUser(
     const control = controlSnap.data() as EventControl;
     if (!eventSnap.exists) throw new HttpsError('not-found', 'Event not found.');
     const event = eventSnap.data() as EventRecord;
+    assertEventReportableAt(event, now);
     const versionIdInner = event.currentVersionId;
     const projection = publicSnap.data() as { eventId?: string; versionId?: string; controlId?: string; docId?: string } | undefined;
     if (!versionIdInner || !isActiveControlGeneration(event, control, eventId)

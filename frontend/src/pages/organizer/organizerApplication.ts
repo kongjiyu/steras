@@ -175,8 +175,9 @@ export function createInitialEventDetails(profile?: { name?: string; email?: str
   };
 }
 
-export function createM1DraftRecord(organizerId: string, eventDetails: EventDetails, templateSelection: M1TemplateSelection, now: number) {
+export function createM1DraftRecord(eventId: string, organizerId: string, eventDetails: EventDetails, templateSelection: M1TemplateSelection, now: number) {
   return {
+    eventId,
     organizerId,
     eventDetails,
     templateSelection,
