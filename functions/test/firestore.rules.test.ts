@@ -2372,6 +2372,20 @@ describe('Firestore security rules', () => {
     await assertFails(getDoc(doc(organizerDb, 'historical_events/history-1')));
     await assertFails(getDoc(doc(environment.unauthenticatedContext().firestore(), 'dataset_manifests/demo-v1')));
   });
+
+  it('denies direct client access to M4 incidents, history, and authority directory', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'incidents/incident-1'), { schemaVersion: '2026-09-03-m4-v1' });
+      await setDoc(doc(context.firestore(), 'incidents/incident-1/history/history-1'), { action: 'submitted' });
+      await setDoc(doc(context.firestore(), 'authority_directory/pdrm-kl'), { active: true });
+    });
+    const reporter = environment.authenticatedContext('reporter-1').firestore();
+    const admin = environment.authenticatedContext('admin-1').firestore();
+    await assertFails(getDoc(doc(reporter, 'incidents/incident-1')));
+    await assertFails(setDoc(doc(reporter, 'incidents/incident-2'), { reporterUid: 'reporter-1' }));
+    await assertFails(getDoc(doc(admin, 'incidents/incident-1/history/history-1')));
+    await assertFails(getDoc(doc(admin, 'authority_directory/pdrm-kl')));
+  });
 });
 
 async function seedReviewableEvent(requiredAuthorities: string[]) {

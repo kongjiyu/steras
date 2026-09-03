@@ -1280,7 +1280,9 @@ export type NotificationType =
   | 'stage2_doc_published'
   | 'stage2_doc_rejected'
   | 'control_resubmit_required'
-  | 'control_restored';
+  | 'control_restored'
+  | 'incident_reported'
+  | 'incident_updated';
 
 export interface Notification {
   notificationId: string;
@@ -1370,7 +1372,7 @@ export interface Incident {
   incidentType: string;
   severity: 'low' | 'medium' | 'high';
   date: number;
-  status?: 'verified' | 'under_review' | 'rejected';
+  status?: 'verified' | 'under_review' | 'rejected' | 'resolved';
   assessmentEligible?: boolean;
   outcome?: {
     injured: number;

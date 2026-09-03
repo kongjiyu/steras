@@ -44,6 +44,7 @@ import AdminAssignment from './pages/admin/AdminAssignment';
 import AdminControlListEditor from './pages/admin/AdminControlListEditor';
 import AdminStage2Review from './pages/admin/AdminStage2Review';
 import OrganizerEventControls from './pages/organizer/OrganizerEventControls';
+import Incidents from './pages/incidents/Incidents';
 
 export default function App() {
   const { loading } = useAuth();
@@ -60,6 +61,7 @@ export default function App() {
       {/* Auth routes */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      <Route path="/incidents" element={<ProtectedRoute><Incidents /></ProtectedRoute>} />
 
       {/* No-auth preview of the Authority Dashboard — for design review */}
       <Route path="/dashboard-preview" element={<DashboardPreview />} />

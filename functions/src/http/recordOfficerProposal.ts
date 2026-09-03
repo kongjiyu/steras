@@ -186,17 +186,36 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
     ]);
     const currentEvent = currentEventSnap.data() as EventRecord | undefined;
     if (!currentEventSnap.exists || currentEvent?.currentVersionId !== versionId
-      || currentEvent.currentAssessmentId !== assessmentId || currentEvent.currentResourceId !== resourceId) {
+      || currentEvent.currentAssessmentId !== assessmentId || currentEvent.currentResourceId !== resourceId
+      || currentEvent.status !== 'UnderReview' || currentEvent.reviewStage !== 'authority'
+      || currentEvent.assignedOfficerByAuthority?.[profile.authorityType] !== request.auth.uid) {
       throw new HttpsError('aborted', 'The application generation changed before the proposal was recorded.');
     }
     const all = allAssignmentsSnap.docs
       .map((d) => d.data() as Assignment)
       .filter((candidate) => candidate.versionId === versionId);
+    const transactionalAssignment = allAssignmentsSnap.docs
+      .find((document) => document.id === assignmentId);
+    assertCurrentOfficerAssignment(
+      transactionalAssignment?.data(),
+      assignmentId,
+      eventId,
+      versionId,
+      profile.authorityType,
+      request.auth!.uid,
+    );
     // Treat the current assignment as if it's about to be completed
     // (so the last officer's proposal correctly triggers reviewStage='second').
-    const allCompleted = all
-      .map((a) => (a.assignmentId === assignmentId ? { ...a, status: 'completed' as const } : a))
-      .every((a) => a.status === 'completed' || a.status === 'revoked');
+    const afterCurrentProposal = all
+      .map((candidate) => candidate.assignmentId === assignmentId
+        ? { ...candidate, status: 'completed' as const }
+        : candidate);
+    const allCompleted = allRequiredAssignmentsCompleted(
+      afterCurrentProposal,
+      currentEvent.requiredAuthorities ?? [],
+      currentEvent.assignedOfficerByAuthority ?? {},
+      versionId,
+    );
     const statusSummary = all.map((a) => ({ auth: a.authorityType, status: a.status }));
     console.log(`[recordOfficerProposal] eventId=${eventId} assignmentId=${assignmentId} statuses=${JSON.stringify(statusSummary)} allCompleted=${allCompleted}`);
 
@@ -264,4 +283,41 @@ async function findFirstAdminUid(db: FirebaseFirestore.Firestore): Promise<strin
   const snap = await db.collection(COLLECTIONS.USERS).where('role', '==', 'admin').limit(1).get();
   if (snap.empty) return null;
   return snap.docs[0].id;
+}
+
+/** Transactional authorization fence for revoke/reassign races. */
+export function assertCurrentOfficerAssignment(
+  value: unknown,
+  assignmentId: string,
+  eventId: string,
+  versionId: string,
+  authorityType: string,
+  officerUid: string,
+): asserts value is Assignment {
+  if (!value || typeof value !== 'object') {
+    throw new HttpsError('aborted', 'The officer assignment changed before the proposal was recorded.');
+  }
+  const assignment = value as Partial<Assignment>;
+  if (assignment.assignmentId !== assignmentId
+    || assignment.eventId !== eventId
+    || assignment.versionId !== versionId
+    || assignment.authorityType !== authorityType
+    || assignment.officerUid !== officerUid
+    || (assignment.status !== 'pending' && assignment.status !== 'in_progress')) {
+    throw new HttpsError('aborted', 'The officer assignment changed before the proposal was recorded.');
+  }
+}
+
+export function allRequiredAssignmentsCompleted(
+  assignments: Assignment[],
+  requiredAuthorities: AuthorityType[],
+  assignedOfficerByAuthority: Partial<Record<AuthorityType, string>>,
+  versionId: string,
+): boolean {
+  return requiredAuthorities.length > 0 && requiredAuthorities.every((authority) => {
+    const assignment = assignments.find((candidate) => candidate.authorityType === authority
+      && candidate.versionId === versionId
+      && assignedOfficerByAuthority[authority] === candidate.officerUid);
+    return assignment?.status === 'completed';
+  });
 }

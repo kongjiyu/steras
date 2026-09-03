@@ -1,7 +1,7 @@
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import logoUrl from '../../assets/brand/steras-logo-horizontal.svg';
-import { CalendarPlus, ClipboardList, Home, LogOut } from 'lucide-react';
+import { CalendarPlus, ClipboardList, Home, LogOut, Siren } from 'lucide-react';
 
 export default function AppLayout() {
   const { profile, signOut } = useAuth();
@@ -19,6 +19,7 @@ export default function AppLayout() {
     { to: '/organizer', label: 'Dashboard' },
     { to: '/organizer/events/new', label: 'New Event' },
     { to: '/organizer/events', label: 'My Events' },
+    { to: '/incidents', label: 'Incidents' },
   ];
 
   const links = isOrganizer ? organizerLinks : [];
@@ -93,11 +94,12 @@ export default function AppLayout() {
         </div>
       </footer>
 
-      <nav className="fixed inset-x-0 bottom-0 z-50 grid grid-cols-4 border-t border-[#d7ccb9] bg-[#fffdf8] px-2 pb-[max(.4rem,env(safe-area-inset-bottom))] pt-1 md:hidden" aria-label="Organizer mobile navigation">
+      <nav className="fixed inset-x-0 bottom-0 z-50 grid grid-cols-5 border-t border-[#d7ccb9] bg-[#fffdf8] px-2 pb-[max(.4rem,env(safe-area-inset-bottom))] pt-1 md:hidden" aria-label="Organizer mobile navigation">
         {[
           { to: '/organizer', label: 'Home', icon: Home, end: true },
           { to: '/organizer/events/new', label: 'New event', icon: CalendarPlus },
           { to: '/organizer/events', label: 'My events', icon: ClipboardList },
+          { to: '/incidents', label: 'Incidents', icon: Siren },
         ].map(({ to, label, icon: Icon, end }) => {
           const active = end ? location.pathname === to : location.pathname.startsWith(to);
           return <Link key={to} to={to} className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-md text-[11px] font-semibold ${active ? 'bg-brand-50 text-brand-700' : 'text-ink-500'}`}><Icon size={18} /><span>{label}</span></Link>;

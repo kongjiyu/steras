@@ -67,18 +67,20 @@ const STANDARD_MIN_RATIONALE = 10;
 
 export const makeAuthorityDecision = onCall<AuthorityDecisionRequest>({ region: FUNCTION_REGION }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in before reviewing an application.');
-  try {
-    return await makeAuthorityDecisionForUser(request.auth.uid, request.data);
-  } catch (err) {
-    if (err instanceof HttpsError) {
-      console.warn(`[makeAuthorityDecision] HttpsError ${err.code}: ${err.message}`);
-      throw err;
-    }
-    const message = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
-    console.error(`[makeAuthorityDecision] unexpected error: ${message}`);
-    throw new HttpsError('internal', message.slice(0, 500));
-  }
+  assertLegacyAuthorityDecisionEndpointAvailable();
 });
+
+/**
+ * The legacy aggregate-and-publish endpoint is permanently retired. Keeping
+ * its pure verification helpers supports old-record integrity checks, while
+ * every live application must use named assignments and Admin second review.
+ */
+export function assertLegacyAuthorityDecisionEndpointAvailable(): never {
+  throw new HttpsError(
+    'failed-precondition',
+    'This legacy decision endpoint is retired. Use the named officer proposal and Admin second-review workflow.',
+  );
+}
 
 export async function makeAuthorityDecisionForUser(
   uid: string,
