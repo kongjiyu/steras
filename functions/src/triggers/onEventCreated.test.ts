@@ -3,6 +3,7 @@ import { latestValidHistoricalResource, nextResourceRevision, resourceDocumentId
 import { isManualAssessmentSourceEligible } from '../engines/manualFinalisation';
 import { AISuccessfulProposal, EventVersion, RESOURCE_KEYS, RESOURCE_SCHEMA_VERSION, ResourceRecommendation } from '@shared/types';
 import { buildSubmittedEventVersion } from '../utils/eventVersionHash';
+import { isM1EvidenceForcedRequired, m1EvidenceRequirementsFor } from '@shared/m1EvidenceContract';
 
 describe('M1-submitted assessment input integrity', () => {
   it('binds the exact template selection into the immutable version hash', () => {
@@ -32,6 +33,11 @@ describe('M1-submitted assessment input integrity', () => {
       },
     };
     const documentPaths = ['event_documents/event-1/v1/combined.pdf', 'event_documents/event-1/v1/evidence.pdf'];
+    const evidenceManifest = m1EvidenceRequirementsFor(templateSelection.scenarioTemplateId).map((requirement) => (
+      isM1EvidenceForcedRequired(requirement, eventDetails.riskProfile)
+        ? { requirementId: requirement.id, applicability: 'required' as const, documentPath: documentPaths[1] }
+        : { requirementId: requirement.id, applicability: 'not_applicable' as const, notApplicableReason: 'Not applicable to this test event scenario.' }
+    ));
     const version = buildSubmittedEventVersion({
       eventId: 'event-1', versionId: 'v1', versionNumber: 1, eventDetails, templateSelection,
       documentPaths,
@@ -45,13 +51,18 @@ describe('M1-submitted assessment input integrity', () => {
         schemaVersion: '2026-08-28-document-v1' as const,
       }],
       extractionId: 'extract-1',
-      evidenceManifest: [{ requirementId: 'CORE-E01', applicability: 'required' as const, documentPath: documentPaths[1] }],
+      evidenceManifest,
       evidenceManifestSchemaVersion: '2026-08-28-evidence-v1' as const,
       submittedBy: 'organizer-1', submittedAt: 1_000,
     } satisfies Omit<EventVersion, 'inputHash'>);
 
     expect(isPipelineEventVersion(version, 'event-1', 'v1')).toBe(true);
     expect(isPipelineEventVersion({ ...version, templateSelection: undefined }, 'event-1', 'v1')).toBe(false);
+    const { inputHash: _inputHash, ...versionInput } = version;
+    expect(isPipelineEventVersion(buildSubmittedEventVersion({
+      ...versionInput,
+      evidenceManifest: evidenceManifest.slice(1),
+    }), 'event-1', 'v1')).toBe(false);
     expect(isPipelineEventVersion({
       ...version,
       templateSelection: { ...templateSelection, scenarioTemplateId: 'STERAS-T01-ENT-IN-v2.0' },

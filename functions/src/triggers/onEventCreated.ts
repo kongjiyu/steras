@@ -66,6 +66,7 @@ import { FUNCTION_REGION } from '../config/runtime';
 import { createResourceCutoverQueueToken, RESOURCE_CUTOVER_LOCK_PATH } from '../config/resourceCutoverLock';
 import { validateEventDetails, validateEvidencePaths } from '../http/submitEvent';
 import { validateDraftDocuments } from '../http/extractApplicationDocuments';
+import { validateM1EvidenceManifest } from '../engines/m1EvidenceManifest';
 import { inspectStorageEvidence } from '../utils/storageEvidence';
 import { CANONICAL_EVIDENCE_KEYS } from '../engines/proposalContract';
 import {
@@ -505,6 +506,14 @@ export function isPipelineEventVersion(value: unknown, eventId: string, versionI
     const documents = validateDraftDocuments(eventId, versionId, version.documentUploads);
     const documentPaths = [...new Set(documents.map((document) => document.path))].sort();
     if (stableStringify(documentPaths) !== stableStringify([...version.documentPaths].sort())) return false;
+    const manifest = validateM1EvidenceManifest(
+      eventDetails as unknown as EventVersion['eventDetails'],
+      templateSelection,
+      documents,
+      version.evidenceManifest,
+    );
+    if (manifest.errors.length > 0
+      || stableStringify(manifest.manifest) !== stableStringify(version.evidenceManifest)) return false;
   } catch {
     return false;
   }
