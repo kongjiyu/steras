@@ -17,6 +17,7 @@ import {
   type ResourceRecommendation,
   type RiskAssessment,
   type RiskLevel,
+  type Stage1Doc,
   type UserProfile,
 } from '@shared/types';
 import {
@@ -31,6 +32,7 @@ import {
   type AnalyticsResourceSummary,
 } from '@shared/analytics';
 import { FUNCTION_REGION } from '../config/runtime';
+import { ACTIVE_CATEGORY_SCHEMA } from '../config/categorySchema';
 import { validateResourceRecommendation } from '../engines/resourceContract';
 
 const DEFAULT_LIMIT = 250;
@@ -38,6 +40,11 @@ const MAX_LIMIT = 500;
 const MAX_FETCH = 1_000;
 const MAX_RANGE_MS = 5 * 366 * 24 * 60 * 60 * 1_000;
 const MAX_FILTER_VALUES = 25;
+const OVERRIDE_LIMIT = 200;
+const INCIDENT_LIMIT = 200;
+const CONTROL_LIMIT = 500;
+const DECISION_LIMIT = 500;
+const STAGE1_DOC_LIMIT = 100;
 const EVENT_TYPE_VALUES = new Set(EVENT_TYPES.map((item) => item.value));
 const EVENT_STATUS_VALUES = new Set(EVENT_STATUSES.map((item) => item.value));
 const RISK_LEVEL_VALUES = new Set<RiskLevel>(['Low', 'Medium', 'High']);
@@ -50,9 +57,11 @@ interface AnalyticsSourceBundle {
   overrides: ResourceOverrideRecord[];
   incidents: Incident[];
   controls: EventControl[];
+  stage1Docs: Stage1Doc[];
   decisionHistory: AuthorityDecision[];
   incidentCoverageAvailable: boolean;
   includeSynthetic: boolean;
+  sourceCoverage: AnalyticsPortfolioRecord['sourceCoverage'];
 }
 
 export const getAnalyticsPortfolio = onCall<AnalyticsPortfolioRequest | undefined>(
@@ -88,23 +97,72 @@ export const getAnalyticsPortfolio = onCall<AnalyticsPortfolioRequest | undefine
       const [assessmentSnapshot, resourceSnapshot, overrideSnapshot, incidentSnapshot, controlSnapshot, decisionHistorySnapshot] = await Promise.all([
         assessmentReference?.get(),
         resourceReference?.get(),
-        eventReference.collection(COLLECTIONS.RESOURCE_OVERRIDES).limit(200).get(),
-        db.collection(COLLECTIONS.INCIDENTS).where('eventId', '==', event.eventId).limit(200).get(),
-        eventReference.collection(COLLECTIONS.EVENT_CONTROLS).limit(500).get(),
-        eventReference.collection(COLLECTIONS.DECISION_HISTORY).limit(500).get(),
+        eventReference.collection(COLLECTIONS.RESOURCE_OVERRIDES).limit(OVERRIDE_LIMIT + 1).get(),
+        db.collection(COLLECTIONS.INCIDENTS).where('eventId', '==', event.eventId).limit(INCIDENT_LIMIT + 1).get(),
+        eventReference.collection(COLLECTIONS.EVENT_CONTROLS).limit(CONTROL_LIMIT + 1).get(),
+        eventReference.collection(COLLECTIONS.DECISION_HISTORY).limit(DECISION_LIMIT + 1).get(),
       ]);
+      const currentControls = controlSnapshot.docs.slice(0, CONTROL_LIMIT)
+        .map((document) => document.data()).filter(isAnalyticsControl)
+        .filter((control) => control.versionId === event.currentVersionId);
+      const stage1Snapshots = await mapWithConcurrency(currentControls, 10, (control) => eventReference
+        .collection(COLLECTIONS.EVENT_CONTROLS).doc(control.controlId)
+        .collection(COLLECTIONS.STAGE1_DOCS).limit(STAGE1_DOC_LIMIT + 1).get());
+      const stage1Truncated = stage1Snapshots.some((snapshot) => snapshot.size > STAGE1_DOC_LIMIT);
+      const rawStage1Docs = stage1Snapshots.flatMap((snapshot) => snapshot.docs.slice(0, STAGE1_DOC_LIMIT)
+        .map((document) => document.data()));
+      const persistedStage1Docs = rawStage1Docs.filter(isAnalyticsStage1Doc);
+      const pendingStage1Docs: Stage1Doc[] = currentControls.flatMap((control, controlIndex) => {
+        const submitted = stage1Snapshots[controlIndex].docs.slice(0, STAGE1_DOC_LIMIT)
+          .map((document) => document.data()).filter(isAnalyticsStage1Doc);
+        const remaining = [...submitted];
+        return control.stage1Requirements.flatMap((requirement, requirementIndex) => {
+          const matchIndex = remaining.findIndex((document) => document.docType === requirement.docType
+            && document.label === requirement.label);
+          if (matchIndex >= 0) {
+            remaining.splice(matchIndex, 1);
+            return [];
+          }
+          return [{
+            docId: `pending-${control.controlId}-${requirementIndex}`,
+            docType: requirement.docType,
+            label: requirement.label,
+            status: 'pending_submission' as const,
+          }];
+        });
+      });
+      const stage1Docs = [...persistedStage1Docs, ...pendingStage1Docs];
+      const rawOverrides = overrideSnapshot.docs.slice(0, OVERRIDE_LIMIT).map((document) => document.data());
+      const rawIncidents = incidentSnapshot.docs.slice(0, INCIDENT_LIMIT).map((document) => document.data());
+      const rawDecisions = decisionHistorySnapshot.docs.slice(0, DECISION_LIMIT).map((document) => document.data());
+      const rawCurrentControls = controlSnapshot.docs.slice(0, CONTROL_LIMIT).map((document) => document.data())
+        .filter((control) => isRecord(control) && control.versionId === event.currentVersionId);
+      const coverage = (truncated: boolean, rawCount: number, validCount: number) => truncated
+        ? 'truncated' as const : rawCount === validCount ? 'complete' as const : 'unavailable' as const;
       const assessmentValue = assessmentSnapshot?.data();
       const resourceValue = resourceSnapshot?.data();
+      const validOverrides = rawOverrides.filter(isAnalyticsOverride);
+      const validIncidents = rawIncidents.filter(isAnalyticsIncident)
+        .filter((incident) => incident.eventVersionId === undefined || incident.eventVersionId === event.currentVersionId);
+      const validDecisions = rawDecisions.filter(isAnalyticsDecision);
       return buildAnalyticsPortfolioRecord({
         event,
         assessment: isAnalyticsAssessment(assessmentValue) ? assessmentValue : undefined,
         resource: isAnalyticsResource(resourceValue) ? resourceValue : undefined,
-        overrides: overrideSnapshot.docs.map((document) => document.data()).filter(isAnalyticsOverride),
-        incidents: incidentSnapshot.docs.map((document) => document.data()).filter(isAnalyticsIncident),
-        controls: controlSnapshot.docs.map((document) => document.data()).filter(isAnalyticsControl),
-        decisionHistory: decisionHistorySnapshot.docs.map((document) => document.data()).filter(isAnalyticsDecision),
+        overrides: validOverrides,
+        incidents: validIncidents,
+        controls: currentControls,
+        stage1Docs,
+        decisionHistory: validDecisions,
         incidentCoverageAvailable: !incidentCoverageSnapshot.empty,
         includeSynthetic: input.includeSynthetic,
+        sourceCoverage: {
+          overrides: coverage(overrideSnapshot.size > OVERRIDE_LIMIT, rawOverrides.length, validOverrides.length),
+          incidents: coverage(incidentSnapshot.size > INCIDENT_LIMIT, rawIncidents.length, rawIncidents.filter(isAnalyticsIncident).length),
+          controls: coverage(controlSnapshot.size > CONTROL_LIMIT, rawCurrentControls.length, currentControls.length),
+          decisionHistory: coverage(decisionHistorySnapshot.size > DECISION_LIMIT, rawDecisions.length, validDecisions.length),
+          stage1Documents: coverage(controlSnapshot.size > CONTROL_LIMIT || stage1Truncated, rawStage1Docs.length, persistedStage1Docs.length),
+        },
       });
     });
 
@@ -125,6 +183,14 @@ export const getAnalyticsPortfolio = onCall<AnalyticsPortfolioRequest | undefine
     if (!selected.some((record) => record.controls.available)) unavailableSections.push('Event-control verification');
 
     const generatedAt = Date.now();
+    const childCollectionsTruncated = selected.some((record) => Object.values(record.sourceCoverage).includes('truncated'));
+    const childCollectionsUnavailable = selected.some((record) => Object.values(record.sourceCoverage).includes('unavailable'));
+    const eventScanTruncated = eventSnapshot.size === fetchLimit;
+    const limitations = [
+      ...(eventScanTruncated ? ['Event scan reached the server cap; totalMatched is a lower bound.'] : []),
+      ...(childCollectionsTruncated ? ['One or more child collections reached a server cap; affected record metrics are incomplete.'] : []),
+      ...(childCollectionsUnavailable ? ['Malformed child records were excluded; affected record metrics are unavailable.'] : []),
+    ];
     return {
       schemaVersion: ANALYTICS_SCHEMA_VERSION,
       metricDefinitionVersion: ANALYTICS_METRIC_DEFINITION_VERSION,
@@ -133,8 +199,14 @@ export const getAnalyticsPortfolio = onCall<AnalyticsPortfolioRequest | undefine
       records: selected,
       totalMatched: operationalRecords.length,
       syntheticExcluded,
-      truncated: eventSnapshot.size === fetchLimit || operationalRecords.length > input.limit,
+      truncated: eventScanTruncated || childCollectionsTruncated || operationalRecords.length > input.limit,
       unavailableSections,
+      coverage: {
+        eventScan: eventScanTruncated ? 'truncated' : 'complete',
+        childCollections: childCollectionsTruncated ? 'truncated' : childCollectionsUnavailable ? 'unavailable' : 'complete',
+        totalMatchedExact: !eventScanTruncated,
+        limitations,
+      },
     };
   },
 );
@@ -174,12 +246,15 @@ export function validateAnalyticsPortfolioRequest(value: unknown): Required<Pick
 }
 
 export function buildAnalyticsPortfolioRecord(bundle: AnalyticsSourceBundle): AnalyticsPortfolioRecord {
-  const { event, assessment, resource, overrides, controls, decisionHistory } = bundle;
+  const { event, assessment, resource, overrides, controls, stage1Docs, decisionHistory } = bundle;
   const incidents = bundle.incidents.filter((incident) => bundle.includeSynthetic || incident.synthetic !== true);
   const synthetic = event.synthetic === true || isRecord(event.m3Uat)
     || Boolean(assessment?.contextEvidence?.length && assessment.contextEvidence.every((item) => item.synthetic));
   const priorRejectedVersion = decisionHistory.some((decision) => decision.decision === 'Rejected'
     && decision.versionId !== event.currentVersionId);
+  const lifecycle = buildLifecycleSummary(event);
+  const terminalDecisionAt = lifecycle.secondReviewAt
+    ?? (event.status === 'Rejected' && event.initialReview?.decision === 'Rejected' ? lifecycle.initialReviewAt : undefined);
   return {
     eventId: event.eventId,
     eventName: event.eventDetails.name,
@@ -191,23 +266,23 @@ export function buildAnalyticsPortfolioRecord(bundle: AnalyticsSourceBundle): An
     currentVersionNumber: event.currentVersionNumber,
     createdAt: event.createdAt,
     ...(event.submittedAt ? { submittedAt: event.submittedAt } : {}),
-    ...(['Approved', 'Rejected'].includes(event.status)
-      ? { terminalDecisionAt: event.authorityReviewCompletedAt ?? event.updatedAt }
-      : {}),
+    ...(terminalDecisionAt !== undefined ? { terminalDecisionAt } : {}),
     updatedAt: event.updatedAt,
+    lifecycle,
+    sourceCoverage: bundle.sourceCoverage,
     synthetic,
     reapplication: event.currentVersionNumber >= 2 && priorRejectedVersion,
     ...(assessment ? { assessment: buildAssessmentSummary(assessment) } : {}),
     ...(resource ? { resources: buildResourceSummary(resource, overrides) } : {}),
     incidents: buildIncidentSummary(incidents, bundle.incidentCoverageAvailable),
-    controls: buildControlSummary(controls, Boolean(event.controlListGenerated)),
+    controls: buildControlSummary(controls, stage1Docs, Boolean(event.controlListGenerated), bundle.sourceCoverage.stage1Documents),
   };
 }
 
 function buildAssessmentSummary(assessment: RiskAssessment): AnalyticsAssessmentSummary {
-  const result = 'officialResult' in assessment
+  const result = assessment.status === 'official_ready' && isAnalyticsOfficialResult(assessment.officialResult)
     ? assessment.officialResult
-    : 'provisionalResult' in assessment ? assessment.provisionalResult : undefined;
+    : undefined;
   const categories = result?.categories ?? [];
   const dominant = [...categories].sort((left, right) => right.normalizedScore - left.normalizedScore)[0];
   const comparable = assessment.aiProposal?.status === 'success'
@@ -239,7 +314,9 @@ function buildAssessmentSummary(assessment: RiskAssessment): AnalyticsAssessment
 
 function buildResourceSummary(resource: ResourceRecommendation, overrides: ResourceOverrideRecord[]): AnalyticsResourceSummary {
   const validOverrides = overrides
-    .filter((override) => override.baseResourceId === resource.resourceId && Number.isFinite(override.overriddenAt))
+    .filter((override) => override.baseResourceId === resource.resourceId
+      && override.eventId === resource.eventId && override.versionId === resource.versionId
+      && override.assessmentId === resource.assessmentId && Number.isFinite(override.overriddenAt))
     .sort((left, right) => left.overriddenAt - right.overriddenAt);
   const latest = validOverrides.at(-1);
   const items = Object.fromEntries(RESOURCE_KEYS.map((key) => {
@@ -259,6 +336,7 @@ function buildResourceSummary(resource: ResourceRecommendation, overrides: Resou
     formulaVersion: resource.formulaVersion,
     items,
     overrideCount: validOverrides.length,
+    overrideReasonCategoriesAvailable: false,
   };
 }
 
@@ -275,10 +353,17 @@ function buildIncidentSummary(incidents: Incident[], available: boolean): Analyt
     verified: byStatus.verified,
     bySeverity,
     byStatus,
+    immediateActionRequired: { available: false },
+    externalEscalations: { available: false },
   };
 }
 
-function buildControlSummary(controls: EventControl[], declaredAvailable: boolean): AnalyticsControlSummary {
+function buildControlSummary(
+  controls: EventControl[],
+  stage1Docs: Stage1Doc[],
+  declaredAvailable: boolean,
+  stage1Coverage: AnalyticsPortfolioRecord['sourceCoverage']['stage1Documents'],
+): AnalyticsControlSummary {
   const summary: AnalyticsControlSummary = {
     available: declaredAvailable || controls.length > 0,
     total: controls.length,
@@ -287,6 +372,15 @@ function buildControlSummary(controls: EventControl[], declaredAvailable: boolea
     reportedUnderReview: 0,
     resubmitRequired: 0,
     usePrevious: 0,
+    stage1: {
+      available: stage1Coverage === 'complete' && declaredAvailable,
+      total: stage1Docs.length,
+      pendingSubmission: 0,
+      pendingVerification: 0,
+      verified: 0,
+      rejected: 0,
+      usePrevious: 0,
+    },
   };
   controls.forEach((control) => {
     if (control.label === 'approved') summary.approved += 1;
@@ -295,7 +389,42 @@ function buildControlSummary(controls: EventControl[], declaredAvailable: boolea
     if (control.label === 'resubmit_required') summary.resubmitRequired += 1;
     if (control.usePreviousSourceEventId) summary.usePrevious += 1;
   });
+  stage1Docs.forEach((document) => {
+    if (document.status === 'pending_submission') summary.stage1.pendingSubmission += 1;
+    if (document.status === 'pending_verification') summary.stage1.pendingVerification += 1;
+    if (document.status === 'verified') summary.stage1.verified += 1;
+    if (document.status === 'rejected') summary.stage1.rejected += 1;
+    if (document.status === 'use_previous') summary.stage1.usePrevious += 1;
+  });
   return summary;
+}
+
+function buildLifecycleSummary(event: EventRecord & Record<string, unknown>): AnalyticsPortfolioRecord['lifecycle'] {
+  const initialReviewAt = isRecord(event.initialReview) && validTimestamp(event.initialReview.reviewedAt)
+    ? event.initialReview.reviewedAt : undefined;
+  const authorityReviewAt = validTimestamp(event.authorityReviewCompletedAt)
+    && event.authorityReviewCompletedVersionId === event.currentVersionId
+    ? event.authorityReviewCompletedAt : undefined;
+  const secondReviewAt = ['Approved', 'Rejected'].includes(event.status) && isRecord(event.secondReview)
+    && event.secondReview.confirmedDecision === event.status && validTimestamp(event.secondReview.decidedAt)
+    ? event.secondReview.decidedAt : undefined;
+  const terminalAt = secondReviewAt
+    ?? (event.status === 'Rejected' && isRecord(event.initialReview)
+      && event.initialReview.decision === 'Rejected' ? initialReviewAt : undefined);
+  return {
+    ...(initialReviewAt !== undefined ? { initialReviewAt } : {}),
+    ...(authorityReviewAt !== undefined ? { authorityReviewAt } : {}),
+    ...(secondReviewAt !== undefined ? { secondReviewAt } : {}),
+    ...duration('submissionToInitialReviewMs', event.submittedAt, initialReviewAt),
+    ...duration('initialToAuthorityReviewMs', initialReviewAt, authorityReviewAt),
+    ...duration('authorityToSecondReviewMs', authorityReviewAt, secondReviewAt),
+    ...duration('submissionToTerminalDecisionMs', event.submittedAt, terminalAt),
+  };
+}
+
+function duration<K extends keyof AnalyticsPortfolioRecord['lifecycle']>(key: K, from: unknown, to: unknown): Partial<AnalyticsPortfolioRecord['lifecycle']> {
+  if (!validTimestamp(from) || !validTimestamp(to) || to < from) return {};
+  return { [key]: to - from } as Partial<AnalyticsPortfolioRecord['lifecycle']>;
 }
 
 function eventMatchesBaseFilters(event: EventRecord, input: AnalyticsPortfolioRequest): boolean {
@@ -350,13 +479,50 @@ function safeFilterValue(value: unknown): value is string {
   return typeof value === 'string' && value.length >= 1 && value.length <= 128 && !/[/\\]/.test(value);
 }
 
-function isAnalyticsAssessment(value: unknown): value is RiskAssessment {
-  return isRecord(value)
-    && typeof value.schemaVersion === 'string'
-    && ['manual_review_required', 'provisional_ready', 'authority_review', 'official_ready'].includes(String(value.status))
-    && ['complete', 'provisional', 'insufficient_data'].includes(String(value.assessmentReadiness))
-    && ['pass', 'review_required', 'blocked'].includes(String(value.complianceStatus))
-    && ['low', 'medium', 'high'].includes(String(value.dataConfidenceLevel));
+export function isAnalyticsAssessment(value: unknown): value is RiskAssessment {
+  if (!isRecord(value)
+    || typeof value.schemaVersion !== 'string'
+    || !['manual_review_required', 'provisional_ready', 'authority_review', 'official_ready'].includes(String(value.status))
+  ) return false;
+  if (!['complete', 'provisional', 'insufficient_data'].includes(String(value.assessmentReadiness))
+    || !['pass', 'review_required', 'blocked'].includes(String(value.complianceStatus))
+    || !['low', 'medium', 'high'].includes(String(value.dataConfidenceLevel))
+    || (value.contextEvidence !== undefined && (!Array.isArray(value.contextEvidence)
+      || !value.contextEvidence.every((item) => isRecord(item) && typeof item.synthetic === 'boolean')))) return false;
+  return value.status !== 'official_ready' || isAnalyticsOfficialResult(value.officialResult);
+}
+
+function isAnalyticsOfficialResult(value: unknown): boolean {
+  if (!isRecord(value) || !Number.isFinite(value.overallScore)
+    || Number(value.overallScore) < 0 || Number(value.overallScore) > 100
+    || !RISK_LEVEL_VALUES.has(value.overallRiskLevel as RiskLevel)
+    || !RISK_LEVEL_VALUES.has(value.weightedRiskLevel as RiskLevel)
+    || !RISK_LEVEL_VALUES.has(value.highestCategoryRiskLevel as RiskLevel)
+    || typeof value.categorySchemaVersion !== 'string' || typeof value.formulaVersion !== 'string'
+    || typeof value.hardRuleVersion !== 'string' || typeof value.officialInputHash !== 'string'
+    || value.officialInputHash.length < 8 || !validTimestamp(value.finalizedAt)
+    || typeof value.finalizedBy !== 'string' || value.finalizedBy.length === 0
+    || !Array.isArray(value.categories)) return false;
+  if (value.sourceKind === 'admin_manual') {
+    if (!safeDocumentId(value.manualAssessmentId)) return false;
+  } else if (!Array.isArray(value.reviewIds) || !value.reviewIds.every(safeDocumentId)) return false;
+  const expected = new Set(ACTIVE_CATEGORY_SCHEMA.categories.map((category) => category.id));
+  const seen = new Set<string>();
+  for (const category of value.categories) {
+    if (!isRecord(category) || typeof category.categoryId !== 'string' || !expected.has(category.categoryId as never)
+      || seen.has(category.categoryId) || !Number.isFinite(category.normalizedScore)
+      || Number(category.normalizedScore) < 4 || Number(category.normalizedScore) > 100
+      || !scoreRating(category.validatedLikelihood) || !scoreRating(category.validatedSeverity)
+      || !RISK_LEVEL_VALUES.has(category.riskLevel as RiskLevel)
+      || !Number.isFinite(category.weightedContribution)
+      || !Array.isArray(category.appliedHardRules)) return false;
+    seen.add(category.categoryId);
+  }
+  return seen.size === expected.size;
+}
+
+function scoreRating(value: unknown): boolean {
+  return Number.isInteger(value) && Number(value) >= 1 && Number(value) <= 5;
 }
 
 function isAnalyticsResource(value: unknown): value is ResourceRecommendation {
@@ -382,7 +548,13 @@ function isAnalyticsOverride(value: unknown): value is ResourceOverrideRecord {
     || !isRecord(value.previousQuantities) || !isRecord(value.quantities)) return false;
   const previous = value.previousQuantities;
   const quantities = value.quantities;
-  return RESOURCE_KEYS.every((key) => Number.isFinite(previous[key]) && Number.isFinite(quantities[key]));
+  return exactResourceKeys(previous) && exactResourceKeys(quantities)
+    && RESOURCE_KEYS.every((key) => Number.isSafeInteger(previous[key]) && Number(previous[key]) >= 0
+    && Number.isSafeInteger(quantities[key]) && Number(quantities[key]) >= 0);
+}
+
+function exactResourceKeys(value: Record<string, unknown>): boolean {
+  return Object.keys(value).length === RESOURCE_KEYS.length && RESOURCE_KEYS.every((key) => Object.hasOwn(value, key));
 }
 
 function isAnalyticsIncident(value: unknown): value is Incident {
@@ -392,12 +564,29 @@ function isAnalyticsIncident(value: unknown): value is Incident {
 }
 
 function isAnalyticsControl(value: unknown): value is EventControl {
-  return isRecord(value) && typeof value.controlId === 'string'
-    && ['approved', 'pending', 'reported_under_review', 'resubmit_required'].includes(String(value.label));
+  return isRecord(value) && safeDocumentId(value.controlId) && safeDocumentId(value.versionId)
+    && ['approved', 'pending', 'reported_under_review', 'resubmit_required'].includes(String(value.label))
+    && ['stage1_only', 'stage1_and_stage2'].includes(String(value.stageRequirement))
+    && Array.isArray(value.stage1Requirements)
+    && value.stage1Requirements.every((requirement) => isRecord(requirement)
+      && ['receipt', 'application', 'floor_plan', 'license', 'insurance', 'other'].includes(String(requirement.docType))
+      && typeof requirement.label === 'string' && requirement.label.length > 0 && typeof requirement.required === 'boolean');
 }
 
 function isAnalyticsDecision(value: unknown): value is AuthorityDecision {
-  return isRecord(value) && typeof value.versionId === 'string' && ['Approved', 'Rejected'].includes(String(value.decision));
+  return isRecord(value) && safeDocumentId(value.versionId) && ['Approved', 'Rejected'].includes(String(value.decision))
+    && (value.decidedAt === undefined || validTimestamp(value.decidedAt));
+}
+
+function isAnalyticsStage1Doc(value: unknown): value is Stage1Doc {
+  return isRecord(value) && safeDocumentId(value.docId)
+    && ['receipt', 'application', 'floor_plan', 'license', 'insurance', 'other'].includes(String(value.docType))
+    && typeof value.label === 'string' && value.label.length > 0
+    && ['pending_submission', 'pending_verification', 'verified', 'rejected', 'use_previous'].includes(String(value.status));
+}
+
+function validTimestamp(value: unknown): value is number {
+  return Number.isFinite(value) && Number(value) >= 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

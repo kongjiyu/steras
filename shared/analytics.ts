@@ -12,8 +12,15 @@ import type {
   RiskLevel,
 } from './types';
 
-export const ANALYTICS_SCHEMA_VERSION = '2026-08-29-m5-v1';
-export const ANALYTICS_METRIC_DEFINITION_VERSION = '2026-08-29-m5-metrics-v1';
+export const ANALYTICS_SCHEMA_VERSION = '2026-09-03-m5-v2';
+export const ANALYTICS_METRIC_DEFINITION_VERSION = '2026-09-03-m5-metrics-v2';
+
+export type AnalyticsCoverageStatus = 'complete' | 'truncated' | 'unavailable';
+
+export interface AnalyticsAvailabilityCount {
+  available: boolean;
+  count?: number;
+}
 
 export interface AnalyticsPortfolioRequest {
   from?: number;
@@ -59,6 +66,8 @@ export interface AnalyticsResourceSummary {
   formulaVersion: string;
   items: Partial<Record<ResourceKey, AnalyticsResourceItemSummary>>;
   overrideCount: number;
+  /** Free-text rationale is deliberately excluded and no safe taxonomy exists yet. */
+  overrideReasonCategoriesAvailable: false;
 }
 
 export interface AnalyticsIncidentSummary {
@@ -67,6 +76,8 @@ export interface AnalyticsIncidentSummary {
   verified: number;
   bySeverity: Record<'low' | 'medium' | 'high', number>;
   byStatus: Record<'verified' | 'under_review' | 'rejected' | 'unknown', number>;
+  immediateActionRequired: AnalyticsAvailabilityCount;
+  externalEscalations: AnalyticsAvailabilityCount;
 }
 
 export interface AnalyticsControlSummary {
@@ -77,6 +88,33 @@ export interface AnalyticsControlSummary {
   reportedUnderReview: number;
   resubmitRequired: number;
   usePrevious: number;
+  stage1: {
+    available: boolean;
+    total: number;
+    pendingSubmission: number;
+    pendingVerification: number;
+    verified: number;
+    rejected: number;
+    usePrevious: number;
+  };
+}
+
+export interface AnalyticsLifecycleSummary {
+  initialReviewAt?: number;
+  authorityReviewAt?: number;
+  secondReviewAt?: number;
+  submissionToInitialReviewMs?: number;
+  initialToAuthorityReviewMs?: number;
+  authorityToSecondReviewMs?: number;
+  submissionToTerminalDecisionMs?: number;
+}
+
+export interface AnalyticsRecordSourceCoverage {
+  overrides: AnalyticsCoverageStatus;
+  incidents: AnalyticsCoverageStatus;
+  controls: AnalyticsCoverageStatus;
+  decisionHistory: AnalyticsCoverageStatus;
+  stage1Documents: AnalyticsCoverageStatus;
 }
 
 export interface AnalyticsPortfolioRecord {
@@ -92,6 +130,8 @@ export interface AnalyticsPortfolioRecord {
   submittedAt?: number;
   terminalDecisionAt?: number;
   updatedAt: number;
+  lifecycle: AnalyticsLifecycleSummary;
+  sourceCoverage: AnalyticsRecordSourceCoverage;
   synthetic: boolean;
   reapplication: boolean;
   assessment?: AnalyticsAssessmentSummary;
@@ -110,4 +150,10 @@ export interface AnalyticsPortfolioResponse {
   syntheticExcluded: number;
   truncated: boolean;
   unavailableSections: string[];
+  coverage: {
+    eventScan: Exclude<AnalyticsCoverageStatus, 'unavailable'>;
+    childCollections: AnalyticsCoverageStatus;
+    totalMatchedExact: boolean;
+    limitations: string[];
+  };
 }

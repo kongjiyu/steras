@@ -15,6 +15,7 @@ import {
 import {
   assertAnalyticsAdmin,
   buildAnalyticsPortfolioRecord,
+  isAnalyticsAssessment,
   isAnalyticsEvent,
   validateAnalyticsPortfolioRequest,
 } from './getAnalyticsPortfolio';
@@ -50,6 +51,7 @@ describe('Module 5 analytics backend', () => {
       stageRequirement: 'stage1_only', stage1Requirements: [], stage2Requirement: null, controlItemVersion: 1,
       label: 'approved', createdAt: 1, updatedAt: 2,
     };
+    const sourceCoverage = completeCoverage();
     const output = buildAnalyticsPortfolioRecord({
       event,
       assessment,
@@ -57,9 +59,11 @@ describe('Module 5 analytics backend', () => {
       overrides: [override],
       incidents: [incident],
       controls: [control],
+      stage1Docs: [{ docId: 'doc-1', docType: 'license', label: 'Licence', status: 'verified' }],
       decisionHistory: [{ decision: 'Rejected', versionId: 'v1' } as never],
       incidentCoverageAvailable: true,
       includeSynthetic: false,
+      sourceCoverage,
     });
 
     expect(output.reapplication).toBe(true);
@@ -67,6 +71,9 @@ describe('Module 5 analytics backend', () => {
     expect(output.resources?.items.police).toMatchObject({ baseline: 10, effective: 12, overrideCount: 1 });
     expect(output.incidents).toMatchObject({ available: true, total: 1, verified: 1 });
     expect(output.controls).toMatchObject({ available: true, total: 1, approved: 1 });
+    expect(output.controls.stage1).toMatchObject({ available: true, total: 1, verified: 1 });
+    expect(output.incidents.immediateActionRequired).toEqual({ available: false });
+    expect(output.resources?.overrideReasonCategoriesAvailable).toBe(false);
     const serialized = JSON.stringify(output);
     expect(serialized).not.toContain('organizer@example.com');
     expect(serialized).not.toContain('+60123456789');
@@ -78,10 +85,85 @@ describe('Module 5 analytics backend', () => {
     const event = Object.assign(sampleEvent(), { m3Uat: { datasetId: 'test' } });
     const output = buildAnalyticsPortfolioRecord({
       event,
-      overrides: [], incidents: [], controls: [], decisionHistory: [],
+      overrides: [], incidents: [], controls: [], stage1Docs: [], decisionHistory: [],
       incidentCoverageAvailable: false, includeSynthetic: false,
+      sourceCoverage: completeCoverage(),
     });
     expect(output.synthetic).toBe(true);
+  });
+
+  it('never labels a provisional result as official analytics', () => {
+    const provisional = sampleAssessment() as RiskAssessment & { status: 'provisional_ready'; officialResult?: never };
+    delete (provisional as unknown as Record<string, unknown>).officialResult;
+    provisional.status = 'provisional_ready';
+    const output = buildAnalyticsPortfolioRecord({
+      event: sampleEvent(), assessment: provisional, overrides: [], incidents: [], controls: [], stage1Docs: [],
+      decisionHistory: [], incidentCoverageAvailable: false, includeSynthetic: false, sourceCoverage: completeCoverage(),
+    });
+    expect(output.assessment).not.toHaveProperty('officialScore');
+    expect(output.assessment).not.toHaveProperty('officialRiskLevel');
+  });
+
+  it('rejects malformed and incomplete official results instead of crashing the report', () => {
+    const valid = sampleAssessment();
+    expect(isAnalyticsAssessment(valid)).toBe(true);
+    expect(isAnalyticsAssessment({ ...valid, officialResult: { overallScore: Number.NaN, categories: [] } })).toBe(false);
+    expect(isAnalyticsAssessment({ ...valid, officialResult: { ...(valid as never as { officialResult: object }).officialResult, categories: [] } })).toBe(false);
+    expect(isAnalyticsAssessment({ ...valid, contextEvidence: {} })).toBe(false);
+  });
+
+  it('uses immutable review timestamps and refuses negative lifecycle durations', () => {
+    const event = Object.assign(sampleEvent(), {
+      initialReview: { decision: 'Approved', reason: 'ok', reviewerUid: 'admin', reviewedAt: 3 },
+      authorityReviewCompletedAt: 7,
+      authorityReviewCompletedVersionId: 'v2',
+      secondReview: { decidedAt: 9, confirmedDecision: 'Approved' },
+      updatedAt: 999,
+    });
+    const output = buildAnalyticsPortfolioRecord({ event, overrides: [], incidents: [], controls: [], stage1Docs: [],
+      decisionHistory: [], incidentCoverageAvailable: false, includeSynthetic: false, sourceCoverage: completeCoverage() });
+    expect(output.terminalDecisionAt).toBe(9);
+    expect(output.lifecycle).toMatchObject({ submissionToInitialReviewMs: 1, initialToAuthorityReviewMs: 4,
+      authorityToSecondReviewMs: 2, submissionToTerminalDecisionMs: 7 });
+
+    event.initialReview.reviewedAt = 1;
+    const invalid = buildAnalyticsPortfolioRecord({ event, overrides: [], incidents: [], controls: [], stage1Docs: [],
+      decisionHistory: [], incidentCoverageAvailable: false, includeSynthetic: false, sourceCoverage: completeCoverage() });
+    expect(invalid.lifecycle).not.toHaveProperty('submissionToInitialReviewMs');
+  });
+
+  it('binds overrides to the current resource generation and does not expose private reasons', () => {
+    const resource = sampleResource();
+    const valid = sampleOverride();
+    const stale = { ...sampleOverride(), overrideId: 'stale', versionId: 'v1', quantities: { ...sampleOverride().quantities, police: 99 } };
+    const output = buildAnalyticsPortfolioRecord({
+      event: sampleEvent(), resource, overrides: [valid, stale], incidents: [], controls: [], stage1Docs: [],
+      decisionHistory: [], incidentCoverageAvailable: false, includeSynthetic: false, sourceCoverage: completeCoverage(),
+    });
+    expect(output.resources?.items.police).toMatchObject({ baseline: 10, effective: 12, overrideCount: 1 });
+    expect(output.resources?.overrideCount).toBe(1);
+    expect(JSON.stringify(output)).not.toContain('PRIVATE OVERRIDE RATIONALE');
+  });
+
+  it('represents missing required Stage 1 uploads only when authoritative coverage is supplied', () => {
+    const control: EventControl = {
+      controlId: 'control-1', eventId: 'event-1', versionId: 'v2', controlName: 'Licence check', authority: 'DBKL',
+      stageRequirement: 'stage1_only', stage1Requirements: [{ docType: 'license', label: 'Current licence', required: true }],
+      stage2Requirement: null, controlItemVersion: 1, label: 'pending', createdAt: 1, updatedAt: 2,
+    };
+    const complete = buildAnalyticsPortfolioRecord({
+      event: sampleEvent(), overrides: [], incidents: [], controls: [control],
+      stage1Docs: [{ docId: 'pending-control-1-0', docType: 'license', label: 'Current licence', status: 'pending_submission' }],
+      decisionHistory: [], incidentCoverageAvailable: false, includeSynthetic: false, sourceCoverage: completeCoverage(),
+    });
+    expect(complete.controls.stage1).toMatchObject({ available: true, total: 1, pendingSubmission: 1 });
+
+    const unavailableCoverage = { ...completeCoverage(), stage1Documents: 'unavailable' as const };
+    const unavailable = buildAnalyticsPortfolioRecord({
+      event: sampleEvent(), overrides: [], incidents: [], controls: [control], stage1Docs: [], decisionHistory: [],
+      incidentCoverageAvailable: false, includeSynthetic: false, sourceCoverage: unavailableCoverage,
+    });
+    expect(unavailable.controls.stage1).toMatchObject({ available: false, total: 0 });
   });
 
   it('skips malformed source events without crashing a portfolio report', () => {
@@ -110,16 +192,24 @@ function sampleEvent(): EventRecord & Record<string, unknown> {
 }
 
 function sampleAssessment(): RiskAssessment {
+  const categoryIds = ['crowd', 'venue_fire', 'weather_environment', 'public_health', 'food_water_sanitation', 'medical_capacity', 'security_cbrn', 'transport_accessibility'];
   return {
     assessmentId: 'assessment-1', eventId: 'event-1', versionId: 'v2', schemaVersion: ASSESSMENT_SCHEMA_VERSION,
-    status: 'provisional_ready', assessmentReadiness: 'complete', complianceStatus: 'pass', dataConfidenceScore: 0.9,
+    status: 'official_ready', assessmentReadiness: 'complete', complianceStatus: 'pass', dataConfidenceScore: 0.9,
     dataConfidenceLevel: 'high', contextEvidence: [{ synthetic: false }], aiProposal: { status: 'success' },
-    provisionalResult: {
+    officialResult: {
       overallScore: 62, overallRiskLevel: 'Medium', categorySchemaVersion: 'categories-v1', formulaVersion: 'formula-v1',
-      hardRuleVersion: 'hard-v1', categories: [{ categoryId: 'crowd', normalizedScore: 62, proposedLikelihood: 3,
-        proposedSeverity: 3, validatedLikelihood: 3, validatedSeverity: 3, appliedHardRules: [] }],
+      weightedRiskLevel: 'Medium', highestCategoryRiskLevel: 'Medium', officialInputHash: 'official-input-hash',
+      finalizedAt: 4, finalizedBy: 'admin-1', reviewIds: ['review-1'],
+      hardRuleVersion: 'hard-v1', categories: categoryIds.map((categoryId) => ({ categoryId, normalizedScore: 62, proposedLikelihood: 3,
+        proposedSeverity: 3, validatedLikelihood: 3, validatedSeverity: 3, riskLevel: 'Medium', weightedContribution: 7.75,
+        appliedHardRules: [] })),
     },
   } as unknown as RiskAssessment;
+}
+
+function completeCoverage() {
+  return { overrides: 'complete', incidents: 'complete', controls: 'complete', decisionHistory: 'complete', stage1Documents: 'complete' } as const;
 }
 
 function sampleResource(): ResourceRecommendation {
