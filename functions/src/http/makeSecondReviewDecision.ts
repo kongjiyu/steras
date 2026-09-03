@@ -27,6 +27,7 @@ import {
   COLLECTIONS,
   DecisionValue,
   EventRecord,
+  EventVersion,
   NotificationType,
   PublicEvent,
   REJECTION_REASON_CATEGORIES,
@@ -126,9 +127,6 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
   // Aggregate (A8).
   const aggregate = aggregateFromAssignments(assignments, required);
   const now = Date.now();
-  // Pick the most informative officer reason+suggestion for the
-  // organiser notification when the admin did not provide a rejection detail.
-  const reasonOfficer = pickFeaturedOfficer(assignments, finalDecision);
   const notifType: NotificationType =
     finalDecision === 'Approved' ? 'application_approved'
     : 'application_rejected';
@@ -144,11 +142,23 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
     const currentAssignments = currentAssignmentsSnap.docs
       .map((document) => document.data() as Assignment)
       .filter((assignment) => assignment.versionId === versionId);
+    const requiredAssignments = required.map((authority) => currentAssignments.find((assignment) =>
+      assignment.assignmentId === `${versionId}_${authority}`
+      && assignment.eventId === eventId
+      && assignment.authorityType === authority
+      && assignment.officerUid === currentEvent?.assignedOfficerByAuthority?.[authority],
+    ));
+    const completeRequiredAssignments = requiredAssignments.filter((assignment): assignment is Assignment => Boolean(assignment));
+    const currentAggregate = aggregateFromAssignments(completeRequiredAssignments, required);
+    const currentReasonOfficer = pickFeaturedOfficer(completeRequiredAssignments, finalDecision);
+    const currentVersion = currentVersionSnap.data() as EventVersion | undefined;
     if (!currentEventSnap.exists || currentEvent?.currentVersionId !== versionId
       || currentEvent.reviewStage !== 'second' || !currentVersionSnap.exists
+      || currentVersion?.eventId !== eventId || currentVersion.versionId !== versionId
       || (currentEvent as EventRecord & { secondReview?: unknown }).secondReview
-      || required.some((authority) => !currentAssignments.some((assignment) => assignment.authorityType === authority && assignment.status === 'completed'))
-      || aggregateFromAssignments(currentAssignments, required) !== aggregate) {
+      || completeRequiredAssignments.length !== required.length
+      || completeRequiredAssignments.some((assignment) => assignment.status !== 'completed')
+      || currentAggregate !== aggregate) {
       throw new HttpsError('aborted', 'The second-review inputs changed or another Admin already finalized this application.');
     }
     tx.update(eventRef, {
@@ -164,11 +174,11 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
         aggregateDecision: aggregate,
         reviewStage: 'second',
         rejectionReasonCategory: finalDecision === 'Rejected' ? rejectionReasonCategory : null,
-        reason: reason || (finalDecision === 'Rejected' ? reasonOfficer?.reason : undefined) || null,
-        suggestion: suggestion || (finalDecision === 'Rejected' ? reasonOfficer?.suggestion : undefined) || null,
+        reason: reason || (finalDecision === 'Rejected' ? currentReasonOfficer?.reason : undefined) || null,
+        suggestion: suggestion || (finalDecision === 'Rejected' ? currentReasonOfficer?.suggestion : undefined) || null,
         adminNote: adminNote || null,
-        featuredOfficerUid: reasonOfficer?.officerUid ?? null,
-        officerFeedback: assignments
+        featuredOfficerUid: currentReasonOfficer?.officerUid ?? null,
+        officerFeedback: completeRequiredAssignments
           .filter((assignment) => assignment.status === 'completed' && assignment.decision && assignment.reason)
           .map((assignment) => ({
             authorityType: assignment.authorityType,
@@ -199,9 +209,9 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
         reviewStage: 'second',
         aggregate,
         finalDecision,
-        featuredOfficerUid: reasonOfficer?.officerUid ?? null,
-        featuredReason: reasonOfficer?.reason ?? null,
-        featuredSuggestion: reasonOfficer?.suggestion ?? null,
+        featuredOfficerUid: currentReasonOfficer?.officerUid ?? null,
+        featuredReason: currentReasonOfficer?.reason ?? null,
+        featuredSuggestion: currentReasonOfficer?.suggestion ?? null,
         reason: reason || null,
         suggestion: suggestion || null,
         rejectionReasonCategory: finalDecision === 'Rejected' ? rejectionReasonCategory : null,
@@ -210,7 +220,7 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
 
     const publicRef = db.collection(COLLECTIONS.PUBLIC_EVENTS).doc(eventId);
     if (finalDecision === 'Approved') {
-      const details = (versionSnap.data() as { eventDetails: EventRecord['eventDetails'] }).eventDetails;
+      const details = currentVersion.eventDetails;
       const publicEvent: PublicEvent = {
         eventId,
         versionId,
@@ -241,7 +251,7 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
     // Decrement workload for each assigned officer + mark assignment
     // history as 'completed' (the assignment doc is already 'completed'
     // from the officer action; this just clears workload).
-    for (const a of assignments) {
+    for (const a of completeRequiredAssignments) {
       if (a.status === 'completed') {
         const officerRef = db.collection(COLLECTIONS.OFFICERS).doc(a.officerUid);
         tx.update(officerRef, {
@@ -253,8 +263,8 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
 
     if (organizerRecipientUid) {
       const notificationId = `second_review_${versionId}`;
-      const notificationReason = reason || reasonOfficer?.reason || adminNote || undefined;
-      const notificationSuggestion = suggestion || reasonOfficer?.suggestion || undefined;
+      const notificationReason = reason || currentReasonOfficer?.reason || adminNote || undefined;
+      const notificationSuggestion = suggestion || currentReasonOfficer?.suggestion || undefined;
       tx.set(db.collection(COLLECTIONS.NOTIFICATIONS).doc(notificationId), {
         notificationId,
         recipientUid: organizerRecipientUid,
@@ -271,7 +281,7 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
       }, { merge: false });
     }
 
-    return { aggregate, finalDecision, notifType, reasonOfficer };
+    return { aggregate: currentAggregate, finalDecision, notifType };
   }).then(async (result) => {
     return { eventId, status: result.finalDecision, aggregate: result.aggregate };
   });

@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EventRecord } from '@shared/types';
+import { M4_AI_PROMPT_VERSION } from '@shared/m4';
 import {
   assertEvidencePath, assertReportableEvent, assertResolutionReady, assertSubmissionGeneration, buildIncidentAiPayload,
-  actionRequestHash, canPerformIncidentAction, safeIncident, sameSubmission, validateSubmission,
+  actionRequestHash, canPerformIncidentAction, rankRecommendedAuthorities, safeIncident, sameSubmission, validateSubmission,
 } from './m4Incidents';
 
 const now = Date.UTC(2026, 8, 3, 12);
@@ -68,6 +69,22 @@ describe('M4 incident input boundary', () => {
     const payload = buildIncidentAiPayload(input, { eventDetails: { type: 'concert', venueName: 'Demo Hall', expectedAttendance: 500 } } as EventRecord);
     expect(payload.evidence).toEqual([{ name: 'photo.jpg', mimeType: 'image/jpeg', size: 123 }]);
     expect(JSON.stringify(payload)).not.toContain('incident_evidence');
+  });
+
+  it('ranks matching authorities using location, event assignment and urgent AI outcome', () => {
+    const entries = [
+      { authorityId: 'generic-1', name: 'Generic Support', authorityType: 'MOTAC', serviceCategories: ['medical_safety'], coverageAreas: ['Penang'], active: true },
+      { authorityId: 'kkm-kl', name: 'KL Medical', authorityType: 'KKM', serviceCategories: ['medical_safety'], coverageAreas: ['Kuala Lumpur'], active: true },
+      { authorityId: 'inactive-1', name: 'Inactive', authorityType: 'KKM', serviceCategories: ['medical_safety'], coverageAreas: ['Kuala Lumpur'], active: false },
+    ] as Parameters<typeof rankRecommendedAuthorities>[0];
+    const ranked = rankRecommendedAuthorities(entries, 'medical_safety', {
+      status: 'success', model: 'test', promptVersion: M4_AI_PROMPT_VERSION, severity: 'high', immediateActionRequired: true,
+      rationale: 'Urgent medical attention is indicated.', assessedAt: now,
+    }, {
+      requiredAuthorities: ['KKM'],
+      eventDetails: { venueName: 'Central Venue', venueAddress: 'Kuala Lumpur', venueState: 'Kuala Lumpur' },
+    } as EventRecord);
+    expect(ranked.map((entry) => entry.authorityId)).toEqual(['kkm-kl', 'generic-1']);
   });
 
   it('rejects idempotency-key reuse when any immutable submission input changes', () => {

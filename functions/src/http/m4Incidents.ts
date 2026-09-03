@@ -47,12 +47,13 @@ export const submitIncident = onCall({ region: FUNCTION_REGION, timeoutSeconds: 
   }
   const evidence = await validateEvidence(uid, input.evidencePaths);
   const authoritySnapshot = await db.collection(DIRECTORY).where('active', '==', true).limit(100).get();
-  const locationText = `${event.eventDetails.venueName} ${event.eventDetails.venueAddress}`.toLocaleLowerCase();
-  const recommendedAuthorityIds = authoritySnapshot.docs.map((doc) => doc.data() as M4AuthorityDirectoryEntry)
-    .filter((entry) => entry.serviceCategories.includes(input.category))
-    .sort((a, b) => Number(b.coverageAreas.some((area) => locationText.includes(area.toLocaleLowerCase()))) - Number(a.coverageAreas.some((area) => locationText.includes(area.toLocaleLowerCase()))))
-    .slice(0, 5).map((entry) => entry.authorityId);
   const aiAssessment = await assessIncident({ ...input, evidence }, event);
+  const recommendedAuthorityIds = rankRecommendedAuthorities(
+    authoritySnapshot.docs.map((doc) => doc.data() as M4AuthorityDirectoryEntry),
+    input.category,
+    aiAssessment,
+    event,
+  ).slice(0, 5).map((entry) => entry.authorityId);
   const now = Date.now();
   const record: M4IncidentRecord = {
     schemaVersion: M4_SCHEMA_VERSION, incidentId, eventId: input.eventId,
@@ -81,6 +82,18 @@ export const submitIncident = onCall({ region: FUNCTION_REGION, timeoutSeconds: 
     }
     if (!currentEventSnap.exists) throw new HttpsError('failed-precondition', 'Event is no longer available.');
     assertSubmissionGeneration(currentEventSnap.data() as EventRecord, capturedVersionId, input, Date.now());
+    if (input.linkedControlId) {
+      const controlRef = db.collection(COLLECTIONS.EVENTS).doc(input.eventId)
+        .collection(COLLECTIONS.EVENT_CONTROLS).doc(input.linkedControlId);
+      const stage2Id = input.linkedStage2DocId ?? `${input.linkedControlId}-s2`;
+      const [currentControl, currentStage2] = await Promise.all([
+        tx.get(controlRef),
+        tx.get(controlRef.collection(COLLECTIONS.STAGE2_DOCS).doc(stage2Id)),
+      ]);
+      if (!currentControl.exists || !currentStage2.exists || currentStage2.data()?.published !== true) {
+        throw new HttpsError('failed-precondition', 'Linked Event Control evidence is no longer published.');
+      }
+    }
     tx.create(ref, record);
     appendHistory(tx, ref, incidentId, uid, profile.role, 'incident_submitted', 'Incident report submitted.', evidence, now);
     if (submitNotification) queueIncidentNotification(tx, submitNotification, now);
@@ -162,8 +175,11 @@ export const manageIncident = onCall({ region: FUNCTION_REGION }, async (request
       if (!entry?.active || !entry.serviceCategories.includes(record.category)) throw new HttpsError('failed-precondition', 'Authority is not active for this incident category.');
       patch = { ...patch, referredAuthorityId: entry.authorityId, referredAuthorityType: entry.authorityType, status: 'authority_investigation' };
       summary = `Referred to ${entry.name}: ${text(input.note, 'note', 10, 1000)}`;
-      const officerRegistry = await db.collection(COLLECTIONS.OFFICERS).where('active', '==', true).where('authorityType', '==', entry.authorityType).limit(100).get();
-      const officerUsers = officerRegistry.empty ? [] : await db.getAll(...officerRegistry.docs.map((document) => db.collection(COLLECTIONS.USERS).doc(document.id)));
+      const officerRegistry = await tx.get(db.collection(COLLECTIONS.OFFICERS)
+        .where('active', '==', true).where('authorityType', '==', entry.authorityType).limit(100));
+      const officerUsers = officerRegistry.empty ? [] : await tx.getAll(
+        ...officerRegistry.docs.map((document) => db.collection(COLLECTIONS.USERS).doc(document.id)),
+      );
       const officerUid = officerRegistry.docs.map((document, index) => ({ officer: document.data() as OfficerProfile, user: officerUsers[index]?.data() as UserProfile | undefined }))
         .filter(({ officer, user }, index) => officer.uid === officerRegistry.docs[index].id && user?.uid === officer.uid
           && user.role === 'authority' && user.authorityType === entry.authorityType)
@@ -293,6 +309,17 @@ export function canPerformIncidentAction(record: M4IncidentRecord, profile: User
 }
 export function assertResolutionReady(record: M4IncidentRecord) { if (record.status !== 'awaiting_resolution') throw new HttpsError('failed-precondition', 'Record a completed response or authority finding before resolution.'); }
 export function buildIncidentAiPayload(input: Pick<ReturnType<typeof validateSubmission>, 'category' | 'description' | 'location' | 'occurredAt'> & { evidence: M4EvidenceRef[] }, event: EventRecord) { return { category: input.category, description: input.description, location: input.location, occurredAt: input.occurredAt, evidence: input.evidence.map(({ name, mimeType, size }) => ({ name, mimeType, size })), event: { type: event.eventDetails.type, venueName: event.eventDetails.venueName, attendance: event.eventDetails.expectedAttendance } }; }
+export function rankRecommendedAuthorities(entries: M4AuthorityDirectoryEntry[], category: M4IncidentCategory, assessment: M4AIAssessment, event: EventRecord) {
+  const locationText = `${event.eventDetails.venueName} ${event.eventDetails.venueAddress} ${event.eventDetails.venueState}`.toLocaleLowerCase();
+  const emergencyTypes = new Set(['PDRM', 'BOMBA', 'KKM']);
+  const urgent = assessment.status === 'success' && (assessment.severity === 'high' || assessment.immediateActionRequired);
+  const score = (entry: M4AuthorityDirectoryEntry) =>
+    (entry.coverageAreas.some((area) => locationText.includes(area.toLocaleLowerCase())) ? 4 : 0)
+    + (event.requiredAuthorities.includes(entry.authorityType) ? 2 : 0)
+    + (urgent && emergencyTypes.has(entry.authorityType) ? 1 : 0);
+  return entries.filter((entry) => entry.active && entry.serviceCategories.includes(category))
+    .sort((left, right) => score(right) - score(left) || left.name.localeCompare(right.name) || left.authorityId.localeCompare(right.authorityId));
+}
 export function actionRequestHash(action: string, input: Record<string, unknown>, evidencePaths: string[]) { return createHash('sha256').update(JSON.stringify({ action, note: input.note ?? null, team: input.team ?? null, authorityId: input.authorityId ?? null, resolution: input.resolution ?? null, manualSeverity: input.manualSeverity ?? null, discrepancyOutcome: input.discrepancyOutcome ?? null, evidencePaths })).digest('hex'); }
 const OUTBOX = 'incident_notification_outbox';
 function incidentNotification(input: NotificationInput) { return input; }

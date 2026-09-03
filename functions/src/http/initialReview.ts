@@ -19,6 +19,7 @@ import {
   AuthorityType,
   Assignment,
   EventRecord,
+  ManualOfficialAssessmentResult,
   ResourceRecommendation,
   RiskAssessment,
   REJECTION_REASON_CATEGORIES,
@@ -27,7 +28,7 @@ import {
 } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
 import { validateResourceRecommendation } from '../engines/resourceContract';
-import { validateAssessmentResultAgainstProposal, validateProvisionalAssessmentResult } from '../engines/resourceCalculator';
+import { validateAssessmentResultAgainstProposal, validateManualOfficialAssessmentResult, validateProvisionalAssessmentResult } from '../engines/resourceCalculator';
 import { resolveAuthUid } from '../utils/notifications';
 
 type InitialDecision = 'Approved' | 'Rejected';
@@ -120,7 +121,6 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
   const resource = resourceSnap?.data() as ResourceRecommendation | undefined;
   const manualOfficial = isManualOfficialAssessment(assessment, eventId, versionId, assessmentId);
   const provisionalReady = isReviewableProvisionalAssessment(assessment, eventId, versionId, assessmentId);
-  const aiOfficialReady = isReadyAssessment(assessment, eventId, versionId, assessmentId);
 
   // Feedback is read before the decision transaction so the admin can
   // explicitly attach the completed officer rationale to an initial reject.
@@ -142,7 +142,7 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
       }));
   }
 
-  if (decision === 'Approved' && (!(aiOfficialReady || manualOfficial || provisionalReady)
+  if (decision === 'Approved' && (!(manualOfficial || provisionalReady)
     || !resourceSnap?.exists || !resource || !resourceId
     || !validateResourceRecommendation(resource).ok
     || resource.resourceId !== resourceId
@@ -171,7 +171,11 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
   const organizerRecipientUid = decision === 'Rejected' ? await resolveAuthUid(event.organizerId) : null;
 
   const result = await db.runTransaction(async (tx) => {
-    const currentEventSnap = await tx.get(eventRef);
+    const [currentEventSnap, currentAssessmentSnap, currentResourceSnap] = await Promise.all([
+      tx.get(eventRef),
+      tx.get(assessmentRef),
+      resourceRef ? tx.get(resourceRef) : Promise.resolve(undefined),
+    ]);
     const currentEvent = { eventId, ...currentEventSnap.data() } as EventRecord;
     if (!currentEventSnap.exists
       || currentEvent.status !== event.status
@@ -182,6 +186,19 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
       || currentEvent.reviewStage === 'second'
       || (currentEvent.assignedOfficerUids?.length ?? 0) > 0) {
       throw new HttpsError('failed-precondition', 'Initial review was completed by another admin.');
+    }
+    if (decision === 'Approved') {
+      const currentAssessment = currentAssessmentSnap.data() as RiskAssessment | undefined;
+      const currentResource = currentResourceSnap?.data() as ResourceRecommendation | undefined;
+      const currentManualOfficial = isManualOfficialAssessment(currentAssessment, eventId, versionId, assessmentId);
+      const currentProvisional = isReviewableProvisionalAssessment(currentAssessment, eventId, versionId, assessmentId);
+      if (!(currentManualOfficial || currentProvisional)
+        || !currentResource || !resourceId || !validateResourceRecommendation(currentResource).ok
+        || currentResource.resourceId !== resourceId || currentResource.eventId !== eventId
+        || currentResource.versionId !== versionId || currentResource.assessmentId !== assessmentId
+        || (currentProvisional ? currentResource.stage !== 'provisional' : currentResource.stage !== 'official')) {
+        throw new HttpsError('aborted', 'Assessment or resource artifacts changed before initial approval. Reload and retry.');
+      }
     }
 
     const eventUpdate: Record<string, unknown> = {
@@ -262,20 +279,6 @@ export function isReviewableProvisionalAssessment(
     && validateAssessmentResultAgainstProposal(provisionalResult, proposal).length === 0;
 }
 
-function isReadyAssessment(value: unknown, eventId?: string, versionId?: string, assessmentId?: string): value is RiskAssessment {
-  if (!value || typeof value !== 'object') return false;
-  const assessment = value as Record<string, unknown>;
-  // The current M2 contract uses `official_ready` (the older M3 fixture used
-  // `ready`). Accept only a current, non-manual assessment here so initial
-  // review cannot release an incomplete or legacy record.
-  return assessment.status === 'official_ready'
-    && assessment.assessmentReadiness === 'complete'
-    && Array.isArray(assessment.evidence)
-    && (!eventId || assessment.eventId === eventId)
-    && (!versionId || assessment.versionId === versionId)
-    && (!assessmentId || assessment.assessmentId === assessmentId);
-}
-
 function isManualOfficialAssessment(value: unknown, eventId: string, versionId: string, assessmentId: string): boolean {
   if (!value || typeof value !== 'object') return false;
   const assessment = value as Record<string, unknown>;
@@ -286,7 +289,9 @@ function isManualOfficialAssessment(value: unknown, eventId: string, versionId: 
     && assessment.versionId === versionId
     && assessment.assessmentId === assessmentId
     && typeof assessment.activeManualAssessmentId === 'string'
-    && assessment.activeManualAssessmentId.length > 0;
+    && assessment.activeManualAssessmentId.length > 0
+    && assessment.officialResult !== undefined
+    && validateManualOfficialAssessmentResult(assessment.officialResult as ManualOfficialAssessmentResult).length === 0;
 }
 
 function safeDocumentId(value: unknown): value is string {

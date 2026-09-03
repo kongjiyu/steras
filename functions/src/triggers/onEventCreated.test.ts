@@ -63,7 +63,8 @@ describe('M1-submitted assessment input integrity', () => {
       templateSelection: Object.fromEntries(Object.entries(templateSelection).reverse()),
     }, 'event-1', 'v1')).toBe(true);
     expect(isPipelineEventVersion({ ...version, templateSelection: undefined }, 'event-1', 'v1')).toBe(false);
-    const { inputHash: _inputHash, ...versionInput } = version;
+    const { inputHash, ...versionInput } = version;
+    expect(inputHash).toMatch(/^[a-f0-9]{64}$/);
     expect(isPipelineEventVersion(buildSubmittedEventVersion({
       ...versionInput,
       evidenceManifest: evidenceManifest.slice(1),
