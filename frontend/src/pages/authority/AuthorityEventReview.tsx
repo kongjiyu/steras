@@ -23,6 +23,10 @@ import {
   HARD_RULE_VERSION,
   MANUAL_ASSESSMENT_SCHEMA_VERSION,
   MANUAL_OFFICIAL_FORMULA_VERSION,
+  REJECTION_REASON_CATEGORIES,
+  RESOURCE_OVERRIDE_REASON_CATEGORIES,
+  RejectionReasonCategory,
+  ResourceOverrideReasonCategory,
   ResourceRecommendation,
   ResourceOverrideRecord,
   ResourceQuantities,
@@ -69,11 +73,13 @@ export default function AuthorityEventReview() {
   // + the legacy makeAuthorityDecision) refuses Approved without it.
   const [confirmedReview, setConfirmedReview] = useState(false);
   const [suggestion, setSuggestion] = useState('');
+  const [rejectionReasonCategory, setRejectionReasonCategory] = useState<RejectionReasonCategory | ''>('');
   const [materialsReviewed, setMaterialsReviewed] = useState(false);
   const [submittingDecision, setSubmittingDecision] = useState<DecisionValue | null>(null);
   const [editingResources, setEditingResources] = useState(false);
   const [resourceDraft, setResourceDraft] = useState<ResourceQuantities | null>(null);
   const [resourceRationale, setResourceRationale] = useState('');
+  const [resourceOverrideReasonCategory, setResourceOverrideReasonCategory] = useState<ResourceOverrideReasonCategory | ''>('');
   const [resourceOverrideKey, setResourceOverrideKey] = useState(() => `resource-override-${crypto.randomUUID()}`);
   const [savingResources, setSavingResources] = useState(false);
   const [resourceConfirmed, setResourceConfirmed] = useState(false);
@@ -310,7 +316,7 @@ export default function AuthorityEventReview() {
   // FR-M3-16: approval requires an explicit materials-review confirmation.
   const canApprove = isNamedOfficer && reviewOpen && evidenceReady && rationale.trim().length >= 10
     && confirmedReview && materialsReviewed && assessment?.complianceStatus !== 'blocked';
-  const canReject = isNamedOfficer && reviewOpen && evidenceReady && rationale.trim().length >= 10 && suggestion.trim().length > 0;
+  const canReject = isNamedOfficer && reviewOpen && evidenceReady && rationale.trim().length >= 10 && suggestion.trim().length > 0 && Boolean(rejectionReasonCategory);
 
   const submitDecision = async (decision: DecisionValue) => {
     const isApproval = decision === 'Approved';
@@ -323,12 +329,14 @@ export default function AuthorityEventReview() {
         reason: string;
         suggestion?: string;
         confirmedReview?: boolean;
+        rejectionReasonCategory?: RejectionReasonCategory;
       }>(functions, 'recordOfficerProposal');
       await command({
         eventId,
         decision,
         reason: rationale.trim(),
         ...(suggestion.trim() ? { suggestion: suggestion.trim() } : {}),
+        ...(decision === 'Rejected' ? { rejectionReasonCategory: rejectionReasonCategory as RejectionReasonCategory } : {}),
         ...(isApproval ? { confirmedReview: true } : {}),
       });
       toast.success(decision === 'Approved' ? 'Approval proposal recorded.' : 'Rejection proposal recorded.');
@@ -344,11 +352,11 @@ export default function AuthorityEventReview() {
   };
 
   const saveResourceOverride = async () => {
-    if (!eventId || !resourceDraft || resourceRationale.trim().length < 10 || !isNamedOfficer) return;
+    if (!eventId || !resourceDraft || resourceRationale.trim().length < 10 || !resourceOverrideReasonCategory || !isNamedOfficer) return;
     setSavingResources(true);
     try {
-      const command = httpsCallable<{ eventId: string; quantities: ResourceQuantities; rationale: string; idempotencyKey: string }>(functions, 'overrideResources');
-      await command({ eventId, quantities: resourceDraft, rationale: resourceRationale.trim(), idempotencyKey: resourceOverrideKey });
+      const command = httpsCallable<{ eventId: string; quantities: ResourceQuantities; rationale: string; idempotencyKey: string; overrideReasonCategory: ResourceOverrideReasonCategory }>(functions, 'overrideResources');
+      await command({ eventId, quantities: resourceDraft, rationale: resourceRationale.trim(), idempotencyKey: resourceOverrideKey, overrideReasonCategory: resourceOverrideReasonCategory as ResourceOverrideReasonCategory });
       toast.success('Append-only resource adjustment recorded.');
       setEditingResources(false);
       setResourceRationale('');
@@ -561,9 +569,15 @@ export default function AuthorityEventReview() {
                   <label className="block text-xs font-medium text-ink-600">Reason for adjustment
                     <textarea className="input mt-1 resize-y" rows={3} maxLength={1000} value={resourceRationale} onChange={(e) => setResourceRationale(e.target.value)} placeholder="Explain the operational basis for this change." />
                   </label>
+                  <label className="block text-xs font-medium text-ink-600">Adjustment category
+                    <select className="input mt-1" value={resourceOverrideReasonCategory} onChange={(event) => setResourceOverrideReasonCategory(event.target.value as ResourceOverrideReasonCategory)}>
+                      <option value="">Select a category</option>
+                      {RESOURCE_OVERRIDE_REASON_CATEGORIES.map((category) => <option key={category} value={category}>{category.replaceAll('_', ' ')}</option>)}
+                    </select>
+                  </label>
                   <div className="flex justify-end gap-2">
                     <button type="button" className="btn-secondary" onClick={() => { setEditingResources(false); setResourceDraft(toResourceQuantities(effectiveResources)); setResourceRationale(''); }}><RotateCcw size={15} /> Cancel</button>
-                    <button type="button" className="btn-primary" disabled={savingResources || resourceRationale.trim().length < 10} onClick={saveResourceOverride}>{savingResources ? 'Saving...' : 'Save adjustment'}</button>
+                    <button type="button" className="btn-primary" disabled={savingResources || resourceRationale.trim().length < 10 || !resourceOverrideReasonCategory} onClick={saveResourceOverride}>{savingResources ? 'Saving...' : 'Save adjustment'}</button>
                   </div>
                 </div>
               ) : <ResourceRecommendationView recommendation={effectiveResources} latestOverride={latestResourceOverride} showOverrideProvenance />}
@@ -656,6 +670,12 @@ export default function AuthorityEventReview() {
               <p className="text-right text-xs text-ink-400">{rationale.trim().length}/1000 · minimum 10</p>
               <label className="block text-xs font-medium text-ink-600">Suggestion / corrective action <span className="font-normal text-ink-400">(required for rejection)</span>
                 <textarea className="input mt-1 resize-y" rows={3} maxLength={1000} disabled={!reviewOpen || !isNamedOfficer} value={suggestion} onChange={(e) => setSuggestion(e.target.value)} placeholder="Explain the action the organizer should take, if applicable." />
+              </label>
+              <label className="block text-xs font-medium text-ink-600">Rejection category
+                <select className="input mt-1" disabled={!reviewOpen || !isNamedOfficer} value={rejectionReasonCategory} onChange={(event) => setRejectionReasonCategory(event.target.value as RejectionReasonCategory)}>
+                  <option value="">Select when rejecting</option>
+                  {REJECTION_REASON_CATEGORIES.map((category) => <option key={category} value={category}>{category.replaceAll('_', ' ')}</option>)}
+                </select>
               </label>
               {suggestion.trim().length === 0 && <p className="text-right text-xs text-ink-400">Required when rejecting</p>}
               <label className={`flex items-start gap-2 rounded-md border px-3 py-2 text-xs text-ink-600 ${confirmedReview ? 'border-brand-300 bg-brand-50/50' : 'border-ink-200 bg-white'}`}>

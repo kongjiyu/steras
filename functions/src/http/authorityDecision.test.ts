@@ -17,7 +17,7 @@ import {
 } from '@shared/types';
 import { ACTIVE_CATEGORY_SCHEMA } from '../config/categorySchema';
 import { computeResources } from '../engines/resourceCalculator';
-import { aggregateDecisionStatus, assertOfficialAssessmentReady, validateDecisionRequest } from './authorityDecision';
+import { aggregateDecisionStatus, assertLegacyAuthorityDecisionEndpointAvailable, assertOfficialAssessmentReady, validateDecisionRequest } from './authorityDecision';
 import { buildAuthorityReviewState, buildOfficialAssessmentResult } from '../engines/authorityFinalisation';
 
 describe('assertOfficialAssessmentReady', () => {
@@ -193,11 +193,14 @@ describe('assertOfficialAssessmentReady', () => {
 });
 
 describe('officer decision boundary', () => {
+  it('retires the legacy callable so initial-review events cannot bypass assignment or Admin second review', () => {
+    expect(() => assertLegacyAuthorityDecisionEndpointAvailable()).toThrow(/legacy decision endpoint is retired/i);
+  });
   it('requires material confirmation for approval and suggestions for adverse recommendations', () => {
     expect(() => validateDecisionRequest({ eventId: 'event-1', decision: 'Approved', rationale: 'Reviewed all required materials.' })).toThrow(HttpsError);
     expect(validateDecisionRequest({ eventId: 'event-1', decision: 'Approved', rationale: 'Reviewed all required materials.', materialsReviewed: true })).toMatchObject({ materialsReviewed: true });
     expect(() => validateDecisionRequest({ eventId: 'event-1', decision: 'Rejected', rationale: 'Evidence is not sufficient.' })).toThrow(HttpsError);
-    expect(validateDecisionRequest({ eventId: 'event-1', decision: 'Rejected', rationale: 'Evidence is not sufficient.', suggestion: 'Provide verified evidence and submit the application again.' })).toMatchObject({ decision: 'Rejected' });
+    expect(validateDecisionRequest({ eventId: 'event-1', decision: 'Rejected', rationale: 'Evidence is not sufficient.', suggestion: 'Provide verified evidence and submit the application again.', rejectionReasonCategory: 'insufficient_evidence' })).toMatchObject({ decision: 'Rejected', rejectionReasonCategory: 'insufficient_evidence' });
   });
 
   it('rejects event IDs that could escape the event document path', () => {

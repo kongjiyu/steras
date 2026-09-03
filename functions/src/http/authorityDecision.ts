@@ -16,6 +16,8 @@ import {
   EventRecord,
   EventVersion,
   PublicEvent,
+  REJECTION_REASON_CATEGORIES,
+  RejectionReasonCategory,
   RiskAssessment,
   ManualReviewRiskAssessment,
   RESOURCE_CONFIG_VERSION,
@@ -55,6 +57,7 @@ interface AuthorityDecisionRequest {
   confirmedReview?: boolean;
   suggestion?: string;
   materialsReviewed?: boolean;
+  rejectionReasonCategory?: RejectionReasonCategory;
 }
 
 /** Minimum rationale length when the assessment is provisional / insufficient. */
@@ -64,25 +67,27 @@ const STANDARD_MIN_RATIONALE = 10;
 
 export const makeAuthorityDecision = onCall<AuthorityDecisionRequest>({ region: FUNCTION_REGION }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in before reviewing an application.');
-  try {
-    return await makeAuthorityDecisionForUser(request.auth.uid, request.data);
-  } catch (err) {
-    if (err instanceof HttpsError) {
-      console.warn(`[makeAuthorityDecision] HttpsError ${err.code}: ${err.message}`);
-      throw err;
-    }
-    const message = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
-    console.error(`[makeAuthorityDecision] unexpected error: ${message}`);
-    throw new HttpsError('internal', message.slice(0, 500));
-  }
+  assertLegacyAuthorityDecisionEndpointAvailable();
 });
+
+/**
+ * The legacy aggregate-and-publish endpoint is permanently retired. Keeping
+ * its pure verification helpers supports old-record integrity checks, while
+ * every live application must use named assignments and Admin second review.
+ */
+export function assertLegacyAuthorityDecisionEndpointAvailable(): never {
+  throw new HttpsError(
+    'failed-precondition',
+    'This legacy decision endpoint is retired. Use the named officer proposal and Admin second-review workflow.',
+  );
+}
 
 export async function makeAuthorityDecisionForUser(
   uid: string,
   request: AuthorityDecisionRequest,
   now = Date.now(),
 ) {
-  const { eventId, decision, rationale, suggestion, materialsReviewed } = validateDecisionRequest(request);
+  const { eventId, decision, rationale, suggestion, materialsReviewed, rejectionReasonCategory } = validateDecisionRequest(request);
 
   const db = firestore();
   const eventReference = db.collection(COLLECTIONS.EVENTS).doc(eventId);
@@ -237,6 +242,8 @@ export async function makeAuthorityDecisionForUser(
       decision,
       rationale,
       ...(suggestion ? { suggestion } : {}),
+      reviewStage: 'authority',
+      ...(decision === 'Rejected' ? { rejectionReasonCategory } : {}),
       ...(decision === 'Approved' ? { materialsReviewed: true } : {}),
       reviewerId: uid,
       decidedAt: now,
@@ -599,6 +606,7 @@ export function validateDecisionRequest(request: unknown): {
   rationale: string;
   suggestion?: string;
   materialsReviewed?: boolean;
+  rejectionReasonCategory?: RejectionReasonCategory;
 } {
   const value = typeof request === 'object' && request !== null ? request as Record<string, unknown> : {};
   const eventId = typeof value.eventId === 'string' ? value.eventId.trim() : '';
@@ -617,11 +625,15 @@ export function validateDecisionRequest(request: unknown): {
   if (decision !== 'Approved' && (suggestion.length < 10 || suggestion.length > 1_000)) {
     throw new HttpsError('invalid-argument', 'A suggestion between 10 and 1,000 characters is required.');
   }
+  const rejectionReasonCategory = value.rejectionReasonCategory;
+  if (decision === 'Rejected' && !REJECTION_REASON_CATEGORIES.includes(rejectionReasonCategory as RejectionReasonCategory)) {
+    throw new HttpsError('invalid-argument', 'A valid rejectionReasonCategory is required when rejecting.');
+  }
   return {
     eventId,
     decision,
     rationale,
-    ...(decision === 'Approved' ? { materialsReviewed: true } : { suggestion }),
+    ...(decision === 'Approved' ? { materialsReviewed: true } : { suggestion, rejectionReasonCategory: rejectionReasonCategory as RejectionReasonCategory }),
   };
 }
 

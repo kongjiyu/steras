@@ -23,6 +23,7 @@ import {
   EventVersion,
   HARD_RULE_VERSION,
   ManualReviewRiskAssessment,
+  M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
   OrganizerAssessmentSummary,
   OrganizerResourceRecommendation,
   OFFICIAL_FORMULA_VERSION,
@@ -64,6 +65,8 @@ import { ASSESSMENT_SECRETS, MINIMAX_API_KEY, OPENWEATHER_API_KEY } from '../con
 import { FUNCTION_REGION } from '../config/runtime';
 import { createResourceCutoverQueueToken, RESOURCE_CUTOVER_LOCK_PATH } from '../config/resourceCutoverLock';
 import { validateEventDetails, validateEvidencePaths } from '../http/submitEvent';
+import { validateDraftDocuments } from '../http/extractApplicationDocuments';
+import { validateM1EvidenceManifest } from '../engines/m1EvidenceManifest';
 import { inspectStorageEvidence } from '../utils/storageEvidence';
 import { CANONICAL_EVIDENCE_KEYS } from '../engines/proposalContract';
 import {
@@ -71,6 +74,7 @@ import {
   m1CategoryForEventType,
   m1VenueSettingMatchesEnvironment,
 } from '@shared/m1TemplateContract';
+import { eventVersionInputHash } from '../utils/eventVersionHash';
 
 const CLAIM_LEASE_MS = 2 * 60 * 1000;
 
@@ -480,6 +484,7 @@ export function isPipelineEventVersion(value: unknown, eventId: string, versionI
     && typeof eventDetails.type === 'string' && Boolean(eventDetails.type.trim())
     && typeof eventDetails.venueName === 'string' && Boolean(eventDetails.venueName.trim())
     && typeof eventDetails.venueAddress === 'string' && Boolean(eventDetails.venueAddress.trim())
+    && typeof eventDetails.venueState === 'string' && Boolean(eventDetails.venueState.trim())
     && Number.isFinite(eventDetails.venueCapacity) && Number(eventDetails.venueCapacity) >= 0
     && Number.isFinite(eventDetails.expectedAttendance) && Number(eventDetails.expectedAttendance) >= 0
     && ['indoor', 'outdoor', 'mixed'].includes(String(eventDetails.environment))
@@ -494,11 +499,25 @@ export function isPipelineEventVersion(value: unknown, eventId: string, versionI
     || !m1VenueSettingMatchesEnvironment(templateSelection.venueSetting, eventDetails.environment as EventEnvironment)
     || validateEventDetails(eventDetails, Number(version.submittedAt) - 1).length > 0
     || validateEvidencePaths(eventId, versionId, version.documentPaths).length > 0) return false;
-  const expectedInputHash = createHash('sha256').update(JSON.stringify({
-    eventDetails,
-    templateSelection,
-    documentPaths: version.documentPaths,
-  })).digest('hex');
+  if (version.evidenceManifestSchemaVersion !== M1_EVIDENCE_MANIFEST_SCHEMA_VERSION
+    || typeof version.extractionId !== 'string' || !isSafeDocumentId(version.extractionId)
+    || !Array.isArray(version.evidenceManifest)) return false;
+  try {
+    const documents = validateDraftDocuments(eventId, versionId, version.documentUploads);
+    const documentPaths = [...new Set(documents.map((document) => document.path))].sort();
+    if (stableStringify(documentPaths) !== stableStringify([...version.documentPaths].sort())) return false;
+    const manifest = validateM1EvidenceManifest(
+      eventDetails as unknown as EventVersion['eventDetails'],
+      templateSelection,
+      documents,
+      version.evidenceManifest,
+    );
+    if (manifest.errors.length > 0
+      || stableStringify(manifest.manifest) !== stableStringify(version.evidenceManifest)) return false;
+  } catch {
+    return false;
+  }
+  const expectedInputHash = eventVersionInputHash(value as EventVersion);
   return version.inputHash === expectedInputHash;
 }
 
@@ -1541,4 +1560,3 @@ export const onEventUpdated = onDocumentUpdated({ document: `${COLLECTIONS.EVENT
   if (before.status === 'Pending' && before.currentVersionId === after.currentVersionId) return;
   try { await runRiskAndResourcePipeline(trigger.params.eventId); } catch (error) { logger.error('[onEventUpdated] failed', error); }
 });
-

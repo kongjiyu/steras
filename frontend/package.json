@@ -24,7 +24,7 @@
     "react-firebase-hooks": "^5.1.1",
     "react-hot-toast": "^2.4.1",
     "react-pdf": "^10.5.0",
-    "react-router-dom": "^6.28.0"
+    "react-router-dom": "^7.18.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

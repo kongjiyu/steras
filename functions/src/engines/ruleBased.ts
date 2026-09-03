@@ -438,7 +438,7 @@ export async function fetchHistoricalContext(
     .map((document) => ({ incidentId: document.id, ...document.data() }) as Incident)
     .filter((incident) => incident.date < eventStart
       && incident.date >= lookbackStart
-      && incident.status === 'verified'
+      && (incident.status === 'verified' || incident.status === 'resolved')
       && incident.assessmentEligible === true);
   const historicalEvents = historicalSnapshot.docs
     .map((document) => ({ historicalEventId: document.id, ...document.data() }) as HistoricalEventOutcome)
@@ -515,7 +515,7 @@ function comparableEvent(
 }
 
 export async function fetchVenueContext(
-  details: Pick<EventDetails, 'venueId' | 'venueName' | 'venueAddress' | 'venueCapacity' | 'venueLocation'>,
+  details: Pick<EventDetails, 'venueId' | 'venueName' | 'venueAddress' | 'venueState' | 'venueCapacity' | 'venueLocation'>,
   now = Date.now(),
 ): Promise<VenueContextSnapshot> {
   const db = firestore();
@@ -530,6 +530,7 @@ export async function fetchVenueContext(
   const registeredCapacity = venue.verifiedSafeCapacity ?? venue.capacity;
   if (normalizeVenueName(venue.name) !== normalizeVenueName(details.venueName)
     || normalizeVenueName(venue.address) !== normalizeVenueName(details.venueAddress)
+    || normalizeVenueName(venue.state) !== normalizeVenueName(details.venueState)
     || registeredCapacity !== submittedCapacity
     || !sameLocation(venue.location, details.venueLocation)) {
     return { matched: false, submittedCapacity, fetchedAt: now };
@@ -567,6 +568,7 @@ async function resolveCanonicalVenueId(details: EventDetails): Promise<string | 
   const venue = { venueId: snapshot.id, ...snapshot.data() } as Venue;
   return normalizeVenueName(venue.name) === normalizeVenueName(details.venueName)
     && normalizeVenueName(venue.address) === normalizeVenueName(details.venueAddress)
+    && normalizeVenueName(venue.state) === normalizeVenueName(details.venueState)
     && (venue.verifiedSafeCapacity ?? venue.capacity) === details.venueCapacity
     && sameLocation(venue.location, details.venueLocation)
     ? details.venueId : undefined;

@@ -71,15 +71,13 @@ export const generateEventControlList = onCall<GenerateEventControlListRequest>(
   if (!versionId) {
     throw new HttpsError('failed-precondition', 'The event has no submitted version.');
   }
-  if (!['UnderReview', 'Approved'].includes(event.status)) {
-    throw new HttpsError('failed-precondition', `Control list can only be generated for events in UnderReview or Approved status (current: ${event.status}).`);
+  if (event.status !== 'Approved') {
+    throw new HttpsError('failed-precondition', `Control list can only be generated after Admin final approval (current: ${event.status}).`);
   }
-
-  const force = request.data?.force === true;
 
   // Cache hit: controlListGenerated is true AND the snapshot is for the
   // current version. The snapshot was written by editEventControlList.
-  if (!force && event.controlListGenerated && event.controlListSnapshot && event.controlListSnapshot.length > 0) {
+  if (event.controlListGenerated && event.controlListSnapshot && event.controlListSnapshot.length > 0) {
     // Rehydrate from the committed controls so cached proposals preserve the
     // exact Stage 1 document types/labels and Stage 2 requirement. Legacy
     // snapshots only stored a count, so retain a bounded placeholder fallback

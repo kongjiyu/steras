@@ -28,8 +28,6 @@ import ReviewQueue from './pages/authority/ReviewQueue';
 import AuthorityEventReview from './pages/authority/AuthorityEventReview';
 import RiskAssessments from './pages/authority/RiskAssessments';
 import ResourceRecommendations from './pages/authority/ResourceRecommendations';
-import DashboardPreview from './pages/DashboardPreview';
-import IncidentReportingPrototype from './pages/IncidentReportingPrototype';
 
 // Admin pages
 import AdminLayout from './components/layout/AdminLayout';
@@ -44,6 +42,7 @@ import AdminAssignment from './pages/admin/AdminAssignment';
 import AdminControlListEditor from './pages/admin/AdminControlListEditor';
 import AdminStage2Review from './pages/admin/AdminStage2Review';
 import OrganizerEventControls from './pages/organizer/OrganizerEventControls';
+import Incidents from './pages/incidents/Incidents';
 
 export default function App() {
   const { loading } = useAuth();
@@ -60,12 +59,7 @@ export default function App() {
       {/* Auth routes */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
-
-      {/* No-auth preview of the Authority Dashboard — for design review */}
-      <Route path="/dashboard-preview" element={<DashboardPreview />} />
-
-      {/* No-auth preview of the M4 incident reporting workflow */}
-      <Route path="/incident-preview" element={<IncidentReportingPrototype />} />
+      <Route path="/incidents" element={<ProtectedRoute><Incidents /></ProtectedRoute>} />
 
       {/* Organizer routes (auth + role=organizer) */}
       <Route

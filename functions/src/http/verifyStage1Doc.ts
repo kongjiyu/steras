@@ -39,6 +39,7 @@ import {
 import { FUNCTION_REGION } from '../config/runtime';
 import { createNotification, resolveAuthUid } from '../utils/notifications';
 import { aggregateLabel } from '../utils/controlAggregate';
+import { isActiveControlGeneration } from '../utils/controlLifecycle';
 
 interface VerifyStage1DocRequest {
   eventId?: string;
@@ -63,7 +64,7 @@ export const verifyStage1Doc = onCall<VerifyStage1DocRequest>({ region: FUNCTION
     }
     const message = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
     console.error(`[verifyStage1Doc] unexpected error: ${message}`);
-    throw new HttpsError('internal', message.slice(0, 500));
+    throw new HttpsError('internal', 'Unable to record the Stage 1 verification. Retry shortly.');
   }
 });
 
@@ -77,7 +78,7 @@ export async function verifyStage1DocForUser(
   const docId = (data.docId ?? '').trim();
   const status = data.status;
   const rationale = (data.rationale ?? '').trim();
-  const evidencePath = (data.evidencePath ?? '').trim() || undefined;
+  const evidencePath = validateVerificationEvidencePath(data.evidencePath);
 
   if (!eventId) throw new HttpsError('invalid-argument', 'eventId is required.');
   if (!controlId) throw new HttpsError('invalid-argument', 'controlId is required.');
@@ -114,7 +115,7 @@ export async function verifyStage1DocForUser(
       .find((candidate) => candidate.versionId === event.currentVersionId
         && candidate.authorityType === profile.authorityType
         && candidate.officerUid === uid
-        && (candidate.status === 'pending' || candidate.status === 'in_progress'));
+        && (candidate.status === 'pending' || candidate.status === 'in_progress' || candidate.status === 'completed'));
     if (!assignment) {
       throw new HttpsError('permission-denied', 'You are not the named officer assigned to this application.');
     }
@@ -122,6 +123,9 @@ export async function verifyStage1DocForUser(
       throw new HttpsError('not-found', `Control ${controlId} was not found for this event.`);
     }
     const control = controlSnap.data() as EventControl;
+    if (!isActiveControlGeneration(event, control, eventId)) {
+      throw new HttpsError('failed-precondition', 'This control is not active for the current application version.');
+    }
     if (control.authority !== profile.authorityType) {
       throw new HttpsError('permission-denied', `This control belongs to ${control.authority}, not ${profile.authorityType}.`);
     }
@@ -156,10 +160,10 @@ export async function verifyStage1DocForUser(
       updatedDoc.rejectionReason = '';
     }
     if (evidencePath) {
-      // Stash the evidence path on the doc so it's persisted with the
-      // verification (per FR-M3-22). The Stage1Doc type doesn't have
-      // evidencePath yet, so we use the filePath field.
-      updatedDoc.filePath = evidencePath;
+      // Keep officer verification provenance separate from the organizer's
+      // immutable uploaded file. This locator is deliberately not rendered
+      // as a link by the organizer UI.
+      updatedDoc.verificationEvidencePath = evidencePath;
     }
     // Recompute the aggregate (with the updated doc in the picture).
     const merged = allDocs.map((d) => (d.docId === docId ? updatedDoc : d));
@@ -247,4 +251,15 @@ export async function verifyStage1DocForUser(
       idempotent: result.idempotent,
     };
   });
+}
+
+export function validateVerificationEvidencePath(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value !== 'string') throw new HttpsError('invalid-argument', 'Evidence path must be text.');
+  const path = value.trim();
+  if (path.length < 1 || path.length > 400 || path.startsWith('/') || path.includes('..')
+    || !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(path)) {
+    throw new HttpsError('invalid-argument', 'Evidence path must be a safe relative locator.');
+  }
+  return path;
 }

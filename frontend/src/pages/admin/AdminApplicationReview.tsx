@@ -37,6 +37,8 @@ import {
   UserProfile,
   AuthorityType,
   EventVersion,
+  REJECTION_REASON_CATEGORIES,
+  RejectionReasonCategory,
 } from '@shared/types';
 import { WorkspaceTopBar } from '../../components/layout/Sidebar';
 import { useAuth } from '../../contexts/AuthContext';
@@ -167,6 +169,7 @@ export default function AdminApplicationReview() {
   const [decisionMode, setDecisionMode] = useState<'approve' | 'reject' | null>(null);
   const [rationale, setRationale] = useState('');
   const [suggestion, setSuggestion] = useState('');
+  const [rejectionReasonCategory, setRejectionReasonCategory] = useState<RejectionReasonCategory | ''>('');
   const [attachOfficerFeedback, setAttachOfficerFeedback] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
@@ -287,6 +290,10 @@ export default function AdminApplicationReview() {
       toast.error('A suggestion is required when rejecting.');
       return;
     }
+    if (decisionMode === 'reject' && !rejectionReasonCategory) {
+      toast.error('Select a privacy-safe rejection category.');
+      return;
+    }
     setSubmitting(true);
     try {
       const decision = decisionMode === 'approve' ? 'Approved' : 'Rejected';
@@ -296,12 +303,14 @@ export default function AdminApplicationReview() {
         reason: string;
         suggestion?: string;
         attachOfficerFeedback?: boolean;
+        rejectionReasonCategory?: RejectionReasonCategory;
       }, { status: EventStatus; decision: 'Approved' | 'Rejected' }>(functions, 'makeInitialReviewDecision');
       await command({
         eventId,
         decision,
         reason: rationale.trim(),
         ...(suggestion.trim() ? { suggestion: suggestion.trim() } : {}),
+        ...(decision === 'Rejected' ? { rejectionReasonCategory: rejectionReasonCategory as RejectionReasonCategory } : {}),
         ...(decision === 'Rejected' && attachOfficerFeedback ? { attachOfficerFeedback: true } : {}),
       });
       toast.success(decision === 'Approved' ? 'Application released for authority assignment.' : 'Application rejected and feedback sent.');
@@ -669,6 +678,13 @@ export default function AdminApplicationReview() {
                         </div>
                         {decisionMode === 'reject' && (
                           <div className="space-y-2">
+                            <label className="block text-xs font-semibold text-ink-600">
+                              Rejection category (required)
+                              <select className="input mt-1" value={rejectionReasonCategory} onChange={(event) => setRejectionReasonCategory(event.target.value as RejectionReasonCategory)}>
+                                <option value="">Select a category</option>
+                                {REJECTION_REASON_CATEGORIES.map((category) => <option key={category} value={category}>{category.replaceAll('_', ' ')}</option>)}
+                              </select>
+                            </label>
                             <label className="block text-xs font-semibold text-ink-600">
                               Corrective suggestion (required)
                               <textarea className="input mt-1 min-h-20" maxLength={1000} value={suggestion} onChange={(e) => setSuggestion(e.target.value)} placeholder="Tell the organiser what must change before resubmission." />

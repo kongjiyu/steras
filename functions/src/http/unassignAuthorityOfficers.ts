@@ -112,16 +112,28 @@ export const unassignAuthorityOfficers = onCall<UnassignAuthorityOfficersRequest
   const now = Date.now();
   return db.runTransaction(async (tx) => {
     // Reads first.
-    // Re-read the event to make sure reviewStage hasn't moved to
-    // 'second' (someone might have just recorded a final proposal).
-    const evSnap = await tx.get(eventRef);
-    const ev = evSnap.data() as EventRecord;
-    if (ev.reviewStage !== 'authority') {
-      throw new HttpsError('failed-precondition', 'reviewStage moved while you were unassigning. Try again.');
-    }
+    // Re-read both event and assignments. An officer proposal can complete an
+    // assignment without moving reviewStage to `second` when other officers
+    // are still pending, so checking the event alone is not a sufficient
+    // concurrency fence.
+    const [evSnap, currentAssignmentsSnap] = await Promise.all([
+      tx.get(eventRef),
+      tx.get(eventRef.collection(COLLECTIONS.ASSIGNMENTS)),
+    ]);
+    const ev = evSnap.data() as EventRecord | undefined;
+    const currentAssignments = currentAssignmentsSnap.docs
+      .map((document) => ({ id: document.id, value: document.data() as Assignment }))
+      .filter(({ value }) => value.versionId === versionId);
+    const currentTargeted = validateUnassignmentSnapshot(
+      evSnap.exists ? ev : undefined,
+      eventId,
+      versionId,
+      currentAssignments,
+      filterAuth,
+    );
 
     // Read all officer refs in the read phase.
-    const targetsToRevoke = targeted.filter((a) => a.status === 'pending' || a.status === 'in_progress');
+    const targetsToRevoke = currentTargeted.filter((a) => a.status === 'pending' || a.status === 'in_progress');
     const officerRefs: Array<{ auth: AuthorityType; officerUid: string; ref: FirebaseFirestore.DocumentReference; exists: boolean; data: OfficerProfile | null }> = [];
     for (const a of targetsToRevoke) {
       const ref = db.collection(COLLECTIONS.OFFICERS).doc(a.officerUid);
@@ -181,7 +193,7 @@ export const unassignAuthorityOfficers = onCall<UnassignAuthorityOfficersRequest
 
     // If every assignment for this version is now revoked, reset
     // reviewStage to null so the admin can re-assign from scratch.
-    const allAssignmentsAfter = allAssignments.map((a) => {
+    const allAssignmentsAfter = currentAssignments.map(({ value: a }) => {
       const wasTargeted = targetsToRevoke.some((t) => t.assignmentId === a.assignmentId);
       return wasTargeted ? { ...a, status: 'revoked' as const } : a;
     });
@@ -215,3 +227,32 @@ export const unassignAuthorityOfficers = onCall<UnassignAuthorityOfficersRequest
     };
   });
 });
+
+export function validateUnassignmentSnapshot(
+  event: EventRecord | undefined,
+  eventId: string,
+  versionId: string,
+  assignments: Array<{ id: string; value: Assignment }>,
+  authorityType?: AuthorityType,
+): Assignment[] {
+  if (!event || event.currentVersionId !== versionId || event.status !== 'UnderReview' || event.reviewStage !== 'authority') {
+    throw new HttpsError('aborted', 'The review state changed while officers were being unassigned. Reload and retry.');
+  }
+  if (assignments.some(({ id, value }) => id !== `${versionId}_${value.authorityType}`
+    || value.assignmentId !== id || value.eventId !== eventId || value.versionId !== versionId
+    || event.assignedOfficerByAuthority?.[value.authorityType] !== value.officerUid)) {
+    throw new HttpsError('failed-precondition', 'The current assignment records are invalid.');
+  }
+  const targeted = assignments
+    .map(({ value }) => value)
+    .filter((assignment) => !authorityType || assignment.authorityType === authorityType);
+  if (targeted.length === 0) {
+    throw new HttpsError('not-found', authorityType
+      ? `No assignment found for authority ${authorityType}.`
+      : 'No assignments found for the current version.');
+  }
+  if (targeted.some((assignment) => assignment.status === 'completed')) {
+    throw new HttpsError('failed-precondition', 'An officer completed a proposal while the unassignment was in progress. Reload and review the submitted decision.');
+  }
+  return targeted;
+}

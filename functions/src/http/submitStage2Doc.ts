@@ -43,6 +43,8 @@ import {
 } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
 import { createNotification } from '../utils/notifications';
+import { validateBase64File } from '../utils/base64File';
+import { isActiveControlGeneration } from '../utils/controlLifecycle';
 
 interface SubmitStage2DocRequest {
   eventId?: string;
@@ -56,18 +58,6 @@ interface SubmitStage2DocRequest {
 const MAX_FILE_BYTES = 700 * 1024;
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png']);
 
-/** Estimate the decoded size of a base64 string (4 chars -> 3 bytes,
- *  with padding). Used for the file-size gate. */
-function approxBase64DecodedBytes(b64: string): number {
-  const len = b64.length;
-  if (len === 0) return 0;
-  // Strip any data URL prefix if present (defensive).
-  const comma = b64.indexOf(',');
-  const clean = comma >= 0 ? b64.slice(comma + 1) : b64;
-  const padding = clean.endsWith('==') ? 2 : clean.endsWith('=') ? 1 : 0;
-  return Math.floor((clean.length * 3) / 4) - padding;
-}
-
 export const submitStage2Doc = onCall<SubmitStage2DocRequest>({ region: FUNCTION_REGION }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in before submitting a Stage 2 image.');
   try {
@@ -79,7 +69,7 @@ export const submitStage2Doc = onCall<SubmitStage2DocRequest>({ region: FUNCTION
     }
     const message = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
     console.error(`[submitStage2Doc] unexpected error: ${message}`);
-    throw new HttpsError('internal', message.slice(0, 500));
+    throw new HttpsError('internal', 'Unable to submit the Stage 2 document. Retry shortly.');
   }
 });
 
@@ -103,10 +93,7 @@ export async function submitStage2DocForUser(
   }
   if (!fileBase64) throw new HttpsError('invalid-argument', 'fileBase64 is required.');
 
-  const approxBytes = approxBase64DecodedBytes(fileBase64);
-  if (approxBytes > MAX_FILE_BYTES) {
-    throw new HttpsError('invalid-argument', `File too large: ${approxBytes} bytes. Max ${MAX_FILE_BYTES} bytes (~700 KB). Compress and re-upload.`);
-  }
+  const { sizeBytes } = validateBase64File(fileBase64, mimeType, MAX_FILE_BYTES);
 
   const db = firestore();
   const eventRef = db.collection(COLLECTIONS.EVENTS).doc(eventId);
@@ -146,7 +133,7 @@ export async function submitStage2DocForUser(
     }
     const control = controlSnap.data() as EventControl;
     const versionId = event.currentVersionId ?? 'v1';
-    if (control.versionId !== versionId) {
+    if (!isActiveControlGeneration(event, control, eventId)) {
       throw new HttpsError('failed-precondition', `Control ${controlId} is for a prior version. The admin must re-commit the list.`);
     }
     if (!control.stage2Requirement) {
@@ -172,12 +159,10 @@ export async function submitStage2DocForUser(
       publicConfirmCount: 0, // fresh on every upload — the prior image's confirms don't carry over
       published: false,
     };
-    // Preserve m4TicketId if it existed (it can't per the Q4 check above, but be defensive).
-    if (existingDoc?.m4TicketId) newDoc.m4TicketId = existingDoc.m4TicketId;
-    if (existingDoc?.reportedAt) newDoc.reportedAt = existingDoc.reportedAt;
-
     // Writes.
-    tx.set(docRef, newDoc, { merge: true });
+    // Replacement semantics clear stale rejection/publication/report fields
+    // from the prior image; fields that must survive are copied explicitly.
+    tx.set(docRef, newDoc);
     // A replacement is private until the admin reviews it again. Remove the
     // previous sanitised copy atomically so the old image cannot linger in
     // public view while the new upload is pending.
@@ -201,7 +186,7 @@ export async function submitStage2DocForUser(
         authorityType: control.authority,
         fileName,
         mimeType,
-        fileSizeBytes: approxBytes,
+        fileSizeBytes: sizeBytes,
         replaced: existingDoc !== null,
       },
     });
@@ -216,7 +201,7 @@ export async function submitStage2DocForUser(
       controlName: control.controlName,
       fileName,
       mimeType,
-      fileSizeBytes: approxBytes,
+      fileSizeBytes: sizeBytes,
       uploadedAt: now,
     };
   });

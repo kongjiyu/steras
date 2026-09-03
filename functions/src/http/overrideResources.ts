@@ -5,6 +5,8 @@ import {
   COLLECTIONS,
   EventRecord,
   RESOURCE_KEYS,
+  RESOURCE_OVERRIDE_REASON_CATEGORIES,
+  ResourceOverrideReasonCategory,
   ResourceOverrideRecord,
   ResourceQuantities,
   ResourceRecommendation,
@@ -19,6 +21,7 @@ interface OverrideResourcesRequest {
   rationale?: string;
   /** Stable client key used to make retries return the same append-only record. */
   idempotencyKey?: string;
+  overrideReasonCategory?: ResourceOverrideReasonCategory;
 }
 
 export const overrideResources = onCall<OverrideResourcesRequest>({ region: FUNCTION_REGION }, async (request) => {
@@ -27,7 +30,7 @@ export const overrideResources = onCall<OverrideResourcesRequest>({ region: FUNC
 });
 
 export async function overrideResourcesForUser(uid: string, request: OverrideResourcesRequest, now = Date.now()) {
-  const { eventId, quantities, rationale, idempotencyKey } = validateResourceOverrideRequest(request);
+  const { eventId, quantities, rationale, idempotencyKey, overrideReasonCategory } = validateResourceOverrideRequest(request);
 
   const db = firestore();
   const eventReference = db.collection(COLLECTIONS.EVENTS).doc(eventId);
@@ -90,7 +93,8 @@ export async function overrideResourcesForUser(uid: string, request: OverrideRes
       const existing = existingOverride.data() as ResourceOverrideRecord;
       if (existing.eventId !== eventId || existing.versionId !== event.currentVersionId
         || existing.baseResourceId !== event.currentResourceId || existing.reviewerId !== uid
-        || !sameQuantities(existing.quantities, quantities) || existing.rationale !== rationale) {
+        || !sameQuantities(existing.quantities, quantities) || existing.rationale !== rationale
+        || existing.overrideReasonCategory !== overrideReasonCategory) {
         throw new HttpsError('already-exists', 'The idempotency key is already bound to different override content.');
       }
       return {
@@ -132,6 +136,7 @@ export async function overrideResourcesForUser(uid: string, request: OverrideRes
       authorityType: profile.authorityType,
       reviewerId: uid,
       rationale,
+      overrideReasonCategory,
       previousQuantities,
       quantities,
       idempotencyKey,
@@ -155,6 +160,7 @@ export async function overrideResourcesForUser(uid: string, request: OverrideRes
         previousQuantities,
         quantities,
         overrideId,
+        overrideReasonCategory,
       },
     });
     return {
@@ -176,16 +182,21 @@ export function validateResourceOverrideRequest(request: unknown): {
   quantities: ResourceQuantities;
   rationale: string;
   idempotencyKey: string;
+  overrideReasonCategory: ResourceOverrideReasonCategory;
 } {
   const value = typeof request === 'object' && request !== null ? request as Record<string, unknown> : {};
   const eventId = typeof value.eventId === 'string' ? value.eventId.trim() : '';
   const rationale = typeof value.rationale === 'string' ? value.rationale.trim() : '';
   const idempotencyKey = typeof value.idempotencyKey === 'string' ? value.idempotencyKey.trim() : '';
+  const overrideReasonCategory = value.overrideReasonCategory;
   if (!eventId) throw new HttpsError('invalid-argument', 'eventId is required.');
   if (!isResourceQuantities(value.quantities)) throw new HttpsError('invalid-argument', 'Every resource quantity must be a non-negative integer.');
   if (rationale.length < 10 || rationale.length > 1_000) throw new HttpsError('invalid-argument', 'Rationale must be between 10 and 1,000 characters.');
   if (!safeIdempotencyKey(idempotencyKey)) throw new HttpsError('invalid-argument', 'idempotencyKey must be 8-128 characters.');
-  return { eventId, quantities: value.quantities, rationale, idempotencyKey };
+  if (!RESOURCE_OVERRIDE_REASON_CATEGORIES.includes(overrideReasonCategory as ResourceOverrideReasonCategory)) {
+    throw new HttpsError('invalid-argument', 'A valid overrideReasonCategory is required.');
+  }
+  return { eventId, quantities: value.quantities, rationale, idempotencyKey, overrideReasonCategory: overrideReasonCategory as ResourceOverrideReasonCategory };
 }
 
 function isResourceQuantities(value: unknown): value is ResourceQuantities {

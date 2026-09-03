@@ -12,9 +12,9 @@
 
 目前已经实现：
 
-- `/admin/analytics`（`/authority/reports` 保留为 compatibility redirect）
+- `/admin/analytics`（Admin-only；retired `/authority/reports` redirects to the Authority dashboard）
 - `/dashboard-preview?view=reports` design-review preview
-- Authority-scope query
+- Admin-only bounded query with authority as a report filter
 - Date range filter
 - Five report modes with event-type scope
 - Monthly applications/approvals
@@ -40,7 +40,7 @@
 
 - Expose venue、risk、status、authority、synthetic 和 schema filters in the report-builder UI
 - Readiness、compliance 和 confidence metrics
-- Full M4 incident triage、verification 和 resolution analytics after Module 4 supplies production fields
+- Full M4 incident triage、verification 和 resolution analytics after Module 4 supplies production fields（当前 `/incident-preview` 只是 synthetic local-state preview，不是可统计的 M4 source）
 - Server-generated snapshots only when production volume exceeds the bounded callable model
 - 更完整的 PII/export tests
 

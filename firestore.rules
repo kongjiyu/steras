@@ -176,6 +176,7 @@ service cloud.firestore {
                       'activeRevision',
                       'cancelledAt', 'cancelledFromVersionId',
                       'withdrawnAt', 'withdrawnFromStatus', 'withdrawalRationale',
+                      'initialReview', 'secondReview',
                       'eventId',
                       'requiredAuthorities', 'currentVersionNumber', 'editableVersionId',
                       'submittedAt'
@@ -414,10 +415,21 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // ---- incidents (synthetic dataset — read-only) ----
+    // ---- M4 incidents — privacy-safe access goes through role-aware callables ----
     match /incidents/{incidentId} {
-      allow read: if isAdmin() || (isSignedIn() && isAuthority());
-      allow write: if false;
+      allow read, write: if false;
+      match /history/{historyId} {
+        allow read, write: if false;
+      }
+    }
+
+    // Directory contacts are returned through a bounded authenticated callable.
+    match /authority_directory/{authorityId} {
+      allow read, write: if false;
+    }
+
+    match /incident_notification_outbox/{outboxId} {
+      allow read, write: if false;
     }
 
     // Historical outcomes are evidence for server-side M2 retrieval. Synthetic

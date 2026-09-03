@@ -12,6 +12,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   ListChecks,
+  Siren,
   type LucideIcon,
 } from 'lucide-react';
 import logoUrl from '../../assets/brand/steras-logo-horizontal-inverse.svg';
@@ -162,6 +163,7 @@ export const AUTHORITY_NAV: SidebarNavSection[] = [
     items: [
       { to: '/authority', label: 'Dashboard', mobileLabel: 'Home', icon: LayoutDashboard, end: true },
       { to: '/authority/applications', label: 'Applications', mobileLabel: 'Queue', icon: FileText },
+      { to: '/incidents', label: 'Incidents', mobileLabel: 'Incidents', icon: Siren },
     ],
   },
   {
@@ -182,6 +184,7 @@ export const ADMIN_NAV: SidebarNavSection[] = [
     items: [
       { to: '/admin', label: 'Dashboard', mobileLabel: 'Home', icon: LayoutDashboard, end: true },
       { to: '/admin/applications', label: 'Application queue', mobileLabel: 'Queue', icon: ListChecks },
+      { to: '/incidents', label: 'Incidents', mobileLabel: 'Incidents', icon: Siren },
     ],
   },
   {

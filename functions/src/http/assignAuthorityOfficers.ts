@@ -28,6 +28,7 @@ import {
   AuthorityType,
   COLLECTIONS,
   EventRecord,
+  EventVersion,
   OfficerProfile,
   UserProfile,
   Venue,
@@ -77,21 +78,33 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
     throw new HttpsError('failed-precondition', 'This event has no required authorities.');
   }
 
-  // Resolve the venue state. If the venue has no `state`, fall back to
-  // 'ALL' so federal officers can still match.
-  let venueState = 'ALL';
-  if (event.eventDetails?.venueId) {
-    const venueSnap = await db.collection(COLLECTIONS.VENUES).doc(event.eventDetails.venueId).get();
-    if (venueSnap.exists) {
-      venueState = (venueSnap.data() as Venue).state ?? 'ALL';
-    }
+  const versionRef = eventRef.collection(COLLECTIONS.VERSIONS).doc(versionId);
+  const versionSnap = await versionRef.get();
+  const version = versionSnap.data() as EventVersion | undefined;
+  if (!versionSnap.exists || version?.eventId !== eventId || version.versionId !== versionId) {
+    throw new HttpsError('failed-precondition', 'The immutable current application version is missing.');
   }
+  // Custom venues use the state stored on the immutable submitted version.
+  // Registry venues additionally fence that value against the active registry.
+  let registryVenue: Venue | undefined;
+  if (version.eventDetails.venueId) {
+    const venueSnap = await db.collection(COLLECTIONS.VENUES).doc(version.eventDetails.venueId).get();
+    registryVenue = venueSnap.data() as Venue | undefined;
+  }
+  const venueState = resolveSubmittedVenueState(version, registryVenue);
 
   // Load all active officers grouped by authorityType. In a real
   // production system this would be indexed / sharded; for the
   // prototype the officer pool is small.
-  const allOfficers = (await db.collection(COLLECTIONS.OFFICERS).where('active', '==', true).get())
-    .docs.map((d) => d.data() as OfficerProfile);
+  const officerDocs = (await db.collection(COLLECTIONS.OFFICERS).where('active', '==', true).get()).docs;
+  const officerUsers = officerDocs.length > 0
+    ? await db.getAll(...officerDocs.map((document) => db.collection(COLLECTIONS.USERS).doc(document.id)))
+    : [];
+  const allOfficers = officerDocs
+    .map((document, index) => ({ officer: document.data() as OfficerProfile, user: officerUsers[index]?.data() as UserProfile | undefined }))
+    .filter(({ officer, user }, index) => officer.uid === officerDocs[index].id
+      && user?.uid === officer.uid && user.role === 'authority' && user.authorityType === officer.authorityType)
+    .map(({ officer }) => officer);
 
   // Filter by state scope (A4).
   const isEligible = (o: OfficerProfile) => {
@@ -149,6 +162,11 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
   if (!assignmentMap || typeof assignmentMap !== 'object') {
     throw new HttpsError('invalid-argument', 'assignmentMap is required when dryRun=false.');
   }
+  const submittedAuthorities = Object.keys(assignmentMap);
+  if (submittedAuthorities.length !== required.length
+    || submittedAuthorities.some((authority) => !required.includes(authority as AuthorityType))) {
+    throw new HttpsError('invalid-argument', 'assignmentMap must contain exactly the event requiredAuthorities.');
+  }
   for (const item of checklist) {
     if (!assignmentMap[item.authorityType]) {
       throw new HttpsError(
@@ -163,7 +181,14 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
     // Re-read the event + ALL officers inside the transaction to avoid races.
     // Firestore requires all reads to complete before any writes.
     const evSnap = await tx.get(eventRef);
+    const currentVersionSnap = await tx.get(versionRef);
     const ev = evSnap.data() as EventRecord;
+    const currentVersion = currentVersionSnap.data() as EventVersion | undefined;
+    if (!currentVersionSnap.exists || currentVersion?.eventId !== eventId || currentVersion.versionId !== versionId
+      || currentVersion.eventDetails.venueState !== version.eventDetails.venueState
+      || currentVersion.eventDetails.venueId !== version.eventDetails.venueId) {
+      throw new HttpsError('aborted', 'The immutable application venue binding changed. Reload and retry.');
+    }
     if (ev.initialReview?.decision !== 'Approved') {
       throw new HttpsError('failed-precondition', 'Complete and approve the admin initial review before assigning officers.');
     }
@@ -175,20 +200,27 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
     }
 
     // Pre-fetch all officer refs in the read phase.
-    const officerEntries: Array<[string, string, FirebaseFirestore.DocumentReference, OfficerProfile | null]> = [];
+    const officerEntries: Array<[string, string, FirebaseFirestore.DocumentReference, OfficerProfile | null, UserProfile | null]> = [];
     for (const [auth, officerUid] of Object.entries(assignmentMap) as Array<[AuthorityType, string]>) {
       if (!officerUid) {
         throw new HttpsError('invalid-argument', `Empty officerUid for ${auth}.`);
       }
       const officerRef = db.collection(COLLECTIONS.OFFICERS).doc(officerUid);
+      const officerUserRef = db.collection(COLLECTIONS.USERS).doc(officerUid);
       const officerSnap = await tx.get(officerRef);
-      officerEntries.push([auth, officerUid, officerRef, officerSnap.exists ? officerSnap.data() as OfficerProfile : null]);
+      const officerUserSnap = await tx.get(officerUserRef);
+      officerEntries.push([auth, officerUid, officerRef, officerSnap.exists ? officerSnap.data() as OfficerProfile : null,
+        officerUserSnap.exists ? officerUserSnap.data() as UserProfile : null]);
     }
 
     // Validate all entries (no writes yet).
-    for (const [auth, officerUid, , officer] of officerEntries) {
+    for (const [auth, officerUid, , officer, officerUser] of officerEntries) {
       if (!officer) {
         throw new HttpsError('not-found', `Officer ${officerUid} not found.`);
+      }
+      if (officer.uid !== officerUid || !officerUser || officerUser.uid !== officerUid
+        || officerUser.role !== 'authority' || officerUser.authorityType !== auth) {
+        throw new HttpsError('failed-precondition', `Officer ${officerUid} is not bound to an active authority user profile for ${auth}.`);
       }
       if (officer.authorityType !== auth) {
         throw new HttpsError(
@@ -275,3 +307,17 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
     return { checklist: result.checklist, assigned: result.assigned, venueState };
   });
 });
+
+export function resolveSubmittedVenueState(version: EventVersion, registryVenue?: Venue): string {
+  const submittedState = version.eventDetails.venueState?.trim() ?? '';
+  const venueId = version.eventDetails.venueId;
+  if (!venueId) {
+    if (!submittedState) throw new HttpsError('failed-precondition', 'The immutable submitted venue state is required for officer assignment.');
+    return submittedState;
+  }
+  if (!registryVenue || registryVenue.venueId !== venueId || !registryVenue.active || !registryVenue.state
+    || (submittedState && submittedState !== registryVenue.state)) {
+    throw new HttpsError('failed-precondition', 'The submitted registry venue state is stale or invalid.');
+  }
+  return registryVenue.state;
+}

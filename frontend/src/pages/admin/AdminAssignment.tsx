@@ -24,6 +24,8 @@ import {
   COLLECTIONS,
   DecisionValue,
   EventRecord,
+  REJECTION_REASON_CATEGORIES,
+  RejectionReasonCategory,
 } from '@shared/types';
 import { db, functions, isFirebaseConfigured } from '../../config/firebase';
 import EmptyState from '../../components/ui/EmptyState';
@@ -55,6 +57,7 @@ export default function AdminAssignment() {
   const [adminNote, setAdminNote] = useState('');
   const [adminReason, setAdminReason] = useState('');
   const [adminSuggestion, setAdminSuggestion] = useState('');
+  const [rejectionReasonCategory, setRejectionReasonCategory] = useState<RejectionReasonCategory | ''>('');
   const [finalDecision, setFinalDecision] = useState<DecisionValue | ''>('');
 
   // Live event doc.
@@ -146,6 +149,7 @@ export default function AdminAssignment() {
         reason?: string;
         suggestion?: string;
         adminNote?: string;
+        rejectionReasonCategory?: RejectionReasonCategory;
       }, { status: DecisionValue; aggregate?: EventRecord['status'] }>(
         functions,
         'makeSecondReviewDecision',
@@ -154,7 +158,7 @@ export default function AdminAssignment() {
         eventId,
         finalDecision,
         ...(finalDecision === 'Rejected'
-          ? { reason: adminReason.trim(), suggestion: adminSuggestion.trim() }
+          ? { reason: adminReason.trim(), suggestion: adminSuggestion.trim(), rejectionReasonCategory: rejectionReasonCategory as RejectionReasonCategory }
           : { adminNote: adminNote.trim() || undefined }),
       });
       toast.success(`Final decision recorded: ${finalDecision}.`);
@@ -341,6 +345,13 @@ export default function AdminAssignment() {
                 </label>
                 {finalDecision === 'Rejected' ? <>
                   <label className="block text-xs font-medium text-ink-600">
+                    Rejection category
+                    <select className="input mt-1" value={rejectionReasonCategory} onChange={(event) => setRejectionReasonCategory(event.target.value as RejectionReasonCategory)}>
+                      <option value="">Select a category</option>
+                      {REJECTION_REASON_CATEGORIES.map((category) => <option key={category} value={category}>{category.replaceAll('_', ' ')}</option>)}
+                    </select>
+                  </label>
+                  <label className="block text-xs font-medium text-ink-600">
                     Rejection reason
                     <textarea className="input mt-1 resize-y" rows={2} maxLength={1000} value={adminReason} onChange={(e) => setAdminReason(e.target.value)} placeholder="Explain why the application cannot proceed." />
                   </label>
@@ -352,7 +363,7 @@ export default function AdminAssignment() {
                   Admin note (optional, for audit)
                   <textarea className="input mt-1 resize-y" rows={2} maxLength={1000} value={adminNote} onChange={(e) => setAdminNote(e.target.value)} placeholder="Any context for the audit log." />
                 </label>}
-                <button type="button" className="btn-success w-full" disabled={confirming || !finalDecision || (finalDecision === 'Rejected' && (adminReason.trim().length < 10 || adminSuggestion.trim().length === 0))} onClick={confirmSecondReview}>
+                <button type="button" className="btn-success w-full" disabled={confirming || !finalDecision || (finalDecision === 'Rejected' && (!rejectionReasonCategory || adminReason.trim().length < 10 || adminSuggestion.trim().length === 0))} onClick={confirmSecondReview}>
                   {confirming ? 'Recording...' : `Record final decision${finalDecision ? ` (${finalDecision})` : ''}`}
                 </button>
               </div>

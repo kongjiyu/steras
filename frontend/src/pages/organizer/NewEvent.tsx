@@ -533,6 +533,7 @@ export default function NewEvent() {
                       venueId: venue.venueId,
                       venueName: venue.name,
                       venueAddress: venue.address,
+                      venueState: venue.state,
                       venueCapacity: venue.verifiedSafeCapacity ?? venue.capacity,
                       venueLocation: venue.location,
                     }));
@@ -560,6 +561,11 @@ export default function NewEvent() {
                 <label htmlFor="venue-capacity" className="field-label">Venue capacity *</label>
                 <input id="venue-capacity" type="number" min={1} className="input mt-1" required disabled={Boolean(form.venueId)} value={form.venueCapacity || ''} onChange={(e) => update('venueCapacity', Number(e.target.value))} />
               </div>
+            </div>
+
+            <div>
+              <label htmlFor="venue-state" className="field-label">Venue state *</label>
+              <input id="venue-state" className="input mt-1" required disabled={Boolean(form.venueId)} value={form.venueState ?? ''} onChange={(e) => update('venueState', e.target.value)} />
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">

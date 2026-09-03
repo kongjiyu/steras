@@ -22,6 +22,7 @@ export { onEventCreated, onEventUpdated } from './triggers/onEventCreated';
 export { refreshAssessmentContext } from './triggers/refreshAssessmentContext';
 export { recomputeRiskAndResources } from './triggers/computeRisk';
 export { onM4ReportOutcome } from './triggers/onM4ReportOutcome';
+export { onPublicReportCreated } from './triggers/onPublicReportCreated';
 export { onEventStatusChanged } from './triggers/onEventStatusChanged';
 
 // HTTP-callable functions (e.g. for manual authority re-trigger, seed runs)
@@ -42,6 +43,7 @@ export { verifyStage1Doc } from './http/verifyStage1Doc';
 export { markNotificationRead, listMyNotifications } from './http/notifications';
 // M5 — bounded, admin-only, privacy-safe analytics read model.
 export { getAnalyticsPortfolio } from './http/getAnalyticsPortfolio';
+export { submitIncident, listIncidents, manageIncident, listAuthorityDirectory, saveAuthorityDirectoryEntry, getIncidentEvidenceDownloadUrl } from './http/m4Incidents';
 // M3 control-list proposal: MiniMax-backed with a deterministic fallback.
 export { proposeEventControlList } from './http/proposeEventControlList';
 // M3 Workstream 1 — officer assignment + multi-stage review.

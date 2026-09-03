@@ -84,6 +84,7 @@ export function validateEventApplication(
   requiredText(details.name, 'Event name', 200, errors);
   requiredText(details.venueName, 'Venue name', 200, errors);
   requiredText(details.venueAddress, 'Venue address', 500, errors);
+  requiredText(details.venueState ?? '', 'Venue state', 100, errors);
   requiredText(details.organizerName, 'Organizer name', 200, errors);
   requiredText(details.organizerEmail, 'Organizer email', 320, errors);
   if (details.organizerEmail.trim() && !isEmail(details.organizerEmail)) errors.push('Organizer email is invalid.');
@@ -157,6 +158,7 @@ export function createInitialEventDetails(profile?: { name?: string; email?: str
     type: 'concert',
     venueName: '',
     venueAddress: '',
+    venueState: '',
     venueCapacity: 0,
     expectedAttendance: 0,
     environment: 'outdoor',

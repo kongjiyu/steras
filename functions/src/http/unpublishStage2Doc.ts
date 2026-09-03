@@ -71,7 +71,7 @@ export const unpublishStage2Doc = onCall<UnpublishStage2DocRequest, Promise<Unpu
     }
     const message = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
     console.error(`[unpublishStage2Doc] unexpected error: ${message}`);
-    throw new HttpsError('internal', message.slice(0, 500));
+    throw new HttpsError('internal', 'Unable to update Stage 2 publication state. Retry shortly.');
   }
 });
 

@@ -32,6 +32,7 @@ import {
   RESOURCE_CONFIG_VERSION, RESOURCE_FORMULA_VERSION, RESOURCE_KEYS, RESOURCE_SCHEMA_VERSION, RESOURCE_SOURCE_REGISTRY_VERSION,
 } from '@shared/types';
 import { ACTIVE_CATEGORY_SCHEMA } from '../src/config/categorySchema';
+import { M4_SCHEMA_VERSION } from '@shared/m4';
 import { computeResources } from '../src/engines/resourceCalculator';
 import { buildAuthorityReviewState, buildOfficialAssessmentResult } from '../src/engines/authorityFinalisation';
 import { m1EvidenceRequirementsFor } from '@shared/m1EvidenceContract';
@@ -84,6 +85,7 @@ const validDetails = {
   type: 'cultural',
   venueName: 'Central Venue',
   venueAddress: 'Kuala Lumpur',
+  venueState: 'Kuala Lumpur',
   venueLocation: { lat: 3.139, lng: 101.687 },
   venueCapacity: 2_000,
   expectedAttendance: 1_500,
@@ -133,6 +135,56 @@ async function uploadTestDocx(eventId: string, versionId: string, role: 'core_te
     metadata: { contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
   });
   return { path: evidencePath, role, originalName, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', sizeBytes: bytes.length, uploadedAt: 1, schemaVersion: '2026-08-28-document-v1' };
+}
+
+async function createValidDraftSubmissionAssets(eventId: string, versionId = 'v1') {
+  const core = await uploadTestDocx(eventId, versionId, 'core_template', '../docs/templates/m1/core/Core Event Application Template.docx');
+  const scenario = await uploadTestDocx(eventId, versionId, 'scenario_template', '../docs/templates/m1/cultural-heritage-festival/Cultural, Heritage and Festival Event - Outdoor Fixed-Site.docx');
+  const supportPath = await uploadTestEvidence(eventId, versionId);
+  const support = {
+    path: supportPath,
+    role: 'supporting_evidence' as const,
+    originalName: 'evidence.pdf',
+    mimeType: 'application/pdf',
+    sizeBytes: Buffer.byteLength('%PDF-1.4\ntest\n%%EOF\n'),
+    uploadedAt: 1,
+    schemaVersion: '2026-08-28-document-v1' as const,
+  };
+  const evidenceManifest = m1EvidenceRequirementsFor(validTemplateSelection.scenarioTemplateId)
+    .map((definition) => ({ requirementId: definition.id, applicability: 'required' as const, documentPath: supportPath }));
+  const extractionId = `extract_${eventId}_${versionId}`.replaceAll('-', '_');
+  await getFirestore(adminApp).doc(`events/${eventId}/document_extractions/${extractionId}`).set({
+    extractionId,
+    eventId,
+    editableVersionId: versionId,
+    status: 'needs_review',
+    schemaVersion: '2026-08-29-document-fields-v2',
+    templateRegistryVersion: validTemplateSelection.templateRegistryVersion,
+    coreTemplateId: validTemplateSelection.coreTemplateId,
+    scenarioTemplateId: validTemplateSelection.scenarioTemplateId,
+    sourceDocuments: [core, scenario].map((document) => ({
+      path: document.path,
+      role: document.role,
+      originalName: document.originalName,
+      mimeType: document.mimeType,
+      sizeBytes: document.sizeBytes,
+      sha256: document.role,
+    })),
+    extractedFields: [],
+    rawFieldIds: [],
+    warnings: ['manual review'],
+    completionPercent: 0,
+    createdAt: 1,
+    createdBy: 'organizer-1',
+  });
+  return {
+    draftDocumentPaths: [core.path, scenario.path, supportPath],
+    draftDocuments: [core, scenario, support],
+    documentSchemaVersion: '2026-08-28-document-v1',
+    currentExtractionId: extractionId,
+    draftEvidenceManifest: evidenceManifest,
+    evidenceManifestSchemaVersion: '2026-08-28-evidence-v1',
+  };
 }
 
 async function seedProfilesAndEvent() {
@@ -294,11 +346,20 @@ describe('Firestore security rules', () => {
     await adminDb.doc('events/withdraw-1').set({ ...base, status: 'Approved', reviewStage: 'closed' });
     await adminDb.doc('events/withdraw-1/versions/v1').set({ eventId: 'withdraw-1', versionId: 'v1', versionNumber: 1 });
     await adminDb.doc('public_events/withdraw-1').set({ eventName: 'Public event' });
+    await adminDb.doc('incidents/withdraw-incident').set({
+      schemaVersion: M4_SCHEMA_VERSION, incidentId: 'withdraw-incident', eventId: 'withdraw-1',
+      eventVersionId: 'v1', status: 'responding', activityClosed: false,
+    });
     await withdrawEventForUser('organizer-1', 'withdraw-1', 'The venue is no longer available.', 40);
     expect((await adminDb.doc('events/withdraw-1').get()).data()).toMatchObject({
       status: 'Withdrawn', withdrawnAt: 40, withdrawnFromStatus: 'Approved', withdrawalRationale: 'The venue is no longer available.',
     });
     expect((await adminDb.doc('public_events/withdraw-1').get()).exists).toBe(false);
+    expect((await adminDb.doc('incidents/withdraw-incident').get()).data()).toMatchObject({
+      status: 'responding', activityClosed: true, closureReason: 'event_withdrawn', closedAt: 40,
+    });
+    expect((await adminDb.doc('incidents/withdraw-incident/history/withdraw-incident_event_withdrawn').get()).data())
+      .toMatchObject({ action: 'event_withdrawn', actorRole: 'system', timestamp: 40 });
     await adminDb.doc('events/withdraw-missing-history').set({ ...base, status: 'Approved', reviewStage: 'closed' });
     await expect(withdrawEventForUser('organizer-1', 'withdraw-missing-history', 'The venue is no longer available.', 41))
       .rejects.toThrow('immutable submitted application version');
@@ -377,7 +438,7 @@ describe('Firestore security rules', () => {
   });
 
   it('submits exactly one immutable version through the server transaction', async () => {
-    const v1Evidence = await uploadTestEvidence('draft-1', 'v1');
+    const submissionAssets = await createValidDraftSubmissionAssets('draft-1');
     await environment.withSecurityRulesDisabled(async (context) => {
       const db = context.firestore();
       await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer' });
@@ -386,7 +447,7 @@ describe('Firestore security rules', () => {
       await setDoc(doc(db, 'users/authority-1'), { role: 'authority', authorityType: 'PDRM' });
       await setDoc(doc(db, 'events/draft-1'), {
         organizerId: 'organizer-1', eventDetails: validDetails, templateSelection: validTemplateSelection, status: 'Draft', currentVersionNumber: 0,
-        editableVersionId: 'v1', draftDocumentPaths: [v1Evidence], requiredAuthorities: [], createdAt: 1, updatedAt: 1,
+        editableVersionId: 'v1', ...submissionAssets, requiredAuthorities: [], createdAt: 1, updatedAt: 1,
       });
     });
     const concurrentSubmissions = await Promise.allSettled([
@@ -572,13 +633,13 @@ describe('Firestore security rules', () => {
   });
 
   it('claims one assessment when duplicate triggers run concurrently', async () => {
-    const evidencePath = await uploadTestEvidence('draft-1', 'v1');
+    const submissionAssets = await createValidDraftSubmissionAssets('draft-1');
     await environment.withSecurityRulesDisabled(async (context) => {
       const db = context.firestore();
       await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer' });
       await setDoc(doc(db, 'events/draft-1'), {
         organizerId: 'organizer-1', eventDetails: validDetails, templateSelection: validTemplateSelection, status: 'Draft', currentVersionNumber: 0,
-        editableVersionId: 'v1', draftDocumentPaths: [evidencePath], requiredAuthorities: [], createdAt: 1, updatedAt: 1,
+        editableVersionId: 'v1', ...submissionAssets, requiredAuthorities: [], createdAt: 1, updatedAt: 1,
       });
     });
     await submitEventForUser('organizer-1', 'draft-1', 1_000);
@@ -695,6 +756,7 @@ describe('Firestore security rules', () => {
 
     await adminDb.doc('venues/stable-venue').set({
       active: true, name: 'Stable Hall', address: validDetails.venueAddress,
+      state: validDetails.venueState,
       capacity: validDetails.venueCapacity, location: validDetails.venueLocation,
     });
     const event = {
@@ -862,6 +924,7 @@ describe('Firestore security rules', () => {
       decision: 'Rejected',
       reason: 'The application cannot proceed because the submitted operating plan is incomplete.',
       suggestion: 'Start a new application with a complete operating and emergency plan.',
+      rejectionReasonCategory: 'incomplete_application',
     }, 118);
     expect(result).toMatchObject({ status: 'Rejected', decision: 'Rejected' });
     expect((await adminDb.doc('events/manual-1').get()).data()).toMatchObject({ status: 'Rejected', reviewStage: 'closed', assignedOfficerUids: [], assignedOfficerByAuthority: {} });
@@ -1038,7 +1101,7 @@ describe('Firestore security rules', () => {
     await submitAdminManualAssessmentForUser('admin-1', manualRequest(), 160);
     await expect(makeAuthorityDecisionForUser('pdrm-1', { eventId: 'manual-1', decision: 'Approved', rationale: 'All official materials were reviewed and accepted.', materialsReviewed: true }, 161))
       .rejects.toMatchObject({ code: 'failed-precondition' });
-    await expect(makeAuthorityDecisionForUser('pdrm-1', { eventId: 'manual-1', decision: 'Rejected', rationale: 'Blocked compliance prevents a positive recommendation.', suggestion: 'Resolve every blocked compliance check before resubmission.' }, 162))
+    await expect(makeAuthorityDecisionForUser('pdrm-1', { eventId: 'manual-1', decision: 'Rejected', rationale: 'Blocked compliance prevents a positive recommendation.', suggestion: 'Resolve every blocked compliance check before resubmission.', rejectionReasonCategory: 'regulatory_non_compliance' }, 162))
       .resolves.toMatchObject({ decision: 'Rejected' });
   });
 
@@ -1120,8 +1183,10 @@ describe('Firestore security rules', () => {
     const resources = await adminDb.collection('events/review-1/resources').get();
     expect(assessment).toMatchObject({ status: 'official_ready', authorityReviewRequired: false });
     expect(assessment?.officialResult.reviewIds).toHaveLength(2);
-    expect(resources.docs).toHaveLength(1);
-    expect(resources.docs[0].data()).toMatchObject({ stage: 'official', resourceId: event?.currentResourceId, authorityReviewRequired: false });
+    expect(resources.docs).toHaveLength(2);
+    expect(resources.docs.find((document) => document.data().stage === 'official')?.data())
+      .toMatchObject({ stage: 'official', resourceId: event?.currentResourceId, authorityReviewRequired: false });
+    expect(resources.docs.find((document) => document.data().stage === 'provisional')).toBeDefined();
     expect((await adminDb.collection('events/review-1/assessments/v1/score_reviews').get()).size).toBe(2);
     const replay = await submitScoreReviewForUser('bomba-1', {
       eventId: 'review-1', categories: confirmedReviewCategories(5), rationale: 'BOMBA reviewed all assessment materials and evidence.', idempotencyKey: 'bomba_review_001',
@@ -1143,7 +1208,7 @@ describe('Firestore security rules', () => {
     ]);
     expect(results.every((result) => result.status === 'official_ready')).toBe(true);
     const adminDb = getFirestore(adminApp);
-    expect((await adminDb.collection('events/review-1/resources').get()).size).toBe(1);
+    expect((await adminDb.collection('events/review-1/resources').get()).size).toBe(2);
     const audits = await adminDb.collection('events/review-1/audit_logs').get();
     expect(audits.docs.filter((item) => item.data().action === 'official_assessment_finalized')).toHaveLength(1);
     expect(audits.docs.some((item) => item.data().action === 'official_finalization_failed')).toBe(false);
@@ -1184,7 +1249,8 @@ describe('Firestore security rules', () => {
     const adminDb = getFirestore(adminApp);
     const before = (await adminDb.doc('events/review-1/assessments/v1').get()).data();
     expect(before?.authorityReviewState.conflicts).toHaveLength(1);
-    expect((await adminDb.collection('events/review-1/resources').get()).size).toBe(0);
+    expect((await adminDb.collection('events/review-1/resources').get()).size).toBe(1);
+    expect((await adminDb.collection('events/review-1/resources').get()).docs[0].data().stage).toBe('provisional');
     const heads = Object.fromEntries(Object.entries(before?.authorityReviewState.activeReviewHeads ?? {}).map(([authority, head]) => [authority, (head as { reviewId: string }).reviewId]));
     await expect(resolveScoreConflictForAdmin('pdrm-1', {
       eventId: 'review-1', reviewHeadIds: heads, categories: [{ categoryId: before!.authorityReviewState.conflicts[0].categoryId, likelihood: 5, severity: 5, reason: 'Admin reconciled the category after reviewing both submissions.' }], rationale: 'Both authority submissions were reviewed and reconciled.',
@@ -1281,7 +1347,8 @@ describe('Firestore security rules', () => {
     }, 30)).rejects.toMatchObject({ code: 'failed-precondition' });
     expect((await adminDb.doc('events/review-1/assessments/v1').get()).data()).toMatchObject({ status: 'authority_review' });
     expect((await adminDb.collection('events/review-1/assessments/v1/score_reviews').get()).size).toBe(1);
-    expect((await adminDb.collection('events/review-1/resources').get()).size).toBe(0);
+    expect((await adminDb.collection('events/review-1/resources').get()).size).toBe(1);
+    expect((await adminDb.collection('events/review-1/resources').get()).docs[0].data().stage).toBe('provisional');
     const audits = await adminDb.collection('events/review-1/audit_logs').get();
     expect(audits.docs.some((item) => item.data().action === 'official_finalization_failed')).toBe(true);
     await expect(retryOfficialFinalisationForAdmin('admin-1', 'review-1', 31)).rejects.toMatchObject({ code: 'failed-precondition' });
@@ -1324,7 +1391,7 @@ describe('Firestore security rules', () => {
     await seedReviewableEvent(['PDRM', 'BOMBA']);
     const results = await Promise.allSettled([
       makeAuthorityDecisionForUser('pdrm-1', { eventId: 'review-1', decision: 'Approved', rationale: 'PDRM operational requirements are satisfied.', materialsReviewed: true }, 3_000),
-      makeAuthorityDecisionForUser('bomba-1', { eventId: 'review-1', decision: 'Rejected', rationale: 'Emergency exits do not satisfy fire requirements.', suggestion: 'Add verified emergency exit controls before the next review.' }, 3_000),
+      makeAuthorityDecisionForUser('bomba-1', { eventId: 'review-1', decision: 'Rejected', rationale: 'Emergency exits do not satisfy fire requirements.', suggestion: 'Add verified emergency exit controls before the next review.', rejectionReasonCategory: 'risk_controls_inadequate' }, 3_000),
     ]);
     const adminDb = getFirestore(adminApp);
     expect(results.some((result) => result.status === 'fulfilled')).toBe(true);
@@ -1390,6 +1457,7 @@ describe('Firestore security rules', () => {
       eventId: 'review-1', quantities,
       rationale: 'Increased staffing for controlled entry and traffic management.',
       idempotencyKey: 'resource-override-test-1',
+      overrideReasonCategory: 'authority_operational_requirement',
     }, 4_000);
     expect(override).toMatchObject({ eventId: 'review-1', baseResourceId: before?.resourceId, quantities, idempotent: false });
     expect((await baselineReference.get()).data()).toEqual(before);
@@ -1397,6 +1465,7 @@ describe('Firestore security rules', () => {
       eventId: 'review-1', quantities,
       rationale: 'Increased staffing for controlled entry and traffic management.',
       idempotencyKey: 'resource-override-test-1',
+      overrideReasonCategory: 'authority_operational_requirement',
     }, 4_001);
     expect(replay).toMatchObject({ overrideId: override.overrideId, idempotent: true });
     expect((await adminDb.collection('events/review-1/resource_overrides').get()).size).toBe(1);
@@ -2372,6 +2441,23 @@ describe('Firestore security rules', () => {
     await assertFails(getDoc(doc(organizerDb, 'historical_events/history-1')));
     await assertFails(getDoc(doc(environment.unauthenticatedContext().firestore(), 'dataset_manifests/demo-v1')));
   });
+
+  it('denies direct client access to M4 incidents, history, and authority directory', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'incidents/incident-1'), { schemaVersion: '2026-09-03-m4-v1' });
+      await setDoc(doc(context.firestore(), 'incidents/incident-1/history/history-1'), { action: 'submitted' });
+      await setDoc(doc(context.firestore(), 'authority_directory/pdrm-kl'), { active: true });
+      await setDoc(doc(context.firestore(), 'incident_notification_outbox/outbox-1'), { deliveredAt: null });
+    });
+    const reporter = environment.authenticatedContext('reporter-1').firestore();
+    const admin = environment.authenticatedContext('admin-1').firestore();
+    await assertFails(getDoc(doc(reporter, 'incidents/incident-1')));
+    await assertFails(setDoc(doc(reporter, 'incidents/incident-2'), { reporterUid: 'reporter-1' }));
+    await assertFails(getDoc(doc(admin, 'incidents/incident-1/history/history-1')));
+    await assertFails(getDoc(doc(admin, 'authority_directory/pdrm-kl')));
+    await assertFails(getDoc(doc(admin, 'incident_notification_outbox/outbox-1')));
+    await assertFails(setDoc(doc(admin, 'incident_notification_outbox/outbox-2'), { deliveredAt: null }));
+  });
 });
 
 async function seedReviewableEvent(requiredAuthorities: string[]) {
@@ -2432,6 +2518,11 @@ async function seedProvisionalReviewEvent(requiredAuthorities: string[]) {
   const adminDb = getFirestore(adminApp);
   const official = officialAssessmentFixture('v1');
   const { officialResult: _officialResult, authorityReviewState: _authorityReviewState, ...base } = official;
+  const provisionalResource = provisionalResourceFixture('v1', 1);
+  const assignedOfficerByAuthority = Object.fromEntries(requiredAuthorities.map((authority) => [
+    authority,
+    authority === 'PDRM' ? 'pdrm-1' : 'bomba-1',
+  ]));
   void _officialResult;
   void _authorityReviewState;
   await Promise.all([
@@ -2440,11 +2531,18 @@ async function seedProvisionalReviewEvent(requiredAuthorities: string[]) {
     adminDb.doc('users/bomba-1').set({ role: 'authority', authorityType: 'BOMBA' }),
     adminDb.doc('users/admin-1').set({ role: 'admin' }),
     adminDb.doc('events/review-1').set({
-      eventId: 'review-1', organizerId: 'organizer-1', eventDetails: validDetails, status: 'Pending', currentVersionId: 'v1', currentVersionNumber: 1,
-      currentAssessmentId: 'v1', editableVersionId: null, draftDocumentPaths: [], requiredAuthorities, createdAt: 1, updatedAt: 1,
+      eventId: 'review-1', organizerId: 'organizer-1', eventDetails: validDetails, status: 'UnderReview', reviewStage: 'authority', currentVersionId: 'v1', currentVersionNumber: 1,
+      currentAssessmentId: 'v1', currentResourceId: provisionalResource.resourceId, editableVersionId: null, draftDocumentPaths: [], requiredAuthorities,
+      assignedOfficerUids: Object.values(assignedOfficerByAuthority), assignedOfficerByAuthority,
+      initialReview: { decision: 'Approved', reason: 'Initial review complete.', reviewerUid: 'admin-1', reviewedAt: 1 }, createdAt: 1, updatedAt: 1,
     }),
     adminDb.doc('events/review-1/versions/v1').set({ versionId: 'v1', eventId: 'review-1', versionNumber: 1, eventDetails: validDetails, documentPaths: [], submittedBy: 'organizer-1', submittedAt: 1, inputHash: 'hash' }),
     adminDb.doc('events/review-1/assessments/v1').set({ ...base, status: 'provisional_ready', authorityReviewRequired: true }),
+    adminDb.doc(`events/review-1/resources/${provisionalResource.resourceId}`).set(provisionalResource),
+    ...requiredAuthorities.map((authority) => adminDb.doc(`events/review-1/assignments/v1_${authority}`).set({
+      assignmentId: `v1_${authority}`, eventId: 'review-1', versionId: 'v1', authorityType: authority,
+      officerUid: assignedOfficerByAuthority[authority], assignedBy: 'admin-1', assignedAt: 1, status: 'pending',
+    })),
   ]);
 }
 

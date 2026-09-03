@@ -28,9 +28,13 @@ import { firestore } from 'firebase-admin';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import {
   Assignment,
+  AuthorityType,
   COLLECTIONS,
   DecisionValue,
   EventRecord,
+  OfficialRiskAssessment,
+  REJECTION_REASON_CATEGORIES,
+  RejectionReasonCategory,
   ResourceRecommendation,
   RiskAssessment,
   UserProfile,
@@ -44,6 +48,7 @@ interface RecordOfficerProposalRequest {
   decision?: DecisionValue;
   reason?: string;
   suggestion?: string;
+  rejectionReasonCategory?: RejectionReasonCategory;
   /**
    * FR-M3-16: when approving, the officer must tick a checkbox
    * confirming review of the assessment, advisory, evidence, and
@@ -64,6 +69,7 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
   const reason = (request.data?.reason ?? '').trim();
   const suggestion = (request.data?.suggestion ?? '').trim();
   const confirmedReview = request.data?.confirmedReview === true;
+  const rejectionReasonCategory = request.data?.rejectionReasonCategory;
 
   if (!eventId) throw new HttpsError('invalid-argument', 'eventId is required.');
   if (!isDecision(decision)) throw new HttpsError('invalid-argument', 'A valid decision is required.');
@@ -75,6 +81,9 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
   }
   if (decision === 'Rejected' && suggestion.length === 0) {
     throw new HttpsError('invalid-argument', 'A suggestion is required when rejecting.');
+  }
+  if (decision === 'Rejected' && !REJECTION_REASON_CATEGORIES.includes(rejectionReasonCategory as RejectionReasonCategory)) {
+    throw new HttpsError('invalid-argument', 'A valid rejectionReasonCategory is required when rejecting.');
   }
   // FR-M3-16: officer must confirm review of all listed materials
   // before approving. The UI checkbox drives this — server-side gate
@@ -92,6 +101,8 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
   if (!profile || profile.role !== 'authority' || !profile.authorityType) {
     throw new HttpsError('permission-denied', 'Only provisioned authority accounts can record proposals.');
   }
+  const authorityType = profile.authorityType;
+  const callerUid = request.auth.uid;
 
   const eventRef = db.collection(COLLECTIONS.EVENTS).doc(eventId);
   const eventSnap = await eventRef.get();
@@ -104,10 +115,9 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
   if (!assessmentId || !resourceId || !safeDocumentId(assessmentId) || !safeDocumentId(resourceId)) {
     throw new HttpsError('failed-precondition', 'Risk assessment and resources must point to the current M2 generation.');
   }
-  const [assessmentSnap, resourceSnap] = await Promise.all([
-    eventRef.collection(COLLECTIONS.ASSESSMENTS).doc(assessmentId).get(),
-    eventRef.collection(COLLECTIONS.RESOURCES).doc(resourceId).get(),
-  ]);
+  const assessmentRef = eventRef.collection(COLLECTIONS.ASSESSMENTS).doc(assessmentId);
+  const resourceRef = eventRef.collection(COLLECTIONS.RESOURCES).doc(resourceId);
+  const [assessmentSnap, resourceSnap] = await Promise.all([assessmentRef.get(), resourceRef.get()]);
   if (!['Pending', 'UnderReview'].includes(event.status)) {
     throw new HttpsError('failed-precondition', 'This application version is no longer open for officer review.');
   }
@@ -116,24 +126,14 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
   }
   const resource = resourceSnap.data() as ResourceRecommendation | undefined;
   const assessment = assessmentSnap.data() as RiskAssessment | undefined;
-  if (!assessmentSnap.exists || !resourceSnap.exists || !assessment
-    || assessment.assessmentId !== assessmentId
-    || assessment.eventId !== eventId
-    || assessment.versionId !== versionId
-    || !resource
-    || !validateResourceRecommendation(resource).ok
-    || resource.resourceId !== resourceId
-    || resource.eventId !== eventId
-    || resource.versionId !== versionId
-    || resource.assessmentId !== assessmentId) {
-    throw new HttpsError('failed-precondition', 'Risk assessment and resources must be ready before recording a proposal.');
-  }
-  if (assessment?.complianceStatus === 'blocked' && decision === 'Approved') {
+  assertOfficerDecisionArtifacts(assessment, resource, eventId, versionId, assessmentId, resourceId, authorityType);
+  const readyAssessment = assessment as RiskAssessment;
+  if (readyAssessment.complianceStatus === 'blocked' && decision === 'Approved') {
     throw new HttpsError('failed-precondition', 'This application cannot be approved while compliance checks are blocked.');
   }
-  const readiness = assessment.assessmentReadiness;
-  const finalizedAdminManual = assessment.status === 'official_ready'
-    && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual';
+  const readiness = readyAssessment.assessmentReadiness;
+  const finalizedAdminManual = readyAssessment.status === 'official_ready'
+    && 'sourceKind' in readyAssessment && readyAssessment.sourceKind === 'admin_manual';
   if (!finalizedAdminManual && (readiness === 'provisional' || readiness === 'insufficient_data') && reason.length < 80) {
     throw new HttpsError('invalid-argument', `When the assessment is ${readiness}, the proposal reason must be at least 80 characters.`);
   }
@@ -159,23 +159,53 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
   const now = Date.now();
   return db.runTransaction(async (tx) => {
     // Reads first (Firestore requires all reads before all writes).
-    const [currentEventSnap, allAssignmentsSnap] = await Promise.all([
+    const [currentEventSnap, allAssignmentsSnap, currentAssessmentSnap, currentResourceSnap] = await Promise.all([
       tx.get(eventRef),
       tx.get(eventRef.collection(COLLECTIONS.ASSIGNMENTS)),
+      tx.get(assessmentRef),
+      tx.get(resourceRef),
     ]);
     const currentEvent = currentEventSnap.data() as EventRecord | undefined;
     if (!currentEventSnap.exists || currentEvent?.currentVersionId !== versionId
-      || currentEvent.currentAssessmentId !== assessmentId || currentEvent.currentResourceId !== resourceId) {
+      || currentEvent.currentAssessmentId !== assessmentId || currentEvent.currentResourceId !== resourceId
+      || currentEvent.status !== 'UnderReview' || currentEvent.reviewStage !== 'authority'
+      || currentEvent.assignedOfficerByAuthority?.[authorityType] !== callerUid) {
       throw new HttpsError('aborted', 'The application generation changed before the proposal was recorded.');
     }
+    assertOfficerDecisionArtifacts(
+      currentAssessmentSnap.data() as RiskAssessment | undefined,
+      currentResourceSnap.data() as ResourceRecommendation | undefined,
+      eventId,
+      versionId,
+      assessmentId,
+      resourceId,
+      authorityType,
+    );
     const all = allAssignmentsSnap.docs
       .map((d) => d.data() as Assignment)
       .filter((candidate) => candidate.versionId === versionId);
+    const transactionalAssignment = allAssignmentsSnap.docs
+      .find((document) => document.id === assignmentId);
+    assertCurrentOfficerAssignment(
+      transactionalAssignment?.data(),
+      assignmentId,
+      eventId,
+      versionId,
+      authorityType,
+      callerUid,
+    );
     // Treat the current assignment as if it's about to be completed
     // (so the last officer's proposal correctly triggers reviewStage='second').
-    const allCompleted = all
-      .map((a) => (a.assignmentId === assignmentId ? { ...a, status: 'completed' as const } : a))
-      .every((a) => a.status === 'completed' || a.status === 'revoked');
+    const afterCurrentProposal = all
+      .map((candidate) => candidate.assignmentId === assignmentId
+        ? { ...candidate, status: 'completed' as const }
+        : candidate);
+    const allCompleted = allRequiredAssignmentsCompleted(
+      afterCurrentProposal,
+      currentEvent.requiredAuthorities ?? [],
+      currentEvent.assignedOfficerByAuthority ?? {},
+      versionId,
+    );
     const statusSummary = all.map((a) => ({ auth: a.authorityType, status: a.status }));
     console.log(`[recordOfficerProposal] eventId=${eventId} assignmentId=${assignmentId} statuses=${JSON.stringify(statusSummary)} allCompleted=${allCompleted}`);
 
@@ -184,6 +214,8 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
       status: 'completed',
       decision,
       reason,
+      reviewStage: 'authority',
+      ...(decision === 'Rejected' ? { rejectionReasonCategory } : {}),
       suggestion: suggestion || null,
       decidedAt: now,
     });
@@ -237,8 +269,74 @@ function safeDocumentId(value: unknown): value is string {
   return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 }
 
+export function assertOfficerDecisionArtifacts(
+  assessment: RiskAssessment | undefined,
+  resource: ResourceRecommendation | undefined,
+  eventId: string,
+  versionId: string,
+  assessmentId: string,
+  resourceId: string,
+  authorityType: AuthorityType,
+): void {
+  if (!assessment || assessment.assessmentId !== assessmentId
+    || assessment.eventId !== eventId || assessment.versionId !== versionId
+    || !resource || !validateResourceRecommendation(resource).ok
+    || resource.resourceId !== resourceId || resource.eventId !== eventId
+    || resource.versionId !== versionId || resource.assessmentId !== assessmentId) {
+    throw new HttpsError('failed-precondition', 'Risk assessment and resources must be ready before recording a proposal.');
+  }
+  if (assessment.status !== 'official_ready' || resource.stage !== 'official') {
+    throw new HttpsError('failed-precondition', 'Officer decisions require the current official assessment and official resource revision.');
+  }
+  if ('sourceKind' in assessment && assessment.sourceKind === 'admin_manual') return;
+  const aiOfficial = assessment as OfficialRiskAssessment;
+  const head = aiOfficial.authorityReviewState?.activeReviewHeads?.[authorityType];
+  const officialReviewIds = Array.isArray(aiOfficial.officialResult.reviewIds)
+    ? aiOfficial.officialResult.reviewIds : [];
+  if (!head?.reviewId || !officialReviewIds.includes(head.reviewId)) {
+    throw new HttpsError('failed-precondition', 'Submit and finalize your eight-category score review before recording an application proposal.');
+  }
+}
+
 async function findFirstAdminUid(db: FirebaseFirestore.Firestore): Promise<string | null> {
   const snap = await db.collection(COLLECTIONS.USERS).where('role', '==', 'admin').limit(1).get();
   if (snap.empty) return null;
   return snap.docs[0].id;
+}
+
+/** Transactional authorization fence for revoke/reassign races. */
+export function assertCurrentOfficerAssignment(
+  value: unknown,
+  assignmentId: string,
+  eventId: string,
+  versionId: string,
+  authorityType: string,
+  officerUid: string,
+): asserts value is Assignment {
+  if (!value || typeof value !== 'object') {
+    throw new HttpsError('aborted', 'The officer assignment changed before the proposal was recorded.');
+  }
+  const assignment = value as Partial<Assignment>;
+  if (assignment.assignmentId !== assignmentId
+    || assignment.eventId !== eventId
+    || assignment.versionId !== versionId
+    || assignment.authorityType !== authorityType
+    || assignment.officerUid !== officerUid
+    || (assignment.status !== 'pending' && assignment.status !== 'in_progress')) {
+    throw new HttpsError('aborted', 'The officer assignment changed before the proposal was recorded.');
+  }
+}
+
+export function allRequiredAssignmentsCompleted(
+  assignments: Assignment[],
+  requiredAuthorities: AuthorityType[],
+  assignedOfficerByAuthority: Partial<Record<AuthorityType, string>>,
+  versionId: string,
+): boolean {
+  return requiredAuthorities.length > 0 && requiredAuthorities.every((authority) => {
+    const assignment = assignments.find((candidate) => candidate.authorityType === authority
+      && candidate.versionId === versionId
+      && assignedOfficerByAuthority[authority] === candidate.officerUid);
+    return assignment?.status === 'completed';
+  });
 }
