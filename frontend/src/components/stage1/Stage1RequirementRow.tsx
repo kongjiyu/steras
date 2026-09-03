@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { functions } from '../../config/firebase';
 import type { Stage1Doc } from '@shared/types';
+import { safeStage1DocumentHref } from './safeDocumentLink';
 
 export interface Stage1Requirement {
   docId: string;
@@ -216,6 +217,7 @@ interface ActionsProps {
 }
 
 function renderActions({ status, isReceipt, filePath, disabled, onUpload, onUsePrevious }: ActionsProps) {
+  const safeFilePath = safeStage1DocumentHref(filePath);
   const uploadBtn = (label: string, icon: React.ReactNode, testid: string, key: string) => (
     <button
       key={key}
@@ -267,7 +269,7 @@ function renderActions({ status, isReceipt, filePath, disabled, onUpload, onUseP
     case 'pending_verification':
       return (
         <>
-          {filePath ? viewLink('View', filePath, 'pending') : viewLink('View', '#', 'pending')}
+          {safeFilePath ? viewLink('View', safeFilePath, 'pending') : viewLink('Unavailable', '#', 'pending')}
           {uploadBtn('Replace', <Replace size={14} />, 'stage1-replace', 'replace')}
         </>
       );

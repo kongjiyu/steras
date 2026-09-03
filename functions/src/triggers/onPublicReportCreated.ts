@@ -3,11 +3,12 @@ import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { COLLECTIONS, type EventRecord, type EventVersion, type PublicReport, type UserProfile } from '@shared/types';
 import { M4_SCHEMA_VERSION, type M4IncidentHistoryEntry, type M4IncidentRecord } from '@shared/m4';
 import { FUNCTION_REGION } from '../config/runtime';
+import { MINIMAX_API_KEY } from '../config/secrets';
 import { assessIncident, assertReportableEvent } from '../http/m4Incidents';
 
 /** Bridges the existing M3 public Stage-2 report into the real M4 queue. */
 export const onPublicReportCreated = onDocumentCreated(
-  { document: `${COLLECTIONS.PUBLIC_REPORTS}/{ticketId}`, region: FUNCTION_REGION },
+  { document: `${COLLECTIONS.PUBLIC_REPORTS}/{ticketId}`, region: FUNCTION_REGION, secrets: [MINIMAX_API_KEY] },
   async (event) => {
     const report = event.data?.data() as PublicReport | undefined;
     if (!report) return;

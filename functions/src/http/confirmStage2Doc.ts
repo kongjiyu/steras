@@ -23,11 +23,14 @@ import { firestore } from 'firebase-admin';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import {
   COLLECTIONS,
+  EventControl,
   EventRecord,
   Stage2Doc,
   UserProfile,
 } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
+import { isActiveControlGeneration } from '../utils/controlLifecycle';
+import { counterMatchesStage2 } from '../utils/stage2Counter';
 
 interface ConfirmStage2DocRequest {
   eventId?: string;
@@ -50,7 +53,7 @@ export const confirmStage2Doc = onCall<ConfirmStage2DocRequest, Promise<ConfirmS
     }
     const message = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
     console.error(`[confirmStage2Doc] unexpected error: ${message}`);
-    throw new HttpsError('internal', message.slice(0, 500));
+    throw new HttpsError('internal', 'Unable to record the Stage 2 confirmation. Retry shortly.');
   }
 });
 
@@ -101,19 +104,19 @@ export async function confirmStage2DocForUser(
     const versionId = event.currentVersionId;
     const control = controlSnap.data() as { eventId?: string; versionId?: string; activityClosed?: boolean } | undefined;
     const projection = publicSnap.data() as { eventId?: string; versionId?: string; controlId?: string; docId?: string } | undefined;
-    if (!versionId || !controlSnap.exists || control?.eventId !== eventId || control.versionId !== versionId
-      || control.activityClosed === true || !publicSnap.exists || projection?.eventId !== eventId
+    if (!versionId || !controlSnap.exists || !isActiveControlGeneration(event, control as EventControl, eventId)
+      || !publicSnap.exists || projection?.eventId !== eventId
       || projection.versionId !== versionId || projection.controlId !== controlId || projection.docId !== docId) {
       throw new HttpsError('failed-precondition', 'This published evidence is not bound to the current application generation.');
     }
-    if (counterSnap.exists) {
+    if (counterSnap.exists && counterMatchesStage2(counterSnap.data(), stage2)) {
       // Idempotency never bypasses the current-generation authorization gate.
       return { alreadyConfirmed: true, publicConfirmCount: stage2.publicConfirmCount };
     }
 
     // First confirm — write the counter, increment the count, write the audit log.
     const newCount = (stage2.publicConfirmCount ?? 0) + 1;
-    tx.set(counterRef, { uid, confirmedAt: now });
+    tx.set(counterRef, { uid, confirmedAt: now, stage2UploadedAt: stage2.uploadedAt });
     tx.update(docRef, { publicConfirmCount: newCount });
     if (publicSnap.exists) tx.update(publicRef, { publicConfirmCount: newCount });
 

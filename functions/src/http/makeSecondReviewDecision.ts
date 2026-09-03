@@ -142,21 +142,22 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
     const currentAssignments = currentAssignmentsSnap.docs
       .map((document) => document.data() as Assignment)
       .filter((assignment) => assignment.versionId === versionId);
-    const requiredAssignments = required.map((authority) => currentAssignments.find((assignment) =>
+    const currentRequired = currentEvent?.requiredAuthorities ?? [];
+    const requiredAssignments = currentRequired.map((authority) => currentAssignments.find((assignment) =>
       assignment.assignmentId === `${versionId}_${authority}`
       && assignment.eventId === eventId
       && assignment.authorityType === authority
       && assignment.officerUid === currentEvent?.assignedOfficerByAuthority?.[authority],
     ));
     const completeRequiredAssignments = requiredAssignments.filter((assignment): assignment is Assignment => Boolean(assignment));
-    const currentAggregate = aggregateFromAssignments(completeRequiredAssignments, required);
+    const currentAggregate = aggregateFromAssignments(completeRequiredAssignments, currentRequired);
     const currentReasonOfficer = pickFeaturedOfficer(completeRequiredAssignments, finalDecision);
     const currentVersion = currentVersionSnap.data() as EventVersion | undefined;
-    if (!currentEventSnap.exists || currentEvent?.currentVersionId !== versionId
-      || currentEvent.reviewStage !== 'second' || !currentVersionSnap.exists
+    if (!currentEventSnap.exists || !isCurrentSecondReviewEvent(currentEvent, versionId, required)
+      || !currentVersionSnap.exists
       || currentVersion?.eventId !== eventId || currentVersion.versionId !== versionId
       || (currentEvent as EventRecord & { secondReview?: unknown }).secondReview
-      || completeRequiredAssignments.length !== required.length
+      || completeRequiredAssignments.length !== currentRequired.length
       || completeRequiredAssignments.some((assignment) => assignment.status !== 'completed')
       || currentAggregate !== aggregate) {
       throw new HttpsError('aborted', 'The second-review inputs changed or another Admin already finalized this application.');
@@ -171,7 +172,7 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
         reviewerUid: request.auth!.uid,
         decidedAt: now,
         confirmedDecision: finalDecision,
-        aggregateDecision: aggregate,
+        aggregateDecision: currentAggregate,
         reviewStage: 'second',
         rejectionReasonCategory: finalDecision === 'Rejected' ? rejectionReasonCategory : null,
         reason: reason || (finalDecision === 'Rejected' ? currentReasonOfficer?.reason : undefined) || null,
@@ -207,7 +208,7 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
       notes: reason || adminNote || null,
       metadata: {
         reviewStage: 'second',
-        aggregate,
+        aggregate: currentAggregate,
         finalDecision,
         featuredOfficerUid: currentReasonOfficer?.officerUid ?? null,
         featuredReason: currentReasonOfficer?.reason ?? null,
@@ -229,7 +230,7 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
         eventType: details.type,
         startDatetime: details.startDatetime,
         endDatetime: details.endDatetime,
-        approvedBy: event.requiredAuthorities,
+        approvedBy: currentRequired,
         publicStatus: 'approved',
       };
       tx.set(publicRef, publicEvent);
@@ -242,7 +243,7 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
         actorId: request.auth!.uid,
         actorRole: 'admin',
         timestamp: now,
-        metadata: { approvedBy: event.requiredAuthorities, reviewStage: 'second' },
+        metadata: { approvedBy: currentRequired, reviewStage: 'second' },
       });
     } else {
       tx.delete(publicRef);
@@ -299,6 +300,27 @@ function aggregateFromAssignments(assignments: Assignment[], required: Authority
     return 'Approved';
   }
   return 'UnderReview';
+}
+
+export function sameAuthoritySet(left: AuthorityType[], right: AuthorityType[]): boolean {
+  return left.length === right.length
+    && new Set(left).size === left.length
+    && new Set(right).size === right.length
+    && left.every((authority) => right.includes(authority));
+}
+
+export function isCurrentSecondReviewEvent(
+  event: EventRecord | undefined,
+  versionId: string,
+  expectedAuthorities: AuthorityType[],
+): event is EventRecord {
+  return Boolean(event
+    && event.currentVersionId === versionId
+    && event.status === 'UnderReview'
+    && event.reviewStage === 'second'
+    && !(event as EventRecord & { secondReview?: unknown }).secondReview
+    && expectedAuthorities.length > 0
+    && sameAuthoritySet(event.requiredAuthorities ?? [], expectedAuthorities));
 }
 
 function pickFeaturedOfficer(assignments: Assignment[], decision: DecisionValue): Assignment | undefined {

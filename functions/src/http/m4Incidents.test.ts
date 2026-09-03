@@ -4,6 +4,7 @@ import { M4_AI_PROMPT_VERSION } from '@shared/m4';
 import {
   assertEvidencePath, assertReportableEvent, assertResolutionReady, assertSubmissionGeneration, buildIncidentAiPayload,
   actionRequestHash, canPerformIncidentAction, rankRecommendedAuthorities, safeIncident, sameSubmission, validateSubmission,
+  parseIncidentAiResponse,
 } from './m4Incidents';
 
 const now = Date.UTC(2026, 8, 3, 12);
@@ -69,6 +70,19 @@ describe('M4 incident input boundary', () => {
     const payload = buildIncidentAiPayload(input, { eventDetails: { type: 'concert', venueName: 'Demo Hall', expectedAttendance: 500 } } as EventRecord);
     expect(payload.evidence).toEqual([{ name: 'photo.jpg', mimeType: 'image/jpeg', size: 123 }]);
     expect(JSON.stringify(payload)).not.toContain('incident_evidence');
+  });
+
+  it('rejects malformed, padded, oversized, or ambiguous MiniMax incident output', () => {
+    expect(parseIncidentAiResponse('{"severity":"high","immediateActionRequired":true,"rationale":"Immediate response is required."}')).toEqual({
+      severity: 'high', immediateActionRequired: true, rationale: 'Immediate response is required.',
+    });
+    for (const raw of [
+      'not-json',
+      '{"severity":"critical","immediateActionRequired":true,"rationale":"Immediate response is required."}',
+      '{"severity":"high","immediateActionRequired":"yes","rationale":"Immediate response is required."}',
+      '{"severity":"high","immediateActionRequired":true,"rationale":"          "}',
+      '{"severity":"high","immediateActionRequired":true,"rationale":"Immediate response is required.","hidden":"ignored"}',
+    ]) expect(() => parseIncidentAiResponse(raw)).toThrow();
   });
 
   it('ranks matching authorities using location, event assignment and urgent AI outcome', () => {

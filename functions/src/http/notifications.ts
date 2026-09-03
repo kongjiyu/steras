@@ -14,7 +14,7 @@ const MAX_LIST = 50;
 export const listMyNotifications = onCall<{ limit?: number } | undefined>({ region: FUNCTION_REGION }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in to view notifications.');
   const db = firestore();
-  const limit = Math.min(Math.max(request.data?.limit ?? MAX_LIST, 1), MAX_LIST);
+  const limit = validateNotificationListLimit(request.data?.limit);
   const snap = await db.collection(COLLECTIONS.NOTIFICATIONS)
     .where('recipientUid', '==', request.auth.uid)
     .orderBy('createdAt', 'desc')
@@ -27,8 +27,10 @@ export const listMyNotifications = onCall<{ limit?: number } | undefined>({ regi
 
 export const markNotificationRead = onCall<{ notificationId?: string; read?: boolean }>({ region: FUNCTION_REGION }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in to update notifications.');
-  const id = (request.data?.notificationId ?? '').trim();
-  if (!id) throw new HttpsError('invalid-argument', 'notificationId is required.');
+  const id = validateNotificationId(request.data?.notificationId);
+  if (request.data?.read !== undefined && typeof request.data.read !== 'boolean') {
+    throw new HttpsError('invalid-argument', 'read must be a boolean.');
+  }
   const read = request.data?.read !== false; // default true
   const db = firestore();
   const ref = db.collection(COLLECTIONS.NOTIFICATIONS).doc(id);
@@ -41,3 +43,18 @@ export const markNotificationRead = onCall<{ notificationId?: string; read?: boo
   await ref.update({ read, readAt: read ? Date.now() : null });
   return { ok: true, idempotent: false };
 });
+
+export function validateNotificationListLimit(value: unknown): number {
+  if (value === undefined) return MAX_LIST;
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1 || value > MAX_LIST) {
+    throw new HttpsError('invalid-argument', `limit must be an integer from 1 to ${MAX_LIST}.`);
+  }
+  return value;
+}
+
+export function validateNotificationId(value: unknown): string {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,200}$/.test(value.trim())) {
+    throw new HttpsError('invalid-argument', 'notificationId is invalid.');
+  }
+  return value.trim();
+}

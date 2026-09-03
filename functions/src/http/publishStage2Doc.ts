@@ -35,6 +35,7 @@ import {
 } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
 import { createNotification, resolveAuthUid } from '../utils/notifications';
+import { isActiveControlGeneration } from '../utils/controlLifecycle';
 
 interface PublishStage2DocRequest {
   eventId?: string;
@@ -57,7 +58,7 @@ export const publishStage2Doc = onCall<PublishStage2DocRequest, Promise<PublishS
     }
     const message = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
     console.error(`[publishStage2Doc] unexpected error: ${message}`);
-    throw new HttpsError('internal', message.slice(0, 500));
+    throw new HttpsError('internal', 'Unable to publish the Stage 2 document. Retry shortly.');
   }
 });
 
@@ -102,7 +103,7 @@ export async function publishStage2DocForUser(
     const versionId = event.currentVersionId ?? 'v1';
     if (!controlSnap.exists) throw new HttpsError('not-found', `Control ${controlId} not found.`);
     const control = controlSnap.data() as EventControl;
-    if (control.versionId !== versionId) {
+    if (!isActiveControlGeneration(event, control, eventId)) {
       throw new HttpsError('failed-precondition', `Control ${controlId} is for a prior version. The admin must re-commit the list.`);
     }
     if (!control.stage2Requirement) {

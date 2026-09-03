@@ -1552,6 +1552,8 @@ export interface Stage1Doc {
   usePreviousSourceEventId?: string;
   verifiedBy?: string;
   verifiedAt?: number;
+  /** Optional, non-clickable verification locator supplied by the officer. */
+  verificationEvidencePath?: string;
   rejectionReason?: string;
   rejectionSuggestion?: string;
 }

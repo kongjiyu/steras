@@ -34,6 +34,8 @@ import {
   UserProfile,
 } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
+import { isActiveControlGeneration } from '../utils/controlLifecycle';
+import { counterMatchesStage2 } from '../utils/stage2Counter';
 import { createNotification, resolveAuthUid } from '../utils/notifications';
 
 const REPORT_CATEGORIES = ['item_not_at_venue', 'wrong_venue', 'low_quality_image', 'other'] as const;
@@ -66,7 +68,7 @@ export const reportStage2Doc = onCall<ReportStage2DocRequest, Promise<ReportStag
     }
     const message = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
     console.error(`[reportStage2Doc] unexpected error: ${message}`);
-    throw new HttpsError('internal', message.slice(0, 500));
+    throw new HttpsError('internal', 'Unable to record the Stage 2 report. Retry shortly.');
   }
 });
 
@@ -129,14 +131,14 @@ export async function reportStage2DocForUser(
     const event = eventSnap.data() as EventRecord;
     const versionIdInner = event.currentVersionId;
     const projection = publicSnap.data() as { eventId?: string; versionId?: string; controlId?: string; docId?: string } | undefined;
-    if (!versionIdInner || control.eventId !== eventId || control.versionId !== versionIdInner
-      || control.activityClosed === true || !publicSnap.exists || projection?.eventId !== eventId
+    if (!versionIdInner || !isActiveControlGeneration(event, control, eventId)
+      || !publicSnap.exists || projection?.eventId !== eventId
       || projection.versionId !== versionIdInner || projection.controlId !== controlId || projection.docId !== docId
       || typeof stage2.publishedAt !== 'number') {
       throw new HttpsError('failed-precondition', 'This published evidence is not bound to the current application generation.');
     }
 
-    if (counterSnap.exists) {
+    if (counterSnap.exists && counterMatchesStage2(counterSnap.data(), stage2)) {
       // Already reported — return the existing ticket info.
       const existing = counterSnap.data() as { ticketId: string; reportedAt: number };
       return {
@@ -170,7 +172,7 @@ export async function reportStage2DocForUser(
       updatedAt: now,
     };
     tx.set(ticketRef, reportDoc);
-    tx.set(counterRef, { uid, ticketId: newTicketId, reportedAt: now, category });
+    tx.set(counterRef, { uid, ticketId: newTicketId, reportedAt: now, category, stage2UploadedAt: stage2.uploadedAt });
     tx.update(docRef, { m4TicketId: newTicketId, reportedAt: now });
     if (publicSnap.exists) tx.update(publicRef, { reported: true });
 
