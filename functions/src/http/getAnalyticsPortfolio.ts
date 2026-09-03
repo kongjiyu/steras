@@ -31,6 +31,7 @@ import {
   type AnalyticsResourceSummary,
 } from '@shared/analytics';
 import { FUNCTION_REGION } from '../config/runtime';
+import { validateResourceRecommendation } from '../engines/resourceContract';
 
 const DEFAULT_LIMIT = 250;
 const MAX_LIMIT = 500;
@@ -298,7 +299,7 @@ function buildControlSummary(controls: EventControl[], declaredAvailable: boolea
 }
 
 function eventMatchesBaseFilters(event: EventRecord, input: AnalyticsPortfolioRequest): boolean {
-  if (!event.eventDetails || !EVENT_TYPE_VALUES.has(event.eventDetails.type) || !EVENT_STATUS_VALUES.has(event.status)) return false;
+  if (!isAnalyticsEvent(event)) return false;
   if (input.eventTypes?.length && !input.eventTypes.includes(event.eventDetails.type)) return false;
   if (input.statuses?.length && !input.statuses.includes(event.status)) return false;
   if (input.venueIds?.length && (!event.eventDetails.venueId || !input.venueIds.includes(event.eventDetails.venueId))) return false;
@@ -359,14 +360,21 @@ function isAnalyticsAssessment(value: unknown): value is RiskAssessment {
 }
 
 function isAnalyticsResource(value: unknown): value is ResourceRecommendation {
-  if (!isRecord(value) || typeof value.resourceId !== 'string' || typeof value.schemaVersion !== 'string'
-    || typeof value.formulaVersion !== 'string' || !isRecord(value.items)) return false;
-  const items = value.items;
-  return RESOURCE_KEYS.every((key) => {
-    const item = items[key];
-    return isRecord(item) && Number.isFinite(item.baseline) && isRecord(item.planningRange)
-      && Number.isFinite(item.planningRange.min) && Number.isFinite(item.planningRange.max);
-  });
+  return validateResourceRecommendation(value).ok;
+}
+
+/** Analytics skips malformed or legacy event rows instead of failing the whole report. */
+export function isAnalyticsEvent(value: unknown): value is EventRecord & Record<string, unknown> {
+  if (!isRecord(value) || !safeDocumentId(value.eventId) || !EVENT_STATUS_VALUES.has(value.status as EventStatus)
+    || !Number.isSafeInteger(value.currentVersionNumber) || Number(value.currentVersionNumber) < 0
+    || !Number.isFinite(value.createdAt) || !Number.isFinite(value.updatedAt)
+    || !Array.isArray(value.requiredAuthorities)
+    || !value.requiredAuthorities.every((authority) => AUTHORITY_VALUES.has(authority as AuthorityType))
+    || !isRecord(value.eventDetails)) return false;
+  const details = value.eventDetails;
+  return typeof details.name === 'string' && details.name.trim().length > 0
+    && EVENT_TYPE_VALUES.has(details.type as EventType)
+    && typeof details.venueName === 'string' && details.venueName.trim().length > 0;
 }
 
 function isAnalyticsOverride(value: unknown): value is ResourceOverrideRecord {

@@ -96,7 +96,8 @@ export default function App() {
         <Route path="/authority/applications" element={<ReviewQueue />} />
         <Route path="/authority/risk" element={<RiskAssessments />} />
         <Route path="/authority/resources" element={<ResourceRecommendations />} />
-        <Route path="/authority/reports" element={<Navigate to="/admin/analytics" replace />} />
+        {/* M5 is Admin-only. Keep the legacy authority URL inside its own workspace. */}
+        <Route path="/authority/reports" element={<Navigate to="/authority" replace />} />
         <Route path="/authority/calendar" element={<Navigate to="/calendar" replace />} />
         <Route path="/authority/audit" element={<Navigate to="/authority/applications" replace />} />
         <Route path="/authority/users" element={<Navigate to="/authority" replace />} />

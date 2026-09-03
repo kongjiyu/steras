@@ -15,6 +15,7 @@ import {
 import {
   assertAnalyticsAdmin,
   buildAnalyticsPortfolioRecord,
+  isAnalyticsEvent,
   validateAnalyticsPortfolioRequest,
 } from './getAnalyticsPortfolio';
 
@@ -81,6 +82,15 @@ describe('Module 5 analytics backend', () => {
       incidentCoverageAvailable: false, includeSynthetic: false,
     });
     expect(output.synthetic).toBe(true);
+  });
+
+  it('skips malformed source events without crashing a portfolio report', () => {
+    expect(isAnalyticsEvent(sampleEvent())).toBe(true);
+    expect(isAnalyticsEvent({ ...sampleEvent(), status: 'Draft', currentVersionNumber: 0, requiredAuthorities: [] })).toBe(true);
+    expect(isAnalyticsEvent({ ...sampleEvent(), requiredAuthorities: undefined })).toBe(false);
+    expect(isAnalyticsEvent({ ...sampleEvent(), requiredAuthorities: ['UNKNOWN'] })).toBe(false);
+    expect(isAnalyticsEvent({ ...sampleEvent(), eventDetails: { ...sampleEvent().eventDetails, venueName: '' } })).toBe(false);
+    expect(isAnalyticsEvent({ ...sampleEvent(), createdAt: Number.NaN })).toBe(false);
   });
 });
 
