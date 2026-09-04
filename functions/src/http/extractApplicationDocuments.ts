@@ -21,9 +21,10 @@ interface ExtractApplicationDocumentsRequest {
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const PDF_MIME = 'application/pdf';
+const APPLICATION_MIME_TYPES = new Set([DOCX_MIME, PDF_MIME]);
 const MAX_DOCX_BYTES = 10 * 1024 * 1024;
 const DOCUMENT_ROLES = new Set(['core_template', 'scenario_template', 'combined_application', 'supporting_evidence']);
-const EVIDENCE_MIME_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
+const EVIDENCE_MIME_TYPES = new Set([PDF_MIME, DOCX_MIME, 'image/jpeg', 'image/png', 'image/webp']);
 const DOCUMENT_KEYS = new Set(['path', 'role', 'originalName', 'mimeType', 'sizeBytes', 'uploadedAt', 'schemaVersion']);
 
 export const extractApplicationDocuments = onCall<ExtractApplicationDocumentsRequest>(
@@ -66,7 +67,7 @@ export async function extractApplicationDocumentsForUser(uid: string, eventId: s
   const inspected = await Promise.all(applicationDocuments.map(downloadApplicationDocument));
   let parsed: Awaited<ReturnType<typeof parseM1Docx>>[];
   try {
-    parsed = await Promise.all(inspected.map((item) => item.document.role === 'combined_application'
+    parsed = await Promise.all(inspected.map((item) => item.document.mimeType === PDF_MIME
       ? parseM1Pdf(item.buffer)
       : parseM1Docx(item.buffer)));
   } catch (error) {
@@ -145,9 +146,9 @@ export async function extractApplicationDocumentsForUser(uid: string, eventId: s
 }
 
 export function validateDraftDocuments(eventId: string, versionId: string, value: unknown): M1DraftDocument[] {
-  if (!Array.isArray(value)) throw new HttpsError('failed-precondition', 'Upload a combined application PDF or the completed Core and scenario DOCX files before extraction.');
+  if (!Array.isArray(value)) throw new HttpsError('failed-precondition', 'Upload a combined application PDF/DOCX or the completed Core and scenario PDF/DOCX files before extraction.');
   const documents = value as M1DraftDocument[];
-  if (documents.length < 1) throw new HttpsError('failed-precondition', 'Upload a combined application PDF or the two completed DOCX files.');
+  if (documents.length < 1) throw new HttpsError('failed-precondition', 'Upload a combined application PDF/DOCX or the two completed PDF/DOCX files.');
   if (documents.length > 20) throw new HttpsError('failed-precondition', 'The Draft document list exceeds the 20-file limit.');
   const coreCount = documents.filter((document) => document?.role === 'core_template').length;
   const scenarioCount = documents.filter((document) => document?.role === 'scenario_template').length;
@@ -155,7 +156,7 @@ export function validateDraftDocuments(eventId: string, versionId: string, value
   const splitValid = combinedCount === 0 && coreCount === 1 && scenarioCount === 1;
   const combinedValid = combinedCount === 1 && coreCount === 0 && scenarioCount === 0;
   if (!splitValid && !combinedValid) {
-    throw new HttpsError('failed-precondition', 'Use either one combined application PDF or exactly one completed Core DOCX and one completed scenario DOCX.');
+    throw new HttpsError('failed-precondition', 'Use either one combined application PDF/DOCX or exactly one completed Core PDF/DOCX and one completed scenario PDF/DOCX.');
   }
   const paths = new Set<string>();
   for (const document of documents) {
@@ -181,16 +182,11 @@ export function validateDraftDocuments(eventId: string, versionId: string, value
       throw new HttpsError('invalid-argument', 'Draft document metadata is invalid.');
     }
     paths.add(document.path);
-    if ((document.role === 'core_template' || document.role === 'scenario_template')
-      && (document.mimeType !== DOCX_MIME || !document.originalName.toLocaleLowerCase().endsWith('.docx'))) {
-      throw new HttpsError('invalid-argument', 'Completed application templates must be DOCX files.');
-    }
-    if (document.role === 'combined_application'
-      && (document.mimeType !== PDF_MIME || !document.originalName.toLocaleLowerCase().endsWith('.pdf'))) {
-      throw new HttpsError('invalid-argument', 'The combined application must be a PDF file.');
+    if (document.role !== 'supporting_evidence' && !isApplicationDocumentFormat(document)) {
+      throw new HttpsError('invalid-argument', 'Completed application documents must be PDF or DOCX files with matching file extensions.');
     }
     if (document.role === 'supporting_evidence' && !EVIDENCE_MIME_TYPES.has(document.mimeType)) {
-      throw new HttpsError('invalid-argument', 'Supporting evidence metadata must identify a PDF, JPEG, PNG, or WebP file.');
+      throw new HttpsError('invalid-argument', 'Supporting evidence metadata must identify a PDF, DOCX, JPEG, PNG, or WebP file.');
     }
   }
   return documents;
@@ -209,13 +205,19 @@ async function downloadApplicationDocument(document: M1DraftDocument): Promise<{
   if (!exists) throw new HttpsError('failed-precondition', `The uploaded document is missing: ${document.originalName}.`);
   const [metadata] = await file.getMetadata();
   const size = Number(metadata.size);
-  const expectedMime = document.role === 'combined_application' ? PDF_MIME : DOCX_MIME;
-  if (metadata.contentType !== expectedMime || !Number.isSafeInteger(size) || size <= 0 || size > MAX_DOCX_BYTES
+  if (!APPLICATION_MIME_TYPES.has(document.mimeType) || metadata.contentType !== document.mimeType
+    || !Number.isSafeInteger(size) || size <= 0 || size > MAX_DOCX_BYTES
     || size !== document.sizeBytes) {
     throw new HttpsError('invalid-argument', `Storage metadata does not match ${document.originalName}.`);
   }
   const [buffer] = await file.download();
   return { document, buffer, sha256: createHash('sha256').update(buffer).digest('hex') };
+}
+
+function isApplicationDocumentFormat(document: M1DraftDocument): boolean {
+  const lowerName = document.originalName.toLocaleLowerCase();
+  return (document.mimeType === PDF_MIME && lowerName.endsWith('.pdf'))
+    || (document.mimeType === DOCX_MIME && lowerName.endsWith('.docx'));
 }
 
 function draftDocumentFingerprint(value: unknown): string {

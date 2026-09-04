@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EventDetails } from '@shared/types';
+import { EventDetails, M1DocumentExtraction, M1_EXTRACTION_SCHEMA_VERSION } from '@shared/types';
 import { applyM1ExtractedFields, createM1DraftRecord, extractionMatchesDraftDocuments, isEditableApplicationStatus, isSelectableRegistryVenue, organizerAdminDecisionLabel, organizerPublicationLabel, organizerPublicationStateFromProjection, reconcileM1EvidenceManifest, validateEventApplication, validateM1EvidenceChecklist, validateTemplateCompatibility } from './organizerApplication';
 import { createTemplateSelection } from '../../features/m1/templateRegistry';
 
@@ -164,13 +164,13 @@ describe('organizer application lifecycle helpers', () => {
       sizeBytes: 100, uploadedAt: 1, schemaVersion: '2026-08-28-document-v1' as const,
     }];
     expect(validateEventApplication(validDetails(), documents.map((document) => document.path), templateSelection, documents, '')).toEqual(expect.arrayContaining([
-      'Upload either one combined application PDF or one completed Core DOCX and one completed scenario DOCX.',
+      'Upload either one combined PDF/DOCX or one completed Core PDF/DOCX and one completed scenario PDF/DOCX.',
       'Extract and review the completed application documents before submission.',
     ]));
 
     const combined = [{ ...documents[0], path: 'event_documents/event-1/v1/combined.pdf', role: 'combined_application' as const, originalName: 'combined.pdf', mimeType: 'application/pdf' }];
     expect(validateEventApplication(validDetails(), combined.map((document) => document.path), templateSelection, combined, 'extract-1'))
-      .not.toContain('Upload either one combined application PDF or one completed Core DOCX and one completed scenario DOCX.');
+      .not.toContain('Upload either one combined PDF/DOCX or one completed Core PDF/DOCX and one completed scenario PDF/DOCX.');
   });
 
   it('does not restore a stale extraction after either completed template is replaced', () => {
@@ -179,9 +179,9 @@ describe('organizer application lifecycle helpers', () => {
       originalName: `${role}.docx`, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       sizeBytes: 100, uploadedAt: 1, schemaVersion: '2026-08-28-document-v1' as const,
     }));
-    const extraction = {
+    const extraction: M1DocumentExtraction = {
       extractionId: 'extract-1', eventId: 'event-1', editableVersionId: 'v1', status: 'ready' as const,
-      schemaVersion: '2026-08-29-document-fields-v2' as const, templateRegistryVersion: templateSelection.templateRegistryVersion,
+      schemaVersion: M1_EXTRACTION_SCHEMA_VERSION, templateRegistryVersion: templateSelection.templateRegistryVersion,
       coreTemplateId: templateSelection.coreTemplateId, scenarioTemplateId: templateSelection.scenarioTemplateId,
       sourceDocuments: documents.map((document) => ({ ...document, role: document.role, sha256: 'a'.repeat(64) })),
       extractedFields: [], rawFieldIds: [], warnings: [], completionPercent: 0, createdAt: 1, createdBy: 'organizer-1',
@@ -196,9 +196,9 @@ describe('organizer application lifecycle helpers', () => {
       originalName: 'combined.pdf', mimeType: 'application/pdf', sizeBytes: 100, uploadedAt: 1,
       schemaVersion: '2026-08-28-document-v1' as const,
     };
-    const extraction = {
+    const extraction: M1DocumentExtraction = {
       extractionId: 'extract-combined', eventId: 'event-1', editableVersionId: 'v1', status: 'ready' as const,
-      schemaVersion: '2026-08-29-document-fields-v2' as const, templateRegistryVersion: templateSelection.templateRegistryVersion,
+      schemaVersion: M1_EXTRACTION_SCHEMA_VERSION, templateRegistryVersion: templateSelection.templateRegistryVersion,
       coreTemplateId: templateSelection.coreTemplateId, scenarioTemplateId: templateSelection.scenarioTemplateId,
       sourceDocuments: [{ ...document, sha256: 'b'.repeat(64) }], extractedFields: [], rawFieldIds: [], warnings: [],
       completionPercent: 0, createdAt: 1, createdBy: 'organizer-1',

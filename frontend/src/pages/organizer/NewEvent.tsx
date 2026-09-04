@@ -18,6 +18,8 @@ import { FileCheck2, FileText, RotateCcw, Sparkles } from 'lucide-react';
 import { isM1EvidenceForcedRequired, m1EvidenceRequirementsFor } from '@shared/m1EvidenceContract';
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const PDF_MIME = 'application/pdf';
+const APPLICATION_DOCUMENT_ACCEPT = '.pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
 export default function NewEvent() {
   const { user, profile } = useAuth();
@@ -250,19 +252,15 @@ export default function NewEvent() {
         ? !applicationRoles.has(document.role)
         : document.role !== role && document.role !== 'combined_application');
     if (retained.length + files.length > 20) return toast.error('Submit no more than 20 application documents.');
-    const allowedEvidenceTypes = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
+    const allowedEvidenceTypes = new Set([PDF_MIME, DOCX_MIME, 'image/jpeg', 'image/png', 'image/webp']);
     const invalid = files.find((file) => file.size === 0
       || file.size > 10 * 1024 * 1024
       || (role === 'supporting_evidence'
-        ? !allowedEvidenceTypes.has(file.type)
-        : role === 'combined_application'
-          ? !(file.type === 'application/pdf' || (!file.type && file.name.toLocaleLowerCase().endsWith('.pdf')))
-          : !(file.type === DOCX_MIME || (!file.type && file.name.toLocaleLowerCase().endsWith('.docx')))));
+        ? !allowedEvidenceTypes.has(normalizedUploadMime(file))
+        : !applicationDocumentMime(file)));
     if (invalid) return toast.error(role === 'supporting_evidence'
-      ? `${invalid.name} must be a non-empty PDF, JPEG, PNG, or WebP file no larger than 10 MB.`
-      : role === 'combined_application'
-        ? `${invalid.name} must be a non-empty PDF file no larger than 10 MB.`
-        : `${invalid.name} must be a non-empty DOCX file no larger than 10 MB.`);
+      ? `${invalid.name} must be a non-empty PDF, DOCX, JPEG, PNG, or WebP file no larger than 10 MB.`
+      : `${invalid.name} must be a non-empty PDF or DOCX file no larger than 10 MB.`);
     setUploading(true);
     try {
       const id = await ensureDraft();
@@ -271,7 +269,7 @@ export default function NewEvent() {
         const file = files[index];
         const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-150) || 'document';
         const path = `event_documents/${id}/${editableVersionId}/${crypto.randomUUID()}-${safeName}`;
-        const mimeType = role === 'supporting_evidence' ? file.type : role === 'combined_application' ? 'application/pdf' : DOCX_MIME;
+        const mimeType = normalizedUploadMime(file);
         const task = uploadBytesResumable(ref(storage, path), file, { contentType: mimeType });
         await new Promise<void>((resolve, reject) => task.on('state_changed', (snapshot) => {
           const fileProgress = snapshot.bytesTransferred / snapshot.totalBytes;
@@ -665,12 +663,12 @@ export default function NewEvent() {
 
           <fieldset className="space-y-5 border-t border-[#e3dacb] pt-8">
             <legend className="section-title mb-2 pr-4">Completed application documents</legend>
-            <p className="text-sm leading-6 text-ink-500">Upload one combined, text-searchable PDF, or upload the completed Core and recommended scenario DOCX separately. STERAS detects both template IDs and Field IDs before auto-filling this form.</p>
-            <TemplateUploadCard label="Combined Core + scenario PDF" document={combinedUpload} uploading={uploading} format="PDF" onChange={(event) => handleFiles(event, 'combined_application')} onRemove={removeDocument} />
+            <p className="text-sm leading-6 text-ink-500">Upload one combined, text-searchable PDF/DOCX, or upload the completed Core and recommended scenario as PDF/DOCX files separately. STERAS detects both template IDs and Field IDs before auto-filling this form.</p>
+            <TemplateUploadCard label="Combined Core + scenario application" document={combinedUpload} uploading={uploading} onChange={(event) => handleFiles(event, 'combined_application')} onRemove={removeDocument} />
             <div className="flex items-center gap-3 text-xs font-bold uppercase tracking-[0.08em] text-ink-400"><span className="h-px flex-1 bg-[#e3dacb]" /><span>or upload separately</span><span className="h-px flex-1 bg-[#e3dacb]" /></div>
             <div className="grid gap-4 md:grid-cols-2">
-              <TemplateUploadCard label="Core application DOCX" document={coreUpload} uploading={uploading} onChange={(event) => handleFiles(event, 'core_template')} onRemove={removeDocument} />
-              <TemplateUploadCard label="Scenario-specific DOCX" document={scenarioUpload} uploading={uploading} onChange={(event) => handleFiles(event, 'scenario_template')} onRemove={removeDocument} />
+              <TemplateUploadCard label="Core application PDF or DOCX" document={coreUpload} uploading={uploading} onChange={(event) => handleFiles(event, 'core_template')} onRemove={removeDocument} />
+              <TemplateUploadCard label="Scenario-specific PDF or DOCX" document={scenarioUpload} uploading={uploading} onChange={(event) => handleFiles(event, 'scenario_template')} onRemove={removeDocument} />
             </div>
             {uploading && <div className="h-1.5 overflow-hidden rounded bg-cream-200"><div className="h-full bg-brand-600 transition-transform" style={{ transform: `scaleX(${uploadProgress / 100})`, transformOrigin: 'left' }} /></div>}
             <button type="button" className="btn-primary" disabled={(!combinedUpload && (!coreUpload || !scenarioUpload)) || uploading || extracting} onClick={extractDocuments}>
@@ -694,7 +692,7 @@ export default function NewEvent() {
 
           <fieldset className="space-y-4 border-t border-[#e3dacb] pt-8">
             <legend className="section-title mb-2 pr-4">Supporting evidence</legend>
-            <p className="text-sm leading-6 text-ink-500">Complete every Core and scenario checklist item. A current PDF or image can support more than one requirement; conditional items need either evidence or a clear not-applicable reason.</p>
+            <p className="text-sm leading-6 text-ink-500">Complete every Core and scenario checklist item. A current PDF, DOCX, or image can support more than one requirement; conditional items need either evidence or a clear not-applicable reason.</p>
             <div className="rounded-lg border border-brand-200 bg-brand-50 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2"><p className="font-semibold text-ink-900">Evidence completeness</p><span className="badge bg-white text-brand-700">{completeEvidenceCount} / {evidenceDefinitions.length} complete</span></div>
               <div className="mt-3 h-2 overflow-hidden rounded-full bg-white"><div className="h-full rounded-full bg-brand-600" style={{ width: `${evidenceDefinitions.length ? Math.round((completeEvidenceCount / evidenceDefinitions.length) * 100) : 0}%` }} /></div>
@@ -717,7 +715,7 @@ export default function NewEvent() {
                     {assigned ? <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-brand-200 bg-white px-3 py-2 text-sm"><span className="min-w-0 truncate font-medium text-ink-800">{assigned.originalName}</span><div className="flex gap-1"><button type="button" className="min-h-11 px-3 font-semibold text-brand-700" onClick={() => viewDocument(assigned.path)}>View</button><button type="button" className="min-h-11 px-3 font-semibold text-red-700" onClick={() => updateEvidenceResponse(definition.id, { requirementId: definition.id, applicability: 'required' })}>Remove</button></div></div> : <p className="text-sm font-medium text-red-700">No evidence file linked.</p>}
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                       {supportingUploads.length > 0 && <select aria-label={`${definition.id} existing evidence`} className="input min-w-0 flex-1" value={response.documentPath ?? ''} onChange={(event) => updateEvidenceResponse(definition.id, { requirementId: definition.id, applicability: 'required', ...(event.target.value ? { documentPath: event.target.value } : {}) })}><option value="">Choose an uploaded file</option>{supportingUploads.map((document) => <option key={document.path} value={document.path}>{document.originalName}</option>)}</select>}
-                      <label className="btn-secondary cursor-pointer justify-center"><span>{assigned ? 'Replace file' : 'Upload file'}</span><input type="file" accept="application/pdf,image/jpeg,image/png,image/webp" disabled={uploading} onChange={(event) => handleFiles(event, 'supporting_evidence', definition.id)} className="sr-only" /></label>
+                      <label className="btn-secondary cursor-pointer justify-center"><span>{assigned ? 'Replace file' : 'Upload file'}</span><input type="file" accept="application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/jpeg,image/png,image/webp,.pdf,.docx" disabled={uploading} onChange={(event) => handleFiles(event, 'supporting_evidence', definition.id)} className="sr-only" /></label>
                     </div>
                   </div>}
                 </article>;
@@ -768,21 +766,31 @@ function legacyDocumentName(path: string): string {
   }
 }
 
-function TemplateUploadCard({ label, document, uploading, format = 'DOCX', onChange, onRemove }: {
+function TemplateUploadCard({ label, document, uploading, onChange, onRemove }: {
   label: string;
   document?: M1DraftDocument;
   uploading: boolean;
-  format?: 'DOCX' | 'PDF';
   onChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onRemove: (path: string) => void;
 }) {
   return <div className={`rounded-lg border p-4 ${document ? 'border-brand-200 bg-brand-50' : 'border-[#ded5c5] bg-cream-50'}`}>
     <div className="flex items-start gap-3"><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${document ? 'bg-brand-700 text-white' : 'bg-cream-200 text-ink-500'}`}>{document ? <FileCheck2 size={17} /> : <FileText size={17} />}</span><div className="min-w-0"><p className="text-sm font-semibold text-ink-900">{label}</p><p className="mt-1 truncate text-xs text-ink-500">{document?.originalName ?? 'No completed file uploaded'}</p></div></div>
     <div className="mt-4 flex flex-wrap gap-2">
-      <label className="btn-secondary cursor-pointer"><span>{document ? `Replace ${format}` : `Upload ${format}`}</span><input type="file" accept={format === 'PDF' ? ".pdf,application/pdf" : ".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"} disabled={uploading} onChange={onChange} className="sr-only" /></label>
+      <label className="btn-secondary cursor-pointer"><span>{document ? 'Replace PDF/DOCX' : 'Upload PDF/DOCX'}</span><input type="file" accept={APPLICATION_DOCUMENT_ACCEPT} disabled={uploading} onChange={onChange} className="sr-only" /></label>
       {document && <button type="button" className="min-h-11 px-3 text-sm font-semibold text-red-700" onClick={() => onRemove(document.path)}>Remove</button>}
     </div>
   </div>;
+}
+
+function applicationDocumentMime(file: File): string | undefined {
+  const lowerName = file.name.toLocaleLowerCase();
+  if ((file.type === PDF_MIME || file.type === '') && lowerName.endsWith('.pdf')) return PDF_MIME;
+  if ((file.type === DOCX_MIME || file.type === '') && lowerName.endsWith('.docx')) return DOCX_MIME;
+  return undefined;
+}
+
+function normalizedUploadMime(file: File): string {
+  return applicationDocumentMime(file) ?? file.type;
 }
 
 function groupExtractedFields(extraction: M1DocumentExtraction): Array<{ label: string; count: number }> {

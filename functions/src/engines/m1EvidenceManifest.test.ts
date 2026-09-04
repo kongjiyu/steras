@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { EventDetails, M1_DOCUMENT_SCHEMA_VERSION, M1DraftDocument, M1TemplateSelection } from '@shared/types';
+import { EventDetails, M1_DOCUMENT_SCHEMA_VERSION, M1_TEMPLATE_REGISTRY_VERSION, M1DraftDocument, M1TemplateSelection } from '@shared/types';
 import { m1EvidenceRequirementsFor } from '@shared/m1EvidenceContract';
 import { validateM1EvidenceManifest } from './m1EvidenceManifest';
 
 const selection: M1TemplateSelection = {
   eventCategory: 'sports_recreational', venueSetting: 'outdoor_route_based', coreTemplateId: 'STERAS-CORE',
-  scenarioTemplateId: 'STERAS-T06-SPT-OR-v1.0', templateRegistryVersion: '2026-08-28-v1', selectedAt: 1,
+  scenarioTemplateId: 'STERAS-T06-SPT-OR-v1.0', templateRegistryVersion: M1_TEMPLATE_REGISTRY_VERSION, selectedAt: 1,
 };
 const details = { riskProfile: { temporaryStructures: false } } as EventDetails;
 

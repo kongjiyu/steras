@@ -29,6 +29,24 @@ const REQUIRED_AUTO_FILL_TARGETS = [
   'organizerName',
   'organizerEmail',
   'organizerPhone',
+  'riskProfile.vulnerableAttendeesPercent',
+  'riskProfile.standingAttendeesPercent',
+  'riskProfile.internationalAttendees',
+  'riskProfile.alcoholServed',
+  'riskProfile.foodServed',
+  'riskProfile.freeDrinkingWater',
+  'riskProfile.ticketedEntry',
+  'riskProfile.overnightAccommodation',
+  'riskProfile.pyrotechnics',
+  'riskProfile.temporaryStructures',
+  'riskProfile.rivalryOrTensionExpected',
+  'riskProfile.crowdManagementPlan',
+  'riskProfile.trafficManagementPlan',
+  'riskProfile.severeWeatherPlan',
+  'riskProfile.medicalPlan',
+  'riskProfile.evacuationPlanTested',
+  'riskProfile.authorityCoordinationConfirmed',
+  'riskProfile.nearestHospitalTravelMinutes',
 ] as const;
 
 export async function parseM1Docx(buffer: Buffer): Promise<ParsedM1Document> {
@@ -188,17 +206,17 @@ export function validateTemplateIdentity(
 
 export function validateCombinedTemplateIdentity(document: ParsedM1Document, expectedScenarioTemplateId: string): string[] {
   const errors: string[] = [];
-  if (!containsToken(document.text, 'STERAS-CORE')) errors.push('The combined PDF does not contain the STERAS Core template.');
+  if (!containsToken(document.text, 'STERAS-CORE')) errors.push('The combined document does not contain the STERAS Core template.');
   if (!['EVENT_NAME', 'EVENT_DATES', 'EVENT_ADDRESS', 'TOTAL_ATTENDANCE', 'RESPONSIBLE_PERSON'].every((fieldId) => document.fields.has(fieldId))) {
-    errors.push('The combined PDF is missing required Core STERAS Field IDs.');
+    errors.push('The combined document is missing required Core STERAS Field IDs.');
   }
   if (!containsToken(document.text, expectedScenarioTemplateId)) {
-    errors.push(`The combined PDF does not contain scenario template ${expectedScenarioTemplateId}.`);
+    errors.push(`The combined document does not contain scenario template ${expectedScenarioTemplateId}.`);
   }
   const expectedPrefix = expectedScenarioTemplateId.match(/STERAS-(T\d{2})-/)?.[1];
   const scenarioPrefixes = new Set([...document.text.matchAll(/\b(T\d{2})-[A-Z]\d{2}\s*\//g)].map((match) => match[1]));
   if (!expectedPrefix || scenarioPrefixes.size !== 1 || !scenarioPrefixes.has(expectedPrefix)) {
-    errors.push(`The combined PDF scenario Field IDs do not match ${expectedScenarioTemplateId}.`);
+    errors.push(`The combined document scenario Field IDs do not match ${expectedScenarioTemplateId}.`);
   }
   return errors;
 }
@@ -241,17 +259,49 @@ export function mapM1Documents(core: ParsedM1Document, scenario: ParsedM1Documen
 
   const capacity = findScenarioInteger(scenario.fields, ['APPROVED_CAPACITY', 'SITE_CAPACITY', 'ROUTE_CAPACITY']);
   add('venueCapacity', capacity, scenarioIds(scenario, ['APPROVED_CAPACITY', 'SITE_CAPACITY', 'ROUTE_CAPACITY']));
-  add('riskProfile.pyrotechnics', affirmativeScenarioField(scenario, ['SPECIAL_EFFECTS', 'PYROTECHNICS', 'FIREWORKS']), scenarioIds(scenario, ['SPECIAL_EFFECTS', 'PYROTECHNICS', 'FIREWORKS']));
-  add('riskProfile.temporaryStructures', affirmativeScenarioField(scenario, ['TEMPORARY_STRUCTURES']), scenarioIds(scenario, ['TEMPORARY_STRUCTURES']));
-  add('riskProfile.foodServed', affirmativeScenarioField(scenario, ['FOOD_BEVERAGE_INSIDE', 'FOOD_BEVERAGE', 'FOOD_SERVICE']), scenarioIds(scenario, ['FOOD_BEVERAGE_INSIDE', 'FOOD_BEVERAGE', 'FOOD_SERVICE']));
-  add('riskProfile.alcoholServed', affirmativeScenarioField(scenario, ['ALCOHOL_SERVICE']), scenarioIds(scenario, ['ALCOHOL_SERVICE']));
-  add('riskProfile.ticketedEntry', affirmative(core.fields.get('REGISTRATION_TICKETING')), ['REGISTRATION_TICKETING']);
+  add('riskProfile.vulnerableAttendeesPercent', boundedWholeNumber(core.fields.get('VULNERABLE_ATTENDEES_PERCENT'), 0, 100), ['VULNERABLE_ATTENDEES_PERCENT']);
+  add('riskProfile.standingAttendeesPercent', boundedWholeNumber(core.fields.get('STANDING_ATTENDEES_PERCENT'), 0, 100), ['STANDING_ATTENDEES_PERCENT']);
+  addRiskBoolean('riskProfile.internationalAttendees', 'INTERNATIONAL_ATTENDEES');
+  addRiskBoolean('riskProfile.alcoholServed', 'ALCOHOL_SERVED', ['ALCOHOL_SERVICE']);
+  addRiskBoolean('riskProfile.foodServed', 'FOOD_SERVED', ['FOOD_BEVERAGE_INSIDE', 'FOOD_BEVERAGE', 'FOOD_SERVICE']);
+  addRiskBoolean('riskProfile.freeDrinkingWater', 'FREE_DRINKING_WATER');
+  addRiskBoolean('riskProfile.ticketedEntry', 'TICKETED_ENTRY', ['REGISTRATION_TICKETING']);
+  addRiskBoolean('riskProfile.overnightAccommodation', 'OVERNIGHT_ACCOMMODATION');
+  addRiskBoolean('riskProfile.pyrotechnics', 'PYROTECHNICS', ['SPECIAL_EFFECTS', 'PYROTECHNICS', 'FIREWORKS']);
+  addRiskBoolean('riskProfile.temporaryStructures', 'ALL_HAZARDS_TEMPORARY_STRUCTURES', ['TEMPORARY_STRUCTURES']);
+  addRiskBoolean('riskProfile.rivalryOrTensionExpected', 'RIVALRY_OR_TENSION_EXPECTED');
+  addRiskBoolean('riskProfile.crowdManagementPlan', 'CROWD_MANAGEMENT_PLAN');
+  addRiskBoolean('riskProfile.trafficManagementPlan', 'TRAFFIC_MANAGEMENT_PLAN');
+  addRiskBoolean('riskProfile.severeWeatherPlan', 'SEVERE_WEATHER_PLAN');
+  addRiskBoolean('riskProfile.medicalPlan', 'MEDICAL_PLAN');
+  addRiskBoolean('riskProfile.evacuationPlanTested', 'EVACUATION_PLAN_TESTED');
+  addRiskBoolean('riskProfile.authorityCoordinationConfirmed', 'AUTHORITY_COORDINATION_CONFIRMED');
+  add('riskProfile.nearestHospitalTravelMinutes', boundedWholeNumber(core.fields.get('NEAREST_HOSPITAL_TRAVEL_MINUTES'), 0, 240), ['NEAREST_HOSPITAL_TRAVEL_MINUTES']);
 
   for (const target of REQUIRED_AUTO_FILL_TARGETS) {
     if (!extractedFields.some((field) => field.target === target)) warnings.push(`${target} was not extracted and must be completed manually.`);
   }
   const completed = REQUIRED_AUTO_FILL_TARGETS.filter((target) => extractedFields.some((field) => field.target === target)).length;
   return { extractedFields, warnings, completionPercent: Math.round((completed / REQUIRED_AUTO_FILL_TARGETS.length) * 100) };
+
+  function addRiskBoolean(
+    target: Extract<M1ExtractedField['target'], `riskProfile.${string}`>,
+    coreFieldId: string,
+    fallbackScenarioSuffixes: string[] = [],
+  ): void {
+    const coreValue = affirmative(core.fields.get(coreFieldId));
+    if (coreValue !== undefined) {
+      add(target, coreValue, [coreFieldId]);
+      return;
+    }
+    const fallbackValue = fallbackScenarioSuffixes.includes('REGISTRATION_TICKETING')
+      ? affirmative(core.fields.get('REGISTRATION_TICKETING'))
+      : affirmativeScenarioField(scenario, fallbackScenarioSuffixes);
+    const fallbackIds = fallbackScenarioSuffixes.includes('REGISTRATION_TICKETING')
+      ? ['REGISTRATION_TICKETING']
+      : scenarioIds(scenario, fallbackScenarioSuffixes);
+    add(target, fallbackValue, fallbackIds);
+  }
 }
 
 function xmlText(xml: string): string {
@@ -293,6 +343,13 @@ function firstSafeInteger(value: string | undefined): number | undefined {
   if (!match) return undefined;
   const number = Number(match[0]);
   return Number.isSafeInteger(number) && number > 0 ? number : undefined;
+}
+
+function boundedWholeNumber(value: string | undefined, minimum: number, maximum: number): number | undefined {
+  const match = value?.replace(/,/g, '').match(/\b\d+\b/);
+  if (!match) return undefined;
+  const number = Number(match[0]);
+  return Number.isSafeInteger(number) && number >= minimum && number <= maximum ? number : undefined;
 }
 
 function firstEmail(value: string): string | undefined {

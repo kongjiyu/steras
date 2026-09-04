@@ -128,7 +128,7 @@ export function validateEventApplication(
     const combinedCount = draftDocuments.filter((document) => document.role === 'combined_application').length;
     if (!((combinedCount === 1 && coreCount === 0 && scenarioCount === 0)
       || (combinedCount === 0 && coreCount === 1 && scenarioCount === 1))) {
-      errors.push('Upload either one combined application PDF or one completed Core DOCX and one completed scenario DOCX.');
+      errors.push('Upload either one combined PDF/DOCX or one completed Core PDF/DOCX and one completed scenario PDF/DOCX.');
     }
     if (!currentExtractionId) errors.push('Extract and review the completed application documents before submission.');
     if (templateSelection) errors.push(...validateM1EvidenceChecklist(details, templateSelection, draftDocuments, evidenceManifest));
@@ -244,6 +244,15 @@ export function validateM1EvidenceChecklist(
 export function applyM1ExtractedFields(details: EventDetails, fields: M1ExtractedField[]): EventDetails {
   const next: EventDetails = { ...details, riskProfile: completeRiskProfile(details.riskProfile) };
   for (const field of fields) {
+    if (field.target.startsWith('riskProfile.')) {
+      const key = field.target.slice('riskProfile.'.length) as keyof EventRiskProfile;
+      if (RISK_BOOLEAN_FIELDS.includes(key as (typeof RISK_BOOLEAN_FIELDS)[number]) && typeof field.value === 'boolean') {
+        next.riskProfile = { ...next.riskProfile, [key]: field.value };
+      } else if (RISK_NUMERIC_FIELDS.has(key) && typeof field.value === 'number' && Number.isFinite(field.value)) {
+        next.riskProfile = { ...next.riskProfile, [key]: field.value };
+      }
+      continue;
+    }
     switch (field.target) {
       case 'name': case 'description': case 'venueAddress': case 'emergencyPlanSummary':
       case 'organizerName': case 'organizerEmail': case 'organizerPhone':
@@ -255,13 +264,6 @@ export function applyM1ExtractedFields(details: EventDetails, fields: M1Extracte
       case 'venueCapacity': case 'expectedAttendance': case 'startDatetime': case 'endDatetime':
         if (typeof field.value === 'number' && Number.isFinite(field.value)) Object.assign(next, { [field.target]: field.value });
         break;
-      case 'riskProfile.pyrotechnics': case 'riskProfile.temporaryStructures': case 'riskProfile.foodServed':
-      case 'riskProfile.alcoholServed': case 'riskProfile.ticketedEntry': {
-        if (typeof field.value !== 'boolean') break;
-        const key = field.target.slice('riskProfile.'.length) as keyof EventRiskProfile;
-        next.riskProfile = { ...next.riskProfile, [key]: field.value };
-        break;
-      }
     }
   }
   return next;
@@ -338,6 +340,11 @@ const RISK_BOOLEAN_FIELDS = [
   'evacuationPlanTested',
   'authorityCoordinationConfirmed',
 ] as const;
+const RISK_NUMERIC_FIELDS = new Set<keyof EventRiskProfile>([
+  'vulnerableAttendeesPercent',
+  'standingAttendeesPercent',
+  'nearestHospitalTravelMinutes',
+]);
 
 function validateRiskProfile(value: EventDetails['riskProfile'], errors: string[]): void {
   if (!value || typeof value !== 'object') {

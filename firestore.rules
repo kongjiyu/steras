@@ -73,7 +73,7 @@ service cloud.firestore {
           'scenarioTemplateId', 'templateRegistryVersion', 'selectedAt'
         ])
         && data.templateSelection.coreTemplateId == 'STERAS-CORE'
-        && data.templateSelection.templateRegistryVersion == '2026-08-28-v1'
+        && data.templateSelection.templateRegistryVersion == '2026-09-04-v2'
         && data.templateSelection.selectedAt is int
         && data.templateSelection.selectedAt > 0
         && (data.eventDetails.type + '|' + data.templateSelection.eventCategory) in [

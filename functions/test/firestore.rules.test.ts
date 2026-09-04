@@ -28,6 +28,7 @@ import {
 import { fetchHistoricalContext, fetchVenueContext } from '../src/engines/ruleBased';
 import {
   ASSESSMENT_SCHEMA_VERSION, HARD_RULE_VERSION, PROVISIONAL_FORMULA_VERSION,
+  M1_EXTRACTION_SCHEMA_VERSION, M1_TEMPLATE_REGISTRY_VERSION,
   SCORE_REVIEW_SCHEMA_VERSION,
   RESOURCE_CONFIG_VERSION, RESOURCE_FORMULA_VERSION, RESOURCE_KEYS, RESOURCE_SCHEMA_VERSION, RESOURCE_SOURCE_REGISTRY_VERSION,
 } from '@shared/types';
@@ -113,7 +114,7 @@ const validTemplateSelection = {
   venueSetting: 'outdoor_fixed_site',
   coreTemplateId: 'STERAS-CORE',
   scenarioTemplateId: 'STERAS-T08-CUL-OF-v1.0',
-  templateRegistryVersion: '2026-08-28-v1',
+  templateRegistryVersion: M1_TEMPLATE_REGISTRY_VERSION,
   selectedAt: 1,
 };
 
@@ -158,7 +159,7 @@ async function createValidDraftSubmissionAssets(eventId: string, versionId = 'v1
     eventId,
     editableVersionId: versionId,
     status: 'needs_review',
-    schemaVersion: '2026-08-29-document-fields-v2',
+    schemaVersion: M1_EXTRACTION_SCHEMA_VERSION,
     templateRegistryVersion: validTemplateSelection.templateRegistryVersion,
     coreTemplateId: validTemplateSelection.coreTemplateId,
     scenarioTemplateId: validTemplateSelection.scenarioTemplateId,
@@ -506,7 +507,7 @@ describe('Firestore security rules', () => {
       });
       await setDoc(doc(db, `events/structured-1/document_extractions/${extractionId}`), {
         extractionId, eventId: 'structured-1', editableVersionId: 'v1', status: 'needs_review',
-        schemaVersion: '2026-08-29-document-fields-v2', templateRegistryVersion: '2026-08-28-v1',
+        schemaVersion: M1_EXTRACTION_SCHEMA_VERSION, templateRegistryVersion: M1_TEMPLATE_REGISTRY_VERSION,
         coreTemplateId: 'STERAS-CORE', scenarioTemplateId: 'STERAS-T08-CUL-OF-v1.0',
         sourceDocuments: [{ path: core.path, role: core.role, originalName: core.originalName, mimeType: core.mimeType, sizeBytes: core.sizeBytes, sha256: 'core' }, { path: scenario.path, role: scenario.role, originalName: scenario.originalName, mimeType: scenario.mimeType, sizeBytes: scenario.sizeBytes, sha256: 'scenario' }],
         extractedFields: [], rawFieldIds: [], warnings: ['manual review'], completionPercent: 0, createdAt: 1, createdBy: 'organizer-1',
@@ -553,7 +554,7 @@ describe('Firestore security rules', () => {
     });
     await adminDb.doc(`events/${eventId}/document_extractions/${extractionId}`).set({
       extractionId, eventId, editableVersionId: 'v2', status: 'needs_review',
-      schemaVersion: '2026-08-29-document-fields-v2', templateRegistryVersion: '2026-08-28-v1',
+      schemaVersion: M1_EXTRACTION_SCHEMA_VERSION, templateRegistryVersion: M1_TEMPLATE_REGISTRY_VERSION,
       coreTemplateId: 'STERAS-CORE', scenarioTemplateId: validTemplateSelection.scenarioTemplateId,
       sourceDocuments: [core, scenario].map((document) => ({
         path: document.path, role: document.role, originalName: document.originalName,

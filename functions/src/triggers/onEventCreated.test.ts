@@ -1,18 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { latestValidHistoricalResource, nextResourceRevision, resourceDocumentId, invalidAiProposalForManualRecovery, __testOnlyManualLockState, isPipelineEventVersion } from './onEventCreated';
 import { isManualAssessmentSourceEligible } from '../engines/manualFinalisation';
-import { AISuccessfulProposal, EventVersion, RESOURCE_KEYS, RESOURCE_SCHEMA_VERSION, ResourceRecommendation } from '@shared/types';
+import { AISuccessfulProposal, EventVersion, M1_TEMPLATE_REGISTRY_VERSION, M1TemplateSelection, RESOURCE_KEYS, RESOURCE_SCHEMA_VERSION, ResourceRecommendation } from '@shared/types';
 import { buildSubmittedEventVersion } from '../utils/eventVersionHash';
 import { isM1EvidenceForcedRequired, m1EvidenceRequirementsFor } from '@shared/m1EvidenceContract';
 
 describe('M1-submitted assessment input integrity', () => {
   it('binds the exact template selection into the immutable version hash', () => {
-    const templateSelection = {
+    const templateSelection: M1TemplateSelection = {
       eventCategory: 'cultural_heritage_festival' as const,
       venueSetting: 'outdoor_fixed_site' as const,
       coreTemplateId: 'STERAS-CORE' as const,
       scenarioTemplateId: 'STERAS-T08-CUL-OF-v1.0',
-      templateRegistryVersion: '2026-08-28-v1' as const,
+      templateRegistryVersion: M1_TEMPLATE_REGISTRY_VERSION,
       selectedAt: 1,
     };
     const eventDetails = {

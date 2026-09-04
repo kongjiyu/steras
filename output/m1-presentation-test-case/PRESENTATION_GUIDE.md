@@ -17,7 +17,7 @@ All people, registration numbers, suppliers and approvals in this pack are synth
 1. `01_Filled_Core_Event_Application_T01.docx` - completed Core template.
 2. `02_Filled_T01_Indoor_Performance_Template.docx` - completed T01 template.
 3. `03_Core_Supporting_Evidence_Pack.pdf` - one consolidated demonstration file that can be linked to all nine always-required Core evidence items.
-4. `../pdf/m1-presentation-test-case/STERAS_DEMO_T01_Completed_Combined_Application.pdf` - completed Core and T01 forms merged into one searchable 17-page PDF for the combined-upload flow.
+4. `../pdf/m1-presentation-test-case/STERAS_DEMO_T01_Completed_Combined_Application.pdf` - completed Core and T01 forms merged into one searchable 18-page PDF for the combined-upload flow.
 
 ## Before the presentation
 
@@ -40,7 +40,7 @@ On **Create application**:
 
 ### 2. Upload and auto-fill
 
-Choose **Upload one combined PDF**, then upload:
+Choose **Upload one combined file**, then upload the rehearsal PDF below. Core, scenario and combined application slots all accept either PDF or DOCX.
 
 - `../pdf/m1-presentation-test-case/STERAS_DEMO_T01_Completed_Combined_Application.pdf`
 
@@ -49,7 +49,7 @@ Click **Extract and auto-fill**.
 Expected result:
 
 - **100% extracted** with no extraction warning.
-- The form is populated with event name, description, venue address, attendance, start/end date and time, organizer name, email, phone, emergency-plan summary, venue capacity, and the five document-derived risk flags.
+- The form is populated with event name, description, venue address, attendance, explicit start/end dates and times, organizer name, email, phone, emergency-plan summary, venue capacity, and all H01-H18 all-hazards values.
 - STERAS verifies that the same PDF contains both `STERAS-CORE` and the recommended `STERAS-T01-ENT-IN-v2.0` scenario identity before accepting the extracted values.
 
 ### 3. Review the form fields
@@ -70,18 +70,18 @@ Use these final values:
 | Event | Environment | Indoor |
 | Event | Coverage | Covered |
 | Event | Seating | Seated |
-| Event | Start date and time | 2026-10-24 14:00 |
-| Event | End date and time | 2026-10-24 18:00 |
-| Event | Description | A seated indoor showcase combining Malaysian cultural storytelling and acoustic music in a controlled four-hour programme. |
+| Event | Start date and time | 2026-09-30 09:00 |
+| Event | End date and time | 2026-09-30 18:00 |
+| Event | Description | A seated indoor showcase combining Malaysian cultural storytelling and acoustic music in a controlled programme for invited guests and members of the public. |
 | Organizer | Organizer name | Aina Rahman |
 | Organizer | Email | aina.rahman@example.com |
 | Organizer | Phone | +60 12-345 6789 |
 
 Keep the extracted emergency-plan summary. It should contain crowd management, security, medical, evacuation and disruption arrangements from the Core document.
 
-### 4. Complete the all-hazards profile
+### 4. Verify the auto-filled all-hazards profile
 
-Set every declaration explicitly. Use these checked values:
+The Core document includes H01-H18, so extraction should fill every declaration and numeric value. Compare the UI with the document and only correct a value if it differs. Expected checked values:
 
 - Crowd management plan declared
 - Traffic management plan declared
@@ -154,7 +154,7 @@ Choose **Not applicable** and enter the following reasons:
 
 - **Recommendation:** two answers choose one of 15 scenario templates while the Core template is always required.
 - **Preview:** organizers know exactly what they must complete before starting.
-- **Extraction:** one completed combined PDF populates the structured application, but the organizer still verifies every value.
+- **Extraction:** one completed combined PDF or DOCX populates the structured application, including the full all-hazards profile, but the organizer still verifies every value.
 - **Validation:** STERAS rejects a combined file whose Core or recommended scenario identity is missing or mismatched.
 - **Evidence mapping:** one uploaded file can support multiple requirement IDs, and every conditional item needs evidence or a clear reason.
 - **Integrity:** verified venue identity, exact capacity, Storage evidence and complete risk declarations are checked by the backend before submission.

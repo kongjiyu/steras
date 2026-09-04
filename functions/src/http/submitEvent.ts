@@ -368,7 +368,7 @@ async function loadCurrentExtraction(
   eventReference: FirebaseFirestore.DocumentReference,
 ): Promise<M1DocumentExtraction> {
   if (!event.currentExtractionId || !/^[A-Za-z0-9_-]{1,128}$/.test(event.currentExtractionId)) {
-    throw new HttpsError('failed-precondition', 'Extract and review the combined PDF or completed Core and scenario DOCX files before submission.');
+    throw new HttpsError('failed-precondition', 'Extract and review the combined PDF/DOCX or completed Core and scenario PDF/DOCX files before submission.');
   }
   const snapshot = await eventReference.collection(COLLECTIONS.DOCUMENT_EXTRACTIONS).doc(event.currentExtractionId).get();
   if (!snapshot.exists) throw new HttpsError('failed-precondition', 'The current document extraction could not be found. Extract the files again.');

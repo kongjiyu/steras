@@ -90,7 +90,7 @@ Final application status:
 
 ### 1.2 上传 combined PDF 并 auto-fill
 
-1. 选择 **Upload one combined PDF**。
+1. 选择 **Upload one combined file**。Core、scenario 和 combined application 三种 slot 都接受 PDF 或 DOCX；本次 rehearsal 使用 combined PDF。
 2. 上传：
 
 ```text
@@ -105,9 +105,9 @@ output/pdf/m1-presentation-test-case/STERAS_DEMO_T01_Completed_Combined_Applicat
 - 显示 **100% extracted**；
 - 系统识别到 `STERAS-CORE` 和 `STERAS-T01-ENT-IN-v2.0`；
 - `A06A / VENUE_NAME` 被识别为 `Kuala Lumpur Convention Centre`；
-- Event、Organizer、Venue、Emergency plan 和 risk-related fields 被填入。
+- Event、Organizer、Venue、Emergency plan，以及 H01–H18 全部 all-hazards fields 被填入。
 
-如果 extraction 失败，不要手动提交空白 form；先确认上传的是 17-page combined PDF，而不是其中一个 DOCX。旧版 combined PDF 没有 `A06A / VENUE_NAME`，即使重新 extraction 也不会得到 Venue name；请重新下载本指南链接的新版 PDF 再上传。
+如果 extraction 失败，不要手动提交空白 form；先确认上传的是新版 18-page combined PDF，而不是其中一个未合并的文件。旧版 combined PDF 没有完整 `A06A / VENUE_NAME` 和 H01–H18 fields，即使重新 extraction 也不能完整 auto-fill；请重新下载本指南链接的新版 PDF 再上传。
 
 ### 1.3 Review auto-filled fields
 
@@ -151,7 +151,7 @@ The event team will operate controlled entry and exit points, maintain clear eme
 
 ### 1.4 填 all-hazards profile
 
-每个 boolean 都必须明确 checked 或 unchecked。
+新版 Core template 已填写 H01–H18，成功 extraction 后这些值应该已经自动出现。逐项对照 PDF；只有发现提取遗漏时才手动补填。每个 boolean 都必须明确 checked 或 unchecked。
 
 勾选：
 
@@ -601,7 +601,7 @@ The secondary queue lane remained active until the arrival peak ended. Additiona
 
 ### Venue name 没有从 combined PDF 提取
 
-- 确认上传的是本指南链接的新版 17-page combined PDF；
+- 确认上传的是本指南链接的新版 18-page combined PDF；
 - 打开 PDF 并确认 Core form 内存在 `A06A / VENUE_NAME`；
 - 如果使用的是之前下载的旧 PDF，请删除该 upload、重新下载新版 PDF、重新上传，再点击 **Extract and auto-fill**；
 - 如果网页仍显示旧 extraction 行为，先强制刷新 production 页面再重试；

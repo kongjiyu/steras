@@ -90,9 +90,9 @@ export type EventEnvironment = 'indoor' | 'outdoor' | 'mixed';
 export type VenueCoverage = 'covered' | 'partially_covered' | 'uncovered';
 export type SeatingType = 'seated' | 'standing' | 'mixed';
 
-export const M1_TEMPLATE_REGISTRY_VERSION = '2026-08-28-v1';
+export const M1_TEMPLATE_REGISTRY_VERSION = '2026-09-04-v2';
 export const M1_DOCUMENT_SCHEMA_VERSION = '2026-08-28-document-v1';
-export const M1_EXTRACTION_SCHEMA_VERSION = '2026-08-29-document-fields-v2';
+export const M1_EXTRACTION_SCHEMA_VERSION = '2026-09-04-document-fields-v3';
 export const M1_EVIDENCE_MANIFEST_SCHEMA_VERSION = '2026-08-28-evidence-v1';
 
 export type M1EventCategory =
@@ -140,11 +140,24 @@ export type M1AutoFillField =
   | 'organizerName'
   | 'organizerEmail'
   | 'organizerPhone'
+  | 'riskProfile.vulnerableAttendeesPercent'
+  | 'riskProfile.standingAttendeesPercent'
+  | 'riskProfile.internationalAttendees'
   | 'riskProfile.pyrotechnics'
   | 'riskProfile.temporaryStructures'
   | 'riskProfile.foodServed'
   | 'riskProfile.alcoholServed'
-  | 'riskProfile.ticketedEntry';
+  | 'riskProfile.freeDrinkingWater'
+  | 'riskProfile.ticketedEntry'
+  | 'riskProfile.overnightAccommodation'
+  | 'riskProfile.rivalryOrTensionExpected'
+  | 'riskProfile.crowdManagementPlan'
+  | 'riskProfile.trafficManagementPlan'
+  | 'riskProfile.severeWeatherPlan'
+  | 'riskProfile.medicalPlan'
+  | 'riskProfile.evacuationPlanTested'
+  | 'riskProfile.authorityCoordinationConfirmed'
+  | 'riskProfile.nearestHospitalTravelMinutes';
 
 export interface M1ExtractedField {
   target: M1AutoFillField;
