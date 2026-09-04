@@ -491,7 +491,7 @@ export default function AuthorityEventReview() {
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
-        <div className="space-y-5">
+        <div className="min-w-0 space-y-5">
           <section className="card">
             <div className="card-header"><div><h2 className="font-semibold">{assessment?.status === 'official_ready' ? 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual' ? 'Official manual assessment' : 'Official AI-assisted assessment' : 'Provisional category assessment'}</h2><p className="mt-0.5 text-xs text-ink-500">{assessment?.status === 'official_ready' ? 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual' ? 'Admin-authored recovery assessment · no AI score proposal' : 'Finalized human-reviewed risk inputs with retained AI provenance' : 'Validated AI proposal · authority confirmation required'}</p></div></div>
             <div className="card-body">
@@ -645,7 +645,7 @@ export default function AuthorityEventReview() {
           </section>
         </div>
 
-        <aside className="space-y-5">
+        <aside className="min-w-0 space-y-5">
           <section className="card">
             <div className="card-header"><h2 className="font-semibold">Review progress</h2></div>
             <div className="card-body space-y-3">
