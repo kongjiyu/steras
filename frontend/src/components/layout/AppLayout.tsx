@@ -19,7 +19,7 @@ export default function AppLayout() {
     { to: '/organizer', label: 'Dashboard' },
     { to: '/organizer/events/new', label: 'New Event' },
     { to: '/organizer/events', label: 'My Events' },
-    { to: '/incidents', label: 'Incidents' },
+    { to: '/organizer/incidents', label: 'Incidents' },
   ];
 
   const links = isOrganizer ? organizerLinks : [];
@@ -99,7 +99,7 @@ export default function AppLayout() {
           { to: '/organizer', label: 'Home', icon: Home, end: true },
           { to: '/organizer/events/new', label: 'New event', icon: CalendarPlus },
           { to: '/organizer/events', label: 'My events', icon: ClipboardList },
-          { to: '/incidents', label: 'Incidents', icon: Siren },
+          { to: '/organizer/incidents', label: 'Incidents', icon: Siren },
         ].map(({ to, label, icon: Icon, end }) => {
           const active = end ? location.pathname === to : location.pathname.startsWith(to);
           return <Link key={to} to={to} className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-md text-[11px] font-semibold ${active ? 'bg-brand-50 text-brand-700' : 'text-ink-500'}`}><Icon size={18} /><span>{label}</span></Link>;

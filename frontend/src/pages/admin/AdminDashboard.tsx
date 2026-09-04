@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { CSSProperties, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertOctagon,
+  ArrowRight,
   CalendarClock,
   CheckCircle2,
   ChevronRight,
   ClipboardList,
   Gauge,
+  Radio,
   ShieldCheck,
   Users,
   type LucideIcon,
@@ -16,7 +18,35 @@ import { db, isFirebaseConfigured } from '../../config/firebase';
 import { COLLECTIONS, EventRecord, UserProfile } from '@shared/types';
 import { WorkspaceTopBar } from '../../components/layout/Sidebar';
 import { useAuth } from '../../contexts/AuthContext';
+import logoMark from '../../assets/brand/steras-mark.svg';
+import '../authority/authority-dashboard.css';
 import './admin.css';
+
+type MotionStyle = CSSProperties & {
+  '--motion-order'?: number;
+  '--node-color'?: string;
+  '--node-delay'?: string;
+};
+
+const ADMIN_RADAR_POINTS = [
+  { x: 126, y: 91 },
+  { x: 307, y: 88 },
+  { x: 349, y: 196 },
+  { x: 230, y: 238 },
+  { x: 92, y: 205 },
+  { x: 225, y: 55 },
+] as const;
+
+const ADMIN_STATUS_COLOR: Record<EventRecord['status'], string> = {
+  Draft: '#aeb99f',
+  Pending: '#f0c340',
+  UnderReview: '#ff9c5b',
+  Approved: '#7fcf61',
+  Rejected: '#ff746d',
+  Cancelled: '#aeb99f',
+  Withdrawn: '#aeb99f',
+  'Manual Review Required': '#ff746d',
+};
 
 interface StatCard {
   label: string;
@@ -80,6 +110,95 @@ function formatRelative(ts: number) {
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
   return `${d}d ago`;
+}
+
+function AdminOperationalBrief({ events, loading }: { events: EventRecord[]; loading: boolean }) {
+  const active = events.filter((event) => event.status === 'Pending' || event.status === 'UnderReview' || event.status === 'Manual Review Required');
+  const spotlight = active[0] ?? events[0];
+  const pending = events.filter((event) => event.status === 'Pending').length;
+  const underReview = events.filter((event) => event.status === 'UnderReview').length;
+  const resolved = events.filter((event) => event.status === 'Approved' || event.status === 'Rejected' || event.status === 'Withdrawn').length;
+  const headline = loading
+    ? 'Synchronizing the operational picture.'
+    : active.length > 0
+      ? `${active.length} application${active.length === 1 ? '' : 's'} need administrative attention.`
+      : 'The review pipeline is clear.';
+
+  return (
+    <section className="ops-hero dashboard-enter" aria-labelledby="admin-operational-brief-title">
+      <div className="ops-hero__weave" aria-hidden="true" />
+      <div className="ops-hero__copy">
+        <div className="ops-live-label">
+          <span className="ops-live-label__beacon"><span /></span>
+          Live system brief
+          <span className="ops-live-label__agency">Admin</span>
+        </div>
+        <h2 id="admin-operational-brief-title">{headline}</h2>
+        <p className="ops-hero__lede">Coordinate intake, multi-agency review, officialisation and final application decisions from one operational view.</p>
+
+        {spotlight && (
+          <div className="spotlight-case">
+            <span className="spotlight-case__index">01</span>
+            <div><span>Next administrative action</span><strong>{spotlight.eventDetails.name}</strong></div>
+            <div className="admin-spotlight-status">{STATUS_LABELS[spotlight.status]}</div>
+          </div>
+        )}
+
+        <div className="ops-hero__actions">
+          <Link to={spotlight ? `/admin/applications/${spotlight.eventId}` : '/admin/applications'} className="command-button command-button--primary">
+            <span>{spotlight ? 'Open priority application' : 'Open application queue'}</span><ArrowRight size={17} aria-hidden="true" />
+          </Link>
+          {spotlight && <Link to="/admin/applications" className="command-button command-button--quiet">View full queue</Link>}
+        </div>
+
+        <dl className="ops-metric-rail" aria-label="Administrative workload summary">
+          <AdminHeroMetric label="Applications" value={events.length} detail="Current portfolio" order={1} />
+          <AdminHeroMetric label="New intake" value={pending} detail="Initial review" order={2} />
+          <AdminHeroMetric label="In review" value={underReview} detail="Officer workflow" order={3} />
+          <AdminHeroMetric label="Resolved" value={resolved} detail="Final outcomes" order={4} />
+        </dl>
+      </div>
+      <AdminOperationalRadar events={events.slice(0, ADMIN_RADAR_POINTS.length)} />
+    </section>
+  );
+}
+
+function AdminHeroMetric({ label, value, detail, order }: { label: string; value: number; detail: string; order: number }) {
+  return <div className="hero-metric" style={{ '--motion-order': order } as MotionStyle}><dt>{label}</dt><dd><strong>{value}</strong><span>{detail}</span></dd></div>;
+}
+
+function AdminOperationalRadar({ events }: { events: EventRecord[] }) {
+  const pending = events.filter((event) => event.status === 'Pending').length;
+  const reviewing = events.filter((event) => event.status === 'UnderReview' || event.status === 'Manual Review Required').length;
+  const complete = events.filter((event) => event.status === 'Approved' || event.status === 'Rejected').length;
+  return (
+    <div className="operational-radar" aria-label="Live application workflow field">
+      <div className="operational-radar__header"><div><Radio size={15} aria-hidden="true" /><span>Workflow field</span></div><span>{events.length} recent signal{events.length === 1 ? '' : 's'}</span></div>
+      <div className="operational-radar__stage">
+        <svg viewBox="0 0 440 300" className="operational-radar__svg" role="img" aria-label={`${events.length} recent applications plotted by workflow state.`}>
+          <defs>
+            <pattern id="admin-radar-grid" width="24" height="24" patternUnits="userSpaceOnUse"><path d="M 24 0 L 0 0 0 24" fill="none" stroke="#536648" strokeWidth="0.55" opacity="0.34" /></pattern>
+            <linearGradient id="admin-radar-sweep" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stopColor="#f0c340" stopOpacity="0" /><stop offset="1" stopColor="#f0c340" stopOpacity="0.26" /></linearGradient>
+            <filter id="admin-radar-glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3" /></filter>
+          </defs>
+          <rect width="440" height="300" fill="url(#admin-radar-grid)" opacity="0.56" />
+          <g className="radar-geometry" aria-hidden="true"><ellipse cx="220" cy="150" rx="168" ry="118" /><ellipse cx="220" cy="150" rx="119" ry="83" /><ellipse cx="220" cy="150" rx="68" ry="47" /><path d="M36 150H404M220 18V282" /><path d="M87 62L353 238M353 62L87 238" /></g>
+          <path className="radar-route" d="M54 221C98 182 115 105 169 117C218 128 234 65 288 83C331 98 333 164 390 177" pathLength="1" aria-hidden="true" />
+          <g className="radar-sweep" aria-hidden="true"><path d="M220 150L220 28A122 122 0 0 1 337 115Z" fill="url(#admin-radar-sweep)" /><line x1="220" y1="150" x2="220" y2="28" stroke="#f0c340" strokeWidth="1.2" opacity="0.78" /></g>
+          {events.map((event, index) => {
+            const point = ADMIN_RADAR_POINTS[index];
+            const color = ADMIN_STATUS_COLOR[event.status];
+            const style = { '--node-color': color, '--node-delay': `${320 + index * 90}ms` } as MotionStyle;
+            return <g key={event.eventId} transform={`translate(${point.x} ${point.y})`} className="radar-node" style={style}><title>{`${event.eventDetails.name}: ${STATUS_LABELS[event.status]}`}</title><circle className="radar-node__glow" r="15" fill={color} filter="url(#admin-radar-glow)" /><circle className="radar-node__halo" r="11" /><circle className="radar-node__core" r="6" /><text y="0.5">{index + 1}</text></g>;
+          })}
+          <g className="radar-origin" transform="translate(220 150)" aria-hidden="true"><circle r="18" /><path d="M0-8L3-3L8 0L3 3L0 8L-3 3L-8 0L-3-3Z" /></g>
+        </svg>
+        <img src={logoMark} alt="" className="operational-radar__mark" />
+        <div className="radar-coordinates" aria-hidden="true"><span>MY · National operations</span><span>Live review topology</span></div>
+      </div>
+      <div className="operational-radar__footer"><span><i className="is-medium" /> Pending {pending}</span><span><i className="is-high" /> Review {reviewing}</span><span><i className="is-low" /> Complete {complete}</span></div>
+    </div>
+  );
 }
 import ScoreConflictQueue from './ScoreConflictQueue';
 import ManualAssessmentQueue from './ManualAssessmentQueue';
@@ -161,23 +280,28 @@ export default function AdminDashboard() {
   return (
     <div className="min-h-screen bg-[#f3f1e9] pb-16">
       <WorkspaceTopBar
-        title="Admin dashboard"
-        subtitle="Operational view of M3 + user/venue management"
+        title="Command centre"
+        subtitle="Cross-module administration and final review"
         userInitials={initialsFor(profile?.name)}
         workspaceEyebrow="STERAS administration"
         workspaceEyebrowIcon={ShieldCheck}
       />
 
-      <main className="page-shell page-enter">
+      <main className="authority-dashboard__main mx-auto w-full max-w-[1580px] px-4 py-5 sm:px-6 sm:py-7 xl:px-8 xl:py-8">
         {error && (
           <div className="mb-5 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-700" role="alert">
             {error}
           </div>
         )}
 
+        <AdminOperationalBrief events={events} loading={loading} />
+
         {/* Stat grid */}
-        <section aria-labelledby="overview-title" className="mb-8">
-          <h2 id="overview-title" className="section-title mb-3">Overview</h2>
+        <section aria-labelledby="overview-title" className="mb-8 mt-8 dashboard-enter" style={{ '--motion-order': 5 } as MotionStyle}>
+          <div className="portfolio-heading !mb-4">
+            <div><div className="section-eyebrow"><span /> System workload</div><h2 id="overview-title">Operational overview</h2></div>
+            <div className="portfolio-heading__context"><span className="portfolio-heading__rule" /><p>Live production records only. Every count links to its working queue.</p></div>
+          </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {stats.map((s) => {
               const Icon = s.icon;

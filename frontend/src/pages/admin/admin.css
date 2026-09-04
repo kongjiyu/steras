@@ -3,6 +3,26 @@
  * Reuses the .authority-* design tokens for visual consistency.
  * ===================================================================== */
 
+.admin-spotlight-status {
+  flex: none;
+  border: 1px solid rgba(240, 195, 64, 0.34);
+  border-radius: 999px;
+  background: rgba(240, 195, 64, 0.12);
+  padding: 0.35rem 0.65rem;
+  color: #fff4c3;
+  font-size: 0.625rem;
+  font-weight: 800;
+  letter-spacing: 0.065em;
+  text-transform: uppercase;
+}
+
+@media (max-width: 520px) {
+  .admin-spotlight-status {
+    width: fit-content;
+    margin-left: 2.65rem;
+  }
+}
+
 /* ---------- Stat cards (dashboard overview) ---------- */
 .admin-stat__icon {
   display: flex;
