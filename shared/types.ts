@@ -130,6 +130,7 @@ export interface M1DraftDocument {
 export type M1AutoFillField =
   | 'name'
   | 'description'
+  | 'venueName'
   | 'venueAddress'
   | 'venueCapacity'
   | 'expectedAttendance'

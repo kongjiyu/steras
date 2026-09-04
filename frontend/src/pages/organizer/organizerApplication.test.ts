@@ -134,9 +134,10 @@ describe('organizer application lifecycle helpers', () => {
   });
 
   it('applies only type-compatible extracted fields and preserves unrelated values', () => {
-    const details = validDetails({ name: 'Old name', venueName: 'Verified venue' });
+    const details = validDetails({ name: 'Old name', venueId: 'venue-klcc', venueName: 'Verified venue' });
     const next = applyM1ExtractedFields(details, [
       { target: 'name', value: 'Extracted name', sourceFieldIds: ['EVENT_NAME'], confidence: 'high' },
+      { target: 'venueName', value: 'Untrusted extracted venue', sourceFieldIds: ['VENUE_NAME'], confidence: 'high' },
       { target: 'expectedAttendance', value: 800, sourceFieldIds: ['TOTAL_ATTENDANCE'], confidence: 'high' },
       { target: 'organizerEmail', value: 123, sourceFieldIds: ['RESPONSIBLE_CONTACT'], confidence: 'low' },
       { target: 'riskProfile.pyrotechnics', value: true, sourceFieldIds: ['SPECIAL_EFFECTS'], confidence: 'high' },
@@ -146,6 +147,14 @@ describe('organizer application lifecycle helpers', () => {
     expect(next.organizerEmail).toBe(details.organizerEmail);
     expect(next.venueName).toBe('Verified venue');
     expect(next.riskProfile?.pyrotechnics).toBe(true);
+  });
+
+  it('auto-fills an explicit venue name only for a custom venue', () => {
+    const details = validDetails({ venueId: undefined, venueName: '' });
+    const next = applyM1ExtractedFields(details, [
+      { target: 'venueName', value: 'Kuala Lumpur Convention Centre', sourceFieldIds: ['VENUE_NAME'], confidence: 'high' },
+    ]);
+    expect(next.venueName).toBe('Kuala Lumpur Convention Centre');
   });
 
   it('requires a complete split or combined application upload and a current extraction', () => {

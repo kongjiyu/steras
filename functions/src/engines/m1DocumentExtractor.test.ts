@@ -21,9 +21,10 @@ describe('M1 DOCX extraction', () => {
     const combined = await parseM1Pdf(readFileSync('../output/pdf/m1-presentation-test-case/STERAS_DEMO_T01_Completed_Combined_Application.pdf'));
     const fields = Object.fromEntries(mapM1Documents(combined, combined).extractedFields.map((field) => [field.target, field.value]));
     expect(validateCombinedTemplateIdentity(combined, 'STERAS-T01-ENT-IN-v2.0')).toEqual([]);
-    expect(combined.fields.size).toBe(71);
+    expect(combined.fields.size).toBe(72);
     expect(fields).toMatchObject({
       name: 'Malaysia Tourism Storytelling Showcase 2026',
+      venueName: 'Kuala Lumpur Convention Centre',
       venueAddress: 'Kuala Lumpur Convention Centre, Kuala Lumpur City Centre, 50088 Kuala Lumpur, Malaysia',
       expectedAttendance: 600,
       organizerEmail: 'aina.rahman@example.com',
@@ -69,6 +70,7 @@ describe('M1 DOCX extraction', () => {
       ['A02 / EVENT_PURPOSE', 'Promote local food and tourism.'],
       ['A04 / EVENT_DATES', 'Start date\n2026-10-10\nEnd date\n2026-10-11'],
       ['A05 / OPERATING_HOURS', 'Opening time\n10:00\nClosing time\n22:30'],
+      ['A06A / VENUE_NAME', 'Dataran Merdeka'],
       ['A06 / EVENT_ADDRESS', 'Dataran Merdeka, Kuala Lumpur'],
       ['A07 / TOTAL_ATTENDANCE', '12,500'],
       ['B03 / RESPONSIBLE_PERSON', 'Nur Aisyah'],
@@ -91,7 +93,7 @@ describe('M1 DOCX extraction', () => {
     const result = mapM1Documents(core, scenario);
     const fields = Object.fromEntries(result.extractedFields.map((field) => [field.target, field.value]));
     expect(fields).toMatchObject({
-      name: 'Malaysia Night Market', expectedAttendance: 12_500, venueCapacity: 15_000,
+      name: 'Malaysia Night Market', venueName: 'Dataran Merdeka', expectedAttendance: 12_500, venueCapacity: 15_000,
       organizerName: 'Nur Aisyah', organizerEmail: 'nur@example.com',
       'riskProfile.ticketedEntry': true, 'riskProfile.pyrotechnics': true,
       'riskProfile.temporaryStructures': false, 'riskProfile.foodServed': true,

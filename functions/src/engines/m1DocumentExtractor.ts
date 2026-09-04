@@ -20,6 +20,7 @@ const MAX_PDF_TEXT_CHARACTERS = 2_000_000;
 const REQUIRED_AUTO_FILL_TARGETS = [
   'name',
   'description',
+  'venueName',
   'venueAddress',
   'expectedAttendance',
   'startDatetime',
@@ -52,7 +53,7 @@ export async function parseM1Docx(buffer: Buffer): Promise<ParsedM1Document> {
   for (const row of xml.match(/<w:tr\b[\s\S]*?<\/w:tr>/g) ?? []) {
     const cells = (row.match(/<w:tc\b[\s\S]*?<\/w:tc>/g) ?? []).map(xmlText);
     if (cells.length < 2) continue;
-    const match = cells[0].match(/\b(?:[A-Z]\d{2}|T\d{2}-[A-Z]\d{2})\s*\/\s*([A-Z][A-Z0-9_]+)\b/);
+    const match = cells[0].match(/\b(?:[A-Z]\d{2}[A-Z]?|T\d{2}-[A-Z]\d{2})\s*\/\s*([A-Z][A-Z0-9_]+)\b/);
     if (!match) continue;
     const value = cleanResponse(cells.slice(1).join('\n'));
     if (fields.has(match[1])) throw new Error(`The DOCX contains duplicate field ID ${match[1]}.`);
@@ -88,13 +89,13 @@ export async function parseM1Pdf(buffer: Buffer): Promise<ParsedM1Document> {
 
   const fields = new Map<string, string>();
   for (const row of tableRows) {
-    const match = row[0]?.match(/\b(?:[A-Z]\d{2}|T\d{2}-[A-Z]\d{2})\s*\/\s*([A-Z][A-Z0-9_]+)\b/);
+    const match = row[0]?.match(/\b(?:[A-Z]\d{2}[A-Z]?|T\d{2}-[A-Z]\d{2})\s*\/\s*([A-Z][A-Z0-9_]+)\b/);
     if (!match) continue;
     if (fields.has(match[1])) throw new Error(`The combined PDF contains duplicate field ID ${match[1]}.`);
     fields.set(match[1], cleanPdfResponse(row.slice(1).join('\n').replace(/\[[\s\S]*?\]/g, '')));
   }
   if (fields.size === 0) {
-    const markers = [...text.matchAll(/\b(?:[A-Z]\d{2}|T\d{2}-[A-Z]\d{2})\s*\/\s*([A-Z][A-Z0-9_]+)\b/g)];
+    const markers = [...text.matchAll(/\b(?:[A-Z]\d{2}[A-Z]?|T\d{2}-[A-Z]\d{2})\s*\/\s*([A-Z][A-Z0-9_]+)\b/g)];
     for (let index = 0; index < markers.length; index += 1) {
       const marker = markers[index];
       const fieldId = marker[1];
@@ -212,6 +213,7 @@ export function mapM1Documents(core: ParsedM1Document, scenario: ParsedM1Documen
 
   add('name', meaningful(core.fields.get('EVENT_NAME')), ['EVENT_NAME']);
   add('description', meaningful(core.fields.get('EVENT_PURPOSE')), ['EVENT_PURPOSE']);
+  add('venueName', meaningful(core.fields.get('VENUE_NAME')), ['VENUE_NAME']);
   add('venueAddress', meaningful(core.fields.get('EVENT_ADDRESS')), ['EVENT_ADDRESS']);
   add('expectedAttendance', firstSafeInteger(core.fields.get('TOTAL_ATTENDANCE')), ['TOTAL_ATTENDANCE']);
   add('organizerName', meaningful(core.fields.get('RESPONSIBLE_PERSON')), ['RESPONSIBLE_PERSON']);

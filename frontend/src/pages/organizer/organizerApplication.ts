@@ -249,6 +249,9 @@ export function applyM1ExtractedFields(details: EventDetails, fields: M1Extracte
       case 'organizerName': case 'organizerEmail': case 'organizerPhone':
         if (typeof field.value === 'string') Object.assign(next, { [field.target]: field.value });
         break;
+      case 'venueName':
+        if (!next.venueId && typeof field.value === 'string') next.venueName = field.value;
+        break;
       case 'venueCapacity': case 'expectedAttendance': case 'startDatetime': case 'endDatetime':
         if (typeof field.value === 'number' && Number.isFinite(field.value)) Object.assign(next, { [field.target]: field.value });
         break;

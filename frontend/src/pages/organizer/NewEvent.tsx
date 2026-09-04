@@ -788,7 +788,7 @@ function TemplateUploadCard({ label, document, uploading, format = 'DOCX', onCha
 function groupExtractedFields(extraction: M1DocumentExtraction): Array<{ label: string; count: number }> {
   const groups = [
     { label: 'Event', targets: ['name', 'description', 'expectedAttendance', 'venueCapacity'] },
-    { label: 'Schedule and venue', targets: ['venueAddress', 'startDatetime', 'endDatetime'] },
+    { label: 'Schedule and venue', targets: ['venueName', 'venueAddress', 'startDatetime', 'endDatetime'] },
     { label: 'Organizer', targets: ['organizerName', 'organizerEmail', 'organizerPhone'] },
     { label: 'Safety and risk', targets: ['emergencyPlanSummary', 'riskProfile.'] },
   ];
