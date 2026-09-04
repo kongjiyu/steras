@@ -5,6 +5,8 @@ import AuthorityLayout from './components/layout/AuthorityLayout';
 import ProtectedRoute from './components/layout/ProtectedRoute';
 import LoadingScreen from './components/ui/LoadingScreen';
 import RoleAwareFallback from './components/layout/RoleAwareFallback';
+import DashboardPreview from './pages/DashboardPreview';
+import { getIncidentPath } from './routing';
 
 // Public pages
 import PublicHome from './pages/public/PublicHome';
@@ -44,6 +46,12 @@ import AdminStage2Review from './pages/admin/AdminStage2Review';
 import OrganizerEventControls from './pages/organizer/OrganizerEventControls';
 import Incidents from './pages/incidents/Incidents';
 
+function IncidentRouteEntry() {
+  const { profile } = useAuth();
+  if (profile?.role === 'public') return <Incidents />;
+  return <Navigate to={getIncidentPath(profile?.role)} replace />;
+}
+
 export default function App() {
   const { loading } = useAuth();
 
@@ -59,7 +67,8 @@ export default function App() {
       {/* Auth routes */}
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
-      <Route path="/incidents" element={<ProtectedRoute><Incidents /></ProtectedRoute>} />
+      <Route path="/dashboard-preview" element={<DashboardPreview />} />
+      <Route path="/incidents" element={<ProtectedRoute><IncidentRouteEntry /></ProtectedRoute>} />
 
       {/* Organizer routes (auth + role=organizer) */}
       <Route
@@ -76,6 +85,7 @@ export default function App() {
         <Route path="/organizer/events" element={<MyEvents />} />
         <Route path="/organizer/events/:eventId" element={<EventDetail />} />
         <Route path="/organizer/events/:eventId/controls" element={<OrganizerEventControls />} />
+        <Route path="/organizer/incidents" element={<Incidents />} />
       </Route>
 
       {/* Authority routes (auth + role=authority) — sidebar layout */}
@@ -90,6 +100,7 @@ export default function App() {
         <Route path="/authority/applications" element={<ReviewQueue />} />
         <Route path="/authority/risk" element={<RiskAssessments />} />
         <Route path="/authority/resources" element={<ResourceRecommendations />} />
+        <Route path="/authority/incidents" element={<Incidents />} />
         {/* M5 is Admin-only. Keep the legacy authority URL inside its own workspace. */}
         <Route path="/authority/reports" element={<Navigate to="/authority" replace />} />
         <Route path="/authority/calendar" element={<Navigate to="/calendar" replace />} />
@@ -117,6 +128,7 @@ export default function App() {
         <Route path="/admin/venues" element={<AdminVenues />} />
         <Route path="/admin/analytics" element={<AdminAnalytics />} />
         <Route path="/admin/audit" element={<AdminAudit />} />
+        <Route path="/admin/incidents" element={<Incidents />} />
       </Route>
 
       {/* Fallback */}

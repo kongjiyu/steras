@@ -14,6 +14,13 @@ export function getRoleHome(role?: UserRole | null): string | null {
   return null;
 }
 
+export function getIncidentPath(role?: UserRole | null): string {
+  if (role === 'organizer') return '/organizer/incidents';
+  if (role === 'authority') return '/authority/incidents';
+  if (role === 'admin') return '/admin/incidents';
+  return role === 'public' ? '/incidents' : '/calendar';
+}
+
 /**
  * Public visitors are allowed to return to a few public-only routes after
  * login. Listed explicitly because the home `'/'` is a prefix of every path.

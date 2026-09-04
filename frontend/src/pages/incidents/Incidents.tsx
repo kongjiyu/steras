@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { httpsCallable } from 'firebase/functions';
 import { getMetadata, ref, uploadBytesResumable } from 'firebase/storage';
-import { Link } from 'react-router-dom';
-import { Activity, ArrowLeft, CheckCircle2, FileWarning, ShieldCheck, Upload } from 'lucide-react';
+import { Activity, CheckCircle2, FileWarning, ShieldCheck, Siren, Upload } from 'lucide-react';
 import { functions, storage } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
+import { WorkspaceTopBar } from '../../components/layout/Sidebar';
 import {
   INCIDENT_CATEGORIES, M4_EVIDENCE_MAX_BYTES, type M4AuthorityDirectoryEntry,
   type M4IncidentHistoryEntry, type M4IncidentRecord, type M4IncidentSeverity,
@@ -32,11 +32,17 @@ export default function Incidents() {
   };
   useEffect(() => { void reload().catch(() => setError('Incident records could not be loaded.')); }, []);
   const active = useMemo(() => incidents.find((item) => item.incidentId === selected), [incidents, selected]);
+  const civicWorkspace = profile?.role === 'authority' || profile?.role === 'admin';
+  const standalonePublic = profile?.role === 'public';
+  const initials = profile?.name
+    ? profile.name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()
+    : profile?.role === 'admin' ? 'AD' : 'AO';
 
-  return <main className="min-h-screen bg-cream-50 px-5 py-8 sm:px-8">
-    <div className="mx-auto max-w-7xl">
-      <Link className="inline-flex items-center gap-2 text-sm font-semibold text-brand-700" to={profile?.role === 'organizer' ? '/organizer' : profile?.role === 'authority' ? '/authority' : profile?.role === 'admin' ? '/admin' : '/calendar'}><ArrowLeft size={15} /> Back to workspace</Link>
-      <header className="mt-5 flex flex-wrap items-end justify-between gap-4"><div><p className="page-eyebrow">Module 4</p><h1 className="font-display text-3xl font-bold text-ink-900">Incident reporting</h1><p className="mt-2 text-sm text-ink-500">Authenticated reports, response actions, investigations and final resolution.</p></div><span className="badge bg-brand-50 text-brand-700"><ShieldCheck size={13} /> {profile?.role}</span></header>
+  return <>
+    {civicWorkspace && <WorkspaceTopBar title="Incident command" subtitle="Reports, response actions and final resolution" userInitials={initials} workspaceEyebrow="Live incident operations" workspaceEyebrowIcon={Siren} />}
+    <main className={civicWorkspace ? 'page-shell page-enter' : standalonePublic ? 'min-h-screen bg-cream-50 px-5 py-8 sm:px-8' : ''}>
+      <div className="mx-auto max-w-7xl">
+      <header className="flex flex-wrap items-end justify-between gap-4"><div><p className="page-eyebrow">Module 4</p><h1 className="font-display text-3xl font-bold text-ink-900">Incident reporting</h1><p className="mt-2 text-sm text-ink-500">Authenticated reports, response actions, investigations and final resolution.</p></div><span className="badge bg-brand-50 text-brand-700"><ShieldCheck size={13} /> {profile?.role}</span></header>
       {error && <div role="alert" className="mt-5 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-risk-high-text">{error}</div>}
       {profile?.role === 'admin' && <DirectoryAdmin directory={directory} busy={busy} setBusy={setBusy} setError={setError} onDone={reload} />}
       {(profile?.role === 'public' || profile?.role === 'organizer') && <Submission events={events} uid={user!.uid} busy={busy} setBusy={setBusy} onDone={reload} setError={setError} />}
@@ -44,8 +50,9 @@ export default function Incidents() {
         <section className="card h-fit"><div className="card-header"><div><h2 className="section-title">Incident queue</h2><p className="text-xs text-ink-500">{incidents.length} accessible records</p></div><Activity size={18} /></div><div className="divide-y divide-[#eee8dc]">{incidents.map((item) => <button key={item.incidentId} onClick={() => setSelected(item.incidentId)} className={`block w-full p-4 text-left ${selected === item.incidentId ? 'bg-brand-50' : 'hover:bg-cream-50'}`}><div className="flex justify-between gap-2"><strong className="text-sm text-ink-800">{item.eventName}</strong><Status value={item.status} /></div><p className="mt-1 text-xs text-ink-500">{item.category.replaceAll('_', ' ')} · {new Date(item.occurredAt).toLocaleString()}</p></button>)}</div></section>
         {active ? <IncidentDetail record={active} profile={profile!} directory={directory} busy={busy} setBusy={setBusy} onDone={reload} setError={setError} /> : <section className="card p-8 text-center text-sm text-ink-500">No incident selected.</section>}
       </div>
-    </div>
-  </main>;
+      </div>
+    </main>
+  </>;
 }
 
 function Submission({ events, uid, busy, setBusy, onDone, setError }: { events: ReportableEvent[]; uid: string; busy: boolean; setBusy: (v: boolean) => void; onDone: () => Promise<void>; setError: (v: string) => void }) {
