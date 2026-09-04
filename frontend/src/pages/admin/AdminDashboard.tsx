@@ -278,7 +278,7 @@ export default function AdminDashboard() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#f3f1e9] pb-16">
+    <div className="authority-dashboard min-h-screen bg-[#f3f1e9] pb-16">
       <WorkspaceTopBar
         title="Command centre"
         subtitle="Cross-module administration and final review"
