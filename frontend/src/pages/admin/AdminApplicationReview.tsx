@@ -444,13 +444,13 @@ export default function AdminApplicationReview() {
                       <p className="text-xs text-ink-500">Risk-profile answers</p>
                       {version.eventDetails.riskProfile && Object.keys(version.eventDetails.riskProfile).length > 0 ? (
                         <dl className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
-                          {Object.entries(version.eventDetails.riskProfile).map(([key, value]) => <div key={key} className="rounded border border-[#e8e0cf] bg-cream-50 px-3 py-2"><dt className="font-semibold text-ink-700">{key}</dt><dd className="mt-1 text-ink-600">{String(value)}</dd></div>)}
+                          {Object.entries(version.eventDetails.riskProfile).map(([key, value]) => <div key={key} className="rounded border border-[#e8e0cf] bg-cream-50 px-3 py-2"><dt className="font-semibold text-ink-700">{fieldLabel(key)}</dt><dd className="mt-1 text-ink-600">{typeof value === 'boolean' ? value ? 'Yes' : 'No' : String(value)}</dd></div>)}
                         </dl>
                       ) : <p className="mt-1 text-sm text-ink-500">No additional risk-profile answers.</p>}
                     </div>
                     <div className="mt-4">
                       <p className="text-xs text-ink-500">Submitted documents</p>
-                      {version.documentPaths.length ? <ul className="mt-2 space-y-1 text-xs text-ink-700">{version.documentPaths.map((path) => <li key={path} className="break-all rounded border border-[#e8e0cf] bg-cream-50 px-3 py-2">{path}</li>)}</ul> : <p className="mt-1 text-sm text-ink-500">No documents attached.</p>}
+                      {version.documentPaths.length ? <ul className="mt-2 space-y-1 text-xs text-ink-700">{version.documentPaths.map((path) => <li key={path} className="rounded border border-[#e8e0cf] bg-cream-50 px-3 py-2" title={submittedDocumentName(path)}>{submittedDocumentName(path)}</li>)}</ul> : <p className="mt-1 text-sm text-ink-500">No documents attached.</p>}
                     </div>
                   </Section>
                 )}
@@ -576,7 +576,7 @@ export default function AdminApplicationReview() {
                         .map((a) => (
                           <li key={a.id} className="flex items-start gap-2 border-l-2 border-[#c8d1a8] pl-3">
                             <div>
-                              <p className="font-semibold text-ink-800">{a.action}</p>
+                              <p className="font-semibold capitalize text-ink-800">{a.action.replaceAll('_', ' ')}</p>
                               {a.notes && <p className="text-xs text-ink-500">{a.notes}</p>}
                             </div>
                             <span className="ml-auto text-xs text-ink-500">{formatDateTime(a.timestamp)}</span>
@@ -735,9 +735,7 @@ export default function AdminApplicationReview() {
                           </button>
                         </div>
                         <p className="text-[11px] text-ink-500">
-                          <FileWarning size={11} className="inline" /> This dispatches the
-                          <code className="mx-1 rounded bg-cream-100 px-1">makeInitialReviewDecision</code>
-                          Cloud Function with full audit provenance.
+                          <FileWarning size={11} className="inline" /> This decision is recorded with immutable audit provenance.
                         </p>
                       </form>
                     )}
@@ -780,4 +778,15 @@ export default function AdminApplicationReview() {
 
 function Detail({ label, value }: { label: string; value: string }) {
   return <div><p className="text-xs text-ink-500">{label}</p><p className="mt-1 text-ink-800">{value}</p></div>;
+}
+
+function submittedDocumentName(path: string): string {
+  const encoded = path.split('/').pop() ?? 'Submitted document';
+  let decoded = encoded;
+  try { decoded = decodeURIComponent(encoded); } catch { /* Retain the safe stored filename when percent encoding is malformed. */ }
+  return decoded.replace(/^[0-9a-f]{8}-[0-9a-f-]{27}-/i, '');
+}
+
+function fieldLabel(value: string): string {
+  return value.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase());
 }

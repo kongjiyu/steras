@@ -30,6 +30,7 @@ import {
 import { db, functions, isFirebaseConfigured } from '../../config/firebase';
 import EmptyState from '../../components/ui/EmptyState';
 import StatusBadge from '../../components/ui/StatusBadge';
+import { displayIdentityName, useDisplayIdentities } from '../../hooks/useDisplayIdentities';
 
 interface ProposedChecklistItem {
   authorityType: AuthorityType;
@@ -107,6 +108,10 @@ export default function AdminAssignment() {
   const assignmentsByAuthority = new Map<AuthorityType, Assignment>();
   for (const a of currentAssignments) assignmentsByAuthority.set(a.authorityType, a);
   const aggregateDecision = computeAggregate(Array.from(assignmentsByAuthority.values()), required);
+  const identityNames = useDisplayIdentities([
+    ...assignments.flatMap((assignment) => [assignment.officerUid, assignment.assignedBy, assignment.revokedBy]),
+    ...checklist.flatMap((item) => item.candidates.map((candidate) => candidate.officerUid)),
+  ]);
   useEffect(() => {
     if (aggregateDecision && !finalDecision) setFinalDecision(aggregateDecision);
   }, [aggregateDecision, finalDecision]);
@@ -261,11 +266,11 @@ export default function AdminAssignment() {
                     </div>
                     {current ? (
                       <div className="mt-2 rounded-md bg-cream-50 p-3 text-xs text-ink-600">
-                        <p><span className="font-semibold">Officer:</span> {current.officerUid}</p>
-                        <p><span className="font-semibold">Assigned by:</span> {current.assignedBy} · {format(new Date(current.assignedAt), 'PPp')}</p>
+                        <p><span className="font-semibold">Officer:</span> {displayIdentityName(current.officerUid, identityNames, `${current.authorityType} officer`)}</p>
+                        <p><span className="font-semibold">Assigned by:</span> {displayIdentityName(current.assignedBy, identityNames, 'STERAS administrator')} · {format(new Date(current.assignedAt), 'PPp')}</p>
                         {current.status === 'revoked' && current.revokedAt && (
                           <p className="mt-1 text-status-rejected">
-                            <span className="font-semibold">Revoked</span> by {current.revokedBy ?? 'admin'} · {format(new Date(current.revokedAt), 'PPp')}
+                            <span className="font-semibold">Revoked</span> by {displayIdentityName(current.revokedBy, identityNames, 'STERAS administrator')} · {format(new Date(current.revokedAt), 'PPp')}
                           </p>
                         )}
                         {current.decision && (
@@ -293,9 +298,9 @@ export default function AdminAssignment() {
                                 className="mt-1"
                                 disabled={isAuthorityReview || isSecondReview}
                               />
-                              <span>
-                                <span className="font-mono text-ink-700">{c.officerUid}</span>
-                                <span className="ml-2 text-ink-500">[{c.scopeType}:{c.state}] · workload {c.workloadCount}</span>
+                              <span className="min-w-0">
+                                <span className="block font-semibold text-ink-800">{displayIdentityName(c.officerUid, identityNames, `${item.authorityType} officer`)}</span>
+                                <span className="block text-ink-500">{c.scopeType === 'federal' ? 'Federal scope' : `${c.state} scope`} · {c.workloadCount} active assignment{c.workloadCount === 1 ? '' : 's'}</span>
                               </span>
                             </label>
                           );

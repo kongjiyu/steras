@@ -44,6 +44,13 @@ service cloud.firestore {
 
     function isAssignedAuthority(eventId) {
       let event = get(/databases/$(database)/documents/events/$(eventId)).data;
+      return isAssignedAuthorityRecord(event);
+    }
+
+    // Use the candidate event document directly for top-level collection
+    // queries. Firestore can prove an `array-contains request.auth.uid` query
+    // satisfies this predicate; it cannot prove the equivalent through get().
+    function isAssignedAuthorityRecord(event) {
       return isAuthority()
              && (event.keys().hasAny(['assignedOfficerUids'])
                  ? event.assignedOfficerUids.hasAny([request.auth.uid])
@@ -136,7 +143,7 @@ service cloud.firestore {
       // private to their organizer until the server advances the status.
       // Public viewers should query `public_events` instead — not `events`.
       allow read: if (isAdmin() && resource.data.status != 'Draft')
-                  || isAssignedAuthority(eventId)
+                  || isAssignedAuthorityRecord(resource.data)
                   || (isSignedIn() && isOwner(resource.data.organizerId));
 
       // Drafts are client-created. Submission and revision preparation are server-owned.

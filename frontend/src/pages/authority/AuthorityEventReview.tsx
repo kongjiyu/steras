@@ -45,6 +45,7 @@ import { RESOURCE_FIELDS, toResourceQuantities } from '../../components/m2/m2Pre
 import EmptyState from '../../components/ui/EmptyState';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { useAuth } from '../../contexts/AuthContext';
+import { displayIdentityName, useDisplayIdentities, type DisplayIdentityMap } from '../../hooks/useDisplayIdentities';
 import { activeScoreResolutionId } from './authorityReviewPresentation';
 
 export default function AuthorityEventReview() {
@@ -236,6 +237,14 @@ export default function AuthorityEventReview() {
     () => resources && latestResourceOverride ? applyResourceOverride(resources, latestResourceOverride) : resources,
     [latestResourceOverride, resources],
   );
+  const identityNames = useDisplayIdentities([
+    ...assignments.flatMap((assignment) => [assignment.officerUid, assignment.assignedBy, assignment.revokedBy]),
+    ...resourceOverrides.map((override) => override.reviewerId),
+    ...Object.values(stage1DocsByControl).flatMap((documents) => documents.flatMap((document) => [document.uploadedBy, document.verifiedBy])),
+    scoreResolution?.resolvedBy,
+    manualAssessment?.submittedBy,
+    assessment?.status === 'official_ready' && 'officialResult' in assessment ? assessment.officialResult.finalizedBy : undefined,
+  ]);
   useEffect(() => {
     if (!isFirebaseConfigured || !eventId || !activeAssessmentId || !activeResolutionId) { setScoreResolution(null); return; }
     return onSnapshot(doc(db, COLLECTIONS.EVENTS, eventId, COLLECTIONS.ASSESSMENTS, activeAssessmentId, COLLECTIONS.SCORE_RESOLUTIONS, activeResolutionId), (snapshot) => {
@@ -526,7 +535,7 @@ export default function AuthorityEventReview() {
                   )}
                   <AuthorityAssessmentWarnings warnings={assessment.warnings} />
                   {assessment.status === 'official_ready' && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual'
-                    ? <><ManualOfficialProvenance assessment={assessment} />{manualAssessment && <ManualAssessmentDetails assessment={manualAssessment} />}</>
+                    ? <><ManualOfficialProvenance assessment={assessment} finalizedByName={displayIdentityName(assessment.officialResult.finalizedBy, identityNames, 'STERAS administrator')} />{manualAssessment && <ManualAssessmentDetails assessment={manualAssessment} />}</>
                     : <AIAdvisory advisory={assessment.aiProposal} resultRiskLevel={assessmentRiskLevel(assessment)} official={assessment.status === 'official_ready'} />}
                   <div className="border-t border-[#e3dacb] pt-5">
                     <h3 className="mb-4 font-display text-sm font-semibold text-ink-800">Versioned context evidence</h3>
@@ -580,7 +589,7 @@ export default function AuthorityEventReview() {
                     <button type="button" className="btn-primary" disabled={savingResources || resourceRationale.trim().length < 10 || !resourceOverrideReasonCategory} onClick={saveResourceOverride}>{savingResources ? 'Saving...' : 'Save adjustment'}</button>
                   </div>
                 </div>
-              ) : <ResourceRecommendationView recommendation={effectiveResources} latestOverride={latestResourceOverride} showOverrideProvenance />}
+              ) : <ResourceRecommendationView recommendation={effectiveResources} latestOverride={latestResourceOverride} reviewerDisplayName={latestResourceOverride ? displayIdentityName(latestResourceOverride.reviewerId, identityNames, `${latestResourceOverride.authorityType} officer`) : undefined} showOverrideProvenance />}
             </div>
           </section>
 
@@ -617,6 +626,7 @@ export default function AuthorityEventReview() {
             docRationale={docRationale}
             docEvidencePath={docEvidencePath}
             submittingDoc={submittingDoc}
+            identityNames={identityNames}
             onRationaleChange={(key, value) => setDocRationale((current) => ({ ...current, [key]: value }))}
             onEvidencePathChange={(key, value) => setDocEvidencePath((current) => ({ ...current, [key]: value }))}
             onSubmit={submitControlVerification}
@@ -703,11 +713,11 @@ export default function AuthorityEventReview() {
   );
 }
 
-function ManualOfficialProvenance({ assessment }: { assessment: import('@shared/types').AdminManualOfficialRiskAssessment }) {
+function ManualOfficialProvenance({ assessment, finalizedByName }: { assessment: import('@shared/types').AdminManualOfficialRiskAssessment; finalizedByName: string }) {
   return <div className="border-l-4 border-brand-500 bg-brand-50 p-4 text-sm text-ink-700">
     <p className="text-[11px] font-bold uppercase tracking-[0.09em] text-brand-700">Source · Admin manual assessment</p>
     <p className="mt-2">This official result was calculated from a locked human assessment after AI failure or insufficient data. No AI proposal was fabricated.</p>
-    <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2"><div><dt className="text-ink-500">Manual assessment</dt><dd className="font-mono text-ink-800">{assessment.activeManualAssessmentId}</dd></div><div><dt className="text-ink-500">Finalized by</dt><dd className="font-mono text-ink-800">{assessment.officialResult.finalizedBy}</dd></div></dl>
+    <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2"><div><dt className="text-ink-500">Manual assessment</dt><dd className="text-ink-800">Locked record</dd></div><div><dt className="text-ink-500">Finalized by</dt><dd className="font-semibold text-ink-800">{finalizedByName}</dd></div></dl>
     <h3 className="mt-4 font-display font-semibold text-ink-800">Manual hazards</h3>
     <ul className="mt-2 space-y-2">{assessment.officialResult.manualHazards.map((hazard) => <li key={hazard.hazardId} className="border-t border-brand-200 pt-2"><strong>{hazard.hazardName}</strong> · {formatWorkflowValue(hazard.categoryId)}<p className="mt-1 text-xs">{hazard.rationale}</p><p className="mt-1 text-[11px] text-ink-500">Evidence: {hazard.evidenceReferences.join(', ')}</p></li>)}</ul>
   </div>;
@@ -867,7 +877,8 @@ function applyResourceOverride(resource: ResourceRecommendation, override: Resou
 
 function evidenceName(path: string): string {
   const encoded = path.split('/').pop() ?? 'evidence-file';
-  const decoded = decodeURIComponent(encoded);
+  let decoded = encoded;
+  try { decoded = decodeURIComponent(encoded); } catch { /* Keep the stored filename when percent encoding is malformed. */ }
   return decoded.replace(/^[0-9a-f]{8}-[0-9a-f-]{27}-/i, '');
 }
 
@@ -895,6 +906,7 @@ interface ControlVerificationSectionProps {
   docRationale: Record<string, string>;
   docEvidencePath: Record<string, string>;
   submittingDoc: string | null;
+  identityNames: DisplayIdentityMap;
   onRationaleChange: (key: string, value: string) => void;
   onEvidencePathChange: (key: string, value: string) => void;
   onSubmit: (controlId: string, docId: string, status: ControlVerificationStatus) => Promise<void>;
@@ -903,7 +915,7 @@ interface ControlVerificationSectionProps {
 function ControlVerificationSection(props: ControlVerificationSectionProps) {
   const {
     eventControls, stage1DocsByControl, myAuthorityType, isNamedOfficer, reviewOpen,
-    docRationale, docEvidencePath, submittingDoc,
+    docRationale, docEvidencePath, submittingDoc, identityNames,
     onRationaleChange, onEvidencePathChange, onSubmit,
   } = props;
   if (eventControls.length === 0) {
@@ -935,7 +947,7 @@ function ControlVerificationSection(props: ControlVerificationSectionProps) {
                     <Shield size={16} className="shrink-0 text-brand-700" />
                     <p className="text-sm font-semibold text-ink-800">{control.controlName}</p>
                   </div>
-                  <p className="mt-1 text-xs text-ink-400">Stage: {control.stageRequirement} · Authority: {control.authority} · {docs.length} doc(s)</p>
+                  <p className="mt-1 text-xs capitalize text-ink-400">Stage: {control.stageRequirement.replaceAll('_', ' ')} · Authority: {control.authority} · {docs.length} doc(s)</p>
                 </div>
                 <ControlLabelBadge label={control.label} />
               </div>
@@ -951,7 +963,7 @@ function ControlVerificationSection(props: ControlVerificationSectionProps) {
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium text-ink-800">{doc.label}</p>
-                          <p className="mt-1 text-xs text-ink-500">docType: {doc.docType} · id: <span className="font-mono">{doc.docId}</span></p>
+                          <p className="mt-1 text-xs capitalize text-ink-500">Document type: {doc.docType.replaceAll('_', ' ')}</p>
                         </div>
                         <DocStatusBadge status={doc.status} />
                       </div>
@@ -959,7 +971,7 @@ function ControlVerificationSection(props: ControlVerificationSectionProps) {
                         <div className="mt-2 text-xs text-ink-600">
                           <p>
                             <span className="font-semibold">{doc.status}</span>
-                            {doc.verifiedAt && <> on {format(new Date(doc.verifiedAt), 'PPp')} by <span className="font-mono">{doc.verifiedBy}</span></>}
+                            {doc.verifiedAt && <> on {format(new Date(doc.verifiedAt), 'PPp')} by <span className="font-semibold">{displayIdentityName(doc.verifiedBy, identityNames, `${control.authority} officer`)}</span></>}
                           </p>
                           {doc.rejectionReason && <p className="mt-1 whitespace-pre-line">{doc.rejectionReason}</p>}
                         </div>
