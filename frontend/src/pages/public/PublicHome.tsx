@@ -108,19 +108,6 @@ export default function PublicHome() {
               </ul>
             </div>
 
-            <div className="relative hidden min-h-[30rem] lg:block" aria-hidden="true">
-              <div className="absolute bottom-8 right-2 w-72 border border-white/35 bg-brand-950/95 p-6 text-cream-50 shadow-[0_24px_64px_rgba(26,35,13,0.22)]">
-                <div className="flex items-center justify-between border-b border-white/20 pb-4">
-                  <span className="text-xs font-bold uppercase tracking-[0.1em] text-gold-300">One shared record</span>
-                  <span className="h-2.5 w-2.5 rounded-full bg-[#83c732] shadow-[0_0_0_5px_rgba(131,199,50,0.13)]" />
-                </div>
-                <p className="mt-5 font-display text-xl font-bold leading-snug text-cream-50">Organizer, Admin and authority officers stay aligned to the same application version.</p>
-                <div className="mt-7 flex items-center gap-3 text-sm text-cream-100">
-                  <span className="grid h-9 w-9 place-items-center rounded-full border border-white/25"><UserRoundCheck size={17} /></span>
-                  Traceable from submission to decision
-                </div>
-              </div>
-            </div>
           </div>
         </section>
 

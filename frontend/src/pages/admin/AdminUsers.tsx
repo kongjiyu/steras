@@ -2,7 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import toast from 'react-hot-toast';
-import { Plus, ShieldCheck, Users, X } from 'lucide-react';
+import { KeyRound, Plus, ShieldCheck, Users, X } from 'lucide-react';
 import { AuthorityType, COLLECTIONS, UserProfile, UserRole } from '@shared/types';
 import { db, functions, isFirebaseConfigured } from '../../config/firebase';
 import { WorkspaceTopBar } from '../../components/layout/Sidebar';
@@ -13,6 +13,7 @@ const ROLE_BADGE: Record<UserRole, string> = {
   public: 'admin-badge admin-badge--default', admin: 'admin-badge admin-badge--good',
 };
 const AUTHORITIES: AuthorityType[] = ['PDRM', 'BOMBA', 'KKM', 'DBKL', 'MOTAC'];
+const RESET_TEMPORARY_PASSWORD = 'Steras@Reset2026!';
 
 function initialsFor(name?: string) {
   return name ? name.split(/\s+/).map((part) => part[0]).slice(0, 2).join('').toUpperCase() : 'AD';
@@ -32,6 +33,9 @@ export default function AdminUsers() {
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
+  const [resetTarget, setResetTarget] = useState<UserProfile | null>(null);
+  const [resettingUid, setResettingUid] = useState<string | null>(null);
+  const [resetIdempotencyKey, setResetIdempotencyKey] = useState(() => crypto.randomUUID());
 
   useEffect(() => {
     if (!isFirebaseConfigured) { setLoading(false); return undefined; }
@@ -67,9 +71,32 @@ export default function AdminUsers() {
     }
   };
 
+  const beginPasswordReset = (user: UserProfile) => {
+    setResetTarget(user);
+    setResetIdempotencyKey(crypto.randomUUID());
+  };
+
+  const resetPassword = async () => {
+    if (!resetTarget) return;
+    setResettingUid(resetTarget.uid);
+    try {
+      await httpsCallable(functions, 'resetUserPassword')({
+        uid: resetTarget.uid,
+        idempotencyKey: resetIdempotencyKey,
+      });
+      toast.success(`Password reset for ${resetTarget.name}.`);
+      setResetTarget(null);
+      setResetIdempotencyKey(crypto.randomUUID());
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Unable to reset password.');
+    } finally {
+      setResettingUid(null);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#f3f1e9] pb-16">
-      <WorkspaceTopBar title="User accounts" subtitle="Create privileged accounts and view registered users" userInitials={initialsFor(profile?.name)} workspaceEyebrow="STERAS administration" workspaceEyebrowIcon={ShieldCheck} />
+      <WorkspaceTopBar title="User accounts" subtitle="Create accounts and issue temporary passwords" userInitials={initialsFor(profile?.name)} workspaceEyebrow="STERAS administration" workspaceEyebrowIcon={ShieldCheck} />
       <main className="page-shell page-enter">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap gap-2">
@@ -81,11 +108,46 @@ export default function AdminUsers() {
           </div>
           <button type="button" className="btn-primary min-h-11" onClick={() => setOpen(true)}><Plus size={16} /> Create privileged account</button>
         </div>
-        <section className="overflow-x-auto rounded-lg border border-[#ded5c5] bg-white shadow-card"><div className="min-w-[720px]">
-          <header className="grid grid-cols-[minmax(0,1.5fr)_minmax(0,2fr)_8rem_10rem] gap-3 border-b border-[#e8e0cf] bg-cream-50 px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.06em] text-ink-500"><span>Name</span><span>Email</span><span>Role</span><span>Authority</span></header>
-          {loading ? <p className="p-5 text-sm text-ink-500">Loading users…</p> : filtered.length === 0 ? <div className="flex flex-col items-center gap-2 p-10 text-center"><Users size={28} className="text-ink-400" /><p className="text-sm text-ink-500">No users match the current filter.</p></div> : <ul className="divide-y divide-[#e8e0cf]">{filtered.map((user) => <li key={user.uid} className="grid grid-cols-[minmax(0,1.5fr)_minmax(0,2fr)_8rem_10rem] items-center gap-3 px-4 py-3 text-sm"><span className="font-semibold text-ink-900">{user.name}</span><span className="truncate text-ink-700">{user.email}</span><span className={ROLE_BADGE[user.role]}>{user.role}</span><span className="text-ink-600">{user.authorityType ?? '—'}</span></li>)}</ul>}
+        <section className="overflow-x-auto rounded-lg border border-[#ded5c5] bg-white shadow-card"><div className="min-w-[860px]">
+          <header className="grid grid-cols-[minmax(0,1.5fr)_minmax(0,2fr)_8rem_9rem_9rem] gap-3 border-b border-[#e8e0cf] bg-cream-50 px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.06em] text-ink-500"><span>Name</span><span>Email</span><span>Role</span><span>Authority</span><span>Account access</span></header>
+          {loading ? <p className="p-5 text-sm text-ink-500">Loading users…</p> : filtered.length === 0 ? <div className="flex flex-col items-center gap-2 p-10 text-center"><Users size={28} className="text-ink-400" /><p className="text-sm text-ink-500">No users match the current filter.</p></div> : <ul className="divide-y divide-[#e8e0cf]">{filtered.map((user) => (
+            <li key={user.uid}>
+              <div className="grid grid-cols-[minmax(0,1.5fr)_minmax(0,2fr)_8rem_9rem_9rem] items-center gap-3 px-4 py-3 text-sm">
+                <span className="font-semibold text-ink-900">{user.name}</span>
+                <span className="truncate text-ink-700">{user.email}</span>
+                <span className={ROLE_BADGE[user.role]}>{user.role}</span>
+                <span className="text-ink-600">{user.authorityType ?? '—'}</span>
+                <button
+                  type="button"
+                  className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-md border border-[#cfc3ad] bg-white px-3 text-xs font-semibold text-brand-700 transition-colors hover:border-brand-400 hover:bg-brand-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+                  aria-expanded={resetTarget?.uid === user.uid}
+                  onClick={() => resetTarget?.uid === user.uid ? setResetTarget(null) : beginPasswordReset(user)}
+                >
+                  <KeyRound size={14} /> Reset password
+                </button>
+              </div>
+              {resetTarget?.uid === user.uid && (
+                <div className="border-t border-[#eee7d9] bg-gold-50/70 px-4 py-4" role="region" aria-label={`Reset password for ${user.name}`}>
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="font-semibold text-ink-900">Issue a new temporary password?</p>
+                      <p className="mt-1 text-sm leading-6 text-ink-600">
+                        {user.name} will sign in with <code className="rounded bg-white px-1.5 py-1 font-semibold text-ink-900">{RESET_TEMPORARY_PASSWORD}</code>. Existing sessions will be revoked.
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <button type="button" className="btn-secondary" disabled={resettingUid === user.uid} onClick={() => setResetTarget(null)}>Cancel</button>
+                      <button type="button" className="btn-primary" disabled={resettingUid === user.uid} onClick={resetPassword}>
+                        {resettingUid === user.uid ? 'Resetting…' : 'Confirm reset'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </li>
+          ))}</ul>}
         </div></section>
-        <p className="mt-3 text-xs text-ink-500">Authority and administrator accounts are created by authorised administrators only. Passwords are sent directly to Firebase Authentication and are never stored in Firestore.</p>
+        <p className="mt-3 text-xs leading-5 text-ink-500">Account creation and password resets are restricted to authorised administrators. Passwords are sent directly to Firebase Authentication and are never stored in Firestore; reset actions are recorded in the administrative audit trail.</p>
       </main>
 
       {open && <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="create-account-title"><form onSubmit={submit} className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-xl border border-ink-200 bg-white p-5 shadow-xl sm:p-6">

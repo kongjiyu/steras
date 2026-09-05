@@ -31,7 +31,7 @@ export { submitEvent } from './http/submitEvent';
 export { extractApplicationDocuments } from './http/extractApplicationDocuments';
 export { withdrawEvent } from './http/withdrawEvent';
 export { prepareApplicationRevision, cancelEvent } from './http/applicationLifecycle';
-export { createPrivilegedAccount } from './http/adminUserManagement';
+export { createPrivilegedAccount, resetUserPassword } from './http/adminUserManagement';
 export { resolveDisplayIdentities } from './http/resolveDisplayIdentities';
 export { saveVenue, verifyVenue, deactivateVenue } from './http/adminVenueManagement';
 export { makeAuthorityDecision } from './http/authorityDecision';

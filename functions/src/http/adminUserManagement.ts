@@ -7,6 +7,8 @@ import { FUNCTION_REGION } from '../config/runtime';
 
 const AUTHORITY_TYPES = new Set<AuthorityType>(['PDRM', 'BOMBA', 'KKM', 'DBKL', 'MOTAC']);
 const REQUEST_FIELDS = new Set(['email', 'password', 'name', 'phone', 'role', 'authorityType', 'idempotencyKey']);
+const RESET_REQUEST_FIELDS = new Set(['uid', 'idempotencyKey']);
+const RESET_TEMPORARY_PASSWORD = 'Steras@Reset2026!';
 
 export interface CreatePrivilegedAccountInput {
   email: string;
@@ -15,6 +17,11 @@ export interface CreatePrivilegedAccountInput {
   phone?: string;
   role: 'authority' | 'admin';
   authorityType?: AuthorityType;
+  idempotencyKey: string;
+}
+
+export interface ResetUserPasswordInput {
+  uid: string;
   idempotencyKey: string;
 }
 
@@ -117,6 +124,63 @@ export const createPrivilegedAccount = onCall({ region: FUNCTION_REGION }, async
   }
 });
 
+export const resetUserPassword = onCall({ region: FUNCTION_REGION }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in before resetting an account password.');
+  const db = getFirestore();
+  const adminSnapshot = await db.collection(COLLECTIONS.USERS).doc(request.auth.uid).get();
+  if ((adminSnapshot.data() as UserProfile | undefined)?.role !== 'admin') {
+    throw new HttpsError('permission-denied', 'Only an authorised administrator can reset account passwords.');
+  }
+
+  const input = validateResetUserPasswordInput(request.data);
+  const targetProfile = await db.collection(COLLECTIONS.USERS).doc(input.uid).get();
+  if (!targetProfile.exists) throw new HttpsError('not-found', 'The selected user account no longer exists.');
+
+  const payloadHash = createHash('sha256').update(input.uid).digest('hex');
+  const operationId = createHash('sha256').update(`${request.auth.uid}:reset-password:${input.idempotencyKey}`).digest('hex');
+  const operationRef = db.collection(COLLECTIONS.ADMIN_OPERATIONS).doc(operationId);
+  const existingOperation = await operationRef.get();
+  if (existingOperation.exists) {
+    const operation = existingOperation.data();
+    if (operation?.kind !== 'reset_user_password' || operation.payloadHash !== payloadHash) {
+      throw new HttpsError('already-exists', 'This idempotency key was already used for a different request.');
+    }
+    return { uid: input.uid, idempotent: true };
+  }
+
+  const auth = getAuth();
+  try {
+    await auth.updateUser(input.uid, { password: RESET_TEMPORARY_PASSWORD });
+    await auth.revokeRefreshTokens(input.uid);
+  } catch (error) {
+    if ((error as { code?: string }).code === 'auth/user-not-found') {
+      throw new HttpsError('not-found', 'The selected Firebase Authentication account no longer exists.');
+    }
+    throw error;
+  }
+
+  const now = Date.now();
+  const auditRef = db.collection(COLLECTIONS.ADMIN_AUDIT_LOGS).doc(`password-${operationId}`);
+  const batch = db.batch();
+  batch.create(operationRef, {
+    operationId,
+    kind: 'reset_user_password',
+    actorId: request.auth.uid,
+    targetId: input.uid,
+    payloadHash,
+    createdAt: now,
+  });
+  batch.create(auditRef, {
+    auditId: auditRef.id,
+    action: 'user_password_reset',
+    actorId: request.auth.uid,
+    targetId: input.uid,
+    timestamp: now,
+  });
+  await batch.commit();
+  return { uid: input.uid, idempotent: false };
+});
+
 export function validatePrivilegedAccountInput(value: unknown): CreatePrivilegedAccountInput {
   if (!isRecord(value)) throw new HttpsError('invalid-argument', 'Account details are required.');
   const unknown = Object.keys(value).filter((key) => !REQUEST_FIELDS.has(key));
@@ -146,6 +210,19 @@ export function validatePrivilegedAccountInput(value: unknown): CreatePrivileged
     ...(value.role === 'authority' ? { authorityType: authorityType as AuthorityType } : {}),
     idempotencyKey,
   };
+}
+
+export function validateResetUserPasswordInput(value: unknown): ResetUserPasswordInput {
+  if (!isRecord(value)) throw new HttpsError('invalid-argument', 'A user account is required.');
+  const unknown = Object.keys(value).filter((key) => !RESET_REQUEST_FIELDS.has(key));
+  if (unknown.length > 0) throw new HttpsError('invalid-argument', `Unsupported fields: ${unknown.join(', ')}.`);
+  const uid = requiredString(value.uid, 'uid', 128);
+  if (/\s/.test(uid)) throw new HttpsError('invalid-argument', 'uid cannot contain whitespace.');
+  const idempotencyKey = requiredString(value.idempotencyKey, 'idempotencyKey', 100);
+  if (idempotencyKey.length < 8 || !/^[A-Za-z0-9_-]+$/.test(idempotencyKey)) {
+    throw new HttpsError('invalid-argument', 'idempotencyKey must be 8-100 letters, numbers, underscores, or hyphens.');
+  }
+  return { uid, idempotencyKey };
 }
 
 function requiredString(value: unknown, field: string, max: number, trim = true): string {

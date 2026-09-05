@@ -11,6 +11,7 @@ describe('PublicHome', () => {
     expect(screen.getByRole('heading', { name: 'From idea to public confidence' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Every role sees the detail it needs—and no more.' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'AI can advise. Evidence and accountable people decide.' })).toBeInTheDocument();
+    expect(screen.queryByText('One shared record')).not.toBeInTheDocument();
 
     for (const phase of ['Application', 'Risk & resources', 'Approval', 'Incident response', 'Analytics']) {
       expect(screen.getByText(phase)).toBeInTheDocument();

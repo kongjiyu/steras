@@ -38,6 +38,19 @@ describe('LoginPage', () => {
     expect(logoLinks.every((link) => link.getAttribute('href') === '/')).toBe(true);
   });
 
+  it('directs users with a forgotten password to an administrator', () => {
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText(/Contact a STERAS administrator to receive a temporary password/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Forgot password/i })).not.toBeInTheDocument();
+  });
+
   it('lets an existing session return to the dashboard from the sign-in page', async () => {
     authState.user = { uid: 'organizer-1' };
     authState.profile = { role: 'organizer' };

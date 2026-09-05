@@ -2,8 +2,6 @@ import { FormEvent, useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
-import { sendPasswordResetEmail } from 'firebase/auth';
-import { auth } from '../../config/firebase';
 import AuthShell from '../../components/layout/AuthShell';
 import { getPostLoginPath, getRoleHome, ReturnLocation } from '../../routing';
 import { authErrorMessage } from '../../contexts/authErrors';
@@ -44,16 +42,6 @@ export default function LoginPage() {
     } catch (err) {
       toast.error(authErrorMessage(err));
       setSubmitting(false);
-    }
-  };
-
-  const resetPassword = async () => {
-    if (!email.trim()) return toast.error('Enter your email address first.');
-    try {
-      await sendPasswordResetEmail(auth, email.trim());
-      toast.success('Password reset email sent.');
-    } catch (error) {
-      toast.error(authErrorMessage(error));
     }
   };
 
@@ -155,7 +143,9 @@ export default function LoginPage() {
             <button type="submit" disabled={submitting || !configured} className="btn-primary w-full">
               {submitting ? 'Signing in…' : 'Sign in'}
             </button>
-            <button type="button" disabled={!configured} onClick={resetPassword} className="w-full text-sm font-medium text-brand-700 hover:text-brand-800">Forgot password?</button>
+            <p className="text-center text-sm leading-6 text-ink-600">
+              Forgot your password? Contact a STERAS administrator to receive a temporary password.
+            </p>
           </form>
 
           <p className="mt-6 border-t border-[#e3dacb] pt-5 text-center text-sm text-ink-500">
