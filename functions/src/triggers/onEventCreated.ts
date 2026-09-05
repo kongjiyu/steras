@@ -1535,7 +1535,7 @@ function organizerResourceRecommendation(resources: ResourceRecommendation): Org
   };
 }
 
-export const onEventCreated = onDocumentCreated({ document: `${COLLECTIONS.EVENTS}/{eventId}`, region: FUNCTION_REGION, secrets: ASSESSMENT_SECRETS }, async (trigger) => {
+export const onEventCreated = onDocumentCreated({ document: `${COLLECTIONS.EVENTS}/{eventId}`, region: FUNCTION_REGION, secrets: ASSESSMENT_SECRETS, timeoutSeconds: 240 }, async (trigger) => {
   const eventId = trigger.params.eventId;
   const createdData = trigger.data?.data() as { sterasTest?: { datasetId?: string; managedBy?: string } } | undefined;
   const legacyM3FixtureIds = new Set([
@@ -1553,7 +1553,7 @@ export const onEventCreated = onDocumentCreated({ document: `${COLLECTIONS.EVENT
   try { await runRiskAndResourcePipeline(eventId); } catch (error) { logger.error('[onEventCreated] failed', error); }
 });
 
-export const onEventUpdated = onDocumentUpdated({ document: `${COLLECTIONS.EVENTS}/{eventId}`, region: FUNCTION_REGION, secrets: ASSESSMENT_SECRETS }, async (trigger) => {
+export const onEventUpdated = onDocumentUpdated({ document: `${COLLECTIONS.EVENTS}/{eventId}`, region: FUNCTION_REGION, secrets: ASSESSMENT_SECRETS, timeoutSeconds: 240 }, async (trigger) => {
   const before = trigger.data?.before.data() as EventRecord | undefined;
   const after = trigger.data?.after.data() as EventRecord | undefined;
   if (!before || !after || after.status !== 'Pending') return;

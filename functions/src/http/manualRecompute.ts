@@ -15,7 +15,7 @@ import { ASSESSMENT_SECRETS } from '../config/secrets';
 import { FUNCTION_REGION } from '../config/runtime';
 import { RESOURCE_CUTOVER_LOCK_PATH } from '../config/resourceCutoverLock';
 
-export const manualRecompute = onCall<{ eventId?: string }>({ region: FUNCTION_REGION, secrets: ASSESSMENT_SECRETS }, async (request) => {
+export const manualRecompute = onCall<{ eventId?: string }>({ region: FUNCTION_REGION, secrets: ASSESSMENT_SECRETS, timeoutSeconds: 240 }, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Sign in first.');
   }
