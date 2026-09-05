@@ -901,9 +901,12 @@ async function persistResourceCalculation(
     const pendingClaimMatches = Boolean(pendingClaimId && currentAssessment?.status === 'processing'
       && currentAssessment.claimId === pendingClaimId && currentAssessment.inputHash === assessment.inputHash
       && currentAssessment.assessmentId === assessment.assessmentId);
-    const currentPointerMatches = expectedCurrentAssessmentId
-      ? currentEvent?.currentAssessmentId === expectedCurrentAssessmentId
-      : pendingClaimMatches ? currentEvent?.currentAssessmentId === undefined : currentEvent?.currentAssessmentId === assessment.assessmentId;
+    const currentPointerMatches = currentAssessmentPointerMatches(
+      currentEvent?.currentAssessmentId,
+      assessment.assessmentId,
+      pendingClaimMatches,
+      expectedCurrentAssessmentId,
+    );
     if (!currentEvent
       || !['Pending', 'UnderReview'].includes(currentEvent.status)
       || currentEvent.currentVersionId !== version.versionId
@@ -1109,6 +1112,26 @@ async function persistResourceCalculation(
 
 /** Emulator-only atomic publication harness; not exported from the deployed Functions entrypoint. */
 export const __testOnlyPersistResourceCalculation = persistResourceCalculation;
+
+export function __testOnlyCurrentAssessmentPointerMatches(
+  currentAssessmentId: string | undefined,
+  assessmentId: string,
+  pendingClaimMatches: boolean,
+  expectedCurrentAssessmentId?: string,
+): boolean {
+  return currentAssessmentPointerMatches(currentAssessmentId, assessmentId, pendingClaimMatches, expectedCurrentAssessmentId);
+}
+
+function currentAssessmentPointerMatches(
+  currentAssessmentId: string | undefined,
+  assessmentId: string,
+  pendingClaimMatches: boolean,
+  expectedCurrentAssessmentId?: string,
+): boolean {
+  if (expectedCurrentAssessmentId !== undefined) return currentAssessmentId === expectedCurrentAssessmentId;
+  if (pendingClaimMatches) return currentAssessmentId === undefined || currentAssessmentId === assessmentId;
+  return currentAssessmentId === assessmentId;
+}
 
 export function resourceDocumentId(stage: 'provisional' | 'official', versionId: string, resourceInputHash: string): string {
   return `${stage}-${versionId}-${resourceInputHash}`;

@@ -680,7 +680,7 @@ describe('Firestore security rules', () => {
         adminDb.doc('events/draft-1').update({ requiredAuthorities: ['BOMBA'] }),
       ]);
       const unauthorizedRetry = await runRiskAndResourcePipeline('draft-1', 2_100, true, {
-        uid: 'pdrm-unassigned', authorityType: 'PDRM',
+        uid: 'pdrm-unassigned', role: 'authority', authorityType: 'PDRM',
       });
       expect(unauthorizedRetry).toMatchObject({ status: 'skipped', reason: 'retry-not-authorized' });
       await Promise.all([
@@ -690,7 +690,7 @@ describe('Firestore security rules', () => {
         }),
       ]);
       const nonRetryable = await runRiskAndResourcePipeline('draft-1', 2_200, true, {
-        uid: 'pdrm-unassigned', authorityType: 'PDRM',
+        uid: 'pdrm-unassigned', role: 'authority', authorityType: 'PDRM',
       });
       expect(nonRetryable).toMatchObject({ status: 'skipped', reason: 'retry-not-retryable' });
     } finally {

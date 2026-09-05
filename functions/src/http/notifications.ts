@@ -11,6 +11,10 @@ import { FUNCTION_REGION } from '../config/runtime';
 
 const MAX_LIST = 50;
 
+interface NotificationDocumentLike {
+  data: () => { read?: unknown };
+}
+
 export const listMyNotifications = onCall<{ limit?: number } | undefined>({ region: FUNCTION_REGION }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in to view notifications.');
   const db = firestore();
@@ -43,6 +47,26 @@ export const markNotificationRead = onCall<{ notificationId?: string; read?: boo
   await ref.update({ read, readAt: read ? Date.now() : null });
   return { ok: true, idempotent: false };
 });
+
+export const markAllNotificationsRead = onCall({ region: FUNCTION_REGION }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in to update notifications.');
+  const db = firestore();
+  const snapshot = await db.collection(COLLECTIONS.NOTIFICATIONS)
+    .where('recipientUid', '==', request.auth.uid)
+    .get();
+  const unread = unreadNotificationDocuments(snapshot.docs);
+  const readAt = Date.now();
+  for (let offset = 0; offset < unread.length; offset += 500) {
+    const batch = db.batch();
+    for (const document of unread.slice(offset, offset + 500)) batch.update(document.ref, { read: true, readAt });
+    await batch.commit();
+  }
+  return { ok: true, updated: unread.length };
+});
+
+export function unreadNotificationDocuments<T extends NotificationDocumentLike>(documents: readonly T[]): T[] {
+  return documents.filter((document) => document.data().read !== true);
+}
 
 export function validateNotificationListLimit(value: unknown): number {
   if (value === undefined) return MAX_LIST;

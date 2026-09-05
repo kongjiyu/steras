@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { latestValidHistoricalResource, nextResourceRevision, resourceDocumentId, invalidAiProposalForManualRecovery, __testOnlyManualLockState, isPipelineEventVersion } from './onEventCreated';
+import { latestValidHistoricalResource, nextResourceRevision, resourceDocumentId, invalidAiProposalForManualRecovery, __testOnlyCurrentAssessmentPointerMatches, __testOnlyManualLockState, isPipelineEventVersion } from './onEventCreated';
 import { isManualAssessmentSourceEligible } from '../engines/manualFinalisation';
 import { AISuccessfulProposal, EventVersion, M1_TEMPLATE_REGISTRY_VERSION, M1TemplateSelection, RESOURCE_KEYS, RESOURCE_SCHEMA_VERSION, ResourceRecommendation } from '@shared/types';
 import { buildSubmittedEventVersion } from '../utils/eventVersionHash';
@@ -81,6 +81,14 @@ describe('M1-submitted assessment input integrity', () => {
 });
 
 describe('resource pipeline identity and revision helpers', () => {
+  it('accepts both initial and same-generation retry pointers while a fenced claim is active', () => {
+    expect(__testOnlyCurrentAssessmentPointerMatches(undefined, 'assessment-1', true)).toBe(true);
+    expect(__testOnlyCurrentAssessmentPointerMatches('assessment-1', 'assessment-1', true)).toBe(true);
+    expect(__testOnlyCurrentAssessmentPointerMatches('other-assessment', 'assessment-1', true)).toBe(false);
+    expect(__testOnlyCurrentAssessmentPointerMatches('previous-assessment', 'assessment-2', true, 'previous-assessment')).toBe(true);
+    expect(__testOnlyCurrentAssessmentPointerMatches('stale-assessment', 'assessment-2', true, 'previous-assessment')).toBe(false);
+  });
+
   it('uses stage, version and the complete input hash in deterministic IDs', () => {
     const hash = 'a'.repeat(64);
     expect(resourceDocumentId('provisional', 'v1', hash)).toBe(`provisional-v1-${hash}`);

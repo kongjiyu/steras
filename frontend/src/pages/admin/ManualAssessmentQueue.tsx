@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import { collection, doc, getDoc, onSnapshot, query, where } from 'firebase/firestore';
 import { ArrowRight, ClipboardCheck, Loader2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { COLLECTIONS, EventRecord, ManualReviewRiskAssessment } from '@shared/types';
+import { AssessmentJob, COLLECTIONS, EventRecord, ManualReviewRiskAssessment } from '@shared/types';
 import { db, isFirebaseConfigured } from '../../config/firebase';
-import { isCurrentEventRecord, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
+import { isCurrentAssessmentJob, isCurrentEventRecord, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
 import { isAdminManualEligible } from './manualAssessmentEligibility';
 
 export type ManualQueueEvent = EventRecord & {
@@ -13,10 +13,9 @@ export type ManualQueueEvent = EventRecord & {
   eventDetails: EventRecord['eventDetails'] & { name: string };
 };
 
-export interface ManualQueueCase {
-  event: ManualQueueEvent;
-  assessment: ManualReviewRiskAssessment;
-}
+export type ManualQueueCase =
+  | { event: ManualQueueEvent; assessment: ManualReviewRiskAssessment; mode: 'manual' }
+  | { event: ManualQueueEvent; assessment: AssessmentJob; mode: 'failed' };
 
 const CANDIDATE_STATUSES = ['Pending', 'UnderReview', 'Manual Review Required'] as const;
 
@@ -35,22 +34,28 @@ export default function ManualAssessmentQueue() {
     const unsubscribe = onSnapshot(eventsQuery, async (snapshot) => {
       const current = ++generation;
       try {
-        const values = await Promise.all(snapshot.docs.map(async (eventDoc) => {
+        const values = await Promise.all(snapshot.docs.map(async (eventDoc): Promise<ManualQueueCase | null> => {
           const event = { eventId: eventDoc.id, ...eventDoc.data() } as EventRecord;
           if (!isManualQueueEvent(event)) return null;
           const assessmentSnapshot = await getDoc(doc(db, COLLECTIONS.EVENTS, event.eventId, COLLECTIONS.ASSESSMENTS, event.currentAssessmentId));
           const assessment = assessmentSnapshot.data();
-          return isCurrentRiskAssessment(assessment)
+          const manualReview = isCurrentRiskAssessment(assessment)
             && assessment.status === 'manual_review_required'
             && assessment.eventId === event.eventId
             && assessment.versionId === event.currentVersionId
             && assessment.assessmentId === event.currentAssessmentId
-            && isAdminManualEligible(assessment)
-            ? { event, assessment }
-            : null;
+            && isAdminManualEligible(assessment);
+          const failedRetry = isCurrentAssessmentJob(assessment)
+            && assessment.status === 'failed'
+            && assessment.eventId === event.eventId
+            && assessment.versionId === event.currentVersionId
+            && assessment.assessmentId === event.currentAssessmentId;
+          if (manualReview) return { event, assessment, mode: 'manual' };
+          if (failedRetry) return { event, assessment, mode: 'failed' };
+          return null;
         }));
         if (current !== generation) return;
-        setCases(values.filter((value): value is ManualQueueCase => Boolean(value)));
+        setCases(values.filter((value): value is ManualQueueCase => value !== null));
         setError('');
       } catch {
         if (current === generation) setError('Manual assessment queue could not be loaded.');
@@ -78,28 +83,28 @@ export default function ManualAssessmentQueue() {
         <span>Application</span><span>Organizer / venue</span><span>Status</span><span>Assessment</span><span className="text-right">Open</span>
       </div>
       <ul className="divide-y divide-[#e8e0cf]">
-        {cases.map(({ event, assessment }) => (
-          <li key={`${event.eventId}:${assessment.assessmentId}`}>
+        {cases.map((entry) => (
+          <li key={`${entry.event.eventId}:${entry.assessment.assessmentId}`}>
             <Link
-              to={`/admin/applications/${event.eventId}?focus=manual-assessment`}
+              to={`/admin/applications/${entry.event.eventId}?focus=${entry.mode === 'failed' ? 'retry-ai' : 'manual-assessment'}`}
               className="grid gap-3 px-4 py-3 transition hover:bg-cream-50 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1.2fr)_8rem_9rem_7rem] lg:items-center"
-              data-testid={`manual-review-${event.eventId}`}
+              data-testid={`manual-review-${entry.event.eventId}`}
             >
               <span className="flex min-w-0 items-center gap-3">
                 <ClipboardCheck size={17} className="shrink-0 text-gold-600" />
                 <span className="min-w-0">
-                  <span className="block truncate text-sm font-semibold text-ink-900">{event.eventDetails.name}</span>
-                  <span className="block truncate text-xs text-ink-500">{event.currentVersionId} · submitted {formatDate(event.submittedAt)}</span>
+                  <span className="block truncate text-sm font-semibold text-ink-900">{entry.event.eventDetails.name}</span>
+                  <span className="block truncate text-xs text-ink-500">{entry.event.currentVersionId} · submitted {formatDate(entry.event.submittedAt)}</span>
                 </span>
               </span>
               <span className="min-w-0 text-xs text-ink-600">
-                <span className="block truncate font-semibold text-ink-700">{event.eventDetails.organizerName}</span>
-                <span className="block truncate" title={event.eventDetails.venueAddress}>{event.eventDetails.venueName}</span>
+                <span className="block truncate font-semibold text-ink-700">{entry.event.eventDetails.organizerName}</span>
+                <span className="block truncate" title={entry.event.eventDetails.venueAddress}>{entry.event.eventDetails.venueName}</span>
               </span>
-              <span className="text-xs"><span className="badge badge-amber">{event.status}</span></span>
-              <span className="text-xs text-ink-600" title={assessment.manualReviewReason}>
-                <span className="block font-semibold capitalize text-ink-700">{assessment.assessmentReadiness.replaceAll('_', ' ')}</span>
-                <span className="block capitalize">{assessment.complianceStatus.replaceAll('_', ' ')} · {assessment.warnings.length} warning{assessment.warnings.length === 1 ? '' : 's'}</span>
+              <span className="text-xs"><span className="badge badge-amber">{entry.event.status}</span></span>
+              <span className="text-xs text-ink-600" title={entry.mode === 'failed' ? entry.assessment.error : entry.assessment.manualReviewReason}>
+                <span className="block font-semibold capitalize text-ink-700">{entry.mode === 'failed' ? 'Pipeline failed' : entry.assessment.assessmentReadiness.replaceAll('_', ' ')}</span>
+                <span className="block capitalize">{entry.mode === 'failed' ? 'AI retry available' : `${entry.assessment.complianceStatus.replaceAll('_', ' ')} · ${entry.assessment.warnings.length} warning${entry.assessment.warnings.length === 1 ? '' : 's'}`}</span>
               </span>
               <span className="flex items-center justify-end gap-1 text-xs font-semibold text-brand-700">Review <ArrowRight size={14} /></span>
             </Link>

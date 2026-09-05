@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateNotificationId, validateNotificationListLimit } from './notifications';
+import { unreadNotificationDocuments, validateNotificationId, validateNotificationListLimit } from './notifications';
 
 describe('notification callable boundaries', () => {
   it('accepts bounded integer limits and safe document IDs', () => {
@@ -16,5 +16,17 @@ describe('notification callable boundaries', () => {
     for (const value of ['', 'other/user', '../notification', 123]) {
       expect(() => validateNotificationId(value)).toThrow();
     }
+  });
+
+  it('marks only notifications that are not already explicitly read', () => {
+    const documents = [
+      { id: 'unread-missing', data: () => ({}) },
+      { id: 'unread-false', data: () => ({ read: false }) },
+      { id: 'read', data: () => ({ read: true }) },
+    ];
+    expect(unreadNotificationDocuments(documents).map((document) => document.id)).toEqual([
+      'unread-missing',
+      'unread-false',
+    ]);
   });
 });

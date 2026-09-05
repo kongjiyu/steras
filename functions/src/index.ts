@@ -41,7 +41,7 @@ export { makeInitialReviewDecision } from './http/initialReview';
 export { overrideResources } from './http/overrideResources';
 export { reviewAssessmentScores } from './http/reviewAssessmentScores';
 export { verifyStage1Doc } from './http/verifyStage1Doc';
-export { markNotificationRead, listMyNotifications } from './http/notifications';
+export { markNotificationRead, markAllNotificationsRead, listMyNotifications } from './http/notifications';
 // M5 — bounded, admin-only, privacy-safe analytics read model.
 export { getAnalyticsPortfolio } from './http/getAnalyticsPortfolio';
 export { submitIncident, listIncidents, manageIncident, listAuthorityDirectory, saveAuthorityDirectoryEntry, getIncidentEvidenceDownloadUrl } from './http/m4Incidents';

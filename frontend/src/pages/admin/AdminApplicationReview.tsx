@@ -28,6 +28,7 @@ import toast from 'react-hot-toast';
 import { db, functions, isFirebaseConfigured } from '../../config/firebase';
 import {
   COLLECTIONS,
+  AssessmentJob,
   EventRecord,
   EventStatus,
   RiskAssessment,
@@ -42,9 +43,10 @@ import {
 } from '@shared/types';
 import { WorkspaceTopBar } from '../../components/layout/Sidebar';
 import { useAuth } from '../../contexts/AuthContext';
-import ManualAssessmentForm from './ManualAssessmentForm';
+import ManualAssessmentForm, { AdminAiRetryPanel } from './ManualAssessmentForm';
 import { isAdminManualEligible } from './manualAssessmentEligibility';
 import { isAdminVisibleEvent } from './adminApplicationVisibility';
+import { isCurrentAssessmentJob, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
 
 const STATUS_TONE: Record<EventStatus, string> = {
   Draft: 'admin-badge admin-badge--default',
@@ -148,6 +150,7 @@ export default function AdminApplicationReview() {
   const [event, setEvent] = useState<EventRecord | null>(null);
   const [version, setVersion] = useState<EventVersion | null>(null);
   const [assessment, setAssessment] = useState<RiskAssessment | null>(null);
+  const [assessmentFailure, setAssessmentFailure] = useState<AssessmentJob | null>(null);
   const [resource, setResource] = useState<ResourceRecommendation | null>(null);
   const [decisions, setDecisions] = useState<AuthorityDecision[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
@@ -197,6 +200,9 @@ export default function AdminApplicationReview() {
         }
         setEvent(eventData);
         setVersion(null);
+        setAssessment(null);
+        setAssessmentFailure(null);
+        setResource(null);
 
         // Default-check authorities based on event's required authorities
         const initial: Record<AuthorityType, boolean> = { PDRM: false, BOMBA: false, KKM: false, DBKL: false, MOTAC: false };
@@ -214,7 +220,12 @@ export default function AdminApplicationReview() {
         if (eventData.currentAssessmentId) {
           promises.push(
             getDoc(doc(eventRef, COLLECTIONS.ASSESSMENTS, eventData.currentAssessmentId))
-              .then((s) => { if (s.exists()) setAssessment(s.data() as RiskAssessment); }),
+              .then((snapshot) => {
+                if (!snapshot.exists()) return;
+                const value = snapshot.data();
+                if (isCurrentRiskAssessment(value)) setAssessment(value);
+                else if (isCurrentAssessmentJob(value) && value.status === 'failed') setAssessmentFailure(value);
+              }),
           );
         }
         if (eventData.currentResourceId) {
@@ -253,7 +264,7 @@ export default function AdminApplicationReview() {
   }, [eventId, reloadToken]);
 
   useEffect(() => {
-    if (!loading && searchParams.get('focus') === 'manual-assessment') {
+    if (!loading && ['manual-assessment', 'retry-ai'].includes(searchParams.get('focus') ?? '')) {
       document.getElementById('manual-assessment')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }, [loading, searchParams]);
@@ -523,6 +534,18 @@ export default function AdminApplicationReview() {
                       <ManualAssessmentForm
                         eventId={event.eventId}
                         assessment={manualReviewAssessment}
+                        onCompleted={() => setReloadToken((value) => value + 1)}
+                      />
+                    </Section>
+                  </div>
+                )}
+
+                {assessmentFailure && event && (
+                  <div id="manual-assessment" className="scroll-mt-24">
+                    <Section title="M2 assessment recovery" icon={FileWarning}>
+                      <AdminAiRetryPanel
+                        eventId={event.eventId}
+                        failureMessage={assessmentFailure.error ?? 'The previous pipeline run did not complete.'}
                         onCompleted={() => setReloadToken((value) => value + 1)}
                       />
                     </Section>
