@@ -25,22 +25,29 @@ describe('validateRecomputeEventId', () => {
 });
 
 describe('validateRecomputeProfile', () => {
-  it('accepts a provisioned authority and rejects every other profile', () => {
-    expect(() => validateRecomputeProfile({ role: 'authority', authorityType: 'PDRM' })).not.toThrow();
-    expect(() => validateRecomputeProfile({ role: 'organizer' })).toThrow('Only provisioned authority accounts can retry assessments.');
-    expect(() => validateRecomputeProfile({ role: 'authority' })).toThrow('Only provisioned authority accounts can retry assessments.');
-    expect(() => validateRecomputeProfile(undefined)).toThrow('Only provisioned authority accounts can retry assessments.');
+  it('accepts provisioned Admin and authority profiles and rejects every other profile', () => {
+    expect(validateRecomputeProfile({ role: 'admin' })).toEqual({ role: 'admin' });
+    expect(validateRecomputeProfile({ role: 'authority', authorityType: 'PDRM' })).toEqual({ role: 'authority', authorityType: 'PDRM' });
+    expect(() => validateRecomputeProfile({ role: 'organizer' })).toThrow('Only provisioned Admin or authority accounts can retry assessments.');
+    expect(() => validateRecomputeProfile({ role: 'authority' })).toThrow('Only provisioned Admin or authority accounts can retry assessments.');
+    expect(() => validateRecomputeProfile(undefined)).toThrow('Only provisioned Admin or authority accounts can retry assessments.');
   });
 });
 
 describe('manual recompute authorization', () => {
   it('requires the caller authority type to be assigned to the event', () => {
-    expect(validateAuthorityAssignment({ requiredAuthorities: ['PDRM'], currentVersionId: 'v1', currentAssessmentId: 'a1' }, 'PDRM')).toBe('a1');
-    expect(() => validateAuthorityAssignment({ requiredAuthorities: ['PDRM'], currentVersionId: 'failed-v1' }, 'PDRM'))
+    const pdrm = { role: 'authority' as const, authorityType: 'PDRM' as const };
+    expect(validateAuthorityAssignment({ requiredAuthorities: ['PDRM'], currentVersionId: 'v1', currentAssessmentId: 'a1' }, pdrm)).toBe('a1');
+    expect(() => validateAuthorityAssignment({ requiredAuthorities: ['PDRM'], currentVersionId: 'failed-v1' }, pdrm))
       .toThrow('This application has no assessment that can be retried.');
-    expect(validateAuthorityAssignment({ requiredAuthorities: ['PDRM'], currentVersionId: 'v2', currentAssessmentId: 'assessment-v2' }, 'PDRM')).toBe('assessment-v2');
-    expect(() => validateAuthorityAssignment({ requiredAuthorities: ['BOMBA'], currentAssessmentId: 'a1' }, 'PDRM'))
+    expect(validateAuthorityAssignment({ requiredAuthorities: ['PDRM'], currentVersionId: 'v2', currentAssessmentId: 'assessment-v2' }, pdrm)).toBe('assessment-v2');
+    expect(() => validateAuthorityAssignment({ requiredAuthorities: ['BOMBA'], currentAssessmentId: 'a1' }, pdrm))
       .toThrow('Your authority is not assigned to this application.');
+  });
+
+  it('allows an Admin to retry the current assessment without authority assignment', () => {
+    expect(validateAuthorityAssignment({ requiredAuthorities: [], currentAssessmentId: 'assessment-v1' }, { role: 'admin' }))
+      .toBe('assessment-v1');
   });
 
   it('only permits forced retry from manual-review or failed state', () => {
@@ -72,6 +79,21 @@ describe('manualRecomputeForUser', () => {
       recompute: async (eventId) => ({ status: 'processed' as const, eventId, versionId: 'v1' }),
     });
     expect(result).toMatchObject({ success: true, status: 'processed', eventId: 'event-1' });
+  });
+
+  it('returns the pipeline result for a provisioned Admin', async () => {
+    let authorization: unknown;
+    const result = await manualRecomputeForUser('admin-1', 'event-1', {
+      ...retryableDependencies,
+      loadProfile: async () => ({ role: 'admin' }),
+      loadEvent: async () => ({ requiredAuthorities: [], currentVersionId: 'v1', currentAssessmentId: 'assessment-1' }),
+      recompute: async (eventId, value) => {
+        authorization = value;
+        return { status: 'processed' as const, eventId, versionId: 'v1', assessmentStatus: 'provisional_ready' as const };
+      },
+    });
+    expect(authorization).toEqual({ uid: 'admin-1', role: 'admin' });
+    expect(result).toMatchObject({ success: true, assessmentStatus: 'provisional_ready' });
   });
 
   it('rejects an unprovisioned caller before running the pipeline', async () => {

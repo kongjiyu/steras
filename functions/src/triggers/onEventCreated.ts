@@ -90,7 +90,8 @@ export interface PipelineResult {
 
 export interface RetryAuthorization {
   uid: string;
-  authorityType: UserProfile['authorityType'];
+  role: 'admin' | 'authority';
+  authorityType?: UserProfile['authorityType'];
 }
 
 export interface PipelineExecutionOptions {
@@ -162,12 +163,14 @@ export async function runRiskAndResourcePipeline(
         : currentEvent.currentAssessmentId !== undefined && currentEvent.currentAssessmentId !== assessmentId)) return false;
     if (retryManual) {
       const retryUser = retryUserSnapshot?.data() as UserProfile | undefined;
-      if (!retryAuthorization
-        || retryUser?.role !== 'authority'
-        || retryUser.authorityType !== retryAuthorization.authorityType
-        || !retryUser.authorityType
-        || !Array.isArray(currentEvent.requiredAuthorities)
-        || !currentEvent.requiredAuthorities.includes(retryUser.authorityType)) return 'retry-not-authorized';
+      const adminAuthorized = retryAuthorization?.role === 'admin' && retryUser?.role === 'admin';
+      const authorityAuthorized = retryAuthorization?.role === 'authority'
+        && retryUser?.role === 'authority'
+        && retryUser.authorityType === retryAuthorization.authorityType
+        && Boolean(retryUser.authorityType)
+        && Array.isArray(currentEvent.requiredAuthorities)
+        && currentEvent.requiredAuthorities.includes(retryUser.authorityType as NonNullable<UserProfile['authorityType']>);
+      if (!adminAuthorized && !authorityAuthorized) return 'retry-not-authorized';
     }
     const existing = existingSnapshot.data() as AssessmentRecord | undefined;
     if (retryManual && existing?.status !== 'manual_review_required' && existing?.status !== 'failed') {

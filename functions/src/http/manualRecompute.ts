@@ -49,17 +49,17 @@ export async function manualRecomputeForUser(
   dependencies: ManualRecomputeDependencies = defaultDependencies,
 ) {
   const profile = await dependencies.loadProfile(uid);
-  const authorityType = validateRecomputeProfile(profile);
+  const actor = validateRecomputeProfile(profile);
   const eventId = validateRecomputeEventId(rawEventId);
   const event = await dependencies.loadEvent(eventId);
-  const assessmentId = validateAuthorityAssignment(event, authorityType);
+  const assessmentId = validateAuthorityAssignment(event, actor);
   const versionId = validateCurrentVersion(event);
   const assessment = await dependencies.loadAssessment(eventId, assessmentId);
   validateRetryableAssessment(assessment, { eventId, versionId, assessmentId });
   if (await dependencies.loadCutoverLock?.()) throw new HttpsError('unavailable', 'Resource migration is in progress. Retry shortly.');
 
   try {
-    const result = await dependencies.recompute(eventId, { uid, authorityType });
+    const result = await dependencies.recompute(eventId, { uid, ...actor });
     return { success: result.status === 'processed', ...result };
   } catch (err) {
     logger.error('[manualRecompute] failed:', err);
@@ -75,17 +75,21 @@ export function validateRecomputeEventId(value: unknown): string {
   return eventId;
 }
 
-export function validateRecomputeProfile(value: unknown): AuthorityType {
+export type RecomputeActor = { role: 'admin' } | { role: 'authority'; authorityType: AuthorityType };
+
+export function validateRecomputeProfile(value: unknown): RecomputeActor {
   const profile = typeof value === 'object' && value !== null ? value as Record<string, unknown> : {};
-  if (profile.role !== 'authority' || !isAuthorityType(profile.authorityType)) {
-    throw new HttpsError('permission-denied', 'Only provisioned authority accounts can retry assessments.');
+  if (profile.role === 'admin') return { role: 'admin' };
+  if (profile.role === 'authority' && isAuthorityType(profile.authorityType)) {
+    return { role: 'authority', authorityType: profile.authorityType };
   }
-  return profile.authorityType;
+  throw new HttpsError('permission-denied', 'Only provisioned Admin or authority accounts can retry assessments.');
 }
 
-export function validateAuthorityAssignment(value: unknown, authorityType: string): string {
+export function validateAuthorityAssignment(value: unknown, actor: RecomputeActor): string {
   const event = typeof value === 'object' && value !== null ? value as Partial<EventRecord> : {};
-  if (!Array.isArray(event.requiredAuthorities) || !event.requiredAuthorities.includes(authorityType as never)) {
+  if (actor.role === 'authority'
+    && (!Array.isArray(event.requiredAuthorities) || !event.requiredAuthorities.includes(actor.authorityType))) {
     throw new HttpsError('permission-denied', 'Your authority is not assigned to this application.');
   }
   const assessmentId = event.currentAssessmentId;

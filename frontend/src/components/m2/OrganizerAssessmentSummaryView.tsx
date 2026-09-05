@@ -24,7 +24,7 @@ export default function OrganizerAssessmentSummaryView({ summary }: { summary: O
       ) : (
         <div className="border-l-4 border-gold-300 bg-gold-50 p-4 text-sm text-ink-700">
           <p className="font-semibold">{summary.status === 'failed' ? 'Assessment unavailable' : 'Manual Review Required'}</p>
-          <p className="mt-1">No calculated risk result is available. An assigned authority can review or retry the assessment.</p>
+          <p className="mt-1">No calculated risk result is available. An Admin can retry the AI assessment or complete a manual assessment.</p>
         </div>
       )}
       {summary.authorityReviewRequired && <p className="border-l-4 border-gold-300 bg-gold-50 p-3 text-xs leading-5 text-ink-700">Authority review is required before this result can become official.{summary.authorityReviewProgress ? ` ${summary.authorityReviewProgress.completed} of ${summary.authorityReviewProgress.required} assigned authorities have submitted their score review.` : ''}</p>}

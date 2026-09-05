@@ -43,8 +43,10 @@ export default function ManualAssessmentForm({ eventId, assessment, onCompleted 
   })));
   const [rationale, setRationale] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [retryingAI, setRetryingAI] = useState(false);
   const [idempotencyKey] = useState(() => `manual-${crypto.randomUUID()}`);
   const persisted = Boolean(assessment.activeManualAssessmentId);
+  const canRetryAI = assessment.aiProposal !== null && assessment.aiProposal.status !== 'success';
 
   const submit = async () => {
     setSubmitting(true);
@@ -72,6 +74,26 @@ export default function ManualAssessmentForm({ eventId, assessment, onCompleted 
     }
   };
 
+  const retryAI = async () => {
+    setRetryingAI(true);
+    try {
+      const retryAssessment = httpsCallable<{ eventId: string }, { success: boolean; assessmentStatus?: string }>(
+        functions,
+        'manualRecompute',
+        { timeout: 240_000 },
+      );
+      const result = (await retryAssessment({ eventId })).data;
+      toast.success(result.assessmentStatus === 'provisional_ready'
+        ? 'AI assessment completed and produced a provisional result.'
+        : 'AI reassessment completed. The refreshed result is now available.');
+      onCompleted?.();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'AI assessment retry failed.');
+    } finally {
+      setRetryingAI(false);
+    }
+  };
+
   return (
     <div data-testid="manual-assessment-form">
       {persisted ? (
@@ -83,6 +105,15 @@ export default function ManualAssessmentForm({ eventId, assessment, onCompleted 
         </div>
       ) : (
         <>
+          {canRetryAI && (
+            <div className="mb-5 rounded-md border border-brand-200 bg-brand-50/50 p-4">
+              <p className="text-sm font-semibold text-ink-800">Retry the AI assessment first</p>
+              <p className="mt-1 text-xs leading-5 text-ink-600">STERAS will ask MiniMax to reassess this unchanged application and automatically retry invalid, timed-out or unavailable responses up to three times. If it still fails, complete the manual assessment below.</p>
+              <button className="btn-secondary mt-3" disabled={retryingAI || submitting} onClick={retryAI} type="button">
+                {retryingAI ? 'AI is reassessing…' : 'Retry AI assessment'}
+              </button>
+            </div>
+          )}
           <div className="flex items-center justify-between">
             <div>
               <h3 className="font-display font-semibold text-ink-800">Manual hazard assessment</h3>
