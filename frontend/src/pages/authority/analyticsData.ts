@@ -1027,8 +1027,8 @@ function formatCoverage(from: string | undefined, to: string | undefined, record
   const timestamps = records.map((record) => record.createdAt).filter(Number.isFinite);
   const observedFrom = timestamps.length ? new Date(Math.min(...timestamps)).toISOString().slice(0, 10) : undefined;
   const observedTo = timestamps.length ? new Date(Math.max(...timestamps)).toISOString().slice(0, 10) : undefined;
-  const startValue = from ?? observedFrom;
-  const endValue = to ?? observedTo;
+  const startValue = from || observedFrom;
+  const endValue = to || observedTo;
   if (!startValue && !endValue) return 'Data Not Available';
   const start = startValue ? new Date(`${startValue}T00:00:00Z`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }) : 'Start not specified';
   const end = endValue ? new Date(`${endValue}T00:00:00Z`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }) : 'End not specified';

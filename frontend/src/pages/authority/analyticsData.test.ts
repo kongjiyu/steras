@@ -194,6 +194,16 @@ describe('analyticsData', () => {
     expect(included.syntheticExcluded).toBe(0);
   });
 
+  it('uses observed coverage when empty date inputs are submitted', () => {
+    const model = buildReportModel('application-outcome', 'overall', undefined, {
+      records,
+      from: '',
+      to: '',
+    });
+    expect(model.coverage.label).not.toBe('Data Not Available');
+    expect(model.coverage.label).toContain('Jan 2026');
+  });
+
   it('marks a client-scoped matched count as a lower bound when the backend response was truncated', () => {
     const model = buildReportModel('risk-assessment', 'eventType', 'conference', {
       records,
