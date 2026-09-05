@@ -10,7 +10,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import OrganizerStatusBadge from './OrganizerStatusBadge';
-import { applyM1ExtractedFields, completeRiskProfile, createInitialEventDetails, createM1DraftRecord, extractionMatchesDraftDocuments, isEditableApplicationStatus, isSelectableRegistryVenue, nextVersionId, reconcileM1EvidenceManifest, validateEventApplication, validateTemplateCompatibility } from './organizerApplication';
+import { applyM1ExtractedFields, bindCanonicalVenue, completeRiskProfile, createInitialEventDetails, createM1DraftRecord, extractionMatchesDraftDocuments, findUniqueRegistryVenueMatch, isEditableApplicationStatus, isSelectableRegistryVenue, nextVersionId, reconcileM1EvidenceManifest, validateEventApplication, validateTemplateCompatibility } from './organizerApplication';
 import { mockVenues } from '../../mock_data/venues';
 import { findEventById } from '../../mock_data/events';
 import { isValidTemplateSelection, M1_CORE_TEMPLATE, scenarioTemplateFor } from '../../features/m1/templateRegistry';
@@ -87,6 +87,12 @@ export default function NewEvent() {
         .sort((left, right) => left.name.localeCompare(right.name))))
       .catch(() => setVenues([]));
   }, []);
+
+  useEffect(() => {
+    if (!form.venueId) return;
+    const venue = venues.find((item) => item.venueId === form.venueId);
+    if (venue) setForm((current) => current.venueId === venue.venueId ? bindCanonicalVenue(current, venue) : current);
+  }, [form.venueId, venues]);
 
   useEffect(() => {
     if (!eventId) return;
@@ -383,7 +389,13 @@ export default function NewEvent() {
       const result = (await extract({ eventId: draftId })).data;
       setExtraction(result);
       setCurrentExtractionId(result.extractionId);
-      setForm((current) => applyM1ExtractedFields(current, result.extractedFields));
+      setForm((current) => {
+        const extracted = applyM1ExtractedFields(current, result.extractedFields);
+        const selectedVenue = extracted.venueId
+          ? venues.find((venue) => venue.venueId === extracted.venueId)
+          : findUniqueRegistryVenueMatch(extracted.venueName, venues);
+        return selectedVenue ? bindCanonicalVenue(extracted, selectedVenue) : extracted;
+      });
       setValidationErrors([]);
       toast.success(`Auto-filled ${result.extractedFields.length} fields. Review all highlighted warnings before submission.`);
     } catch (error) {
@@ -527,15 +539,7 @@ export default function NewEvent() {
                       setForm((previous) => ({ ...previous, venueId: undefined }));
                       return;
                     }
-                    setForm((previous) => ({
-                      ...previous,
-                      venueId: venue.venueId,
-                      venueName: venue.name,
-                      venueAddress: venue.address,
-                      venueState: venue.state,
-                      venueCapacity: venue.verifiedSafeCapacity ?? venue.capacity,
-                      venueLocation: venue.location,
-                    }));
+                    setForm((previous) => bindCanonicalVenue(previous, venue));
                   }}
                 >
                   <option value="">Custom / unverified venue</option>

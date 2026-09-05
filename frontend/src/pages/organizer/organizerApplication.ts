@@ -29,6 +29,59 @@ export function isSelectableRegistryVenue(venue: Venue): boolean {
   return venue.active === true && venue.verificationStatus === 'verified' && venue.deactivatedAt === undefined;
 }
 
+function normalizedVenueName(value: string): string {
+  return value.toLocaleLowerCase('en-MY').replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function venueNameInitials(value: string): string {
+  return normalizedVenueName(value).split(' ').filter(Boolean).map((word) => word[0]).join('');
+}
+
+function leadingVenueAcronym(value: string): string | undefined {
+  const [firstToken = ''] = value.trim().split(/\s+/);
+  return /^[A-Z0-9]{4,8}$/.test(firstToken) ? firstToken.toLocaleLowerCase('en-MY') : undefined;
+}
+
+/** Auto-bind only when an extracted name identifies exactly one selectable registry venue. */
+export function findUniqueRegistryVenueMatch(venueName: string, venues: Venue[]): Venue | undefined {
+  const selectable = venues.filter(isSelectableRegistryVenue);
+  const normalized = normalizedVenueName(venueName);
+  if (!normalized) return undefined;
+  const exact = selectable.filter((venue) => normalizedVenueName(venue.name) === normalized);
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) return undefined;
+  const submittedInitials = venueNameInitials(venueName);
+  const submittedAcronym = leadingVenueAcronym(venueName);
+  const aliases = selectable.filter((venue) => {
+    const registryAcronym = leadingVenueAcronym(venue.name);
+    return (registryAcronym !== undefined && registryAcronym === submittedInitials)
+      || (submittedAcronym !== undefined && submittedAcronym === venueNameInitials(venue.name));
+  });
+  return aliases.length === 1 ? aliases[0] : undefined;
+}
+
+/** Registry identity fields are one atomic value and must never be mixed with extracted/custom values. */
+export function bindCanonicalVenue(details: EventDetails, venue: Venue): EventDetails {
+  const venueCapacity = venue.verifiedSafeCapacity ?? venue.capacity;
+  const venueState = venue.state ?? '';
+  if (details.venueId === venue.venueId
+    && details.venueName === venue.name
+    && details.venueAddress === venue.address
+    && details.venueState === venueState
+    && details.venueCapacity === venueCapacity
+    && details.venueLocation?.lat === venue.location.lat
+    && details.venueLocation?.lng === venue.location.lng) return details;
+  return {
+    ...details,
+    venueId: venue.venueId,
+    venueName: venue.name,
+    venueAddress: venue.address,
+    venueState,
+    venueCapacity,
+    venueLocation: { ...venue.location },
+  };
+}
+
 export function applicationStatusLabel(status: string): string {
   if (status === 'UnderReview') return 'Under Review';
   return status.replace(/([a-z])([A-Z])/g, '$1 $2');
@@ -254,14 +307,20 @@ export function applyM1ExtractedFields(details: EventDetails, fields: M1Extracte
       continue;
     }
     switch (field.target) {
-      case 'name': case 'description': case 'venueAddress': case 'emergencyPlanSummary':
+      case 'name': case 'description': case 'emergencyPlanSummary':
       case 'organizerName': case 'organizerEmail': case 'organizerPhone':
         if (typeof field.value === 'string') Object.assign(next, { [field.target]: field.value });
+        break;
+      case 'venueAddress':
+        if (!next.venueId && typeof field.value === 'string') next.venueAddress = field.value;
         break;
       case 'venueName':
         if (!next.venueId && typeof field.value === 'string') next.venueName = field.value;
         break;
-      case 'venueCapacity': case 'expectedAttendance': case 'startDatetime': case 'endDatetime':
+      case 'venueCapacity':
+        if (!next.venueId && typeof field.value === 'number' && Number.isFinite(field.value)) next.venueCapacity = field.value;
+        break;
+      case 'expectedAttendance': case 'startDatetime': case 'endDatetime':
         if (typeof field.value === 'number' && Number.isFinite(field.value)) Object.assign(next, { [field.target]: field.value });
         break;
     }

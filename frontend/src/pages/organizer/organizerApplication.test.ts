@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { EventDetails, M1DocumentExtraction, M1_EXTRACTION_SCHEMA_VERSION } from '@shared/types';
-import { applyM1ExtractedFields, createM1DraftRecord, extractionMatchesDraftDocuments, isEditableApplicationStatus, isSelectableRegistryVenue, organizerAdminDecisionLabel, organizerPublicationLabel, organizerPublicationStateFromProjection, reconcileM1EvidenceManifest, validateEventApplication, validateM1EvidenceChecklist, validateTemplateCompatibility } from './organizerApplication';
+import { EventDetails, M1DocumentExtraction, M1_EXTRACTION_SCHEMA_VERSION, Venue } from '@shared/types';
+import { applyM1ExtractedFields, bindCanonicalVenue, createM1DraftRecord, extractionMatchesDraftDocuments, findUniqueRegistryVenueMatch, isEditableApplicationStatus, isSelectableRegistryVenue, organizerAdminDecisionLabel, organizerPublicationLabel, organizerPublicationStateFromProjection, reconcileM1EvidenceManifest, validateEventApplication, validateM1EvidenceChecklist, validateTemplateCompatibility } from './organizerApplication';
 import { createTemplateSelection } from '../../features/m1/templateRegistry';
 
 const future = Date.now() + 7 * 24 * 60 * 60 * 1000;
@@ -155,6 +155,59 @@ describe('organizer application lifecycle helpers', () => {
       { target: 'venueName', value: 'Kuala Lumpur Convention Centre', sourceFieldIds: ['VENUE_NAME'], confidence: 'high' },
     ]);
     expect(next.venueName).toBe('Kuala Lumpur Convention Centre');
+  });
+
+  it('matches an extracted full venue name to a unique verified registry acronym', () => {
+    const klcc: Venue = {
+      venueId: 'ven-klcc', active: true, verificationStatus: 'verified', name: 'KLCC Convention Centre',
+      address: 'Kuala Lumpur City Centre, 50088 KL', state: 'Kuala Lumpur', capacity: 15_000,
+      verifiedSafeCapacity: 14_000, location: { lat: 3.1578, lng: 101.7117 },
+    };
+    expect(findUniqueRegistryVenueMatch('Kuala Lumpur Convention Centre', [klcc])).toBe(klcc);
+    expect(findUniqueRegistryVenueMatch('KLCC Convention Centre', [klcc])).toBe(klcc);
+    expect(findUniqueRegistryVenueMatch('Kuala Lumpur Convention Centre', [
+      { ...klcc, name: 'Kuala Lumpur Cultural Centre' },
+    ])).toBeUndefined();
+    expect(findUniqueRegistryVenueMatch('Kuala Lumpur Convention Centre', [
+      klcc,
+      { ...klcc, venueId: 'ven-klcc-hall', name: 'KLCC Hall' },
+    ])).toBeUndefined();
+    expect(findUniqueRegistryVenueMatch('Kuala Lumpur Convention Centre', [
+      { ...klcc, active: false },
+    ])).toBeUndefined();
+  });
+
+  it('atomically replaces stale extracted venue identity with canonical registry values', () => {
+    const venue: Venue = {
+      venueId: 'ven-klcc', active: true, verificationStatus: 'verified', name: 'KLCC Convention Centre',
+      address: 'Kuala Lumpur City Centre, 50088 KL', state: 'Kuala Lumpur', capacity: 15_000,
+      verifiedSafeCapacity: 14_000, location: { lat: 3.1578, lng: 101.7117 },
+    };
+    const bound = bindCanonicalVenue(validDetails({
+      venueId: venue.venueId,
+      venueName: venue.name,
+      venueAddress: 'Extracted long-form address',
+      venueCapacity: 8_000,
+    }), venue);
+    expect(bound).toMatchObject({
+      venueId: venue.venueId,
+      venueName: venue.name,
+      venueAddress: venue.address,
+      venueState: venue.state,
+      venueCapacity: 14_000,
+      venueLocation: venue.location,
+    });
+    expect(bindCanonicalVenue(bound, venue)).toBe(bound);
+  });
+
+  it('does not let extraction overwrite identity fields for a selected registry venue', () => {
+    const details = validDetails({ venueId: 'ven-klcc', venueAddress: 'Canonical address', venueCapacity: 14_000 });
+    const next = applyM1ExtractedFields(details, [
+      { target: 'venueAddress', value: 'Extracted address', sourceFieldIds: ['VENUE_ADDRESS'], confidence: 'high' },
+      { target: 'venueCapacity', value: 8_000, sourceFieldIds: ['VENUE_CAPACITY'], confidence: 'high' },
+    ]);
+    expect(next.venueAddress).toBe('Canonical address');
+    expect(next.venueCapacity).toBe(14_000);
   });
 
   it('requires a complete split or combined application upload and a current extraction', () => {
