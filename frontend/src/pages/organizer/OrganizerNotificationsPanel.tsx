@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Bell, Check, ExternalLink } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { findNotificationsForRecipient, Notification as MockNotification } from '../../mock_data/notifications';
+import { userFacingSystemText } from '../../utils/userFacingText';
 
 const MAX_VISIBLE = 5;
 
@@ -20,7 +21,7 @@ export default function OrganizerNotificationsPanel() {
     <section className="card" aria-labelledby="organizer-notifications-title">
       <div className="card-header">
         <div>
-          <p className="page-eyebrow !mb-1">M3 notifications</p>
+          <p className="page-eyebrow !mb-1">Application notifications</p>
           <h2 id="organizer-notifications-title" className="section-title">Recent updates</h2>
         </div>
         <span className="badge bg-brand-50 text-brand-700">
@@ -43,12 +44,12 @@ export default function OrganizerNotificationsPanel() {
                       <Bell size={14} />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="font-semibold text-ink-800">{notification.title}</p>
-                      <p className="mt-1 text-sm leading-6 text-ink-600">{notification.message}</p>
+                      <p className="font-semibold text-ink-800">{userFacingSystemText(notification.title)}</p>
+                      <p className="mt-1 text-sm leading-6 text-ink-600">{userFacingSystemText(notification.message)}</p>
                       {feedback && (
                         <div className="mt-3 rounded-md border border-[#ded5c5] bg-[#fffdf8] px-3 py-2 text-xs leading-5 text-ink-700">
-                          <p><span className="font-semibold text-ink-800">Reason:</span> {feedback.reason}</p>
-                          <p className="mt-1"><span className="font-semibold text-ink-800">Suggestion:</span> {feedback.suggestion}</p>
+                          <p><span className="font-semibold text-ink-800">Reason:</span> {userFacingSystemText(feedback.reason)}</p>
+                          <p className="mt-1"><span className="font-semibold text-ink-800">Suggestion:</span> {userFacingSystemText(feedback.suggestion)}</p>
                         </div>
                       )}
                       <div className="mt-3 flex flex-wrap items-center gap-3 text-xs font-semibold text-ink-500">

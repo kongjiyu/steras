@@ -447,7 +447,7 @@ export default function NewEvent() {
     <div>
       <PageHeader
         title={draftId ? 'Edit Event Application' : 'New Event Application'}
-        description="Complete the operational details and supporting evidence used for the official category assessment and advisory M3 explanation."
+        description="Complete the operational details and supporting evidence used for the official category assessment and AI advisory explanation."
       />
 
       <section className={`mb-6 border ${templateSelection && !templateCompatibilityError ? 'border-brand-200 bg-brand-50' : 'border-gold-300 bg-gold-50'} p-4 sm:p-5`} aria-labelledby="template-choice-heading">

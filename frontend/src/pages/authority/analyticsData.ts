@@ -41,7 +41,7 @@ export const REPORT_CATALOG: ReportCatalogItem[] = [
     title: 'Event risk & incident analysis',
     shortTitle: 'Risk & incidents',
     description: 'Official risk patterns alongside privacy-safe incident signals.',
-    source: 'M1, M2, M4',
+    source: 'Applications, risk assessments, incidents',
   },
   {
     id: 'application-outcome',
@@ -49,7 +49,7 @@ export const REPORT_CATALOG: ReportCatalogItem[] = [
     title: 'Application outcome & rejection analysis',
     shortTitle: 'Outcomes & rejection',
     description: 'Submission outcomes, rejection patterns, and review durations.',
-    source: 'M1, M2, M3',
+    source: 'Applications, risk assessments, approvals',
   },
   {
     id: 'risk-assessment',
@@ -57,7 +57,7 @@ export const REPORT_CATALOG: ReportCatalogItem[] = [
     title: 'Risk assessment analysis',
     shortTitle: 'Assessment quality',
     description: 'Readiness, compliance, confidence, hazards, and review signals.',
-    source: 'M2',
+    source: 'Risk assessment records',
   },
   {
     id: 'resource-override',
@@ -65,7 +65,7 @@ export const REPORT_CATALOG: ReportCatalogItem[] = [
     title: 'Safety resource & override analysis',
     shortTitle: 'Resources & overrides',
     description: 'Planning baselines, ranges, authority overrides, and reasons.',
-    source: 'M2, M3',
+    source: 'Resource recommendations and authority reviews',
   },
   {
     id: 'control-compliance',
@@ -73,7 +73,7 @@ export const REPORT_CATALOG: ReportCatalogItem[] = [
     title: 'Event control compliance analysis',
     shortTitle: 'Control compliance',
     description: 'Current control states and verification progress across the portfolio.',
-    source: 'M3',
+    source: 'Event-control records',
   },
 ];
 
@@ -873,8 +873,8 @@ function demoSummary(reportType: ReportType, factor: number, population: number,
   ];
   if (reportType === 'risk-incident') return [metric('Events in scope', population, 'After synthetic-data exclusion', 'neutral'), metric('Incidents', Math.round(73 * factor), 'Privacy-safe incident attributes', 'warning'), metric('Events with incidents', '27.2%', 'Share of events with incident coverage', 'neutral'), metric('Action required', '18.4%', 'Of recorded incidents', 'danger')];
   if (reportType === 'application-outcome') return [common[0], common[1], metric('Revisions', `${Math.round(56 * factor)}`, 'Requests for amendment', 'warning'), metric('Median process', '4.2 days', 'Submission to terminal decision', 'neutral')];
-  if (reportType === 'risk-assessment') return [metric('Assessments', Math.round(254 * factor), 'Latest valid assessment records', 'neutral'), metric('Complete', '81.3%', 'Assessment-readiness gate', 'positive'), metric('AI agreement', '74.8%', 'Successful M3 comparisons only', 'neutral'), metric('Manual review', Math.round(12 * factor), 'Monitoring signal only', 'warning')];
-  if (reportType === 'resource-override') return [metric('Resource plans', Math.round(254 * factor), 'M2 recommendations', 'neutral'), metric('Override rate', '13.6%', 'Baseline recommendation items', 'warning'), metric('Highest override', 'Medical', 'Resource category', 'neutral'), metric('Rationale coverage', '100%', 'Overrides with rationale', 'positive')];
+  if (reportType === 'risk-assessment') return [metric('Assessments', Math.round(254 * factor), 'Latest valid assessment records', 'neutral'), metric('Complete', '81.3%', 'Assessment-readiness gate', 'positive'), metric('AI agreement', '74.8%', 'Comparable authority validations only', 'neutral'), metric('Manual review', Math.round(12 * factor), 'Monitoring signal only', 'warning')];
+  if (reportType === 'resource-override') return [metric('Resource plans', Math.round(254 * factor), 'Safety resource recommendations', 'neutral'), metric('Override rate', '13.6%', 'Baseline recommendation items', 'warning'), metric('Highest override', 'Medical', 'Resource category', 'neutral'), metric('Rationale coverage', '100%', 'Overrides with rationale', 'positive')];
   return [metric('Control items', Math.round(222 * factor), 'Current event-control records', 'neutral'), metric('Verified', '60.4%', 'Eligible control items', 'positive'), metric('Resubmission', Math.round(13 * factor), 'Rejected control items', 'warning'), metric('Use Previous', Math.round(8 * factor), 'Explicit exemptions', 'muted')];
 }
 
@@ -913,7 +913,7 @@ function definitionsFor(reportType: ReportType): MetricDefinition[] {
     'risk-incident': [
       { metric: 'Events with incident rate', formula: 'Events with one or more incidents ÷ covered events', denominator: 'Eligible latest-valid events with incident coverage', unavailable: 'Data Not Available when incident coverage is absent' },
       { metric: 'Average incidents per event', formula: 'Total incidents ÷ covered events', denominator: 'Eligible latest-valid events with incident coverage, including zero-incident events', unavailable: 'Data Not Available when incident coverage is absent' },
-      { metric: 'AI agreement', formula: 'Matching advisory band ÷ successful comparisons', denominator: 'M3-successful records only', unavailable: 'Fallback and invalid records are excluded and reported separately' },
+      { metric: 'AI agreement', formula: 'Matching advisory band ÷ successful comparisons', denominator: 'Successful authority-validation records only', unavailable: 'Fallback and invalid records are excluded and reported separately' },
     ],
     'application-outcome': [
       { metric: 'Monthly trend', formula: 'Applications grouped by creation month; approvals and rejections grouped by terminal-decision month', denominator: 'Eligible latest-valid events for each timestamped series', unavailable: 'Records missing the relevant timestamp are excluded from that series' },
@@ -926,11 +926,11 @@ function definitionsFor(reportType: ReportType): MetricDefinition[] {
     ],
     'resource-override': [
       { metric: 'Override rate', formula: 'Overridden recommendation items ÷ baseline recommendation items', denominator: 'Eligible resource recommendation items', unavailable: 'Data Not Available when override history is not supplied' },
-      { metric: 'Planning range', formula: 'M2 baseline and source-owned planning range', denominator: 'Latest valid resource recommendations', unavailable: 'M5 never invents resource quantities' },
+      { metric: 'Planning range', formula: 'Assessment baseline and source-owned planning range', denominator: 'Latest valid resource recommendations', unavailable: 'Analytics never invents resource quantities' },
     ],
     'control-compliance': [
       { metric: 'Verified rate', formula: 'Verified control items ÷ eligible control items', denominator: 'Current control items in selected scope', unavailable: 'Missing control state is not treated as pending' },
-      { metric: 'Use Previous', formula: 'Explicit exemptions through the source workflow', denominator: 'Eligible control items', unavailable: 'Data Not Available when M3 control records are absent' },
+      { metric: 'Use Previous', formula: 'Explicit exemptions through the source workflow', denominator: 'Eligible control items', unavailable: 'Data Not Available when event-control records are absent' },
     ],
   };
   return definitions[reportType];

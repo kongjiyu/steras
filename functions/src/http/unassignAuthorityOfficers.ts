@@ -105,7 +105,7 @@ export const unassignAuthorityOfficers = onCall<UnassignAuthorityOfficersRequest
     throw new HttpsError(
       'failed-precondition',
       `Cannot unassign — these officers have already recorded a proposal: ${blockingList}. ` +
-        'Wait for the second review to close out their work, or contact the M3 owner.',
+        'Wait for the second review to close out their work, or contact an administrator.',
     );
   }
 

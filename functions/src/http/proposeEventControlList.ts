@@ -137,7 +137,7 @@ export async function proposeControlItemsForEventWithMetadata(eventId: string, v
     || !resourceSnap?.exists || resource?.stage !== 'official'
     || resource.eventId !== eventId || resource.versionId !== versionId
     || resource.assessmentId !== event.currentAssessmentId) {
-    throw new Error('The control list requires a current bound M2 V3 official assessment and official resource.');
+    throw new Error('The control list requires a current official risk assessment and safety resource recommendation.');
   }
 
   let apiKey = '';

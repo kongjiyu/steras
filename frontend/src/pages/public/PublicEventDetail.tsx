@@ -299,7 +299,7 @@ function ControlCard({ ctrl, doc: stage2Doc, currentUid, eventId, onStartReport,
         <h3 className="font-semibold text-[#20251d]">{ctrl.controlName}</h3>
         {reported && (
           <span className="badge bg-red-100 text-red-700 text-xs" data-testid={`public-stage2-reported-badge-${ctrl.authority}`}>
-            <AlertTriangle size={11} className="mr-0.5 inline" /> Reported to M4
+            <AlertTriangle size={11} className="mr-0.5 inline" /> Under incident investigation
           </span>
         )}
         <span className="ml-auto text-xs text-[#6b6555]" data-testid={`public-stage2-confirm-count-${ctrl.authority}`}>
@@ -374,9 +374,9 @@ function ReportModal({ ctrl, eventId, onClose, onSubmitted, onError }: ReportMod
       const fn = httpsCallable<{ eventId: string; controlId: string; category: string; description: string }, { ticketId: string; alreadyReported: boolean }>(functions, 'reportStage2Doc');
       const result = await fn({ eventId, controlId: ctrl.controlId, category, description: description.trim() });
       if (result.data.alreadyReported) {
-        onSubmitted('You already reported this image. The previous report is still open with M4.');
+        onSubmitted('You already reported this image. The previous incident investigation is still open.');
       } else {
-        onSubmitted('Report submitted. M4 will investigate.');
+        onSubmitted('Report submitted for incident investigation.');
       }
     } catch (err) {
       onError(errMessage(err));
@@ -395,7 +395,7 @@ function ReportModal({ ctrl, eventId, onClose, onSubmitted, onError }: ReportMod
     >
       <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-lg">
         <h3 id="report-modal-title" className="font-display text-lg font-bold text-[#20251d]">Report {ctrl.authority} image</h3>
-        <p className="mt-1 text-sm text-[#6b6555]">Tell us what's wrong. M4 will review and either confirm or dismiss the report.</p>
+        <p className="mt-1 text-sm text-[#6b6555]">Tell us what is wrong. The incident team will investigate and either confirm or dismiss the report.</p>
         <form onSubmit={handleSubmit} className="mt-4 space-y-3">
           <label className="block">
             <span className="text-sm font-semibold text-[#303528]">Category</span>

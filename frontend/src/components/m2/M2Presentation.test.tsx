@@ -28,7 +28,7 @@ describe('M2 presentation components', () => {
 
   it('shows numeric AI proposals and the validated provisional band', () => {
     render(<AIAdvisory advisory={assessment.aiProposal} resultRiskLevel={assessmentRiskLevel(assessment)} />);
-    expect(screen.getByText('AI proposal · MiniMax M3')).toBeInTheDocument();
+    expect(screen.getByText('AI proposal · MiniMax AI')).toBeInTheDocument();
     expect(screen.getByText(/Validated provisional result/)).toHaveTextContent(String(assessmentRiskLevel(assessment)));
   });
 

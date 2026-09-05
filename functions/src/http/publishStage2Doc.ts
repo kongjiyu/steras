@@ -139,7 +139,7 @@ export async function publishStage2DocForUser(
       };
     }
     if (stage2.m4TicketId) {
-      throw new HttpsError('failed-precondition', 'A public report is open for this Stage 2 image. Wait for M4 to resolve the ticket before publishing.');
+      throw new HttpsError('failed-precondition', 'A public report is open for this Stage 2 image. Wait for the incident investigation to resolve the ticket before publishing.');
     }
 
     // Publish: set the published flags, clear any prior rejection fields.

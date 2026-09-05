@@ -152,7 +152,7 @@ const auditByEvent: Record<string, AuditOverrides[]> = {
     { eventId: EVENT_IDS.E014, action: 'decision_made', actorId: USER_IDS.U_OFC_KKM_SL_01, actorRole: 'authority', timestamp: daysAgo(76), versionId: 'v1', metadata: { authorityType: 'KKM', decision: 'Approved' } },
     { eventId: EVENT_IDS.E014, action: 'public_published', actorId: 'system', actorRole: 'system', timestamp: daysAgo(76), versionId: 'v1', metadata: { approvedBy: ['PDRM', 'BOMBA', 'KKM'] } },
     // M4 outcome applied - control #3 set to resubmit_required
-    { eventId: EVENT_IDS.E014, action: 'status_changed', actorId: 'system', actorRole: 'system', timestamp: daysAgo(5), versionId: 'v1', notes: 'M4 confirmed_true applied via public_reports trigger.', metadata: { trigger: 'public_reports', reportId: 'rep-002', previousState: 'approved', newState: 'resubmit_required', controlId: 'ctrl-e014-03-medical-station' } },
+    { eventId: EVENT_IDS.E014, action: 'status_changed', actorId: 'system', actorRole: 'system', timestamp: daysAgo(5), versionId: 'v1', notes: 'Incident investigation confirmed the public report.', metadata: { trigger: 'public_reports', reportId: 'rep-002', previousState: 'approved', newState: 'resubmit_required', controlId: 'ctrl-e014-03-medical-station' } },
   ],
 
   // E015 - Approved, M4 dismissed
@@ -162,7 +162,7 @@ const auditByEvent: Record<string, AuditOverrides[]> = {
     { eventId: EVENT_IDS.E015, action: 'decision_made', actorId: USER_IDS.U_OFC_PDRM_KL_01, actorRole: 'authority', timestamp: daysAgo(78), versionId: 'v1', metadata: { authorityType: 'PDRM', decision: 'Approved' } },
     { eventId: EVENT_IDS.E015, action: 'decision_made', actorId: USER_IDS.U_OFC_BOMBA_KL_01, actorRole: 'authority', timestamp: daysAgo(76), versionId: 'v1', metadata: { authorityType: 'BOMBA', decision: 'Approved' } },
     { eventId: EVENT_IDS.E015, action: 'public_published', actorId: 'system', actorRole: 'system', timestamp: daysAgo(76), versionId: 'v1', metadata: { approvedBy: ['PDRM', 'BOMBA'] } },
-    { eventId: EVENT_IDS.E015, action: 'status_changed', actorId: 'system', actorRole: 'system', timestamp: daysAgo(5), versionId: 'v1', notes: 'M4 dismissed as fake applied via public_reports trigger.', metadata: { trigger: 'public_reports', reportId: 'rep-003', previousState: 'reported_under_review', newState: 'approved', controlId: 'ctrl-e015-03-medical-station' } },
+    { eventId: EVENT_IDS.E015, action: 'status_changed', actorId: 'system', actorRole: 'system', timestamp: daysAgo(5), versionId: 'v1', notes: 'Incident investigation dismissed the public report and restored approval.', metadata: { trigger: 'public_reports', reportId: 'rep-003', previousState: 'reported_under_review', newState: 'approved', controlId: 'ctrl-e015-03-medical-station' } },
   ],
 };
 

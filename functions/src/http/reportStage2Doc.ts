@@ -238,7 +238,7 @@ async function fireReportNotifications(args: {
 }): Promise<void> {
   const db = firestore();
   const title = 'Stage 2 image reported';
-  const baseMessage = `Public viewer reported a Stage 2 issue for ${args.authorityType} "${args.controlName}". Ticket ${args.ticketId}. Awaiting M4 investigation.`;
+  const baseMessage = `Public viewer reported a Stage 2 issue for ${args.authorityType} "${args.controlName}". Ticket ${args.ticketId}. Awaiting incident investigation.`;
   const sourceActionId = args.ticketId; // public_reports doc id is the natural idempotency key
 
   // Find the assigned officer for this authority + version.

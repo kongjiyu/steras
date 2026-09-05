@@ -113,7 +113,7 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
   const assessmentId = event.currentAssessmentId;
   const resourceId = event.currentResourceId;
   if (!assessmentId || !resourceId || !safeDocumentId(assessmentId) || !safeDocumentId(resourceId)) {
-    throw new HttpsError('failed-precondition', 'Risk assessment and resources must point to the current M2 generation.');
+    throw new HttpsError('failed-precondition', 'Risk assessment and resources must point to the current application assessment.');
   }
   const assessmentRef = eventRef.collection(COLLECTIONS.ASSESSMENTS).doc(assessmentId);
   const resourceRef = eventRef.collection(COLLECTIONS.RESOURCES).doc(resourceId);

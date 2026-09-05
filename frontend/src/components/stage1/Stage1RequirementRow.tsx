@@ -122,7 +122,7 @@ export default function Stage1RequirementRow(props: Stage1RequirementRowProps) {
 
   async function handleUsePrevious() {
     if (!isReceipt) return;
-    if (!window.confirm('Mark this receipt as "Use Previous"? Stage 2 is the public verification backstop — if the item is not actually at the venue, the public can report it via the M4 module.')) {
+    if (!window.confirm('Mark this receipt as "Use Previous"? The public verification step remains available—if the item is not actually at the venue, the public can report it through Incident reporting.')) {
       return;
     }
     setSubmitting(true);

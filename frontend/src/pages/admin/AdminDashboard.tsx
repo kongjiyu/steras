@@ -377,7 +377,7 @@ export default function AdminDashboard() {
 
         {/* M2 officialisation and recovery queues */}
         <section className="mt-6 rounded-lg border border-[#ded5c5] bg-[#fffdf8] px-5 py-6 sm:px-7">
-          <div className="mb-5"><p className="text-xs font-bold uppercase tracking-[0.06em] text-gold-600">M2 officialisation</p><h2 className="mt-1 font-display text-xl font-bold text-ink-900">Score conflicts and finalisation recovery</h2><p className="mt-1 text-sm leading-6 text-ink-500">Resolve categories with different authority scores, or retry an atomic official calculation after a resource failure. Every resolution remains append-only and bound to the current review heads.</p></div>
+          <div className="mb-5"><p className="text-xs font-bold uppercase tracking-[0.06em] text-gold-600">Assessment finalisation</p><h2 className="mt-1 font-display text-xl font-bold text-ink-900">Score conflicts and finalisation recovery</h2><p className="mt-1 text-sm leading-6 text-ink-500">Resolve categories with different authority scores, or retry an atomic official calculation after a resource failure. Every resolution remains append-only and bound to the current review heads.</p></div>
           <ScoreConflictQueue />
         </section>
         <section className="mt-6 rounded-lg border border-[#ded5c5] bg-[#fffdf8] px-5 py-6 sm:px-7">

@@ -368,7 +368,7 @@ function PreviewBanner() {
         <Info size={18} className="mt-0.5 shrink-0 text-brand-600" aria-hidden="true" />
         <p><strong>Prototype preview.</strong> Three role views use synthetic data and local interactions; no live incident records are created.</p>
       </div>
-      <span className="shrink-0 text-xs font-bold uppercase tracking-[0.08em] text-brand-600">M4 · Incident reporting</span>
+      <span className="shrink-0 text-xs font-bold uppercase tracking-[0.08em] text-brand-600">Incident reporting</span>
     </div>
   );
 }
@@ -402,7 +402,7 @@ function PageHeader({ role, onRoleChange }: { role: Role; onRoleChange: (role: R
           <div className="hidden h-7 w-px bg-[#ddd3c2] sm:block" />
           <div className="hidden min-w-0 sm:block">
             <p className="truncate text-sm font-bold text-ink-800">Incident reporting prototype</p>
-            <p className="text-xs text-ink-500">M4 workflow preview</p>
+            <p className="text-xs text-ink-500">Incident response workflow preview</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -1086,7 +1086,7 @@ export default function IncidentReportingPrototype() {
         {role === 'organizer' && <OrganizerView incidents={incidents} selectedId={selectedId} setSelectedId={setSelectedId} onAssignInternalTeam={assignInternalTeam} onRequestExternalAuthority={requestExternalAuthority} onRecordAction={recordIncidentAction} onResolve={resolveIncident} notice={notice} />}
         {role === 'authority' && <AuthorityView incidents={incidents} selectedId={selectedId} setSelectedId={setSelectedId} onRecordInvestigation={recordInvestigationAction} notice={notice} />}
       </main>
-      <footer className="border-t border-[#ddd3c2] bg-[#fffdf8] py-5"><div className="mx-auto max-w-[1440px] px-5 text-center text-xs text-ink-500">STERAS · M4 Incident Reporting Prototype · Reporter, organizer and authority views · Synthetic data only</div></footer>
+      <footer className="border-t border-[#ddd3c2] bg-[#fffdf8] py-5"><div className="mx-auto max-w-[1440px] px-5 text-center text-xs text-ink-500">STERAS · Incident Reporting Prototype · Reporter, organizer and authority views · Synthetic data only</div></footer>
     </div>
   );
 }

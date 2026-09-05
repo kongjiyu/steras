@@ -42,7 +42,7 @@ export default function RiskAssessments({ previewRecords, previewAgency }: RiskA
 
   return (
     <div className="m2-workspace">
-      <AuthorityTopBar title="Risk assessments" subtitle={`${agency} · Provisional M2 category intelligence`} userInitials={initials} />
+      <AuthorityTopBar title="Risk assessments" subtitle={`${agency} · Provisional category intelligence`} userInitials={initials} />
 
       <main className="m2-page page-enter">
         <section className="m2-observatory" aria-labelledby="risk-observatory-title">
@@ -68,7 +68,7 @@ export default function RiskAssessments({ previewRecords, previewAgency }: RiskA
             {summary.requiresRecompute > 0 && (
               <p className="flex items-start gap-2 border-l-4 border-status-amend bg-gold-50 p-3 text-ink-700">
                 <DatabaseZap size={17} className="mt-0.5 shrink-0 text-gold-600" />
-                {summary.requiresRecompute} legacy assessment{summary.requiresRecompute === 1 ? '' : 's'} require versioned M2 recomputation.
+                {summary.requiresRecompute} legacy assessment{summary.requiresRecompute === 1 ? '' : 's'} require recalculation with the current assessment rules.
               </p>
             )}
             {summary.advisoryUnavailable > 0 && (

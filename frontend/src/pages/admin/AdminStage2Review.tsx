@@ -227,7 +227,7 @@ export default function AdminStage2Review() {
                 <>
                   {publishedCount} published
                   {pendingCount > 0 && <> · <span className="font-medium text-amber-700">{pendingCount} pending review</span></>}
-                  {reportedCount > 0 && <> · <span className="font-medium text-red-700">{reportedCount} reported to M4</span></>}
+                  {reportedCount > 0 && <> · <span className="font-medium text-red-700">{reportedCount} under incident investigation</span></>}
                   {generated && <> · of {totalStage2} Stage 2 control{totalStage2 === 1 ? '' : 's'}</>}
                 </>
               )}
@@ -283,7 +283,7 @@ export default function AdminStage2Review() {
                     <span className="badge bg-blue-100 text-brand-700 text-xs">{ctrl.authority}</span>
                     {reported && (
                       <span className="badge bg-red-100 text-red-700 text-xs">
-                        <AlertTriangle size={11} className="mr-0.5 inline" /> Reported to M4
+                        <AlertTriangle size={11} className="mr-0.5 inline" /> Under incident investigation
                       </span>
                     )}
                     {published && !reported && (
@@ -337,7 +337,7 @@ export default function AdminStage2Review() {
                       )}
                       {reported && (
                         <p className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-800">
-                          A public report is open for this Stage 2 image (ticket <span className="font-mono">{doc.m4TicketId}</span>). The M4 module owns the outcome; this admin gate is locked until M4 resolves the ticket.
+                          A public report is open for this Stage 2 image (ticket <span className="font-mono">{doc.m4TicketId}</span>). The incident investigation owns the outcome; this approval action is locked until the ticket is resolved.
                         </p>
                       )}
                       <div className="flex flex-wrap items-center gap-2">
@@ -385,7 +385,7 @@ export default function AdminStage2Review() {
                         )}
                         {reported && (
                           <span className="text-xs text-ink-500 italic">
-                            All actions locked — M4 ticket open.
+                            All actions locked while the incident ticket is open.
                           </span>
                         )}
                       </div>

@@ -222,7 +222,7 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
         <section className="reports-hero">
           <div className="reports-hero__grid">
             <div className="relative z-[1]">
-              <div className="reports-hero__eyebrow"><Activity size={14} /> Module 5 · Analytics &amp; Reporting</div>
+              <div className="reports-hero__eyebrow"><Activity size={14} /> Analytics &amp; Reporting</div>
               <h1>See the portfolio clearly.</h1>
               <p>
                 Read-only intelligence for the STERAS administrator. Compare event risk,
@@ -368,7 +368,7 @@ function ReportOutput({
       <div className="report-output-header">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <p className="report-kicker">{REPORT_CATALOG.find((item) => item.id === model.reportType)?.eyebrow ?? 'Module 5'}</p>
+            <p className="report-kicker">{REPORT_CATALOG.find((item) => item.id === model.reportType)?.eyebrow ?? 'Analytics report'}</p>
             <StatusChip status={model.dataStatus} />
             {previewMode && <span className="status-chip status-chip--demo">Synthetic design data</span>}
           </div>
@@ -537,7 +537,7 @@ function RiskAssessmentView({ model }: { model: ReportModel }) {
           <div><span>Hard-rule adjustments</span><strong>{formatNumber(assessment.hardRuleAdjustments)}</strong></div>
           <div><span>Manual reviews</span><strong>{formatNumber(assessment.manualReviews)}</strong></div>
         </div>
-        <div className="report-callout report-callout--info mt-5"><CircleHelp size={16} /><span>AI agreement is measured only against comparable M3 category validations.</span></div>
+        <div className="report-callout report-callout--info mt-5"><CircleHelp size={16} /><span>AI agreement is measured only against comparable authority-validated categories.</span></div>
       </Panel>
     </div>
   );
@@ -548,7 +548,7 @@ function ResourceOverrideView({ model }: { model: ReportModel }) {
   const recommendationUnavailable = model.unavailableSections.includes('Resource recommendations');
   return (
     <div className="report-content-grid">
-      <Panel className="report-panel--span-8" eyebrow="Override signal" title="Resource override rate by category" subtitle="Authority changes compared with the M2 baseline">
+      <Panel className="report-panel--span-8" eyebrow="Override signal" title="Resource override rate by category" subtitle="Authority changes compared with the original recommendation baseline">
         {overrideUnavailable ? <UnavailableSection label="Resource override rates" /> : (
           <ChartFrame>
             <Bar
@@ -558,13 +558,13 @@ function ResourceOverrideView({ model }: { model: ReportModel }) {
           </ChartFrame>
         )}
       </Panel>
-      <Panel className="report-panel--span-4" eyebrow="Source boundary" title="Planning assumptions" subtitle="Baseline and range remain traceable to M2 source records">
+      <Panel className="report-panel--span-4" eyebrow="Source boundary" title="Planning assumptions" subtitle="Baseline and range remain traceable to their assessment source records">
         {recommendationUnavailable ? <UnavailableSection label="Resource planning data" /> : (
           <div className="metric-stack">
             <MetricLine label="Planning items" value={formatNumber(model.resources.length)} />
             <MetricLine label="Total override records" value={overrideUnavailable || model.resourceOverrideRecords === null ? 'Data Not Available' : formatNumber(model.resourceOverrideRecords)} tone="warning" />
-            <MetricLine label="Source-owned range" value="M2" />
-            <div className="report-callout report-callout--warning"><TriangleAlert size={16} /><span>M5 reports overrides; it does not recalculate recommended quantities.</span></div>
+            <MetricLine label="Range owner" value="Risk &amp; resource assessment" />
+            <div className="report-callout report-callout--warning"><TriangleAlert size={16} /><span>Analytics reports overrides; it does not recalculate recommended quantities.</span></div>
           </div>
         )}
       </Panel>
@@ -581,7 +581,7 @@ function ControlComplianceView({ model }: { model: ReportModel }) {
   const unavailable = model.unavailableSections.includes('Stage 1 document verification');
   return (
     <div className="report-content-grid">
-      <Panel className="report-panel--span-4" eyebrow="Control state" title="Verification status" subtitle="Current M3 event-control records">
+      <Panel className="report-panel--span-4" eyebrow="Control state" title="Verification status" subtitle="Current event-control records">
         {unavailable ? <UnavailableSection label="Event-control verification" /> : <ChartFrame><Doughnut options={doughnutOptions} data={doughnutData(model.controls.statuses)} /></ChartFrame>}
       </Panel>
       <Panel className="report-panel--span-8" eyebrow="Completion" title="Verification progress" subtitle="Verified items divided by eligible control items">
@@ -589,7 +589,7 @@ function ControlComplianceView({ model }: { model: ReportModel }) {
           <div className="progress-card">
             <div className="progress-card__value">{percent(model.controls.verifiedRate)}</div>
             <div className="progress-track"><span style={{ width: Math.min(100, model.controls.verifiedRate * 100) + '%' }} /></div>
-            <div className="mt-3 flex items-center justify-between text-xs text-ink-500"><span>{formatNumber(model.controls.totalItems)} eligible control items</span><span>Source: M3</span></div>
+            <div className="mt-3 flex items-center justify-between text-xs text-ink-500"><span>{formatNumber(model.controls.totalItems)} eligible control items</span><span>Source: Event controls</span></div>
           </div>
         )}
       </Panel>
@@ -598,7 +598,7 @@ function ControlComplianceView({ model }: { model: ReportModel }) {
           <DataTable headers={['Status', 'Items', 'Share']} rows={model.controls.statuses.map((item) => [item.label, formatNumber(item.value), item.percentage === undefined ? 'Data Not Available' : percent(item.percentage)])} />
         )}
       </Panel>
-      <Panel className="report-panel--span-12" eyebrow="Interpretation" title="How to read this report" subtitle="Module 5 remains descriptive and read-only">
+      <Panel className="report-panel--span-12" eyebrow="Interpretation" title="How to read this report" subtitle="Analytics remains descriptive and read-only">
         <div className="report-callout report-callout--info"><CheckCircle2 size={17} /><span>Use Previous is reported as an explicit source status. It is not silently merged into verified or pending.</span></div>
       </Panel>
     </div>

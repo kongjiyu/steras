@@ -130,7 +130,7 @@ export async function unpublishStage2DocForUser(
     }
     const stage2 = docSnap.data() as Stage2Doc;
     if (stage2.m4TicketId) {
-      throw new HttpsError('failed-precondition', 'A public report is open for this Stage 2 image. Wait for M4 to resolve the ticket before changing publish state.');
+      throw new HttpsError('failed-precondition', 'A public report is open for this Stage 2 image. Wait for the incident investigation to resolve the ticket before changing publish state.');
     }
     if (stage2.published !== true && !isReject) {
       // Unpublish on an already-pending doc: idempotent no-op. We return

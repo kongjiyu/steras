@@ -19,35 +19,40 @@ import heroUrl from '../../assets/imagery/public-event-hero.webp';
 
 const journey = [
   {
-    module: 'M1',
+    step: '01',
+    phase: 'Application',
     title: 'Prepare one complete application',
     body: 'Choose an event scenario, preview the right templates, upload your completed documents and verify every extracted field before submission.',
     detail: 'Guided templates · venue registry · evidence checks',
     icon: ClipboardCheck,
   },
   {
-    module: 'M2',
+    step: '02',
+    phase: 'Risk & resources',
     title: 'Understand risk before review',
     body: 'STERAS brings event data and contextual evidence together, then produces traceable category risks and practical safety-resource planning ranges.',
     detail: 'Eight risk categories · provenance · resource ranges',
     icon: FileSearch,
   },
   {
-    module: 'M3',
+    step: '03',
+    phase: 'Approval',
     title: 'Coordinate accountable approval',
     body: 'Administrators and assigned agencies review the same submitted version, record their rationale and complete the required event-control workflow.',
     detail: 'Named reviewers · immutable decisions · event controls',
     icon: ShieldCheck,
   },
   {
-    module: 'M4',
+    step: '04',
+    phase: 'Incident response',
     title: 'Respond when an incident happens',
     body: 'Registered reporters can raise an incident, while organizers and authorities coordinate response, escalation, evidence and final resolution.',
     detail: 'Incident triage · authority referral · resolution history',
     icon: Siren,
   },
   {
-    module: 'M5',
+    step: '05',
+    phase: 'Analytics',
     title: 'Learn across the event portfolio',
     body: 'Privacy-safe operational reports reveal application outcomes, risk patterns, incidents, controls and resource trends without exposing private evidence.',
     detail: 'Read-only analytics · PDF and CSV reports',
@@ -127,7 +132,7 @@ export default function PublicHome() {
                 From idea to public confidence
               </h2>
               <p className="mt-6 max-w-sm text-base leading-7 text-ink-600">
-                Five connected modules keep work moving without losing the evidence, people or decisions that came before.
+                Five connected stages keep work moving without losing the evidence, people or decisions that came before.
               </p>
               <Link to="/login" className="mt-8 inline-flex min-h-11 items-center gap-2 font-semibold text-brand-700 underline decoration-brand-300 underline-offset-4 hover:text-brand-600">
                 Continue to your workspace <ArrowRight size={16} />
@@ -135,13 +140,13 @@ export default function PublicHome() {
             </div>
 
             <ol className="relative border-l border-[#cfc3ad] pl-7 sm:pl-10">
-              {journey.map(({ module, title, body, detail, icon: Icon }, index) => (
-                <li key={module} className="relative pb-12 last:pb-0 sm:pb-16">
+              {journey.map(({ step, phase, title, body, detail, icon: Icon }) => (
+                <li key={step} className="relative pb-12 last:pb-0 sm:pb-16">
                   <span className="absolute -left-[2.28rem] top-0 grid h-4 w-4 place-items-center rounded-full border-[3px] border-cream-50 bg-brand-600 sm:-left-[2.78rem]" aria-hidden="true" />
                   <div className="grid gap-4 sm:grid-cols-[5rem_1fr] sm:gap-7">
                     <div>
-                      <span className="font-display text-4xl font-bold tracking-[-0.06em] text-[#c9bea9]">{module}</span>
-                      <span className="mt-1 block text-xs font-bold uppercase tracking-[0.12em] text-gold-700">Step {index + 1}</span>
+                      <span className="font-display text-4xl font-bold tracking-[-0.06em] text-[#c9bea9]">{step}</span>
+                      <span className="mt-1 block text-xs font-bold uppercase tracking-[0.09em] text-gold-700">{phase}</span>
                     </div>
                     <article>
                       <div className="flex items-start gap-3">

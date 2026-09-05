@@ -22,6 +22,7 @@ import {
 import { db, functions, isFirebaseConfigured } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { COLLECTIONS, Notification } from '@shared/types';
+import { userFacingSystemText } from '../../utils/userFacingText';
 
 const MAX_VISIBLE = 20;
 
@@ -170,8 +171,8 @@ export default function NotificationBell() {
                   className={`flex items-start gap-3 px-4 py-3 text-sm ${n.read ? 'bg-transparent' : 'bg-brand-50/40'}`}
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="font-semibold text-ink-800">{n.title}</p>
-                    <p className="mt-0.5 text-xs leading-5 text-ink-600">{n.message}</p>
+                    <p className="font-semibold text-ink-800">{userFacingSystemText(n.title)}</p>
+                    <p className="mt-0.5 text-xs leading-5 text-ink-600">{userFacingSystemText(n.message)}</p>
                     {/* FR-M3-08: surface reason + suggestion as separate
                         lines when present, so the organizer sees the
                         full feedback (not just the message). Old
@@ -181,13 +182,13 @@ export default function NotificationBell() {
                         {n.reason && (
                           <p>
                             <span className="font-semibold text-ink-800">Reason:</span>{' '}
-                            <span className="whitespace-pre-line">{n.reason}</span>
+                            <span className="whitespace-pre-line">{userFacingSystemText(n.reason)}</span>
                           </p>
                         )}
                         {n.suggestion && (
                           <p className={n.reason ? 'mt-1' : ''}>
                             <span className="font-semibold text-ink-800">Suggestion:</span>{' '}
-                            <span className="whitespace-pre-line">{n.suggestion}</span>
+                            <span className="whitespace-pre-line">{userFacingSystemText(n.suggestion)}</span>
                           </p>
                         )}
                       </div>

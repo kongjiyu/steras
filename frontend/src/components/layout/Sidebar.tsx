@@ -167,7 +167,7 @@ export const AUTHORITY_NAV: SidebarNavSection[] = [
     ],
   },
   {
-    label: 'M2 intelligence',
+    label: 'Risk & Resource Planning',
     items: [
       { to: '/authority/risk', label: 'Risk assessments', mobileLabel: 'Risk', icon: ShieldAlert },
       { to: '/authority/resources', label: 'Resources', mobileLabel: 'Plans', icon: Boxes },
@@ -180,7 +180,7 @@ export const AUTHORITY_NAV: SidebarNavSection[] = [
  * ============================================================================ */
 export const ADMIN_NAV: SidebarNavSection[] = [
   {
-    label: 'M3 — Authority Approval',
+    label: 'Application Approval',
     items: [
       { to: '/admin', label: 'Dashboard', mobileLabel: 'Home', icon: LayoutDashboard, end: true },
       { to: '/admin/applications', label: 'Application queue', mobileLabel: 'Queue', icon: ListChecks },
@@ -188,14 +188,14 @@ export const ADMIN_NAV: SidebarNavSection[] = [
     ],
   },
   {
-    label: 'M1 — User & Event Mgmt',
+    label: 'Users & Venues',
     items: [
       { to: '/admin/users', label: 'User accounts', mobileLabel: 'Users', icon: Users },
       { to: '/admin/venues', label: 'Venues', mobileLabel: 'Venues', icon: MapPin },
     ],
   },
   {
-    label: 'M5 — Analytics',
+    label: 'Analytics & Reporting',
     items: [
       { to: '/admin/analytics', label: 'Reports', mobileLabel: 'Reports', icon: ChartLine },
     ],

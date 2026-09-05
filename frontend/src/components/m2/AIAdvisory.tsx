@@ -14,7 +14,7 @@ export default function AIAdvisory({ advisory, resultRiskLevel, showCategories =
     <div className="border-l-4 border-gold-300 bg-gold-50 p-4 sm:p-5" data-testid="ai-advisory">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-[11px] font-bold uppercase tracking-[0.09em] text-gold-600">AI proposal · MiniMax M3</p>
+          <p className="text-[11px] font-bold uppercase tracking-[0.09em] text-gold-600">AI proposal · MiniMax AI</p>
           <h3 className="mt-1 font-display text-base font-semibold text-ink-800">Hazard and category score proposal</h3>
         </div>
         <span className={`badge ${available ? 'badge-green' : 'badge-amber'}`}>{advisory?.status ?? 'not attempted'}</span>

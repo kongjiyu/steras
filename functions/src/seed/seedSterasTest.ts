@@ -395,7 +395,7 @@ function eventDetails(scenario: Scenario, now: number): EventDetails {
     seating: 'mixed',
     startDatetime: now + 30 * 24 * 60 * 60 * 1000,
     endDatetime: now + 30 * 24 * 60 * 60 * 1000 + 8 * 60 * 60 * 1000,
-    description: `Deterministic STERAS Module 3 test application for ${scenario.state}. Do not use as operational data.`,
+    description: `Deterministic STERAS authority-approval test application for ${scenario.state}. Do not use as operational data.`,
     emergencyPlanSummary: 'Synthetic emergency, evacuation, medical, traffic and authority coordination plan.',
     riskProfile: {
       crowdManagementPlan: true,
@@ -1137,4 +1137,3 @@ if (require.main === module) {
     process.exitCode = 1;
   });
 }
-

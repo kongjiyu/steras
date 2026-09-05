@@ -12,8 +12,8 @@ describe('PublicHome', () => {
     expect(screen.getByRole('heading', { name: 'Every role sees the detail it needs—and no more.' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'AI can advise. Evidence and accountable people decide.' })).toBeInTheDocument();
 
-    for (const module of ['M1', 'M2', 'M3', 'M4', 'M5']) {
-      expect(screen.getByText(module)).toBeInTheDocument();
+    for (const phase of ['Application', 'Risk & resources', 'Approval', 'Incident response', 'Analytics']) {
+      expect(screen.getByText(phase)).toBeInTheDocument();
     }
 
     expect(screen.getAllByRole('link', { name: /Start an application/ })[0]).toHaveAttribute('href', '/register');

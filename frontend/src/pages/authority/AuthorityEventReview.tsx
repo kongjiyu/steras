@@ -404,7 +404,7 @@ export default function AuthorityEventReview() {
       const command = httpsCallable<{ eventId: string; rationale: string; overrides: Array<{ hazardId: string; residualLikelihood: number; residualSeverity: number }> }, { overrideCount: number }>(functions, 'reviewAssessmentScores');
       const result = await command({ eventId, rationale: scoreReviewRationale.trim(), overrides });
       setScoreReviewRecorded(true);
-      toast.success(result.data.overrideCount > 0 ? 'Score overrides recorded for M2 review.' : 'Assessment confirmation recorded.');
+      toast.success(result.data.overrideCount > 0 ? 'Score overrides recorded for official recalculation.' : 'Assessment confirmation recorded.');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Unable to record score review.');
     } finally {
@@ -503,7 +503,7 @@ export default function AuthorityEventReview() {
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <h3 className="font-semibold text-ink-800">Authority score confirmation / override</h3>
-                          <p className="mt-1 text-xs leading-5 text-ink-600">Confirm residual likelihood and severity for each hazard, or record a revised value with a reason. The official M2 score remains immutable.</p>
+                          <p className="mt-1 text-xs leading-5 text-ink-600">Confirm residual likelihood and severity for each hazard, or record a revised value with a reason. The current official score remains immutable.</p>
                         </div>
                         {scoreReviewRecorded && <span className="badge bg-green-100 text-status-approved">Recorded</span>}
                       </div>
@@ -699,7 +699,7 @@ export default function AuthorityEventReview() {
                 />
                 <span>
                   <span className="font-semibold text-ink-700">I confirm I have reviewed</span> the assessment, AI advisory, submitted evidence, and recommended resource ranges for this application.
-                  <span className="mt-0.5 block text-[11px] text-ink-500">Required to approve (FR-M3-16). Rejection requires a reason and suggestion.</span>
+                  <span className="mt-0.5 block text-[11px] text-ink-500">Required to approve. Rejection requires a reason and suggestion.</span>
                 </span>
               </label>
               {assessment?.complianceStatus === 'blocked' && <p className="rounded-md bg-red-50 p-3 text-xs leading-5 text-status-rejected">Approval is blocked by compliance. You may record a rejection.</p>}

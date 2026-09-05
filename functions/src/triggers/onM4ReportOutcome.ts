@@ -97,7 +97,7 @@ export async function applyM4ReportOutcome(
         published: false,
         m4TicketId: FieldValue.delete(),
         reportedAt: FieldValue.delete(),
-        rejectionReason: 'M4 confirmed the public discrepancy; submit a corrected Stage 2 image.',
+        rejectionReason: 'The incident investigation confirmed the public discrepancy; submit a corrected Stage 2 image.',
         rejectionAt: now,
         rejectedBy: 'm4',
       });
@@ -149,8 +149,8 @@ export async function applyM4ReportOutcome(
       actorRole: 'system',
       timestamp: now,
       notes: outcome === 'confirmed_true'
-        ? 'M4 confirmed the Stage 2 discrepancy; organiser resubmission required.'
-        : 'M4 dismissed the Stage 2 discrepancy; the published control was restored.',
+        ? 'The incident investigation confirmed the Stage 2 discrepancy; organiser resubmission required.'
+        : 'The incident investigation dismissed the Stage 2 discrepancy; the published control was restored.',
       metadata: { ticketId: report.ticketId, controlId: report.controlId, docId: report.docId, outcome },
     });
 
@@ -184,8 +184,8 @@ export async function applyM4ReportOutcome(
         type: confirmed ? 'control_resubmit_required' : 'control_restored',
         title: confirmed ? 'Stage 2 correction required' : 'Stage 2 control restored',
         message: confirmed
-          ? `${result.authorityType}: M4 confirmed a public discrepancy for "${result.controlName}". Upload a corrected Stage 2 image for admin review.`
-          : `${result.authorityType}: M4 dismissed the public discrepancy for "${result.controlName}". The published Stage 2 image is visible again.`,
+          ? `${result.authorityType}: The incident investigation confirmed a public discrepancy for "${result.controlName}". Upload a corrected Stage 2 image for admin review.`
+          : `${result.authorityType}: The incident investigation dismissed the public discrepancy for "${result.controlName}". The published Stage 2 image is visible again.`,
         sourceActionId: report.ticketId,
         notificationId: `${report.ticketId}_${outcome}_${recipientUid}`,
       });

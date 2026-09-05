@@ -48,6 +48,7 @@ import { isAdminManualEligible } from './manualAssessmentEligibility';
 import { isAdminVisibleEvent } from './adminApplicationVisibility';
 import { isCurrentAssessmentJob, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
 import { adminOfficerDecisionRows } from './adminOfficerDecisionPresentation';
+import { userFacingSystemText } from '../../utils/userFacingText';
 
 const STATUS_TONE: Record<EventStatus, string> = {
   Draft: 'admin-badge admin-badge--default',
@@ -350,7 +351,7 @@ export default function AdminApplicationReview() {
     <div className="min-h-screen bg-[#f3f1e9] pb-16">
       <WorkspaceTopBar
         title={event ? `Review · ${event.eventDetails.name}` : 'Application review'}
-        subtitle={event ? `M3 · submitted ${formatDateTime(event.submittedAt)}` : 'M3 · Authority Approval'}
+        subtitle={event ? `Application review · submitted ${formatDateTime(event.submittedAt)}` : 'Authority approval'}
         userInitials={initialsFor(profile?.name)}
         workspaceEyebrow="STERAS administration"
         workspaceEyebrowIcon={ShieldCheck}
@@ -480,7 +481,7 @@ export default function AdminApplicationReview() {
                     ? `Schema v${display.schemaVersion} · Logic v${display.formulaVersion}`
                     : '';
                   return (
-                    <Section title="M2 risk assessment" icon={ShieldCheck}>
+                    <Section title="Risk assessment" icon={ShieldCheck}>
                       <div className="mb-3 flex flex-wrap items-center gap-2">
                         <span className={`${RISK_TONE[riskLevel]} text-sm`}>
                           {riskLevel}{score !== undefined ? ` · ${score}/100` : ''}
@@ -517,12 +518,12 @@ export default function AdminApplicationReview() {
                       {assessment.aiProposal && (
                         <div className="mt-3 rounded-md border border-gold-300 bg-gold-50 p-3 text-xs text-ink-700">
                           <p className="font-semibold text-gold-600">
-                            AI proposal · {assessment.aiProposal.model}
+                            AI proposal · MiniMax AI
                             <span className="ml-2 font-normal text-ink-500">
                               status: {assessment.aiProposal.status}
                             </span>
                           </p>
-                          <p className="mt-1">The assessment retains the AI proposal as provenance; the displayed score is calculated by the deterministic M2 rules.</p>
+                          <p className="mt-1">The assessment retains the AI proposal as provenance; the displayed score is calculated by versioned deterministic rules.</p>
                         </div>
                       )}
                     </Section>
@@ -534,7 +535,7 @@ export default function AdminApplicationReview() {
                     <Section title="Admin manual assessment" icon={FileWarning}>
                       <div className="mb-4 rounded-md border border-gold-200 bg-gold-50 p-3 text-sm text-ink-700">
                         <p className="font-semibold text-gold-700">This application requires Admin manual review before an application decision.</p>
-                        <p className="mt-1 text-xs leading-5">Review the complete application and M2 evidence above, then submit the locked assessment. The application decision remains Approve or Reject only.</p>
+                        <p className="mt-1 text-xs leading-5">Review the complete application and assessment evidence above, then submit the locked assessment. The application decision remains Approve or Reject only.</p>
                       </div>
                       <ManualAssessmentForm
                         eventId={event.eventId}
@@ -547,7 +548,7 @@ export default function AdminApplicationReview() {
 
                 {assessmentFailure && event && (
                   <div id="manual-assessment" className="scroll-mt-24">
-                    <Section title="M2 assessment recovery" icon={FileWarning}>
+                    <Section title="Assessment recovery" icon={FileWarning}>
                       <AdminAiRetryPanel
                         eventId={event.eventId}
                         failureMessage={assessmentFailure.error ?? 'The previous pipeline run did not complete.'}
@@ -559,7 +560,7 @@ export default function AdminApplicationReview() {
 
                 {/* Resource recommendations */}
                 {resource && (
-                  <Section title="M2 resource recommendations" icon={Users} defaultOpen={false}>
+                  <Section title="Safety resource recommendations" icon={Users} defaultOpen={false}>
                     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                       {(['police', 'security', 'medicalTeams', 'ambulances', 'toilets', 'wasteBins', 'fireOfficers'] as const).map((key) => (
                         <div key={key} className="rounded-md border border-[#e8e0cf] bg-cream-50 p-3 text-center">
@@ -606,7 +607,7 @@ export default function AdminApplicationReview() {
                           <li key={a.id} className="flex items-start gap-2 border-l-2 border-[#c8d1a8] pl-3">
                             <div>
                               <p className="font-semibold capitalize text-ink-800">{a.action.replaceAll('_', ' ')}</p>
-                              {a.notes && <p className="text-xs text-ink-500">{a.notes}</p>}
+                              {a.notes && <p className="text-xs text-ink-500">{userFacingSystemText(a.notes)}</p>}
                             </div>
                             <span className="ml-auto text-xs text-ink-500">{formatDateTime(a.timestamp)}</span>
                           </li>

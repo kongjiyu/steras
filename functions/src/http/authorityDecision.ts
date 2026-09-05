@@ -205,7 +205,7 @@ export async function makeAuthorityDecisionForUser(
     if (assessment?.complianceStatus === 'blocked' && decision === 'Approved') {
       throw new HttpsError(
         'failed-precondition',
-        'This application cannot be approved while M2 compliance status is "blocked". ' +
+        'This application cannot be approved while the assessment compliance status is "blocked". ' +
         'Resolve the blocking compliance checks first or choose Reject.',
       );
     }

@@ -141,7 +141,7 @@ export async function submitStage2DocForUser(
     }
     const existingDoc = docSnap.exists ? (docSnap.data() as Stage2Doc) : null;
     if (existingDoc && existingDoc.m4TicketId) {
-      throw new HttpsError('failed-precondition', 'A report is open for this Stage 2 image. Wait for M4 to resolve the ticket before replacing.');
+      throw new HttpsError('failed-precondition', 'A report is open for this Stage 2 image. Wait for the incident investigation to resolve the ticket before replacing it.');
     }
 
     // Build the new doc.

@@ -103,7 +103,7 @@ export default function Stage2RequirementRow(props: Stage2RequirementRowProps) {
             <span className="text-sm font-medium text-ink-800">{label}</span>
             {reported && (
               <span className="badge bg-red-100 text-red-700 text-xs" data-testid={`stage2-reported-badge-${authority}`}>
-                <AlertTriangle size={11} className="mr-0.5 inline" /> Reported to M4
+                <AlertTriangle size={11} className="mr-0.5 inline" /> Under incident investigation
               </span>
             )}
             {published && !reported && (
@@ -194,7 +194,7 @@ export default function Stage2RequirementRow(props: Stage2RequirementRowProps) {
           )}
           {reported && (
             <span className="inline-flex min-h-9 items-center gap-1.5 rounded-md bg-ink-100 px-3 py-1.5 text-xs font-medium text-ink-700">
-              Replace disabled (M4 ticket open)
+              Replacement disabled while investigation is open
             </span>
           )}
           {rejected && !reported && (

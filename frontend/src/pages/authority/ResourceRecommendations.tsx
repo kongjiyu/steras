@@ -46,7 +46,7 @@ export default function ResourceRecommendations({ previewRecords, previewAgency 
               <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#f6d25b]">Resource planning ledger</p>
               <h2 id="resource-observatory-title" className="mt-2 max-w-xl text-2xl font-bold sm:text-3xl">Indicative quantities with their operational basis attached.</h2>
               <p className="mt-3 max-w-2xl text-sm leading-6 text-[#c7d0be]">
-                Compare M2 recommendations across assigned events. Prototype quantities support review; they do not authorise deployment.
+                Compare safety resource recommendations across assigned events. Prototype quantities support review; they do not authorise deployment.
               </p>
             </div>
             <div className="m2-stat-ledger" aria-label="Resource portfolio summary">

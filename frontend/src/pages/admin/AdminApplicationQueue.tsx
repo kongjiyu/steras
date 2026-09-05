@@ -110,7 +110,7 @@ export default function AdminApplicationQueue() {
     <div className="min-h-screen bg-[#f3f1e9] pb-16">
       <WorkspaceTopBar
         title="Application queue"
-        subtitle="M3 — Authority Approval · all submissions"
+        subtitle="Authority approval · all submissions"
         userInitials={initialsFor(profile?.name)}
         workspaceEyebrow="STERAS administration"
         workspaceEyebrowIcon={ShieldCheck}
