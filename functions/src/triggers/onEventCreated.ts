@@ -742,13 +742,17 @@ function publishPendingAssessment(
   assessment: ProvisionalRiskAssessment | OfficialRiskAssessment | AdminManualOfficialRiskAssessment,
   pendingClaimMatches: boolean,
   computedAt: number,
+  pendingClaimId: string | undefined,
+  baseAuditExists: boolean,
 ): void {
-  if (!pendingClaimMatches) return;
+  if (!pendingClaimMatches || !pendingClaimId) return;
   transaction.set(
     eventReference.collection(COLLECTIONS.ASSESSMENTS).doc(assessment.assessmentId),
     assessment,
   );
-  const auditReference = eventReference.collection(COLLECTIONS.AUDIT_LOGS).doc(`${assessment.assessmentId}-risk-score-computed`);
+  const auditReference = eventReference.collection(COLLECTIONS.AUDIT_LOGS).doc(
+    riskScoreAuditId(assessment.assessmentId, pendingClaimId, baseAuditExists),
+  );
   transaction.create(auditReference, {
     id: auditReference.id,
     eventId: assessment.eventId,
@@ -766,6 +770,11 @@ function publishPendingAssessment(
       inputHash: assessment.inputHash,
     },
   });
+}
+
+export function riskScoreAuditId(assessmentId: string, claimId: string, baseAuditExists: boolean): string {
+  const baseId = `${assessmentId}-risk-score-computed`;
+  return baseAuditExists ? `${baseId}-retry-${claimId}` : baseId;
 }
 
 export async function recomputeResourceForStoredAssessment(
@@ -869,14 +878,17 @@ async function persistResourceCalculation(
   const resourceId = resourceDocumentId(stage, version.versionId, calculation.resourceInputHash);
   return db.runTransaction(async (transaction) => {
     const assessmentReference = eventReference.collection(COLLECTIONS.ASSESSMENTS).doc(assessment.assessmentId);
+    const riskAuditBaseReference = eventReference.collection(COLLECTIONS.AUDIT_LOGS)
+      .doc(`${assessment.assessmentId}-risk-score-computed`);
     const previousAssessmentReference = expectedCurrentAssessmentId
       ? eventReference.collection(COLLECTIONS.ASSESSMENTS).doc(expectedCurrentAssessmentId)
       : undefined;
-    const [currentEventSnapshot, currentAssessmentSnapshot, cutoverLockSnapshot, previousAssessmentSnapshot] = await Promise.all([
+    const [currentEventSnapshot, currentAssessmentSnapshot, cutoverLockSnapshot, previousAssessmentSnapshot, riskAuditBaseSnapshot] = await Promise.all([
       transaction.get(eventReference),
       transaction.get(assessmentReference),
       transaction.get(db.doc(RESOURCE_CUTOVER_LOCK_PATH)),
       previousAssessmentReference ? transaction.get(previousAssessmentReference) : Promise.resolve(undefined),
+      transaction.get(riskAuditBaseReference),
     ]);
     const currentEvent = currentEventSnapshot.data() as EventRecord | undefined;
     const currentAssessment = currentAssessmentSnapshot.data();
@@ -988,7 +1000,10 @@ async function persistResourceCalculation(
           eventReference.collection(COLLECTIONS.ASSESSMENT_SUMMARIES).doc(version.versionId),
           organizerSummary(effectiveAssessment, pointedResource, computedAt),
         );
-        publishPendingAssessment(transaction, eventReference, effectiveAssessment, pendingClaimMatches, computedAt);
+        publishPendingAssessment(
+          transaction, eventReference, effectiveAssessment, pendingClaimMatches, computedAt,
+          pendingClaimId, riskAuditBaseSnapshot.exists,
+        );
         if (expectedCurrentAssessmentId || pendingClaimMatches) transaction.update(eventReference, {
           currentAssessmentId: assessment.assessmentId,
           currentResourceId: pointedResource.resourceId,
@@ -1007,7 +1022,10 @@ async function persistResourceCalculation(
         eventReference.collection(COLLECTIONS.ASSESSMENT_SUMMARIES).doc(version.versionId),
         organizerSummary(effectiveAssessment, existing, computedAt),
       );
-      publishPendingAssessment(transaction, eventReference, effectiveAssessment, pendingClaimMatches, computedAt);
+      publishPendingAssessment(
+        transaction, eventReference, effectiveAssessment, pendingClaimMatches, computedAt,
+        pendingClaimId, riskAuditBaseSnapshot.exists,
+      );
       return { status: 'reused' as const, resourceId };
     }
     const previousId = currentEvent.currentResourceId && currentEvent.currentResourceId !== resourceId
@@ -1084,7 +1102,10 @@ async function persistResourceCalculation(
       eventReference.collection(COLLECTIONS.ASSESSMENT_SUMMARIES).doc(version.versionId),
       organizerSummary(effectiveAssessment, recommendation, computedAt),
     );
-    publishPendingAssessment(transaction, eventReference, effectiveAssessment, pendingClaimMatches, computedAt);
+    publishPendingAssessment(
+      transaction, eventReference, effectiveAssessment, pendingClaimMatches, computedAt,
+      pendingClaimId, riskAuditBaseSnapshot.exists,
+    );
     const auditReference = eventReference.collection(COLLECTIONS.AUDIT_LOGS).doc(`${resourceId}-recommended`);
     transaction.create(auditReference, {
       id: auditReference.id,

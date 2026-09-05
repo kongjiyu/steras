@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { latestValidHistoricalResource, nextResourceRevision, resourceDocumentId, invalidAiProposalForManualRecovery, __testOnlyCurrentAssessmentPointerMatches, __testOnlyManualLockState, isPipelineEventVersion } from './onEventCreated';
+import { latestValidHistoricalResource, nextResourceRevision, resourceDocumentId, invalidAiProposalForManualRecovery, __testOnlyCurrentAssessmentPointerMatches, __testOnlyManualLockState, isPipelineEventVersion, riskScoreAuditId } from './onEventCreated';
 import { isManualAssessmentSourceEligible } from '../engines/manualFinalisation';
 import { AISuccessfulProposal, EventVersion, M1_TEMPLATE_REGISTRY_VERSION, M1TemplateSelection, RESOURCE_KEYS, RESOURCE_SCHEMA_VERSION, ResourceRecommendation } from '@shared/types';
 import { buildSubmittedEventVersion } from '../utils/eventVersionHash';
@@ -87,6 +87,12 @@ describe('resource pipeline identity and revision helpers', () => {
     expect(__testOnlyCurrentAssessmentPointerMatches('other-assessment', 'assessment-1', true)).toBe(false);
     expect(__testOnlyCurrentAssessmentPointerMatches('previous-assessment', 'assessment-2', true, 'previous-assessment')).toBe(true);
     expect(__testOnlyCurrentAssessmentPointerMatches('stale-assessment', 'assessment-2', true, 'previous-assessment')).toBe(false);
+  });
+
+  it('preserves the first audit record and assigns every retry claim an append-only audit ID', () => {
+    expect(riskScoreAuditId('assessment-1', 'claim-1', false)).toBe('assessment-1-risk-score-computed');
+    expect(riskScoreAuditId('assessment-1', 'claim-2', true)).toBe('assessment-1-risk-score-computed-retry-claim-2');
+    expect(riskScoreAuditId('assessment-1', 'claim-3', true)).not.toBe(riskScoreAuditId('assessment-1', 'claim-2', true));
   });
 
   it('uses stage, version and the complete input hash in deterministic IDs', () => {
