@@ -17,6 +17,7 @@
     "seed:authority": "npm run build && node lib/functions/src/seed/seedAuthority.js",
     "seed:admin": "npm run build && node lib/functions/src/seed/seedAdmin.js",
     "seed:demo": "npm run build && node lib/functions/src/seed/seedDemo.js",
+    "seed:presentation-portfolio": "npm run build && node lib/functions/src/scripts/seedPresentationPortfolio.js",
     "seed:steras:test": "npm run build && node lib/functions/src/seed/seedSterasTest.js",
     "seed:venues:staging": "npm run build && node lib/functions/src/seed/seedVenues.js",
     "migrate:m3": "npm run build && node lib/functions/src/scripts/migrateM3Deployment.js",
@@ -51,4 +52,3 @@
     "typescript": "^5.6.3"
   }
 }
-

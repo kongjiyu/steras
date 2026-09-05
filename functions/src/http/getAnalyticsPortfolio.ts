@@ -817,7 +817,7 @@ function isAnalyticsIncident(value: unknown): value is Incident | M4IncidentReco
   if (!isRecord(value) || !safeDocumentId(value.incidentId)) return false;
   if (value.schemaVersion === M4_SCHEMA_VERSION) {
     return safeDocumentId(value.eventId) && safeDocumentId(value.eventVersionId)
-      && typeof value.synthetic === 'boolean' && value.synthetic === false
+      && typeof value.synthetic === 'boolean'
       && ['submitted', 'manual_review_required', 'organizer_review', 'responding', 'authority_investigation', 'awaiting_resolution', 'resolved'].includes(String(value.status))
       && (value.severity === undefined || ['low', 'medium', 'high'].includes(String(value.severity)))
       && (value.immediateActionRequired === undefined || typeof value.immediateActionRequired === 'boolean')

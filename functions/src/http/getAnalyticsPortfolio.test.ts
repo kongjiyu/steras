@@ -194,6 +194,20 @@ describe('Module 5 analytics backend', () => {
     });
   });
 
+  it('accepts honestly labelled presentation incidents while preserving their synthetic marker', () => {
+    const incidents = selectValidAnalyticsIncidents([{
+      schemaVersion: M4_SCHEMA_VERSION,
+      incidentId: 'presentation-incident-1',
+      eventId: 'presentation-event-1',
+      eventVersionId: 'v1',
+      status: 'responding',
+      severity: 'medium',
+      synthetic: true,
+    }]);
+    expect(incidents).toHaveLength(1);
+    expect(incidents[0]?.synthetic).toBe(true);
+  });
+
   it('never labels a provisional result as official analytics', () => {
     const provisional = sampleAssessment() as RiskAssessment & { status: 'provisional_ready'; officialResult?: never };
     delete (provisional as unknown as Record<string, unknown>).officialResult;

@@ -115,6 +115,7 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
   const [loading, setLoading] = useState(!previewMode);
   const [error, setError] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [includePresentationData, setIncludePresentationData] = useState(true);
   const [reportRecords, setReportRecords] = useState<AnalyticsRecord[]>([]);
   const [backendMeta, setBackendMeta] = useState<{
     syntheticExcluded: number;
@@ -123,7 +124,8 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
     totalMatchedExact: boolean;
     truncated: boolean;
     coverageLimitations: string[];
-  }>({ syntheticExcluded: 0, unavailableSections: [], totalMatched: 0, totalMatchedExact: true, truncated: false, coverageLimitations: [] });
+    presentationIncluded: number;
+  }>({ syntheticExcluded: 0, unavailableSections: [], totalMatched: 0, totalMatchedExact: true, truncated: false, coverageLimitations: [], presentationIncluded: 0 });
   const [report, setReport] = useState<ReportModel>(() => buildReportModel('risk-incident', 'overall', undefined, { preview: previewMode }));
 
   useEffect(() => {
@@ -140,7 +142,7 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
     const load = async () => {
       try {
         const callable = httpsCallable<AnalyticsPortfolioRequest, AnalyticsPortfolioResponse>(functions, 'getAnalyticsPortfolio');
-        const response = await callable({ limit: 500, includeSynthetic: false });
+        const response = await callable({ limit: 500, includeSynthetic: includePresentationData });
         if (!active) return;
         const validated = parseAnalyticsPortfolioResponse(response.data);
         if (!validated) throw new Error('Invalid analytics response');
@@ -152,6 +154,7 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
           totalMatchedExact: validated.coverage.totalMatchedExact,
           truncated: validated.truncated || validated.coverage.eventScan === 'truncated' || validated.coverage.childCollections === 'truncated',
           coverageLimitations: validated.coverage.limitations,
+          presentationIncluded: nextRecords.filter((record) => record.synthetic).length,
         };
         setRecords(nextRecords);
         setBackendMeta(nextMeta);
@@ -175,7 +178,7 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
     };
     void load();
     return () => { active = false; };
-  }, [previewMode, profile?.role]);
+  }, [includePresentationData, previewMode, profile?.role]);
 
   const selectedRecords = useMemo(
     () => selectRecords(records, scope, scope === 'eventType' ? eventType : undefined, from, to),
@@ -241,7 +244,11 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
             <div className="reports-hero__meta relative z-[1]">
               <MetaStat icon={<Database size={17} />} label="Eligible responses" value={formatNumber(report.eligibleRecords)} />
               <MetaStat icon={<CalendarDays size={17} />} label="Coverage" value={<CoverageValue label={report.coverage.label} />} />
-              <MetaStat icon={<ShieldCheck size={17} />} label="Synthetic reports" value={report.syntheticExcluded === null ? 'Data Not Available' : formatNumber(report.syntheticExcluded)} />
+              <MetaStat
+                icon={<ShieldCheck size={17} />}
+                label={includePresentationData ? 'Presentation records' : 'Presentation excluded'}
+                value={includePresentationData ? formatNumber(backendMeta.presentationIncluded) : report.syntheticExcluded === null ? 'Data Not Available' : formatNumber(report.syntheticExcluded)}
+              />
             </div>
           </div>
         </section>
@@ -253,7 +260,7 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
               <h2 id="report-builder-title">Choose the question you need answered</h2>
               <p>Each view uses the latest valid source records available to the system.</p>
             </div>
-            <div className="report-builder__source"><Database size={15} /> {previewMode ? 'Design preview · synthetic data' : 'Live Firestore source · no writes'}</div>
+            <div className="report-builder__source"><Database size={15} /> {previewMode ? 'Design preview · synthetic data' : includePresentationData ? 'Live Firestore · presentation records included' : 'Live Firestore · operational records only'}</div>
           </div>
 
           <div className="report-selector-grid">
@@ -277,6 +284,15 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
           </div>
 
           <div className="report-filters">
+            {!previewMode && (
+              <label className="report-filter-group min-w-[13rem] cursor-pointer">
+                <span className="report-filter-label">Presentation dataset</span>
+                <span className="flex min-h-11 items-center gap-2 rounded-md border border-[#d8d0c1] bg-white px-3 text-sm font-semibold text-ink-700">
+                  <input type="checkbox" checked={includePresentationData} onChange={(event) => setIncludePresentationData(event.target.checked)} />
+                  Include presentation records
+                </span>
+              </label>
+            )}
             <div className="report-filter-group">
               <span className="report-filter-label">Analysis scope</span>
               <div className="scope-toggle" role="group" aria-label="Analysis scope">
