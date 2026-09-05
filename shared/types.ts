@@ -319,6 +319,15 @@ export interface EventRecord {
     suggestion?: string | null;
     adminNote?: string | null;
     featuredOfficerUid?: string | null;
+    /** Immutable snapshot of the officer proposals confirmed by this review. */
+    officerFeedback?: Array<{
+      authorityType: AuthorityType;
+      officerUid: string;
+      decision: DecisionValue;
+      reason: string;
+      suggestion?: string | null;
+      decidedAt?: number | null;
+    }>;
   };
   /** Human assessment captured when AI-assisted assessment is unavailable. */
   manualAssessment?: {

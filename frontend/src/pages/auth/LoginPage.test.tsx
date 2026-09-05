@@ -25,6 +25,19 @@ describe('LoginPage', () => {
     authState.profile = null;
   });
 
+  it('links both responsive logo variants to the public landing page', () => {
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    const logoLinks = screen.getAllByRole('link', { name: 'Go to STERAS landing page' });
+    expect(logoLinks).toHaveLength(2);
+    expect(logoLinks.every((link) => link.getAttribute('href') === '/')).toBe(true);
+  });
+
   it('lets an existing session return to the dashboard from the sign-in page', async () => {
     authState.user = { uid: 'organizer-1' };
     authState.profile = { role: 'organizer' };

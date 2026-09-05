@@ -47,6 +47,7 @@ import ManualAssessmentForm, { AdminAiRetryPanel } from './ManualAssessmentForm'
 import { isAdminManualEligible } from './manualAssessmentEligibility';
 import { isAdminVisibleEvent } from './adminApplicationVisibility';
 import { isCurrentAssessmentJob, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
+import { adminOfficerDecisionRows } from './adminOfficerDecisionPresentation';
 
 const STATUS_TONE: Record<EventStatus, string> = {
   Draft: 'admin-badge admin-badge--default',
@@ -276,6 +277,10 @@ export default function AdminApplicationReview() {
     }
     return m;
   }, [officers]);
+  const displayedOfficerDecisions = useMemo(
+    () => event ? adminOfficerDecisionRows(event, assignments, decisions) : [],
+    [event, assignments, decisions],
+  );
 
   const canReview = event && (event.status === 'Pending' || event.status === 'UnderReview' || event.status === 'Manual Review Required');
   const manualOfficialReady = assessment?.status === 'official_ready'
@@ -568,16 +573,17 @@ export default function AdminApplicationReview() {
 
                 {/* Officer decisions */}
                 <Section title="Authority officer decisions" icon={CheckCircle2} defaultOpen={false}>
-                  {decisions.length === 0 ? (
+                  {displayedOfficerDecisions.length === 0 ? (
                     <p className="text-sm text-ink-500">No officer decisions recorded yet.</p>
                   ) : (
                     <ul className="divide-y divide-[#e8e0cf]">
-                      {decisions.map((d) => (
-                        <li key={d.decisionId} className="flex items-start gap-3 py-2">
+                      {displayedOfficerDecisions.map((d) => (
+                        <li key={d.id} className="flex items-start gap-3 py-2">
                           <span className={`${RISK_TONE[d.decision]} text-xs`}>{d.decision}</span>
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-semibold text-ink-800">{d.authorityType}</p>
                             <p className="text-xs text-ink-500">{d.rationale}</p>
+                            {d.suggestion && <p className="mt-1 text-xs text-ink-600"><span className="font-semibold">Suggestion:</span> {d.suggestion}</p>}
                           </div>
                           <span className="text-xs text-ink-500">{formatDateTime(d.decidedAt)}</span>
                         </li>
