@@ -161,6 +161,7 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
         setReportRecords(selectRecords(nextRecords, 'overall', undefined, '', ''));
         setReport(buildReportModel('risk-incident', 'overall', undefined, {
           records: nextRecords,
+          includeSynthetic: includePresentationData,
           syntheticExcluded: nextMeta.syntheticExcluded,
           unavailableSections: nextMeta.unavailableSections,
           totalMatched: nextMeta.totalMatched,
@@ -197,6 +198,7 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
       records,
       from,
       to,
+      includeSynthetic: includePresentationData,
       syntheticExcluded: backendMeta.syntheticExcluded,
       unavailableSections: backendMeta.unavailableSections,
       totalMatched: backendMeta.totalMatched,

@@ -320,10 +320,10 @@ export function buildReportModel(
   reportType: ReportType,
   scope: AnalysisScope,
   eventType: EventType | undefined,
-  options: { preview?: boolean; records?: AnalyticsRecord[]; from?: string; to?: string; syntheticExcluded?: number; unavailableSections?: string[]; totalMatched?: number; totalMatchedExact?: boolean; truncated?: boolean; coverageLimitations?: string[] } = {},
+  options: { preview?: boolean; records?: AnalyticsRecord[]; from?: string; to?: string; includeSynthetic?: boolean; syntheticExcluded?: number; unavailableSections?: string[]; totalMatched?: number; totalMatchedExact?: boolean; truncated?: boolean; coverageLimitations?: string[] } = {},
 ): ReportModel {
   if (options.preview) return buildDemoReport(reportType, scope, eventType);
-  return buildLiveReport(reportType, scope, eventType, options.records ?? [], options.from, options.to, options.syntheticExcluded, options.unavailableSections, options.totalMatched, options.totalMatchedExact, options.truncated, options.coverageLimitations);
+  return buildLiveReport(reportType, scope, eventType, options.records ?? [], options.from, options.to, options.includeSynthetic, options.syntheticExcluded, options.unavailableSections, options.totalMatched, options.totalMatchedExact, options.truncated, options.coverageLimitations);
 }
 
 function buildDemoReport(reportType: ReportType, scope: AnalysisScope, eventType?: EventType): ReportModel {
@@ -423,6 +423,7 @@ function buildLiveReport(
   records: AnalyticsRecord[],
   from?: string,
   to?: string,
+  includeSynthetic = false,
   backendSyntheticExcluded = 0,
   backendUnavailable: string[] = [],
   backendTotalMatched?: number,
@@ -433,7 +434,7 @@ function buildLiveReport(
   const selected = REPORT_CATALOG.find((item) => item.id === reportType) ?? REPORT_CATALOG[0];
   const scoped = filterAnalyticsRecords(records, from, to).filter((record) => scope === 'overall' || record.eventType === eventType);
   const syntheticInScope = scoped.filter((record) => record.synthetic).length;
-  const filtered = scoped.filter((record) => !record.synthetic);
+  const filtered = includeSynthetic ? scoped : scoped.filter((record) => !record.synthetic);
   const summary = analyticsSummary(filtered);
   const risks = riskDistribution(filtered);
   const monthlyTrend = buildMonthlyAnalytics(filtered);
@@ -527,7 +528,7 @@ function buildLiveReport(
     dataStatus: total === 0 ? 'unavailable' : relevantUnavailable.length ? 'partial' : 'complete',
     population: total,
     eligibleRecords: total,
-    syntheticExcluded: clientScoped ? null : backendSyntheticExcluded + syntheticInScope,
+    syntheticExcluded: clientScoped ? null : backendSyntheticExcluded + (includeSynthetic ? 0 : syntheticInScope),
     totalMatched: clientScoped ? total : backendTotalMatched ?? total,
     totalMatchedExact: clientScoped ? !backendTruncated && backendTotalMatchedExact : backendTotalMatchedExact,
     truncated: backendTruncated,

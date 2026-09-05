@@ -179,6 +179,21 @@ describe('analyticsData', () => {
     expect(model.coverage.label).not.toBe('Source coverage not specified');
   });
 
+  it('includes presentation records only when explicitly requested', () => {
+    const presentationRecord = { ...records[0], eventId: 'presentation-event', synthetic: true };
+    const excluded = buildReportModel('risk-incident', 'overall', undefined, {
+      records: [...records, presentationRecord],
+    });
+    const included = buildReportModel('risk-incident', 'overall', undefined, {
+      records: [...records, presentationRecord],
+      includeSynthetic: true,
+    });
+    expect(excluded.population).toBe(records.length);
+    expect(included.population).toBe(records.length + 1);
+    expect(excluded.syntheticExcluded).toBe(1);
+    expect(included.syntheticExcluded).toBe(0);
+  });
+
   it('marks a client-scoped matched count as a lower bound when the backend response was truncated', () => {
     const model = buildReportModel('risk-assessment', 'eventType', 'conference', {
       records,
