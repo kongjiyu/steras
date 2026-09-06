@@ -60,7 +60,7 @@ Draft or Pending → Withdrawn
 
 ## Modules
 
-### Module 1 — Event management
+### Module 1 — Event and User management
 
 Organizer-facing application management:
 
