@@ -50,4 +50,16 @@ npm --workspace functions run seed:presentation-portfolio -- --verify --project 
 
 ## Acceptance evidence
 
-Focused tests cover participant-only submission, organizer/authority action ownership, future/old event rejection, exact category labels, and admin separation. Production verification must confirm the participant selector shows five eligible events and that organizer/authority pages do not show the submission form. A real participant submission should use clearly synthetic text and should be removed or retained as labeled demo evidence according to the presentation plan.
+Focused tests cover participant-only submission, organizer/authority action ownership, future/old event rejection, exact category labels, admin separation, and authenticated participant navigation. Production browser verification confirmed that only eligible events are listed and that the authority page does not show the submission form. A real participant submission should use clearly synthetic text and should be removed or retained as labeled demo evidence according to the presentation plan.
+
+## Production result
+
+- Released from commit `c4878a0`; the participant demo binding is in `e5848c8`, and the final authenticated public-header correction is in `9f11770`.
+- Hosting and `submitIncident`, `listIncidents`, and `getIncidentEvidenceDownloadUrl` were deployed to `linkos-496505`.
+- Dataset apply and verify passed: 17 events, 17 incidents, five prepared reportable events, and all ten categories.
+- The live participant selector displayed six eligible events: the five prepared records plus one independently existing eligible event. This is expected because the selector includes every eligible approved event, rather than only the managed dataset.
+- The live participant account displayed 17 owned synthetic incident records, all ten labels, and an automatically suggested valid occurrence time. The 390-pixel viewport had a 390-pixel document width.
+- The live authority workspace displayed the review explanation and zero submission headings/buttons.
+- The dedicated account is `participant.showcase@steras.test`. Its password is stored only in the local restricted file `output/ui-feedback/participant-demo-credentials.txt` and is not committed.
+
+![Production participant incident form at 390 px](participant-incident-production-mobile-final.png)
