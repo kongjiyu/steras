@@ -16,7 +16,7 @@ Solutions tab: https://docs.google.com/document/d/12jvwEfBeLYHmNxULfaU1zZf1JqEC3
 
 ## Scope and remaining review
 
-Release preparation: scoped UI changes were copied to an isolated checkout based on the latest origin/main, preserving unrelated edits in the original workspace. GitHub push and Firebase deployment are authorized; their results are recorded below after completion.
+Scoped UI changes were released from an isolated checkout based on the latest origin/main, preserving unrelated edits in the original workspace. GitHub push and Firebase deployment completed successfully.
 
 MOTAC demo Auth/user/officer records were repaired in live Firebase and login was verified. Credentials are in the local private file `output/ui-feedback/motac-demo-credentials.txt`; never commit that file. Existing live reports: 2; missing M4 incident records: 0.
 
@@ -29,3 +29,14 @@ The emulator interrupted the final upload retest. Its Firestore fixtures were ex
 ## Isolated release validation
 
 The release excludes unrelated local M2 and resilience work. `VITE_USE_FIREBASE_EMULATOR=false npm run check` passed with 178 frontend tests, 334 Functions tests, typecheck, lint and both builds. The earlier 192 frontend test count describes the original combined working directory.
+
+## Published release — 7 September 2026
+
+- Application commit: `516b3fc4b3c64e37e0dc2d607e1364a21686a408`, pushed to `https://github.com/kongjiyu/steras` main.
+- Production: `https://linkos-496505.web.app`, Firebase project `linkos-496505`.
+- Hosting and Firestore Rules deployed successfully. Nine targeted Functions are ACTIVE in asia-southeast1: updateOwnProfile, withdrawStage2Report, confirmStage2Doc, reportStage2Doc, makeInitialReviewDecision, makeAuthorityDecision, submitEvent, listIncidents, onPublicReportCreated. No unrelated Functions were deployed or deleted.
+- Isolated release validation: 178 frontend tests, 334 Functions tests, 95 Firestore/Storage tests, typecheck, lint and both builds passed.
+- Live Hosting HTML exactly matches the release build: SHA-256 `c26d98c333c51879122693ee28b205229e2b74f6edc7bdf2d6cdb41a384da477`.
+- Live browser smoke: registration consent/password requirements, Terms & Conditions and reset page render; 390 px reset viewport has document width 390 px. No registration or reset email was submitted.
+- Both new callable endpoints reject anonymous requests with 401 UNAUTHENTICATED. Full write-flow acceptance remains evidenced by emulator tests, not a claim of production UAT.
+- Google Docs release introduction and all 66 original reply paragraphs updated with the deployed code commit. The 22 embedded screenshots retain their local/emulator labels.
