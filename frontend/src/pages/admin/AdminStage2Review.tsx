@@ -68,6 +68,7 @@ export default function AdminStage2Review() {
   const [event, setEvent] = useState<EventRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const [retryKey, setRetryKey] = useState(0);
   const [controls, setControls] = useState<EventControl[]>([]);
   const [stage2Docs, setStage2Docs] = useState<Record<string, Stage2Doc | null>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -75,6 +76,9 @@ export default function AdminStage2Review() {
 
   useEffect(() => {
     if (!eventId) return;
+    setLoading(true);
+    setLoadError('');
+    setEvent(null);
     return onSnapshot(doc(db, COLLECTIONS.EVENTS, eventId), (snapshot) => {
       if (snapshot.exists()) {
         setEvent({ eventId: snapshot.id, ...(snapshot.data() as Partial<EventRecord>) } as EventRecord);
@@ -87,7 +91,7 @@ export default function AdminStage2Review() {
       setLoadError('The event could not be loaded.');
       setLoading(false);
     });
-  }, [eventId]);
+  }, [eventId, retryKey]);
 
   // Subscribe to the per-event event_controls (current version only).
   const versionId = event?.currentVersionId ?? 'v1';
@@ -103,8 +107,9 @@ export default function AdminStage2Review() {
       setControls(list);
     }, (err) => {
       console.warn('[AdminStage2Review] controls subscribe failed', err);
+      setLoadError('Control requirements or evidence could not be loaded. Try again before taking action.');
     });
-  }, [eventId, versionId]);
+  }, [eventId, versionId, retryKey]);
 
   // Subscribe to the per-control stage2_docs (admin reads all per the
   // WS5 rule). Fan-out is small (5 controls × 1 doc each in the UAT
@@ -131,13 +136,14 @@ export default function AdminStage2Review() {
         },
         (err) => {
           console.warn(`[AdminStage2Review] stage2_docs subscribe failed for ${ctrl.controlId}`, err);
+          setLoadError('Control requirements or evidence could not be loaded. Try again before taking action.');
         },
       );
       unsubs.push(unsub);
     }
     return () => { for (const u of unsubs) u(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventId, controls.map((c) => c.controlId).join('|')]);
+  }, [eventId, controls.map((c) => c.controlId).join('|'), retryKey]);
 
   // Only the controls that require Stage 2 get a card.
   const reviewable = useMemo(
@@ -195,7 +201,7 @@ export default function AdminStage2Review() {
   }
 
   if (loading) return <div className="p-8 text-ink-500">Loading event...</div>;
-  if (loadError) return <div className="p-8"><EmptyState title="Event unavailable" description={loadError} /></div>;
+  if (loadError) return <div className="p-8"><EmptyState title="Event unavailable" description={loadError}><button type="button" className="btn-secondary" onClick={() => setRetryKey((value) => value + 1)}>Try again</button></EmptyState></div>;
   if (!event) return <div className="p-8"><EmptyState title="Event not found" description="It may have been removed or you do not have access." /></div>;
 
   const details = event.eventDetails;

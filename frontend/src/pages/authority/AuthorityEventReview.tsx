@@ -46,7 +46,7 @@ import EmptyState from '../../components/ui/EmptyState';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { useAuth } from '../../contexts/AuthContext';
 import { displayIdentityName, useDisplayIdentities, type DisplayIdentityMap } from '../../hooks/useDisplayIdentities';
-import { activeScoreResolutionId } from './authorityReviewPresentation';
+import { activeScoreResolutionId, authorityAssessmentPresentation } from './authorityReviewPresentation';
 
 export default function AuthorityEventReview() {
   const { profile } = useAuth();
@@ -323,7 +323,7 @@ export default function AuthorityEventReview() {
   );
   const isNamedOfficer = Boolean(profile?.uid && event.assignedOfficerUids?.includes(profile.uid));
   // FR-M3-16: approval requires an explicit materials-review confirmation.
-  const canApprove = isNamedOfficer && reviewOpen && evidenceReady && rationale.trim().length >= 10
+  const canApprove = isNamedOfficer && reviewOpen && evidenceReady && (!rationale.trim() || rationale.trim().length >= 10)
     && confirmedReview && materialsReviewed && assessment?.complianceStatus !== 'blocked';
   const canReject = isNamedOfficer && reviewOpen && evidenceReady && rationale.trim().length >= 10 && suggestion.trim().length > 0 && Boolean(rejectionReasonCategory);
 
@@ -493,9 +493,9 @@ export default function AuthorityEventReview() {
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
         <div className="min-w-0 space-y-5">
           <section className="card">
-            <div className="card-header"><div><h2 className="font-semibold">{assessment?.status === 'official_ready' ? 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual' ? 'Official manual assessment' : 'Official AI-assisted assessment' : 'Provisional category assessment'}</h2><p className="mt-0.5 text-xs text-ink-500">{assessment?.status === 'official_ready' ? 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual' ? 'Admin-authored recovery assessment · no AI score proposal' : 'Finalized human-reviewed risk inputs with retained AI provenance' : 'Validated AI proposal · authority confirmation required'}</p></div></div>
+            <div className="card-header"><div><h2 className="font-semibold">{authorityAssessmentPresentation(assessment, assessmentStatus, event.status, legacyAssessment).title}</h2><p className="mt-0.5 text-xs text-ink-500">{authorityAssessmentPresentation(assessment, assessmentStatus, event.status, legacyAssessment).subtitle}</p></div></div>
             <div className="card-body">
-              {!assessment ? <p className="text-sm text-ink-500">{legacyAssessment ? 'Legacy assessment detected. Recompute this event version before recording a decision.' : assessmentStatus === 'failed' ? 'Assessment failed and requires a retry.' : 'Assessment is still processing.'}</p> : (
+              {!assessment ? <p className="text-sm text-ink-500">{authorityAssessmentPresentation(assessment, assessmentStatus, event.status, legacyAssessment).emptyMessage}</p> : (
                 <div className="space-y-5">
                   <CategoryProfile assessment={assessment} />
                   {isNamedOfficer && reviewHazards.length > 0 && (
@@ -554,7 +554,7 @@ export default function AuthorityEventReview() {
             <div className="card-header">
               <div>
                 <h2 className="font-semibold">Recommended resources</h2>
-                {resources?.confidenceLevel === 'authority_validated' && <p className="mt-0.5 text-xs text-status-approved">Official risk input · prototype resource ratios</p>}
+                {resources?.confidenceLevel === 'authority_validated' && <p className="mt-0.5 text-xs text-status-approved">Official risk input · indicative planning ratios</p>}
               </div>
               {resources && isNamedOfficer && reviewOpen && !editingResources && (
                 <div className="flex flex-wrap gap-2">
@@ -566,7 +566,7 @@ export default function AuthorityEventReview() {
               )}
             </div>
             <div className="card-body">
-              {!effectiveResources || !resourceDraft ? <p className="text-sm text-ink-500">{legacyResources ? 'Legacy resource record detected. Recompute this event version before review.' : 'No recommendation yet.'}</p> : editingResources ? (
+              {!effectiveResources || !resourceDraft ? <p className="text-sm text-ink-500">{legacyResources ? 'This recommendation was created under an earlier calculation version. Recalculate it before review.' : 'No recommendation yet.'}</p> : editingResources ? (
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                     {RESOURCE_FIELDS.map(({ key, label }) => (
@@ -677,7 +677,7 @@ export default function AuthorityEventReview() {
               <label className="block text-xs font-medium text-ink-600">Decision rationale
                 <textarea className="input mt-1 resize-y" rows={4} maxLength={1000} disabled={!reviewOpen || !isNamedOfficer} value={rationale} onChange={(e) => setRationale(e.target.value)} placeholder="Record the evidence and reasoning behind your proposal." />
               </label>
-              <p className="text-right text-xs text-ink-400">{rationale.trim().length}/1000 · minimum 10</p>
+              <p className="text-right text-xs text-ink-400">{rationale.trim().length}/1000 · optional for approval; required for rejection</p>
               <label className="block text-xs font-medium text-ink-600">Suggestion / corrective action <span className="font-normal text-ink-400">(required for rejection)</span>
                 <textarea className="input mt-1 resize-y" rows={3} maxLength={1000} disabled={!reviewOpen || !isNamedOfficer} value={suggestion} onChange={(e) => setSuggestion(e.target.value)} placeholder="Explain the action the organizer should take, if applicable." />
               </label>

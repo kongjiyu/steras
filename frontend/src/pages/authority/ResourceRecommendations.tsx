@@ -46,7 +46,7 @@ export default function ResourceRecommendations({ previewRecords, previewAgency 
               <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#f6d25b]">Resource planning ledger</p>
               <h2 id="resource-observatory-title" className="mt-2 max-w-xl text-2xl font-bold sm:text-3xl">Indicative quantities with their operational basis attached.</h2>
               <p className="mt-3 max-w-2xl text-sm leading-6 text-[#c7d0be]">
-                Compare safety resource recommendations across assigned events. Prototype quantities support review; they do not authorise deployment.
+                Compare indicative safety resource recommendations across assigned events. Planning quantities support review; they do not authorise deployment.
               </p>
             </div>
             <div className="m2-stat-ledger" aria-label="Resource portfolio summary">
@@ -60,12 +60,12 @@ export default function ResourceRecommendations({ previewRecords, previewAgency 
 
         <div className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
           <p className="border-l-4 border-brand-300 bg-brand-50 p-3 text-ink-700">
-            {summary.authorityValidated} of {summary.recommended} recommendations include a human authority validation.
+            {summary.authorityValidated} of {summary.recommended} recommendations are based on an official risk assessment. Resource ratios remain indicative.
           </p>
           {summary.requiresRecompute > 0 && (
             <p className="flex items-start gap-2 border-l-4 border-status-amend bg-gold-50 p-3 text-ink-700">
               <DatabaseZap size={17} className="mt-0.5 shrink-0 text-gold-600" />
-              {summary.requiresRecompute} legacy resource record{summary.requiresRecompute === 1 ? '' : 's'} require recomputation.
+              {summary.requiresRecompute} recommendation{summary.requiresRecompute === 1 ? '' : 's'} from an earlier calculation version require recalculation.
             </p>
           )}
         </div>
@@ -80,7 +80,7 @@ export default function ResourceRecommendations({ previewRecords, previewAgency 
             <span className="sr-only">Filter resource recommendations</span>
             <select className="input" value={filter} onChange={(event) => setFilter(event.target.value as ResourcePortfolioFilter)}>
               <option value="all">All assigned ({records.length})</option>
-              <option value="prototype">Prototype ({records.filter((item) => item.resources?.confidenceLevel === 'prototype').length})</option>
+              <option value="prototype">Indicative planning ({records.filter((item) => item.resources?.confidenceLevel === 'prototype').length})</option>
               <option value="authority_validated">Official risk input ({summary.authorityValidated})</option>
               <option value="missing">Awaiting plan ({summary.missing})</option>
             </select>
@@ -141,7 +141,7 @@ function ResourceRecord({ record }: { record: M2PortfolioRecord }) {
         <div className="m2-score">
           {assessmentRiskLevel(assessment) ? <RiskMeter level={assessmentRiskLevel(assessment)!} size="compact" /> : <span className="text-xs font-semibold text-ink-500">Risk pending</span>}
           <span className={`badge ${resources?.confidenceLevel === 'authority_validated' ? 'badge-green' : resources ? 'badge-amber' : 'badge-gray'}`}>
-            {resources?.confidenceLevel === 'authority_validated' ? 'Official risk input' : resources ? 'Prototype' : 'Missing'}
+            {resources?.confidenceLevel === 'authority_validated' ? 'Official risk input' : resources ? 'Indicative planning' : 'Missing'}
           </span>
         </div>
       </div>
@@ -161,7 +161,7 @@ function ResourceRecord({ record }: { record: M2PortfolioRecord }) {
         </details>
       ) : (
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#e3dacb] px-4 py-3 text-sm text-ink-600">
-          <p>{record.legacyResources ? 'Legacy recommendation shape detected. Recompute this event version.' : resourceState(record)}</p>
+          <p>{record.legacyResources ? 'Created under an earlier calculation version. Recalculate this event version.' : resourceState(record)}</p>
           <Link to={`/authority/events/${event.eventId}`} className="font-semibold text-brand-700 hover:text-brand-800">Open application <ArrowRight className="inline" size={14} /></Link>
         </div>
       )}

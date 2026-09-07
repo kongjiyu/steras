@@ -178,7 +178,7 @@ export default function AuthorityDashboard({ previewRecords }: AuthorityDashboar
                 <p className="portfolio-updated dashboard-enter" style={{ '--motion-order': 8 } as MotionStyle}>
                   <Clock3 size={14} aria-hidden="true" />
                   Portfolio synchronized {formatDistanceToNowStrict(Math.max(...records.map(({ event }) => event.updatedAt)), { addSuffix: true })}
-                  <span>Live Firestore feed</span>
+                  <span>Live application feed</span>
                 </p>
               </>
             )}
@@ -218,7 +218,7 @@ function OperationalBrief({
 
         <h2 id="operational-brief-title">{headline}</h2>
         <p className="ops-hero__lede">
-          Review the provisional category risk, supporting evidence and inter-agency requirements while official confirmation is pending.
+          Review category risk, supporting evidence and inter-agency requirements across active and completed applications.
         </p>
 
         {spotlight && (

@@ -47,7 +47,7 @@ export default function ResourceRecommendation({
         <span>Config <strong className="text-ink-700">{recommendation.configVersion}</strong></span>
         <span>Revision <strong className="text-ink-700">{recommendation.revision}</strong></span>
         <span className={recommendation.confidenceLevel === 'authority_validated' ? 'text-status-approved' : 'text-gold-600'}>
-          <strong>{recommendation.confidenceLevel === 'authority_validated' ? manualOfficial ? 'Admin manual risk input' : 'Official risk input only' : 'Prototype guidance'}</strong>
+          <strong>{recommendation.confidenceLevel === 'authority_validated' ? manualOfficial ? 'Admin manual risk input' : 'Official risk input only' : 'Indicative planning guidance'}</strong>
         </span>
       </div>
 
@@ -62,7 +62,7 @@ export default function ResourceRecommendation({
       )}
 
       <p className="border-l-4 border-gold-300 bg-gold-50 p-3 text-xs leading-5 text-ink-700">
-        These are internal prototype planning ranges, not statutory or authority-issued minimums. Finalising the risk score does not validate these resource ratios; they require a separate future resource-review workflow.
+        These are indicative planning ranges, not statutory or authority-issued minimums. Finalising the risk score does not validate these resource ratios; an authorised officer must still assess operational suitability.
       </p>
 
       {showRationales && (
@@ -80,7 +80,7 @@ export default function ResourceRecommendation({
                   <div className="text-ink-600">
                     {item.assumptions.map((assumption) => <p key={assumption.assumptionId}>{assumption.statement}</p>)}
                     <p className="mt-1 text-ink-500">
-                      Risk input: {item.authorityReviewRequired ? 'provisional' : 'finalized'} · resource ratio: prototype unverified
+                      Risk input: {item.authorityReviewRequired ? 'provisional' : 'finalised'} · planning ratio: not authority-verified
                     </p>
                     <ul className="mt-2 space-y-1 text-ink-500">
                       {item.inputReferences.map((input) => <li key={input.inputId}>Input {input.path}: <strong className="text-ink-700">{String(input.value)}</strong></li>)}
@@ -91,16 +91,16 @@ export default function ResourceRecommendation({
                     <ul className="mt-2 space-y-1 text-ink-500">
                       {item.sourceSnapshots.map((source) => (
                         <li key={source.sourceId}>
-                          {source.title} · {source.issuer} · {source.kind} · version {source.version} · retrieved {formatM2Timestamp(source.retrievedAt)} · {source.locator || 'internal locator'} · {source.verificationStatus}
+                          {source.title} · {source.issuer} · {humanize(source.kind)} · version {source.version} · retrieved {formatM2Timestamp(source.retrievedAt)} · {source.locator || 'internal locator'} · {humanize(source.verificationStatus)}
                         </li>
                       ))}
                     </ul>
                     {item.authoritySource.status === 'not_supplied'
                       ? <p className="mt-1 text-gold-600">Authority source not supplied: {item.authoritySource.reason}</p>
                       : <p className="mt-1 text-ink-500">
-                          Authority source: {item.authoritySource.source.title} · {item.authoritySource.source.issuer} · {item.authoritySource.source.kind}
+                          Authority source: {item.authoritySource.source.title} · {item.authoritySource.source.issuer} · {humanize(item.authoritySource.source.kind)}
                           {' '}· version {item.authoritySource.source.version} · retrieved {formatM2Timestamp(item.authoritySource.source.retrievedAt)}
-                          {' '}· {item.authoritySource.source.locator} · {item.authoritySource.source.verificationStatus}
+                          {' '}· {item.authoritySource.source.locator} · {humanize(item.authoritySource.source.verificationStatus)}
                         </p>}
                   </div>
                 </div>
@@ -113,4 +113,8 @@ export default function ResourceRecommendation({
       {recommendation.supersedesResourceId && <p className="text-xs text-ink-500">Supersedes resource revision {recommendation.supersedesResourceId}.</p>}
     </div>
   );
+}
+
+function humanize(value: string): string {
+  return value.replaceAll('_', ' ');
 }

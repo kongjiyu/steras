@@ -147,7 +147,7 @@ export default function AdminUsers() {
             </li>
           ))}</ul>}
         </div></section>
-        <p className="mt-3 text-xs leading-5 text-ink-500">Account creation and password resets are restricted to authorised administrators. Passwords are sent directly to Firebase Authentication and are never stored in Firestore; reset actions are recorded in the administrative audit trail.</p>
+        <p className="mt-3 text-xs leading-5 text-ink-500">Account creation and password resets are restricted to authorised administrators. Passwords are handled by the secure authentication service and are never stored in application records; reset actions are recorded in the administrative audit trail.</p>
       </main>
 
       {open && <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-labelledby="create-account-title"><form onSubmit={submit} className="max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-xl border border-ink-200 bg-white p-5 shadow-xl sm:p-6">

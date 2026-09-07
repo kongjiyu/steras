@@ -1,4 +1,4 @@
-import { EventDetails, EventRecord, EventRiskProfile, EventStatus, EventType, M1_DOCUMENT_SCHEMA_VERSION, M1_EVIDENCE_MANIFEST_SCHEMA_VERSION, M1DocumentExtraction, M1DraftDocument, M1EvidenceRequirementResponse, M1ExtractedField, M1TemplateSelection, Venue } from '@shared/types';
+import { EventDetails, EventRecord, EventRiskProfile, EventStatus, EventType, M1_DOCUMENT_SCHEMA_VERSION, M1_EVIDENCE_MANIFEST_SCHEMA_VERSION, M1DocumentExtraction, M1DraftDocument, M1EvidenceRequirementResponse, M1ExtractedField, M1TemplateSelection, OrganizerAssessmentSummary, Venue } from '@shared/types';
 import { isValidM1TemplateSelection, m1CategoryForEventType, m1VenueSettingMatchesEnvironment } from '@shared/m1TemplateContract';
 import { isM1EvidenceForcedRequired, m1EvidenceRequirementsFor } from '@shared/m1EvidenceContract';
 
@@ -93,6 +93,59 @@ export function assessmentLabel(event: Pick<EventRecord, 'status' | 'currentAsse
   if (event.status === 'Pending') return event.currentAssessmentId ? 'Risk assessment underway' : 'Risk assessment queued';
   if (event.currentAssessmentId) return 'Risk assessment available';
   return 'Assessment unavailable';
+}
+
+export interface AssessmentAvailability {
+  label: string;
+  description: string;
+  emptyMessage: string;
+  resourceMessage: string;
+}
+
+export function organizerAssessmentAvailability(
+  eventStatus: string,
+  hasVersion: boolean,
+  hasAssessmentPointer: boolean,
+  summary: OrganizerAssessmentSummary | null,
+  earlierSummary: boolean,
+): AssessmentAvailability {
+  if (summary?.status === 'official_ready') return {
+    label: 'Official result available', description: 'Official result available for authority decision', emptyMessage: '', resourceMessage: '',
+  };
+  if (summary?.status === 'failed') return {
+    label: 'Failed — retry required', description: 'Assessment failed and requires a retry', emptyMessage: '', resourceMessage: '',
+  };
+  if (summary?.status === 'manual_review_required') return {
+    label: 'Manual review required', description: 'Manual review is required before an official result can be produced', emptyMessage: '', resourceMessage: '',
+  };
+  if (summary) return {
+    label: 'Provisional result available', description: 'Provisional until authority confirmation is complete', emptyMessage: '', resourceMessage: '',
+  };
+  if (!hasVersion) return {
+    label: 'Not started', description: 'Assessment begins after the application is submitted',
+    emptyMessage: 'No assessment has been created for this application.',
+    resourceMessage: 'No resource recommendation has been created for this application.',
+  };
+  if (earlierSummary) return {
+    label: 'Recalculation required', description: 'This application needs a current assessment before review can continue',
+    emptyMessage: 'This assessment was created under an earlier calculation version and must be recalculated before it can be shown.',
+    resourceMessage: 'Resource recommendations will appear after the current assessment is recalculated.',
+  };
+  if (eventStatus === 'Manual Review Required') return {
+    label: 'Manual assessment required', description: 'No calculated risk result is available yet',
+    emptyMessage: 'An Admin must retry the AI assessment or complete a manual assessment before review can continue.',
+    resourceMessage: 'Resource recommendations will appear after a manual assessment is completed.',
+  };
+  if (['Approved', 'Rejected', 'Withdrawn', 'Cancelled'].includes(eventStatus)) return {
+    label: 'Record unavailable', description: 'The saved assessment summary is unavailable for this application version',
+    emptyMessage: 'This application is no longer processing, but its assessment summary is unavailable. Contact an administrator to verify the application record.',
+    resourceMessage: 'The saved resource recommendation is unavailable for this application version. Contact an administrator to verify the application record.',
+  };
+  return {
+    label: hasAssessmentPointer ? 'Assessment record created' : 'Processing', description: 'Assessment processing is in progress',
+    emptyMessage: 'Assessment is processing. Refresh later to view the result.',
+    resourceMessage: 'Resources will appear after the assessment is calculated.',
+  };
 }
 
 export function organizerAdminDecisionLabel(event: Pick<EventRecord, 'status' | 'initialReview'>): string {

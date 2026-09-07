@@ -192,6 +192,7 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
   };
 
   const handleGenerate = () => {
+    if (loading || error || (from && to && from > to)) return;
     setIsGenerating(true);
     const nextReport = buildReportModel(reportType, scope, scope === 'eventType' ? eventType : undefined, {
       preview: previewMode,
@@ -244,7 +245,7 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
               </div>
             </div>
             <div className="reports-hero__meta relative z-[1]">
-              <MetaStat icon={<Database size={17} />} label="Eligible responses" value={formatNumber(report.eligibleRecords)} />
+              <MetaStat icon={<Database size={17} />} label="Eligible responses" value={loading ? 'Loading...' : error ? 'Data Not Available' : formatNumber(report.eligibleRecords)} />
               <MetaStat icon={<CalendarDays size={17} />} label="Coverage" value={<CoverageValue label={report.coverage.label} />} />
               <MetaStat
                 icon={<ShieldCheck size={17} />}
@@ -320,13 +321,14 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
               <button type="button" className="btn-secondary !min-h-[42px]" onClick={() => { setFrom(''); setTo(''); }}>
                 <RefreshCw size={15} /> Reset
               </button>
-              <button type="button" className="btn-primary !min-h-[42px]" onClick={handleGenerate} disabled={isGenerating}>
+              <button type="button" className="btn-primary !min-h-[42px]" onClick={handleGenerate} disabled={isGenerating || loading || Boolean(error) || Boolean(from && to && from > to)}>
                 <Sparkles size={15} /> {isGenerating ? 'Generating…' : 'Generate report'}
               </button>
             </div>
           </div>
         </section>
 
+        {from && to && from > to && <p role="alert" className="mt-3 text-sm text-red-800">The start date must be on or before the end date.</p>}
         {loading ? (
           <div className="report-loading"><RefreshCw className="animate-spin" size={20} /> Loading latest valid records…</div>
         ) : error ? (

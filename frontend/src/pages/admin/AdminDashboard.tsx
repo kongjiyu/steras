@@ -281,7 +281,7 @@ export default function AdminDashboard() {
     <div className="authority-dashboard min-h-screen bg-[#f3f1e9] pb-16">
       <WorkspaceTopBar
         title="Command centre"
-        subtitle="Cross-module administration and final review"
+        subtitle="End-to-end administration and final review"
         userInitials={initialsFor(profile?.name)}
         workspaceEyebrow="STERAS administration"
         workspaceEyebrowIcon={ShieldCheck}

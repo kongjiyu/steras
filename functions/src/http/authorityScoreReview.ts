@@ -583,7 +583,7 @@ function organizerSummary(assessment: OfficialRiskAssessment, resource: Resource
     revision: resource.revision,
     stage: resource.stage,
     items: Object.fromEntries(RESOURCE_KEYS.map((key) => [key, { baseline: resource.items[key].baseline, planningRange: { ...resource.items[key].planningRange } }])) as OrganizerResourceRecommendation['items'],
-    disclaimer: 'Planning ranges derived from an official risk assessment; resource ratios remain internal prototype inputs.',
+    disclaimer: 'Planning ranges derived from an official risk assessment; resource ratios remain indicative and are not statutory minimums.',
   };
   return {
     assessmentId: assessment.assessmentId, eventId: assessment.eventId, versionId: assessment.versionId,

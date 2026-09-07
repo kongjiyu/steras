@@ -11,7 +11,7 @@ import PageHeader from '../../components/ui/PageHeader';
 import OrganizerAssessmentSummaryView, { OrganizerResourceSummaryView } from '../../components/m2/OrganizerAssessmentSummaryView';
 import { isCurrentEventRecord, isCurrentEventVersion, isOrganizerAssessmentSummary } from '../../components/m2/m2Contract';
 import OrganizerStatusBadge from './OrganizerStatusBadge';
-import { applicationStatusLabel, isEditableApplicationStatus, isWithdrawableApplicationStatus, nextVersionId, organizerAdminDecisionLabel, organizerPublicationLabel, organizerPublicationStateFromProjection, OrganizerPublicationState } from './organizerApplication';
+import { applicationStatusLabel, isEditableApplicationStatus, isWithdrawableApplicationStatus, nextVersionId, organizerAdminDecisionLabel, organizerAssessmentAvailability, organizerPublicationLabel, organizerPublicationStateFromProjection, OrganizerPublicationState } from './organizerApplication';
 import { findEventById } from '../../mock_data/events';
 import { findPublicEventById } from '../../mock_data/public_events';
 
@@ -126,6 +126,7 @@ export default function EventDetail() {
   const submittedVersionLabel = event.currentVersionId ?? 'Not submitted';
   const editableVersionLabel = event.editableVersionId ?? (editable ? nextVersionId(event.currentVersionNumber) : 'Locked');
   const revisionFeedback = versions.find((version) => version.versionId === event.currentVersionId)?.revisionSource ?? event.activeRevision;
+  const assessmentAvailability = organizerAssessmentAvailability(status, Boolean(event.currentVersionId), Boolean(event.currentAssessmentId), summary, legacySummary);
 
   const prepareEdit = async () => {
     if (!isFirebaseConfigured || !window.confirm(status === 'Rejected'
@@ -207,7 +208,7 @@ export default function EventDetail() {
             <Row label="Submitted" value={submittedVersionLabel} />
             <Row label="Editable" value={editableVersionLabel} />
             <Row label="Submitted at" value={event.submittedAt ? format(new Date(event.submittedAt), 'PPp') : 'Not submitted'} />
-            <Row label="Assessment" value={summary?.status === 'failed' ? 'Failed — retry required' : summary?.status === 'manual_review_required' ? 'Manual review required' : summary ? 'Available' : event.currentAssessmentId ? 'Assessment record created' : status === 'Pending' ? 'Processing' : 'Unavailable'} />
+            <Row label="Assessment" value={assessmentAvailability.label} />
             <Row label="Admin decision" value={organizerAdminDecisionLabel(event)} />
             <Row label="Public" value={organizerPublicationLabel(publicationState)} />
             <Row label="Authorities" value={event.requiredAuthorities.length > 0 ? event.requiredAuthorities.join(', ') : 'Not assigned yet'} />
@@ -215,9 +216,9 @@ export default function EventDetail() {
         </section>
 
         <section className="card">
-          <div className="card-header"><div><h2 className="section-title">Risk assessment summary</h2><p className="mt-1 text-xs text-ink-500">{summary?.status === 'official_ready' ? 'Official result available for authority decision' : summary?.status === 'failed' ? 'Assessment failed and requires a retry' : summary?.status === 'manual_review_required' ? 'Manual review is required before an official result can be produced' : 'Provisional until authority confirmation is complete'}</p></div></div>
+          <div className="card-header"><div><h2 className="section-title">Risk assessment summary</h2><p className="mt-1 text-xs text-ink-500">{assessmentAvailability.description}</p></div></div>
           <div className="card-body">
-            {!summary ? <p className="text-sm text-ink-500">{!event.currentVersionId ? 'No assessment has been created for this application.' : legacySummary ? 'This version has a legacy assessment and must be recomputed before the current result can be shown.' : 'Assessment is processing.'}</p> : (
+            {!summary ? <p className="text-sm text-ink-500">{assessmentAvailability.emptyMessage}</p> : (
               <OrganizerAssessmentSummaryView summary={summary} />
             )}
           </div>
@@ -253,7 +254,7 @@ export default function EventDetail() {
         <section className="card lg:col-span-2">
           <div className="card-header"><div><h2 className="section-title">Recommended resources</h2><p className="mt-1 text-xs text-ink-500">Operational quantities linked to the current assessment</p></div></div>
           <div className="card-body">
-            {!summary ? <p className="text-sm text-ink-500">{event.currentVersionId ? 'Resources appear after assessment.' : 'No resource recommendation has been created for this application.'}</p> : (
+            {!summary ? <p className="text-sm text-ink-500">{assessmentAvailability.resourceMessage}</p> : (
               <OrganizerResourceSummaryView summary={summary} />
             )}
           </div>

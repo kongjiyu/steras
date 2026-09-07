@@ -1,7 +1,11 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import PublicHome from './PublicHome';
+
+vi.mock('../../contexts/AuthContext', () => ({
+  useAuth: () => ({ user: null, profile: null, signOut: vi.fn() }),
+}));
 
 describe('PublicHome', () => {
   it('explains the connected STERAS journey and exposes the primary entry points', () => {

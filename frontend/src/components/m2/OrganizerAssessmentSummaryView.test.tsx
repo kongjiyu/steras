@@ -37,7 +37,8 @@ describe('UC-M2-18 organizer-safe assessment summary', () => {
     expect(screen.getByText('Crowd safety')).toBeInTheDocument();
     expect(screen.getByText('Police officers')).toBeInTheDocument();
     expect(screen.getAllByText('Planning range 10–12').length).toBeGreaterThan(0);
-    expect(screen.getByText('Provisional prototype planning ranges.')).toBeInTheDocument();
+    expect(screen.getByText(/Indicative planning ranges only/)).toBeInTheDocument();
+    expect(screen.queryByText('Provisional prototype planning ranges.')).not.toBeInTheDocument();
     expect(screen.getByText(/1 of 3 assigned authorities/)).toBeInTheDocument();
     expect(screen.queryByText(/SECRET PROMPT|INTERNAL RATIONALE|INTERNAL WARNING|INTERNAL RULE/)).not.toBeInTheDocument();
   });

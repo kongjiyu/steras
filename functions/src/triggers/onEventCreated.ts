@@ -1090,7 +1090,7 @@ async function persistResourceCalculation(
           },
           confidenceLevel: 'prototype',
           authorityReviewRequired: true,
-          notes: 'Provisional internal prototype planning ranges; authority validation and official assessment are pending.',
+          notes: 'Indicative planning ranges; authority validation and official assessment are pending.',
         };
     transaction.create(resourceReference, recommendation);
     transaction.update(eventReference, {
@@ -1577,8 +1577,8 @@ function organizerResourceRecommendation(resources: ResourceRecommendation): Org
       planningRange: { ...item.planningRange },
     }])) as OrganizerResourceRecommendation['items'],
     disclaimer: resources.stage === 'provisional'
-      ? 'Provisional internal prototype planning ranges; not statutory or authority-issued minimums.'
-      : 'Planning ranges derived from an official risk assessment; resource ratios remain internal prototype inputs.',
+      ? 'Indicative planning ranges; not statutory or authority-issued minimums.'
+      : 'Planning ranges derived from an official risk assessment; resource ratios remain indicative and are not statutory minimums.',
   };
 }
 

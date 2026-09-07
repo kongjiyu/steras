@@ -42,14 +42,14 @@ export default function RiskAssessments({ previewRecords, previewAgency }: RiskA
 
   return (
     <div className="m2-workspace">
-      <AuthorityTopBar title="Risk assessments" subtitle={`${agency} · Provisional category intelligence`} userInitials={initials} />
+      <AuthorityTopBar title="Risk assessments" subtitle={`${agency} · Versioned category intelligence`} userInitials={initials} />
 
       <main className="m2-page page-enter">
         <section className="m2-observatory" aria-labelledby="risk-observatory-title">
           <div className="m2-observatory__grid">
             <div>
               <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#f6d25b]">Assessment observatory</p>
-              <h2 id="risk-observatory-title" className="mt-2 max-w-xl text-2xl font-bold sm:text-3xl">Validated provisional risk, ready for authority review.</h2>
+              <h2 id="risk-observatory-title" className="mt-2 max-w-xl text-2xl font-bold sm:text-3xl">Versioned risk assessment with its source context.</h2>
               <p className="mt-3 max-w-2xl text-sm leading-6 text-[#c7d0be]">
                 Monitor deterministic category results and their evidence provenance across every application assigned to {agency}.
               </p>
@@ -68,7 +68,7 @@ export default function RiskAssessments({ previewRecords, previewAgency }: RiskA
             {summary.requiresRecompute > 0 && (
               <p className="flex items-start gap-2 border-l-4 border-status-amend bg-gold-50 p-3 text-ink-700">
                 <DatabaseZap size={17} className="mt-0.5 shrink-0 text-gold-600" />
-                {summary.requiresRecompute} legacy assessment{summary.requiresRecompute === 1 ? '' : 's'} require recalculation with the current assessment rules.
+                {summary.requiresRecompute} assessment{summary.requiresRecompute === 1 ? '' : 's'} from an earlier calculation version require recalculation.
               </p>
             )}
             {summary.advisoryUnavailable > 0 && (
@@ -143,7 +143,7 @@ function RiskRecord({ record }: { record: M2PortfolioRecord }) {
 
         <div className="text-xs text-ink-600">
           <p className="font-semibold text-ink-800">{topCategory ? `${topCategory.categoryName}: ${topCategory.normalizedScore}/100` : assessmentState(record)}</p>
-          <p className="mt-1 capitalize">Context: {freshness} · AI: {assessment?.aiProposal?.status ?? 'pending'}</p>
+          <p className="mt-1 capitalize">Context: {freshness} · AI proposal: {assessment?.aiProposal?.status ?? 'pending'}</p>
         </div>
 
         <div className="m2-score">
@@ -174,7 +174,7 @@ function RiskRecord({ record }: { record: M2PortfolioRecord }) {
         </details>
       ) : (
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#e3dacb] px-4 py-3 text-sm text-ink-600">
-          <p>{record.legacyAssessment ? 'Legacy assessment shape detected. Recompute this event version before review.' : assessmentState(record)}</p>
+          <p>{record.legacyAssessment ? 'Created under an earlier calculation version. Recalculate before review.' : assessmentState(record)}</p>
           <Link to={`/authority/events/${event.eventId}`} className="font-semibold text-brand-700 hover:text-brand-800">Open application <ArrowRight className="inline" size={14} /></Link>
         </div>
       )}

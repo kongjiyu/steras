@@ -48,7 +48,13 @@ export function OrganizerResourceSummaryView({ summary }: { summary: OrganizerAs
           );
         })}
       </dl>
-      <p className="border-l-4 border-gold-300 bg-gold-50 p-3 text-xs leading-5 text-ink-700">{summary.resourceRecommendation.disclaimer}</p>
+      <p className="border-l-4 border-gold-300 bg-gold-50 p-3 text-xs leading-5 text-ink-700">{organizerResourceDisclaimer(summary.resourceRecommendation.stage)}</p>
     </div>
   );
+}
+
+function organizerResourceDisclaimer(stage: 'provisional' | 'official'): string {
+  return stage === 'provisional'
+    ? 'Indicative planning ranges only. They are not statutory or authority-issued minimums and may change after review.'
+    : 'The risk assessment is official. Resource ranges remain indicative planning guidance and are not statutory minimums.';
 }

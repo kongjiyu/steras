@@ -36,6 +36,7 @@ export default function OrganizerEventControls() {
   const [event, setEvent] = useState<EventRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const [retryKey, setRetryKey] = useState(0);
   const [controls, setControls] = useState<EventControl[]>([]);
   const [docs, setDocs] = useState<Record<string, Stage1Doc | null>>({});
   const [stage2Docs, setStage2Docs] = useState<Record<string, Stage2Doc | null>>({});
@@ -43,6 +44,9 @@ export default function OrganizerEventControls() {
 
   useEffect(() => {
     if (!eventId) return;
+    setLoading(true);
+    setLoadError('');
+    setEvent(null);
     return onSnapshot(doc(db, COLLECTIONS.EVENTS, eventId), (snapshot) => {
       if (snapshot.exists()) {
         setEvent({ eventId: snapshot.id, ...(snapshot.data() as Partial<EventRecord>) } as EventRecord);
@@ -55,7 +59,7 @@ export default function OrganizerEventControls() {
       setLoadError('The event could not be loaded.');
       setLoading(false);
     });
-  }, [eventId]);
+  }, [eventId, retryKey]);
 
   // Subscribe to the per-event event_controls sub-collection. The current
   // version's controls only (Q1 refactor: control docs are versioned).
@@ -73,8 +77,9 @@ export default function OrganizerEventControls() {
       setControls(list);
     }, (err) => {
       console.warn('[OrganizerEventControls] controls subscribe failed', err);
+      setLoadError('Control requirements or evidence could not be loaded. Try again before taking action.');
     });
-  }, [eventId, versionId]);
+  }, [eventId, versionId, retryKey]);
 
   // Stable key based on the control IDs, so the effect only re-runs when
   // the set of controls changes (not on every re-render where the
@@ -111,6 +116,7 @@ export default function OrganizerEventControls() {
         },
         (err) => {
           console.warn(`[OrganizerEventControls] stage1_docs subscribe failed for ${ctrl.controlId}`, err);
+          setLoadError('Control requirements or evidence could not be loaded. Try again before taking action.');
         },
       );
       const unsub2 = onSnapshot(
@@ -126,13 +132,14 @@ export default function OrganizerEventControls() {
         },
         (err) => {
           console.warn(`[OrganizerEventControls] stage2_docs subscribe failed for ${ctrl.controlId}`, err);
+          setLoadError('Control requirements or evidence could not be loaded. Try again before taking action.');
         },
       );
       unsubscribes.push(unsub1, unsub2);
     }
     return () => { for (const u of unsubscribes) u(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventId, controlsKey]);
+  }, [eventId, controlsKey, retryKey]);
 
   // Aggregate stats across all controls.
   const stats = useMemo(() => {
@@ -159,7 +166,7 @@ export default function OrganizerEventControls() {
   }, [controls, docs]);
 
   if (loading) return <div className="p-8 text-ink-500">Loading event...</div>;
-  if (loadError) return <div className="p-8"><EmptyState title="Event unavailable" description={loadError} /></div>;
+  if (loadError) return <div className="p-8"><EmptyState title="Event unavailable" description={loadError}><button type="button" className="btn-secondary" onClick={() => setRetryKey((value) => value + 1)}>Try again</button></EmptyState></div>;
   if (!event) return <div className="p-8"><EmptyState title="Event not found" /></div>;
 
   const details = event.eventDetails;

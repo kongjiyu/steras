@@ -8,6 +8,9 @@ const { snapshotState } = vi.hoisted(() => ({
 }));
 
 vi.mock('../../config/firebase', () => ({ db: {}, isFirebaseConfigured: true }));
+vi.mock('../../contexts/AuthContext', () => ({
+  useAuth: () => ({ user: null, profile: null, signOut: vi.fn() }),
+}));
 vi.mock('firebase/firestore', () => ({
   collection: vi.fn(),
   query: vi.fn(),

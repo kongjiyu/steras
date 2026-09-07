@@ -112,6 +112,12 @@ frontend/test-results/
 frontend/playwright-report/
 frontend/blob-report/
 .playwright-cli/
+# Local browser captures and Google Docs review work. Curated production
+# rehearsal evidence already tracked under production-m1-m5 remains allowed.
+output/playwright/*
+!output/playwright/production-m1-m5/
+!output/playwright/production-m1-m5/**
+output/ui-feedback/
 .parcel-cache/
 .eslintcache
 .stylelintcache
