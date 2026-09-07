@@ -3,7 +3,7 @@ import type { EventRecord } from '@shared/types';
 import { M4_AI_PROMPT_VERSION } from '@shared/m4';
 import {
   assertEvidencePath, assertReportableEvent, assertResolutionReady, assertSubmissionGeneration, buildIncidentAiPayload,
-  actionRequestHash, canPerformIncidentAction, rankRecommendedAuthorities, safeIncident, sameSubmission, validateSubmission,
+  actionRequestHash, canPerformIncidentAction, canSubmitIncident, rankRecommendedAuthorities, safeIncident, sameSubmission, validateSubmission,
   parseIncidentAiResponse,
 } from './m4Incidents';
 
@@ -14,6 +14,12 @@ const event = (start: number, end: number, status: EventRecord['status'] = 'Appr
 }) as EventRecord;
 
 describe('M4 incident input boundary', () => {
+  it('defines participant submission as public-role only', () => {
+    expect(canSubmitIncident('public')).toBe(true);
+    expect(canSubmitIncident('organizer')).toBe(false);
+    expect(canSubmitIncident('authority')).toBe(false);
+    expect(canSubmitIncident('admin')).toBe(false);
+  });
   it('accepts ongoing and recently completed approved events', () => {
     expect(() => assertReportableEvent(event(now - 1_000, now + 1_000), now)).not.toThrow();
     expect(() => assertReportableEvent(event(now - 10_000, now - 7 * 86_400_000), now)).not.toThrow();

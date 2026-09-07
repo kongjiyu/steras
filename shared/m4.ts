@@ -9,6 +9,18 @@ export const INCIDENT_CATEGORIES = [
   'property_damage', 'suspicious_activity', 'access_traffic', 'event_control_discrepancy', 'other',
 ] as const;
 export type M4IncidentCategory = typeof INCIDENT_CATEGORIES[number];
+export const INCIDENT_CATEGORY_LABELS: Record<M4IncidentCategory, string> = {
+  crowd: 'Crowd Congestion or Overcrowding',
+  missing_person: 'Missing Person',
+  lost_found: 'Lost and Found',
+  medical_safety: 'Medical or Safety Incident',
+  security: 'Security Concern',
+  property_damage: 'Property or Facility Damage',
+  suspicious_activity: 'Suspicious Activity',
+  access_traffic: 'Access or Traffic Issue',
+  event_control_discrepancy: 'Published Event Control Discrepancy',
+  other: 'Other Incident',
+};
 export type M4IncidentSeverity = 'low' | 'medium' | 'high';
 export type M4IncidentStatus = 'submitted' | 'manual_review_required' | 'organizer_review' | 'responding' | 'authority_investigation' | 'awaiting_resolution' | 'resolved';
 

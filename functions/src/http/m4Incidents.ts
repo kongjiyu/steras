@@ -22,6 +22,9 @@ const ALLOWED_EVIDENCE = new Set(['image/jpeg', 'image/png', 'image/webp', 'appl
 
 export const submitIncident = onCall({ region: FUNCTION_REGION, timeoutSeconds: 60, memory: '512MiB', secrets: [MINIMAX_API_KEY] }, async (request) => {
   const { uid, profile } = await requireProfile(request.auth?.uid);
+  if (!canSubmitIncident(profile.role)) {
+    throw new HttpsError('permission-denied', 'Only participant accounts can submit incident reports.');
+  }
   const input = validateSubmission(request.data);
   const db = firestore();
   const eventSnap = await db.collection(COLLECTIONS.EVENTS).doc(input.eventId).get();
@@ -111,24 +114,23 @@ export const listIncidents = onCall({ region: FUNCTION_REGION }, async (request)
   if (profile.role === 'organizer') query = query.where('organizerId', '==', uid);
   else if (profile.role === 'authority') query = query.where('assignedAuthorityOfficerUid', '==', uid);
   else if (profile.role !== 'admin') query = query.where('reporterUid', '==', uid);
-  const snap = await query.limit(100).get();
-  const records = snap.docs.map((doc) => doc.data() as M4IncidentRecord).sort((a, b) => b.createdAt - a.createdAt);
+  const snap = profile.role === 'admin' ? undefined : await query.limit(100).get();
+  const records = snap?.docs.map((doc) => doc.data() as M4IncidentRecord).sort((a, b) => b.createdAt - a.createdAt) ?? [];
   const histories = profile.role === 'public' ? new Map<string, M4IncidentHistoryEntry[]>() : new Map(await Promise.all(records.map(async (record) => {
     const history = await db.collection(COLLECTIONS.INCIDENTS).doc(record.incidentId).collection(HISTORY).orderBy('timestamp').limit(200).get();
     return [record.incidentId, history.docs.map((doc) => doc.data() as M4IncidentHistoryEntry)] as const;
   })));
   const reportable = profile.role === 'public'
     ? await db.collection(COLLECTIONS.PUBLIC_EVENTS).limit(100).get()
-    : profile.role === 'organizer'
-      ? await db.collection(COLLECTIONS.EVENTS).where('organizerId', '==', uid).where('status', '==', 'Approved').limit(100).get()
-      : undefined;
+    : undefined;
   const events = reportable?.docs.map((doc) => {
     const value = doc.data() as EventRecord & { startDatetime?: number; endDatetime?: number; eventName?: string };
     const details = value.eventDetails;
     return details
       ? { eventId: doc.id, name: details.name, startDatetime: details.startDatetime, endDatetime: details.endDatetime }
       : { eventId: doc.id, name: value.eventName ?? doc.id, startDatetime: value.startDatetime ?? 0, endDatetime: value.endDatetime ?? 0 };
-  }).filter((event) => event.startDatetime <= Date.now() && event.endDatetime >= Date.now() - 7 * DAY) ?? [];
+  }).filter((event) => event.startDatetime <= Date.now() && event.endDatetime >= Date.now() - 7 * DAY)
+    .sort((left, right) => right.startDatetime - left.startDatetime) ?? [];
   return { incidents: records.map((record) => ({ ...safeIncident(record, profile.role, uid), ...(profile.role === 'public' ? {} : { history: histories.get(record.incidentId) ?? [] }) })), reportableEvents: events };
 });
 
@@ -249,8 +251,7 @@ export const getIncidentEvidenceDownloadUrl = onCall({ region: FUNCTION_REGION }
   const incidentSnap = await db.collection(COLLECTIONS.INCIDENTS).doc(incidentId).get();
   if (!incidentSnap.exists) throw new HttpsError('not-found', 'Incident not found.');
   const incident = incidentSnap.data() as M4IncidentRecord;
-  const canReview = profile.role === 'admin'
-    || (profile.role === 'organizer' && incident.organizerId === uid)
+  const canReview = (profile.role === 'organizer' && incident.organizerId === uid)
     || (profile.role === 'authority' && incident.assignedAuthorityOfficerUid === uid);
   const canViewOwnReport = profile.role === 'public' && incident.reporterUid === uid;
   if (!canReview && !canViewOwnReport) deny();
@@ -280,6 +281,7 @@ export const saveAuthorityDirectoryEntry = onCall({ region: FUNCTION_REGION }, a
 });
 
 async function requireProfile(uid?: string) { if (!uid) throw new HttpsError('unauthenticated', 'Sign in required.'); const snap = await firestore().collection(COLLECTIONS.USERS).doc(uid).get(); const profile = snap.data() as UserProfile | undefined; if (!profile) throw new HttpsError('permission-denied', 'Registered profile required.'); return { uid, profile }; }
+export function canSubmitIncident(role: UserProfile['role']) { return role === 'public'; }
 export function validateSubmission(value: unknown) { const v = value as Record<string, unknown>; const category = String(v?.category ?? '') as M4IncidentCategory; if (!INCIDENT_CATEGORIES.includes(category)) throw new HttpsError('invalid-argument', 'Invalid incident category.'); const occurredAt = Number(v.occurredAt); if (!Number.isFinite(occurredAt) || occurredAt <= 0 || occurredAt > Date.now() + 300_000) throw new HttpsError('invalid-argument', 'Invalid occurrence time.'); return { eventId: identifier(v.eventId, 'eventId'), category, description: text(v.description, 'description', 20, 2000), location: text(v.location, 'location', 3, 300), occurredAt, idempotencyKey: identifier(v.idempotencyKey, 'idempotencyKey'), evidencePaths: Array.isArray(v.evidencePaths) ? v.evidencePaths.map(String) : [], linkedControlId: v.linkedControlId ? identifier(v.linkedControlId, 'linkedControlId') : undefined, linkedStage2DocId: v.linkedStage2DocId ? identifier(v.linkedStage2DocId, 'linkedStage2DocId') : undefined }; }
 export function assertReportableEvent(event: EventRecord, now: number) { assertEventReportableAt(event, now); }
 export function assertSubmissionGeneration(event: EventRecord, capturedVersionId: string, input: Pick<ReturnType<typeof validateSubmission>, 'occurredAt'>, now: number) { assertReportableEvent(event, now); if ((event.currentVersionId ?? `v${event.currentVersionNumber}`) !== capturedVersionId) throw new HttpsError('aborted', 'Event generation changed while the incident was being assessed.'); if (input.occurredAt < event.eventDetails.startDatetime || input.occurredAt > event.eventDetails.endDatetime) throw new HttpsError('failed-precondition', 'Occurrence is no longer valid for the current event generation.'); }

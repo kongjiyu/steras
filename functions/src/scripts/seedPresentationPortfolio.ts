@@ -22,7 +22,7 @@ import {
   type UserProfile,
   type Venue,
 } from '@shared/types';
-import { M4_AI_PROMPT_VERSION, M4_SCHEMA_VERSION, type M4IncidentRecord } from '@shared/m4';
+import { M4_AI_PROMPT_VERSION, M4_SCHEMA_VERSION, type M4IncidentCategory, type M4IncidentRecord } from '@shared/m4';
 import { ACTIVE_CATEGORY_SCHEMA } from '../config/categorySchema';
 import { buildAuthorityReviewState, buildOfficialAssessmentResult } from '../engines/authorityFinalisation';
 import { validateAndCalculateProvisional } from '../engines/assessmentValidator';
@@ -52,11 +52,13 @@ interface Scenario {
   startAt: number;
   attendance: number;
   incidentSeverities: Array<'low' | 'medium' | 'high'>;
+  incidentCategories?: M4IncidentCategory[];
 }
 
 interface SeedIdentity {
   adminUid: string;
   organizerUid: string;
+  participantUid: string;
   authorityUids: Partial<Record<AuthorityType, string>>;
 }
 
@@ -73,6 +75,11 @@ const SCENARIOS: Scenario[] = [
   scenario('craft-market', 'Malaysia Craft & Design Market', 'fair', 'Pending', 'medium', '2026-06-28', '2026-10-03', 4800, []),
   scenario('community-harmony', 'Community Harmony Gathering', 'religious', 'Approved', 'medium', '2026-07-17', '2026-10-10', 5400, []),
   scenario('innovation-summit', 'Tourism Innovation Summit', 'conference', 'Rejected', 'low', '2026-08-06', '2026-10-17', 1600, []),
+  reportableScenario('participant-live-cultural', 'Participant Demo · KL Cultural Day', 'cultural', 'medium', -2 * HOUR, 5200, ['high', 'medium'], ['crowd', 'missing_person']),
+  reportableScenario('participant-live-sports', 'Participant Demo · Putrajaya Sports Fiesta', 'sports', 'medium', -5 * HOUR, 3400, ['low', 'medium'], ['lost_found', 'medical_safety']),
+  reportableScenario('participant-recent-expo', 'Participant Demo · Tourism Product Expo', 'exhibition', 'low', -1 * DAY, 2600, ['medium', 'low'], ['security', 'property_damage']),
+  reportableScenario('participant-recent-concert', 'Participant Demo · Malaysia Music Showcase', 'concert', 'high', -4 * DAY, 7600, ['high', 'medium'], ['suspicious_activity', 'access_traffic']),
+  reportableScenario('participant-recent-festival', 'Participant Demo · Community Festival', 'festival', 'medium', -7 * DAY, 4800, ['medium', 'low'], ['event_control_discrepancy', 'other']),
 ];
 
 const PRESENTATION_IMAGES = [
@@ -94,6 +101,15 @@ function scenario(slug: string, name: string, type: EventType, status: EventStat
     startAt: Date.parse(`${eventDate}T02:00:00.000Z`),
     attendance,
     incidentSeverities,
+  };
+}
+
+function reportableScenario(slug: string, name: string, type: EventType, risk: RiskBand, startOffset: number, attendance: number, incidentSeverities: Scenario['incidentSeverities'], incidentCategories: M4IncidentCategory[]): Scenario {
+  return {
+    slug, name, type, status: 'Approved', risk,
+    createdAt: Date.now() - 30 * DAY,
+    startAt: Date.now() + startOffset,
+    attendance, incidentSeverities, incidentCategories,
   };
 }
 
@@ -127,20 +143,22 @@ export function parsePresentationArgs(argv: string[]) {
 }
 
 async function loadIdentities(db: Firestore): Promise<SeedIdentity> {
-  const [admins, organizers, authorities] = await Promise.all([
+  const [admins, organizers, participants, authorities] = await Promise.all([
     db.collection(COLLECTIONS.USERS).where('role', '==', 'admin').limit(10).get(),
     db.collection(COLLECTIONS.USERS).where('role', '==', 'organizer').limit(10).get(),
+    db.collection(COLLECTIONS.USERS).where('role', '==', 'public').limit(10).get(),
     db.collection(COLLECTIONS.USERS).where('role', '==', 'authority').limit(50).get(),
   ]);
   const admin = admins.docs[0]?.data() as UserProfile | undefined;
   const organizer = organizers.docs[0]?.data() as UserProfile | undefined;
-  if (!admin?.uid || !organizer?.uid) throw new Error('At least one Admin and Organizer profile must already exist.');
+  const participant = participants.docs[0]?.data() as UserProfile | undefined;
+  if (!admin?.uid || !organizer?.uid || !participant?.uid) throw new Error('At least one Admin, Organizer and Public participant profile must already exist.');
   const authorityUids: Partial<Record<AuthorityType, string>> = {};
   authorities.docs.forEach((document) => {
     const profile = document.data() as UserProfile;
     if (profile.authorityType && !authorityUids[profile.authorityType]) authorityUids[profile.authorityType] = profile.uid;
   });
-  return { adminUid: admin.uid, organizerUid: organizer.uid, authorityUids };
+  return { adminUid: admin.uid, organizerUid: organizer.uid, participantUid: participant.uid, authorityUids };
 }
 
 function authoritiesFor(type: EventType): AuthorityType[] {
@@ -261,7 +279,7 @@ function buildArtifacts(scenarioValue: Scenario, event: EventRecord, identities:
       likelihood: rating as 1 | 3 | 4,
       severity: rating as 1 | 3 | 4,
       evidenceReferences: [evidenceByCategory[category.id] as never],
-      rationale: `${category.name} rating reflects the presentation scenario attendance, venue and operating controls.`,
+      rationale: `${category.name} rating reflects the event attendance, venue and operating controls.`,
       confidence: 'high' as const,
       concerns: [],
       missingInformation: [],
@@ -306,7 +324,7 @@ function buildArtifacts(scenarioValue: Scenario, event: EventRecord, identities:
       authorityType: authority,
       reviewerId,
       categories: proposal.categories.map((category) => ({ categoryId: category.categoryId, likelihood: category.likelihood, severity: category.severity, decision: 'confirmed' as const })),
-      rationale: `${authority} reviewed the presentation scenario and confirmed the category ratings.`,
+      rationale: `${authority} reviewed the submitted event evidence and confirmed the category ratings.`,
       idempotencyKey: `${eventId}-${authority.toLowerCase()}-review-v1`,
       createdAt: now,
     } satisfies AuthorityScoreReview;
@@ -355,7 +373,7 @@ function buildArtifacts(scenarioValue: Scenario, event: EventRecord, identities:
     confidenceLevel: 'authority_validated',
     authorityReviewRequired: false,
     validationScope: 'official_risk_input_only',
-    notes: 'Presentation dataset using internal prototype resource ratios.',
+    notes: 'Indicative planning ratios; operational suitability requires authority review.',
     computedAt: now,
   };
   return { assessment, resource: { ...resource, presentationData: marker(eventId) }, reviews, inputHash };
@@ -487,12 +505,15 @@ async function writeIncidents(db: Firestore, scenarioValue: Scenario, event: Rec
   const details = event.eventDetails as EventDetails;
   for (const [incidentIndex, severity] of scenarioValue.incidentSeverities.entries()) {
     const incidentId = `${eventId}-incident-${incidentIndex + 1}`;
-    const incidentPath = `incident_evidence/${organizer.uid}/${incidentId}.jpg`;
+    const incidentPath = `incident_evidence/${identities.participantUid}/${incidentId}.jpg`;
     const bytes = await readFile(resolve(process.cwd(), '..', 'docs', 'presentation', 'assets', 'e2e-2026-09-30', PRESENTATION_IMAGES.at(-1)!));
     await uploadFile(incidentPath, bytes, 'image/jpeg', incidentId);
     const occurredAt = details.startDatetime + (2 + incidentIndex) * HOUR;
     const resolved = scenarioIndex % 3 === 0;
     const status: M4IncidentRecord['status'] = resolved ? 'resolved' : severity === 'high' ? 'authority_investigation' : 'responding';
+    const category = scenarioValue.incidentCategories?.[incidentIndex]
+      ?? (severity === 'high' ? 'crowd' : severity === 'medium' ? 'medical_safety' : 'lost_found');
+    const narrative = incidentNarrative(category);
     const record: M4IncidentRecord & { presentationData: ReturnType<typeof marker> } = {
       schemaVersion: M4_SCHEMA_VERSION,
       incidentId,
@@ -502,20 +523,24 @@ async function writeIncidents(db: Firestore, scenarioValue: Scenario, event: Rec
       eventType: details.type,
       eventName: details.name,
       organizerId: organizer.uid,
-      reporterUid: organizer.uid,
-      reporterRole: 'organizer',
-      category: severity === 'high' ? 'crowd' : severity === 'medium' ? 'medical_safety' : 'lost_found',
-      incidentType: severity === 'high' ? 'crowd_pressure_at_entry' : severity === 'medium' ? 'heat_exhaustion' : 'lost_property',
-      description: severity === 'high' ? 'A temporary crowd build-up formed near the primary entry while an additional lane was opened.' : severity === 'medium' ? 'A visitor reported heat exhaustion and received assessment at the medical point.' : 'A visitor reported a misplaced personal item to the event help desk.',
-      location: severity === 'high' ? 'Main public entrance' : severity === 'medium' ? 'Visitor concourse' : 'Information counter',
+      reporterUid: identities.participantUid,
+      reporterRole: 'public',
+      category,
+      incidentType: category,
+      description: narrative.description,
+      location: narrative.location,
       occurredAt,
-      evidence: [{ path: incidentPath, name: 'incident-observation.jpg', mimeType: 'image/jpeg', size: bytes.length, uploadedBy: organizer.uid, uploadedAt: occurredAt + 5 * 60_000 }],
+      evidence: [{ path: incidentPath, name: 'incident-observation.jpg', mimeType: 'image/jpeg', size: bytes.length, uploadedBy: identities.participantUid, uploadedAt: occurredAt + 5 * 60_000 }],
       aiAssessment: { status: 'success', model: 'presentation-fixture', promptVersion: M4_AI_PROMPT_VERSION, severity, immediateActionRequired: severity === 'high', rationale: 'Presentation incident triage based on the recorded category, location and evidence.', assessedAt: occurredAt + 60_000 },
       severity,
       immediateActionRequired: severity === 'high',
       status,
       recommendedAuthorityIds: [],
-      ...(status === 'authority_investigation' ? { assignedAuthorityOfficerUid: identities.authorityUids.PDRM ?? identities.adminUid } : {}),
+      ...(status === 'authority_investigation' ? {
+        referredAuthorityId: 'pdrm-kuala-lumpur-demo',
+        referredAuthorityType: 'PDRM' as const,
+        assignedAuthorityOfficerUid: identities.authorityUids.PDRM ?? identities.adminUid,
+      } : {}),
       ...(resolved ? { finalResolution: 'The response team completed the documented action and closed the incident without further escalation.', resolvedAt: occurredAt + 45 * 60_000 } : {}),
       assessmentEligible: resolved,
       synthetic: true,
@@ -526,9 +551,25 @@ async function writeIncidents(db: Firestore, scenarioValue: Scenario, event: Rec
     };
     const incidentRef = db.collection(COLLECTIONS.INCIDENTS).doc(incidentId);
     await incidentRef.set(record);
-    await incidentRef.collection('history').doc('incident-submitted').set({ historyId: 'incident-submitted', incidentId, action: 'incident_submitted', actorUid: organizer.uid, actorRole: 'organizer', timestamp: record.createdAt, summary: 'Incident report submitted with photographic evidence.', evidence: record.evidence, presentationData: marker(incidentId) });
+    await incidentRef.collection('history').doc('incident-submitted').set({ historyId: 'incident-submitted', incidentId, action: 'incident_submitted', actorUid: identities.participantUid, actorRole: 'public', timestamp: record.createdAt, summary: 'Participant incident report submitted with photographic evidence.', evidence: record.evidence, presentationData: marker(incidentId) });
     if (resolved) await incidentRef.collection('history').doc('incident-resolved').set({ historyId: 'incident-resolved', incidentId, action: 'resolve', actorUid: organizer.uid, actorRole: 'organizer', timestamp: record.resolvedAt, summary: record.finalResolution, evidence: [], presentationData: marker(incidentId) });
   }
+}
+
+function incidentNarrative(category: M4IncidentCategory) {
+  const values: Record<M4IncidentCategory, { description: string; location: string }> = {
+    crowd: { description: 'A dense crowd formed near the main entry and movement slowed while staff opened another lane.', location: 'Main public entrance' },
+    missing_person: { description: 'A participant reported that a family member could not be located after leaving the activity area.', location: 'Family meeting point' },
+    lost_found: { description: 'A participant handed a found personal item to the event information team for secure recording.', location: 'Information counter' },
+    medical_safety: { description: 'A participant felt unwell and received an assessment from the event medical response team.', location: 'Medical assistance point' },
+    security: { description: 'A participant reported an aggressive confrontation and requested support from event security staff.', location: 'North concourse' },
+    property_damage: { description: 'A temporary barrier and nearby facility fitting were damaged during event operations.', location: 'Exhibition hall entrance' },
+    suspicious_activity: { description: 'An unattended item and unusual activity were reported to the event security team for checking.', location: 'Stage access corridor' },
+    access_traffic: { description: 'Vehicle congestion temporarily blocked the marked participant drop-off and accessible entrance route.', location: 'South vehicle entrance' },
+    event_control_discrepancy: { description: 'The published crowd-control setup did not match the arrangement visible at the event entrance.', location: 'Published control location' },
+    other: { description: 'A participant reported an operational issue that did not fit another available incident category.', location: 'Participant services desk' },
+  };
+  return values[category];
 }
 
 async function clearDataset(db: Firestore) {
@@ -551,8 +592,8 @@ async function clearDataset(db: Firestore) {
   }
   await getStorage().bucket().deleteFiles({ prefix: `event_documents/presentation-`, force: true });
   await getStorage().bucket().deleteFiles({ prefix: `events/presentation-`, force: true });
-  const organizerProfiles = await db.collection(COLLECTIONS.USERS).where('role', '==', 'organizer').limit(10).get();
-  for (const profile of organizerProfiles.docs) await getStorage().bucket().deleteFiles({ prefix: `incident_evidence/${profile.id}/presentation-`, force: true });
+  const reporterProfiles = await db.collection(COLLECTIONS.USERS).where('role', 'in', ['organizer', 'public']).limit(20).get();
+  for (const profile of reporterProfiles.docs) await getStorage().bucket().deleteFiles({ prefix: `incident_evidence/${profile.id}/presentation-`, force: true });
   await db.collection(COLLECTIONS.DATASET_MANIFESTS).doc(DATASET_ID).delete();
 }
 
@@ -564,12 +605,15 @@ async function applyDataset(db: Firestore) {
   if (venues.length === 0) throw new Error('At least one active venue is required.');
   await clearDataset(db);
   for (const [index, scenarioValue] of SCENARIOS.entries()) await writeScenario(db, scenarioValue, venues[index % venues.length], organizer, identities, index);
-  await db.collection(COLLECTIONS.DATASET_MANIFESTS).doc(DATASET_ID).set({ datasetId: DATASET_ID, managedBy: MANAGED_BY, synthetic: true, intendedUse: 'STERAS classroom presentation and analytics demonstration only.', generatedAt: Date.now(), eventIds: SCENARIOS.map(eventIdFor), counts: { events: SCENARIOS.length, incidents: SCENARIOS.reduce((sum, item) => sum + item.incidentSeverities.length, 0) } });
+  await db.collection(COLLECTIONS.DATASET_MANIFESTS).doc(DATASET_ID).set({ datasetId: DATASET_ID, managedBy: MANAGED_BY, synthetic: true, intendedUse: 'STERAS classroom presentation, participant incident-flow testing and analytics demonstration only.', generatedAt: Date.now(), eventIds: SCENARIOS.map(eventIdFor), participantUid: identities.participantUid, counts: { events: SCENARIOS.length, reportableEvents: SCENARIOS.filter((item) => item.slug.startsWith('participant-')).length, incidents: SCENARIOS.reduce((sum, item) => sum + item.incidentSeverities.length, 0) } });
 }
 
 async function verifyDataset(db: Firestore) {
   const failures: string[] = [];
   let incidentCount = 0;
+  const incidentCategories = new Set<M4IncidentCategory>();
+  let reportableEventCount = 0;
+  const now = Date.now();
   for (const scenarioValue of SCENARIOS) {
     const eventId = eventIdFor(scenarioValue);
     const eventRef = db.collection(COLLECTIONS.EVENTS).doc(eventId);
@@ -586,19 +630,24 @@ async function verifyDataset(db: Firestore) {
     ]);
     if (!assessment.exists || !isAnalyticsAssessment(assessment.data())) failures.push(`${eventId}: invalid assessment`);
     if (!resource.exists || !validateResourceRecommendation(resource.data()).ok) failures.push(`${eventId}: invalid resource`);
-    if (selectValidAnalyticsIncidents(incidents.docs.map((document) => ({ ...document.data(), incidentId: document.id }))).length !== incidents.size) failures.push(`${eventId}: invalid incident`);
+    const incidentValues = incidents.docs.map((document) => ({ ...document.data(), incidentId: document.id }) as M4IncidentRecord);
+    if (selectValidAnalyticsIncidents(incidentValues).length !== incidents.size) failures.push(`${eventId}: invalid incident`);
+    incidentValues.forEach((incident) => incidentCategories.add(incident.category));
+    if (event.status === 'Approved' && event.eventDetails.startDatetime <= now && event.eventDetails.endDatetime >= now - 7 * DAY) reportableEventCount += 1;
     incidentCount += incidents.size;
   }
   const expectedIncidents = SCENARIOS.reduce((sum, item) => sum + item.incidentSeverities.length, 0);
   if (incidentCount !== expectedIncidents) failures.push(`incident count ${incidentCount}, expected ${expectedIncidents}`);
+  if (reportableEventCount !== 5) failures.push(`reportable event count ${reportableEventCount}, expected 5`);
+  if (incidentCategories.size !== 10) failures.push(`incident category coverage ${incidentCategories.size}, expected 10`);
   if (failures.length > 0) throw new Error(`Presentation dataset verification failed:\n- ${failures.join('\n- ')}`);
-  console.info(JSON.stringify({ datasetId: DATASET_ID, events: SCENARIOS.length, incidents: incidentCount, verified: true }, null, 2));
+  console.info(JSON.stringify({ datasetId: DATASET_ID, events: SCENARIOS.length, reportableEvents: reportableEventCount, incidents: incidentCount, incidentCategories: [...incidentCategories].sort(), verified: true }, null, 2));
 }
 
 async function main() {
   const { action, projectId } = parsePresentationArgs(process.argv.slice(2));
   if (action === 'dry-run') {
-    console.info(JSON.stringify({ projectId, action, datasetId: DATASET_ID, events: SCENARIOS.map(({ slug, name, status, risk, incidentSeverities }) => ({ eventId: eventIdFor({ slug }), name, status, risk, incidents: incidentSeverities.length })) }, null, 2));
+    console.info(JSON.stringify({ projectId, action, datasetId: DATASET_ID, events: SCENARIOS.map(({ slug, name, status, risk, startAt, incidentSeverities, incidentCategories }) => ({ eventId: eventIdFor({ slug }), name, status, risk, startAt: new Date(startAt).toISOString(), reportableDemo: slug.startsWith('participant-'), incidents: incidentSeverities.length, incidentCategories })) }, null, 2));
     return;
   }
   initializeApp({ credential: applicationDefault(), projectId, storageBucket: `${projectId}.firebasestorage.app` });

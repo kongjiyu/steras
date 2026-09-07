@@ -16,6 +16,7 @@ export default function PublicHeader() {
           <a href="/#how-it-works" className="hidden min-h-11 items-center rounded-md px-3 py-2 text-sm font-semibold text-[#5d5b4e] hover:bg-[#f7f1e5] md:inline-flex">How it works</a>
           <a href="/#who-it-is-for" className="hidden min-h-11 items-center rounded-md px-3 py-2 text-sm font-semibold text-[#5d5b4e] hover:bg-[#f7f1e5] lg:inline-flex">For organizers &amp; authorities</a>
           <NavLink to="/calendar" className={({ isActive }) => `inline-flex min-h-11 items-center rounded-md px-3 py-2 text-sm font-semibold ${isActive ? 'bg-[#edf2dc] text-[#52651c]' : 'text-[#5d5b4e] hover:bg-[#f7f1e5]'}`}>Events</NavLink>
+          <NavLink to="/incidents" className={({ isActive }) => `hidden min-h-11 items-center rounded-md px-3 py-2 text-sm font-semibold sm:inline-flex ${isActive ? 'bg-[#edf2dc] text-[#52651c]' : 'text-[#5d5b4e] hover:bg-[#f7f1e5]'}`}>Report incident</NavLink>
           <Link to="/login" className="btn-secondary !px-3">Sign in</Link>
         </nav>
       </div>
