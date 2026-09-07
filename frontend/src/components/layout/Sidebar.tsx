@@ -1,3 +1,4 @@
+import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import '../../pages/authority/authority-dashboard.css';
 import { NavLink } from 'react-router-dom';
 import {
@@ -67,6 +68,7 @@ export default function Sidebar({
   activePath,
   onSignOut,
 }: SidebarProps) {
+  const online = useOnlineStatus();
   return (
     <>
       <aside className="authority-sidebar sticky top-0 hidden h-screen w-[252px] flex-col overflow-hidden lg:flex">
@@ -75,7 +77,7 @@ export default function Sidebar({
           <img src={logoUrl} alt="STERAS" />
           <div className="authority-sidebar__workspace-label">
             <span>{workspaceLabel}</span>
-            <span className="authority-sidebar__live"><i /> Live</span>
+            <span className="authority-sidebar__live" role="status" title="Browser network connection; this does not confirm data synchronization.">{online ? 'Online' : 'Offline'}</span>
           </div>
         </div>
 

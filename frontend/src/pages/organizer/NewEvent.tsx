@@ -3,7 +3,7 @@ import { documentMime } from '../../utils/documentMime';
 import EvidencePreview from '../../components/ui/EvidencePreview';
 import PageHeader from '../../components/ui/PageHeader';
 import { EVENT_TYPES, EventType, EventDetails, EventRiskProfile, M1_DOCUMENT_SCHEMA_VERSION, M1_EVIDENCE_MANIFEST_SCHEMA_VERSION, M1ApplicationRevisionSource, M1DocumentExtraction, M1DocumentRole, M1DraftDocument, M1EvidenceRequirementResponse, M1TemplateSelection, Venue } from '@shared/types';
-import { useEffect, useState, FormEvent, ChangeEvent } from 'react';
+import { useEffect, useState, useRef, FormEvent, ChangeEvent } from 'react';
 import { collection, doc, getDoc, getDocs, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { ref, uploadBytesResumable } from 'firebase/storage';
@@ -29,6 +29,9 @@ export default function NewEvent() {
   const navigate = useNavigate();
   const location = useLocation();
   const { eventId } = useParams<{ eventId: string }>();
+  const validationRef = useRef<HTMLDivElement>(null);
+  const [onlyMissing, setOnlyMissing] = useState(false);
+  const [saveMessage, setSaveMessage] = useState('');
   const [editing, setEditing] = useState(false);
   const [editSnapshot, setEditSnapshot] = useState<EventDetails>();
   const [notice, setNotice] = useState('');
@@ -71,13 +74,22 @@ export default function NewEvent() {
     setForm(current => ({ ...current, organizerName: profile.name, organizerEmail: profile.email, organizerPhone: profile.phone ?? '' }));
   }, [profile, form.organizerName, form.organizerEmail, form.organizerPhone]);
 
+  useEffect(() => {
+    if (!editing || !editSnapshot || JSON.stringify(form) === JSON.stringify(editSnapshot)) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [editing, editSnapshot, form]);
+
   const update = <K extends keyof EventDetails>(key: K, value: EventDetails[K]) => {
     setValidationErrors([]);
+    setSaveMessage('Unsaved changes');
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
   const updateRiskProfile = <K extends keyof EventRiskProfile>(key: K, value: EventRiskProfile[K]) => {
     setValidationErrors([]);
+    setSaveMessage('Unsaved changes');
     setForm((previous) => ({
       ...previous,
       riskProfile: { ...previous.riskProfile, [key]: value },
@@ -220,14 +232,23 @@ export default function NewEvent() {
   };
 
   const handleSaveDraft = async () => {
-    if (!isFirebaseConfigured) return setNotice('Firebase is not configured.');
+    if (!isFirebaseConfigured || !navigator.onLine) {
+      setSaveMessage('Unable to save. Reconnect and try again.');
+      return false;
+    }
     setSaving(true);
     try {
       const savedId = await ensureDraft();
       setSavedDraft(savedId);
+      setEditSnapshot(structuredClone(form));
       setNotice('Draft saved.');
+      setSaveMessage('Draft saved successfully.');
+      return true;
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Draft save failed.');
+      const message = error instanceof Error ? error.message : 'Draft save failed.';
+      setNotice(message);
+      setSaveMessage(message);
+      return false;
     } finally {
       setSaving(false);
     }
@@ -240,6 +261,10 @@ export default function NewEvent() {
     if (errors.length > 0) {
       setValidationErrors(errors);
       setNotice(errors[0]);
+      requestAnimationFrame(() => {
+        validationRef.current?.focus({ preventScroll: true });
+        validationRef.current?.scrollIntoView({ block: 'start' });
+      });
       return;
     }
     if (!isFirebaseConfigured) {
@@ -447,6 +472,29 @@ export default function NewEvent() {
     return response?.applicability === 'required' && supportingUploads.some(document => document.path === response.documentPath);
   }).length;
 
+  const jumpTo = (id: string) => {
+    requestAnimationFrame(() => {
+      const target = document.getElementById(id);
+      target?.scrollIntoView({ block: 'start' });
+      target?.focus({ preventScroll: true });
+    });
+  };
+  const reviewError = (error: string) => {
+    const item = evidenceDefinitions.find(definition => error.includes(definition.id));
+    if (item || /supporting.evidence/.test(error)) {
+      setOnlyMissing(false);
+      jumpTo(item ? `evidence-${item.id}` : 'supporting-evidence');
+    } else if (/Upload|Extract|template/i.test(error)) {
+      jumpTo('application-documents');
+    } else if (/Organizer/i.test(error)) {
+      jumpTo('organizer-contact');
+    } else {
+      setEditSnapshot(structuredClone(form));
+      setEditing(true);
+      jumpTo('application-details');
+    }
+  };
+
   return (
     <div>
       <PageHeader
@@ -454,9 +502,9 @@ export default function NewEvent() {
         description="Complete the operational details and supporting evidence used for the official category assessment and AI advisory explanation."
       />
 
-      <nav aria-label="Application progress" className="sticky top-[72px] z-20 mb-5 flex gap-4 overflow-x-auto border border-brand-200 bg-cream-50 p-4 text-sm font-semibold shadow-sm"><span>1. Templates</span><span aria-current={!currentExtractionId ? 'step' : undefined}>2. Upload &amp; extract</span><span aria-current={currentExtractionId ? 'step' : undefined}>3. Review &amp; evidence</span><span>4. Submit</span></nav>
+      <nav aria-label="Application progress" className="sticky top-[72px] z-20 mb-5 flex gap-4 overflow-x-auto border border-brand-200 bg-cream-50 p-3 text-sm font-semibold shadow-sm">{[['template-choice', '1. Templates'], ['application-documents', '2. Upload & extract'], ['supporting-evidence', '3. Review & evidence'], ['application-submit', '4. Submit']].map(([id, label]) => <button key={id} type="button" className="min-h-11 shrink-0 underline decoration-brand-300 underline-offset-4" onClick={() => jumpTo(id)}>{label}</button>)}</nav>
       {notice && <div role="status" className="mb-5 rounded-md border border-gold-300 bg-gold-50 p-4 text-sm">{notice}{savedDraft && notice === 'Draft saved.' && <Link className="ml-3 font-bold underline" to={`/organizer/events?status=Draft&highlight=${encodeURIComponent(savedDraft)}`}>View drafts</Link>}</div>}
-      <section className={`mb-6 border ${templateSelection && !templateCompatibilityError ? 'border-brand-200 bg-brand-50' : 'border-gold-300 bg-gold-50'} p-4 sm:p-5`} aria-labelledby="template-choice-heading">
+      <section id="template-choice" tabIndex={-1} style={{ scrollMarginTop: 155 }} className={`mb-6 border ${templateSelection && !templateCompatibilityError ? 'border-brand-200 bg-brand-50' : 'border-gold-300 bg-gold-50'} p-4 sm:p-5`} aria-labelledby="template-choice-heading">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-3">
             <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-full ${templateSelection && !templateCompatibilityError ? 'bg-brand-700 text-cream-50' : 'bg-gold-300 text-brand-950'}`}><FileText size={18} /></span>
@@ -483,7 +531,7 @@ export default function NewEvent() {
         </div>
       </section>
 
-      <form onSubmit={handleSubmit} noValidate className="overflow-hidden rounded-lg border border-[#ded5c5] bg-[#fffdf8] shadow-card">
+      <form onSubmit={handleSubmit} noValidate className="rounded-lg border border-[#ded5c5] bg-[#fffdf8] shadow-card">
         <div className="border-b border-[#e3dacb] bg-brand-50 px-4 py-4 sm:px-6">
           <p className="text-xs font-bold uppercase tracking-[0.07em] text-brand-700">Application {editableVersionId}</p>
           <p className="mt-1 text-sm text-ink-500">
@@ -493,10 +541,10 @@ export default function NewEvent() {
         </div>
         <div className="space-y-8 p-4 sm:p-6 lg:p-8">
           {validationErrors.length > 0 && (
-            <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800" role="alert">
+            <div ref={validationRef} tabIndex={-1} style={{ scrollMarginTop: 155 }} className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800" role="alert">
               <p className="font-semibold">Required information is missing or needs correction</p>
               <ul className="mt-2 list-disc space-y-1 pl-5">
-                {validationErrors.map((error) => <li key={error}>{error}</li>)}
+                {validationErrors.map((error) => <li key={error}><button type="button" className="text-left underline underline-offset-2" onClick={() => reviewError(error)}>{error}</button></li>)}
               </ul>
             </div>
           )}
@@ -513,7 +561,7 @@ export default function NewEvent() {
             </div>
           )}
 
-          <fieldset className="space-y-5 border-t border-[#e3dacb] pt-8">
+          <fieldset id="application-documents" tabIndex={-1} style={{ scrollMarginTop: 155 }} className="space-y-5 border-t border-[#e3dacb] pt-8">
             <legend className="section-title mb-2 pr-4">Completed application documents</legend>
             <p className="text-sm leading-6 text-ink-500">Upload one combined, text-searchable PDF/DOCX, or upload the completed Core and recommended scenario as PDF/DOCX files separately. STERAS detects both template IDs and Field IDs before auto-filling this form.</p>
             <TemplateUploadCard label="Combined Core + scenario application" document={combinedUpload} uploading={uploading} onChange={(event) => handleFiles(event, 'combined_application')} onRemove={removeDocument} onView={viewDocument} />
@@ -527,7 +575,7 @@ export default function NewEvent() {
               <Sparkles size={16} className={extracting ? 'animate-pulse motion-reduce:animate-none' : ''} />{extracting ? 'Extracting documents…' : 'Extract and auto-fill'}
             </button>
             {extraction && (
-              <div className="sticky top-[140px] z-10 rounded-lg border border-brand-200 bg-brand-50 p-4 shadow-sm" role="status">
+              <div className="sticky top-[148px] z-10 rounded-lg border border-brand-200 bg-brand-50 p-4 shadow-sm" role="status">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div><p className="font-semibold text-ink-900">Auto-fill review</p><p className="mt-1 text-sm text-ink-600">{extraction.extractedFields.length} fields populated from {extraction.rawFieldIds.length} recognised Field IDs.</p></div>
                   <span className="badge bg-white text-brand-700">{extraction.completionPercent}% extracted</span>
@@ -542,15 +590,16 @@ export default function NewEvent() {
             )}
           </fieldset>
 
-          <section aria-labelledby="application-details-heading">
+          <section id="application-details" tabIndex={-1} style={{ scrollMarginTop: 155 }} aria-labelledby="application-details-heading">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div><h2 id="application-details-heading" className="section-title">Application details</h2><p className="mt-1 text-sm text-ink-500">Upload and extract your completed templates above. Review the details below; edit only when a correction is needed.</p></div>
-              {!editing ? <button type="button" className="btn-secondary" onClick={() => { setEditSnapshot(structuredClone(form)); setEditing(true); }}>Edit details</button> : <div className="flex gap-2"><button type="button" className="btn-secondary" onClick={() => { if (editSnapshot) setForm(editSnapshot); setEditing(false); }}>Cancel edits</button><button type="button" className="btn-primary" onClick={() => { setEditing(false); setManuallyEdited(true); }}>Save details</button></div>}
+              {!editing ? <button type="button" className="btn-secondary" onClick={() => { setEditSnapshot(structuredClone(form)); setEditing(true); }}>Edit details</button> : <div className="flex gap-2"><button type="button" className="btn-secondary" disabled={saving} onClick={() => { if (editSnapshot) setForm(editSnapshot); setSaveMessage(''); setEditing(false); }}>Cancel edits</button><button type="button" className="btn-primary" disabled={saving || uploading || submitting} onClick={async () => { if (await handleSaveDraft()) { setEditing(false); setManuallyEdited(true); } }}>{saving ? 'Saving...' : 'Save details'}</button></div>}
             </div>
+            {saveMessage && <p role="status" className="mb-4 text-sm font-semibold text-brand-800">{saveMessage}</p>}
             {!editing && <dl className="grid gap-4 rounded-lg bg-cream-50 p-5 sm:grid-cols-2">{[
               ['Event', form.name], ['Type', form.type], ['Venue', form.venueName], ['Address', form.venueAddress], ['State', form.venueState], ['Attendance / capacity', `${form.expectedAttendance || '—'} / ${form.venueCapacity || '—'}`], ['Starts', form.startDatetime ? new Date(form.startDatetime).toLocaleString() : '—'], ['Ends', form.endDatetime ? new Date(form.endDatetime).toLocaleString() : '—'], ['Environment', form.environment], ['Coverage / seating', `${form.coverage} / ${form.seating}`], ['Coordinates', `${form.venueLocation?.lat ?? '—'}, ${form.venueLocation?.lng ?? '—'}`], ['Description', form.description], ['Emergency plan', form.emergencyPlanSummary], ...Object.entries(form.riskProfile ?? {}).filter(([, value]) => typeof value === 'number').map(([key, value]) => [key.replace(/([A-Z])/g, ' $1'), String(value)]), ['Safety declarations', RISK_PROFILE_OPTIONS.filter(option => form.riskProfile?.[option.key]).map(option => option.label).join(', ') || 'No declarations extracted'],
             ].map(([label, value]) => <div key={label}><dt className="text-xs font-semibold text-ink-500">{label}</dt><dd className="mt-1 whitespace-pre-wrap text-sm text-ink-900">{value || 'Not provided'}</dd></div>)}</dl>}
-            <fieldset hidden={!editing} disabled={!editing || extracting} className="space-y-8">
+            <fieldset hidden={!editing} disabled={!editing || extracting || saving} className="space-y-8">
           <fieldset className="space-y-5">
             <legend className="section-title mb-5">Event and venue</legend>
 
@@ -712,22 +761,26 @@ export default function NewEvent() {
             </fieldset>
           </section>
 
-          <fieldset className="space-y-4 border-t border-[#e3dacb] pt-8">
+          <fieldset id="supporting-evidence" tabIndex={-1} style={{ scrollMarginTop: 155 }} className="space-y-4 border-t border-[#e3dacb] pt-8">
             <legend className="section-title mb-2 pr-4">Supporting evidence</legend>
             <p className="text-sm leading-6 text-ink-500">Complete every Core and scenario checklist item. A current PDF, DOCX, or image can support more than one requirement; conditional items need either evidence or a clear not-applicable reason.</p>
-            <div className="sticky top-[140px] z-10 rounded-lg border border-brand-200 bg-brand-50 p-4 shadow-sm">
+            <div className="sticky top-[148px] z-10 rounded-lg border border-brand-200 bg-brand-50 p-4 shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-2"><p className="font-semibold text-ink-900">Evidence completeness</p><span className="badge bg-white text-brand-700">{completeEvidenceCount} / {requiredEvidenceCount} evidence items linked · {validNotApplicable.length} not applicable</span></div>
               <div className="mt-3 h-2 overflow-hidden rounded-full bg-white"><div className="h-full rounded-full bg-brand-600" style={{ width: `${requiredEvidenceCount ? Math.round((completeEvidenceCount / requiredEvidenceCount) * 100) : 100}%` }} /></div>
             </div>
             <div className="rounded-lg border border-cream-200 p-4"><p className="text-sm text-ink-600">Upload supporting files together, then select the matching file for each requirement below. Check the document contents; filenames alone do not prove that evidence is correct.</p><label className="btn-secondary mt-3 cursor-pointer">Upload supporting files<input type="file" multiple accept=".pdf,.docx,.jpg,.jpeg,.png,.webp" disabled={uploading} onChange={event => handleFiles(event, 'supporting_evidence')} className="sr-only" /></label><ul className="mt-3 space-y-2">{supportingUploads.map(file => <li key={file.path} className="flex flex-wrap items-center justify-between gap-2 text-sm"><span className="break-all">{file.originalName}</span><div><button type="button" className="btn-secondary" onClick={() => viewDocument(file.path)}>View</button><button type="button" className="btn-secondary ml-2" onClick={() => removeDocument(file.path)}>Remove</button></div></li>)}</ul></div>
+            <label className="flex min-h-11 items-center gap-3 text-sm font-semibold"><input type="checkbox" checked={onlyMissing} onChange={event => setOnlyMissing(event.target.checked)} />Only show missing evidence</label>
             <div className="space-y-4">
+              {onlyMissing && completeEvidenceCount + validNotApplicable.length === evidenceDefinitions.length && <p role="status" className="rounded-md bg-brand-50 p-4 text-sm">All evidence items are complete. Turn off the filter to review them.</p>}
               {evidenceDefinitions.map((definition) => {
                 const guidance = evidenceGuidance.get(definition.id);
                 const response = evidenceManifest.find((item) => item.requirementId === definition.id)
                   ?? { requirementId: definition.id, applicability: 'not_applicable' as const, notApplicableReason: '' };
                 const forcedRequired = isM1EvidenceForcedRequired(definition, form.riskProfile);
                 const assigned = supportingUploads.find((document) => document.path === response.documentPath);
-                return <article key={definition.id} className="rounded-lg border border-[#ded5c5] bg-cream-50 p-4">
+                const complete = Boolean(assigned && response.applicability === 'required') || validNotApplicable.some(item => item.id === definition.id);
+                if (onlyMissing && complete) return null;
+                return <article id={`evidence-${definition.id}`} tabIndex={-1} style={{ scrollMarginTop: 290 }} key={definition.id} className="rounded-lg border border-[#ded5c5] bg-cream-50 p-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div><div className="flex flex-wrap items-center gap-2"><span className="text-xs font-bold text-brand-700">{definition.id}</span><span className="badge bg-white text-ink-600">{definition.source === 'core' ? 'Core' : 'Scenario'}</span>{forcedRequired && <span className="badge bg-red-50 text-red-700">Required</span>}</div><h3 className="mt-2 font-semibold text-ink-900">{guidance?.title ?? definition.id}</h3><p className="mt-1 text-sm leading-5 text-ink-500">{guidance?.condition ?? 'Review whether this evidence applies to the event.'}</p></div>
                     {!forcedRequired && <select aria-label={`${definition.id} applicability`} className="input w-full sm:w-48" value={response.applicability} onChange={(event) => updateEvidenceResponse(definition.id, event.target.value === 'required'
@@ -748,7 +801,7 @@ export default function NewEvent() {
             {legacySupportingPaths.length > 0 && <div className="rounded-md border border-gold-200 bg-gold-50 p-3"><p className="text-xs font-semibold text-gold-700">Previously uploaded supporting files</p><ul className="mt-2 divide-y divide-gold-200">{legacySupportingPaths.map((path) => <li key={path} className="flex items-center justify-between gap-3 py-2 text-sm"><span className="min-w-0 truncate">{legacyDocumentName(path)}</span><div className="flex"><button type="button" onClick={() => viewDocument(path)} className="min-h-11 px-2 font-semibold text-brand-700">View</button><button type="button" onClick={() => removeDocument(path)} className="min-h-11 px-2 font-semibold text-red-700">Remove</button></div></li>)}</ul></div>}
           </fieldset>
 
-          <fieldset className="space-y-4 border-t border-[#e3dacb] pt-8">
+          <fieldset id="organizer-contact" tabIndex={-1} style={{ scrollMarginTop: 155 }} className="space-y-4 border-t border-[#e3dacb] pt-8">
             <legend className="section-title mb-2 pr-4">Organizer contact</legend><p className="text-sm text-ink-500">These details are linked to your account. <Link className="font-semibold text-brand-700 underline" to="/organizer/profile">Edit profile</Link> to update them.</p>
             <div className="grid gap-4 sm:grid-cols-3">
               <div>
@@ -766,9 +819,11 @@ export default function NewEvent() {
             </div>
           </fieldset>
 
-          <div className="sticky bottom-20 z-10 -mx-4 flex flex-wrap justify-end gap-2 border-t border-[#d8cebd] bg-[#fffdf8]/95 px-4 pb-1 pt-4 backdrop-blur-sm sm:static sm:mx-0 sm:px-0 md:bottom-0">
+          <div id="application-submit" tabIndex={-1} style={{ scrollMarginTop: 155 }} className="-mx-4 flex flex-wrap justify-end gap-2 border-t border-[#d8cebd] bg-[#fffdf8] px-4 pb-1 pt-4 sm:mx-0 sm:px-0">
+            {validationErrors.length > 0 && <button type="button" className="w-full text-left text-sm font-semibold text-red-700 underline" onClick={() => { validationRef.current?.focus(); validationRef.current?.scrollIntoView({ block: 'start' }); }}>Review {validationErrors.length} items before submitting.</button>}
+            {saveMessage && <p role="status" className="w-full text-sm">{saveMessage}</p>}
             <button type="button" className="btn-secondary" onClick={() => navigate(-1)}>Cancel</button>
-            <button type="button" disabled={saving || submitting || uploading} className="btn-secondary" onClick={handleSaveDraft}>{saving ? 'Saving...' : 'Save draft'}</button>
+            <button type="button" disabled={saving || submitting || uploading} className="btn-secondary" onClick={() => { void handleSaveDraft(); }}>{saving ? 'Saving...' : 'Save draft'}</button>
             <button type="submit" disabled={submitting || saving || uploading || extracting || editing} className="btn-primary">
               {submitting ? 'Submitting…' : activeRevision ? 'Submit new version' : 'Submit application'}
             </button>
