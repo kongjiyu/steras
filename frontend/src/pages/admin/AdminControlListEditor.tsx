@@ -93,8 +93,8 @@ export default function AdminControlListEditor() {
   const venueName = event?.eventDetails.venueName ?? '...';
   const isApproved = event?.status === 'Approved';
   const isUnderReview = event?.status === 'UnderReview';
-  const canEdit = isApproved || isUnderReview;
-  const generated = event?.controlListGenerated === true;
+  const canEdit = isApproved || (isUnderReview && Boolean(event?.authorityReviewCompletedAt));
+  const generated = event?.controlListGenerated === true && Boolean(event.controlListSnapshot?.length);
 
   const dirty = useMemo(() => JSON.stringify(items) !== JSON.stringify(committedSnapshot), [items, committedSnapshot]);
 
@@ -209,7 +209,7 @@ export default function AdminControlListEditor() {
         <div className="flex flex-col items-end gap-1">
           <StatusBadge status={event.status} />
           {event.reviewStage && <span className="text-xs font-semibold text-ink-500">Stage: {event.reviewStage}</span>}
-          {generated && <span className="text-xs font-semibold text-status-approved">Control list: published</span>}
+          {generated && <span className="text-xs font-semibold text-status-approved">Control list: generated</span>}
           {!generated && <span className="text-xs font-semibold text-ink-500">Control list: not generated</span>}
         </div>
       </div>
@@ -276,7 +276,7 @@ export default function AdminControlListEditor() {
           <div className="card-body">
             <p className="text-sm text-ink-500">
               {generated
-                ? 'No cached proposal items. Click "Regenerate" to re-fetch.'
+                ? 'No proposal items are available. Generate a proposal or retry the previous request.'
                 : 'No control list yet. Click "Generate proposal" to populate the table.'}
             </p>
           </div>

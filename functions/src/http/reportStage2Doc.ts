@@ -105,13 +105,14 @@ export async function reportStage2DocForUser(
 
   const { ticketId, alreadyReported, reportedAt, controlName, authorityType, versionId, eventOrganizerUid } = await db.runTransaction(async (tx) => {
     // Reads first.
-    const [docSnap, counterSnap, controlSnap, eventSnap, publicSnap, userSnap] = await Promise.all([
+    const [docSnap, counterSnap, controlSnap, eventSnap, publicSnap, userSnap, confirmSnap] = await Promise.all([
       tx.get(docRef),
       tx.get(counterRef),
       tx.get(controlRef),
       tx.get(eventRef),
       tx.get(publicRef),
       tx.get(db.collection(COLLECTIONS.USERS).doc(uid)),
+      tx.get(controlRef.collection(COLLECTIONS.STAGE2_CONFIRMS).doc(uid)),
     ]);
     const viewer = userSnap.data() as UserProfile | undefined;
     if (!viewer || viewer.uid !== uid || viewer.role !== 'public') {
@@ -139,6 +140,8 @@ export async function reportStage2DocForUser(
       || typeof stage2.publishedAt !== 'number') {
       throw new HttpsError('failed-precondition', 'This published evidence is not bound to the current application generation.');
     }
+
+    if (confirmSnap.exists && counterMatchesStage2(confirmSnap.data(), stage2)) throw new HttpsError('failed-precondition', 'Undo your confirmation before reporting this image.');
 
     if (counterSnap.exists && counterMatchesStage2(counterSnap.data(), stage2)) {
       // Already reported — return the existing ticket info.
@@ -174,7 +177,7 @@ export async function reportStage2DocForUser(
       updatedAt: now,
     };
     tx.set(ticketRef, reportDoc);
-    tx.set(counterRef, { uid, ticketId: newTicketId, reportedAt: now, category, stage2UploadedAt: stage2.uploadedAt });
+    tx.set(counterRef, { uid, ticketId: newTicketId, reportedAt: now, category, stage2UploadedAt: stage2.uploadedAt, stage2PublishedAt: stage2.publishedAt });
     tx.update(docRef, { m4TicketId: newTicketId, reportedAt: now });
     if (publicSnap.exists) tx.update(publicRef, { reported: true });
 

@@ -35,6 +35,8 @@ describe('PublicCalendar', () => {
     snapshotState.mode = 'error';
     render(<MemoryRouter><PublicCalendar /></MemoryRouter>);
     expect(await screen.findByRole('heading', { name: 'Events unavailable' })).toBeInTheDocument();
+    expect(screen.getByText('Event count unavailable')).toBeInTheDocument();
+    expect(screen.queryByText('0 approved events')).not.toBeInTheDocument();
 
     snapshotState.mode = 'success';
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));

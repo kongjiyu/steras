@@ -1,14 +1,15 @@
+import registerVisualUrl from '../../assets/imagery/public-event-hero.webp';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import logoUrl from '../../assets/brand/steras-logo-horizontal.svg';
 import inverseLogoUrl from '../../assets/brand/steras-logo-horizontal-inverse.svg';
 import authVisualUrl from '../../assets/imagery/auth-event-planning.webp';
 
-export default function AuthShell({ children }: { children: ReactNode }) {
+export default function AuthShell({ children, variant = 'login' }: { children: ReactNode; variant?: 'login' | 'register' }) {
   return (
     <div className="grid min-h-screen bg-cream-50 lg:grid-cols-[minmax(0,1.15fr)_minmax(28rem,0.85fr)]">
       <section className="relative hidden min-h-screen overflow-hidden lg:block" aria-label="Malaysian event safety planning">
-        <img src={authVisualUrl} alt="Malaysian event professionals reviewing a venue safety plan" className="absolute inset-0 h-full w-full object-cover" />
+        <img src={variant === 'register' ? registerVisualUrl : authVisualUrl} alt="Malaysian event professionals reviewing a venue safety plan" className="absolute inset-0 h-full w-full object-cover" />
         <div className="absolute inset-x-0 top-0 flex items-center justify-between border-b border-white/40 bg-brand-950/90 px-8 py-5">
           <Link to="/" aria-label="Go to STERAS landing page" className="rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-300 focus-visible:ring-offset-2 focus-visible:ring-offset-brand-950">
             <img src={inverseLogoUrl} alt="STERAS" className="h-14 w-auto max-w-[21rem]" />

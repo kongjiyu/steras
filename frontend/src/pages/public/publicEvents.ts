@@ -13,7 +13,7 @@ export function filterPublicEvents(events: PublicEvent[], filters: PublicEventFi
     .filter((event) => filters.eventType === 'all' || event.eventType === filters.eventType)
     .filter((event) => !filters.month || localMonth(event.startDatetime) === filters.month)
     .filter((event) => !search || `${event.eventName} ${event.venueName}`.toLocaleLowerCase().includes(search))
-    .sort((a, b) => a.startDatetime - b.startDatetime || a.eventName.localeCompare(b.eventName));
+    .sort((a, b) => b.startDatetime - a.startDatetime || a.eventName.localeCompare(b.eventName));
 }
 
 export function groupPublicEventsByMonth(events: PublicEvent[]): { month: string; events: PublicEvent[] }[] {

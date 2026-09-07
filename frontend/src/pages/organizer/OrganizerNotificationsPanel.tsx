@@ -1,100 +1,34 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Bell, Check, ExternalLink } from 'lucide-react';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
+import { COLLECTIONS, Notification } from '@shared/types';
+import { db, functions, isFirebaseConfigured } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
-import { findNotificationsForRecipient, Notification as MockNotification } from '../../mock_data/notifications';
 import { userFacingSystemText } from '../../utils/userFacingText';
 
-const MAX_VISIBLE = 5;
-
 export default function OrganizerNotificationsPanel() {
-  const { profile, user } = useAuth();
-  const [readIds, setReadIds] = useState<Set<string>>(() => new Set());
-  const recipientId = profile?.uid ?? user?.uid ?? '';
-  const notifications = useMemo(
-    () => findNotificationsForRecipient(recipientId).slice(0, MAX_VISIBLE),
-    [recipientId],
-  );
-  const unreadCount = notifications.filter((notification) => !notification.readAt && !readIds.has(notification.notificationId)).length;
-
-  return (
-    <section className="card" aria-labelledby="organizer-notifications-title">
-      <div className="card-header">
-        <div>
-          <p className="page-eyebrow !mb-1">Application notifications</p>
-          <h2 id="organizer-notifications-title" className="section-title">Recent updates</h2>
-        </div>
-        <span className="badge bg-brand-50 text-brand-700">
-          <Bell size={13} />
-          {unreadCount} unread
-        </span>
-      </div>
-      <div className="card-body">
-        {notifications.length === 0 ? (
-          <p className="text-sm leading-6 text-ink-500">No organiser notifications yet.</p>
-        ) : (
-          <ul className="divide-y divide-[#e3dacb] border-y border-[#e3dacb]">
-            {notifications.map((notification) => {
-              const read = Boolean(notification.readAt) || readIds.has(notification.notificationId);
-              const feedback = correctionFeedback(notification);
-              return (
-                <li key={notification.notificationId} className={`py-4 ${read ? '' : 'bg-brand-50/40 px-3'}`}>
-                  <div className="flex items-start gap-3">
-                    <div className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${read ? 'bg-cream-100 text-ink-500' : 'bg-brand-600 text-cream-50'}`}>
-                      <Bell size={14} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="font-semibold text-ink-800">{userFacingSystemText(notification.title)}</p>
-                      <p className="mt-1 text-sm leading-6 text-ink-600">{userFacingSystemText(notification.message)}</p>
-                      {feedback && (
-                        <div className="mt-3 rounded-md border border-[#ded5c5] bg-[#fffdf8] px-3 py-2 text-xs leading-5 text-ink-700">
-                          <p><span className="font-semibold text-ink-800">Reason:</span> {userFacingSystemText(feedback.reason)}</p>
-                          <p className="mt-1"><span className="font-semibold text-ink-800">Suggestion:</span> {userFacingSystemText(feedback.suggestion)}</p>
-                        </div>
-                      )}
-                      <div className="mt-3 flex flex-wrap items-center gap-3 text-xs font-semibold text-ink-500">
-                        <span>{timeAgo(notification.createdAt)}</span>
-                        <span>Version {notification.versionId}</span>
-                        <Link to={`/organizer/events/${notification.eventId}`} className="inline-flex items-center gap-1 text-brand-700 hover:text-brand-800">
-                          Open application <ExternalLink size={12} />
-                        </Link>
-                      </div>
-                    </div>
-                    {!read && (
-                      <button
-                        type="button"
-                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-ink-500 hover:bg-cream-100 hover:text-ink-800"
-                        onClick={() => setReadIds((current) => new Set(current).add(notification.notificationId))}
-                        aria-label="Mark notification as read"
-                        title="Mark as read"
-                      >
-                        <Check size={15} />
-                      </button>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function correctionFeedback(notification: MockNotification): { reason: string; suggestion: string } | null {
-  const [, rawReason] = notification.message.split('Reason:');
-  if (!rawReason) return null;
-  const [reason, suggestion = ''] = rawReason.split('Suggestion:').map((value) => value.trim());
-  if (!reason || !suggestion) return null;
-  return { reason, suggestion };
-}
-
-function timeAgo(timestamp: number): string {
-  const minutes = Math.max(0, Math.floor((Date.now() - timestamp) / 60_000));
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
+  const { user } = useAuth();
+  const [items, setItems] = useState<Notification[]>([]);
+  const [filter, setFilter] = useState<'All' | 'Unread' | 'Read'>('All');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [retry, setRetry] = useState(0);
+  const [busy, setBusy] = useState('');
+  useEffect(() => {
+    if (!user || !isFirebaseConfigured) { setLoading(false); return; }
+    setLoading(true);
+    return onSnapshot(query(collection(db, COLLECTIONS.NOTIFICATIONS), where('recipientUid', '==', user.uid)), snapshot => {
+      setItems(snapshot.docs.map(item => ({ ...item.data(), notificationId: item.id }) as Notification).sort((a, b) => b.createdAt - a.createdAt));
+      setError(''); setLoading(false);
+    }, () => { setError('Notifications could not be refreshed.'); setLoading(false); });
+  }, [user, retry]);
+  async function toggle(item: Notification) {
+    setBusy(item.notificationId);
+    try { await httpsCallable(functions, 'markNotificationRead')({ notificationId: item.notificationId, read: !item.read }); }
+    catch { setError('Could not update this notification. Please retry.'); }
+    finally { setBusy(''); }
+  }
+  const visible = items.filter(item => filter === 'All' || (filter === 'Read' ? item.read : !item.read));
+  return <section className="card" aria-labelledby="organizer-notifications-title"><div className="card-header"><h2 id="organizer-notifications-title" className="section-title">Recent updates</h2><span className="text-sm">{loading ? 'Loading…' : error ? 'Refresh unavailable' : `${items.filter(item => !item.read).length} unread`}</span></div><div className="card-body"><div className="mb-4 flex gap-2" aria-label="Notification filters">{(['All', 'Unread', 'Read'] as const).map(value => <button key={value} type="button" aria-pressed={filter === value} className={filter === value ? 'btn-primary' : 'btn-secondary'} onClick={() => setFilter(value)}>{value}</button>)}</div>{error && <p role="alert" className="mb-4 text-sm text-red-700">{error} <button onClick={() => setRetry(value => value + 1)} className="underline">Retry</button></p>}{!loading && !error && !visible.length && <p className="text-sm text-ink-500">No {filter === 'All' ? '' : filter.toLowerCase()} notifications.</p>}<ul className="divide-y divide-cream-200">{visible.map(item => <li key={item.notificationId} className={`py-4 ${item.read ? '' : 'bg-brand-50 px-3'}`}><div className="flex items-start justify-between gap-3"><div><h3 className="font-semibold">{userFacingSystemText(item.title)}</h3><p className="mt-2 whitespace-pre-line text-sm text-ink-600">{userFacingSystemText(item.message)}</p>{item.reason && <p className="mt-2 text-sm">Reason: {userFacingSystemText(item.reason)}</p>}{item.suggestion && <p className="mt-2 text-sm">Suggestion: {userFacingSystemText(item.suggestion)}</p>}<Link className="mt-3 inline-block text-sm font-semibold text-brand-700" to={`/organizer/events/${item.eventId}`}>Open application →</Link></div><button disabled={Boolean(busy)} onClick={() => void toggle(item)} className="btn-secondary shrink-0">{busy === item.notificationId ? 'Saving…' : item.read ? 'Mark unread' : 'Mark read'}</button></div></li>)}</ul></div></section>;
 }

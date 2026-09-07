@@ -191,7 +191,7 @@ async function createValidDraftSubmissionAssets(eventId: string, versionId = 'v1
 async function seedProfilesAndEvent() {
   await environment.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
-    await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer' });
+    await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer', name: validDetails.organizerName, email: validDetails.organizerEmail, phone: validDetails.organizerPhone });
     await setDoc(doc(db, 'users/authority-1'), { role: 'authority', authorityType: 'PDRM' });
     await setDoc(doc(db, 'events/event-1'), {
       organizerId: 'organizer-1', status: 'Pending', requiredAuthorities: ['PDRM'],
@@ -214,7 +214,7 @@ describe('Firestore security rules', () => {
     await environment.withSecurityRulesDisabled(async (context) => {
       const db = context.firestore();
       await setDoc(doc(db, 'users/admin-1'), { role: 'admin' });
-      await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer' });
+      await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer', name: validDetails.organizerName, email: validDetails.organizerEmail, phone: validDetails.organizerPhone });
       await setDoc(doc(db, 'users/public-1'), { role: 'public' });
       await setDoc(doc(db, 'events/draft-private'), {
         organizerId: 'organizer-1', eventDetails: validDetails, status: 'Draft', currentVersionNumber: 0,
@@ -289,7 +289,7 @@ describe('Firestore security rules', () => {
 
   it('prepares Pending edits and rejected revisions without mutating submitted versions', async () => {
     const adminDb = getFirestore(adminApp);
-    await adminDb.doc('users/organizer-1').set({ role: 'organizer' });
+    await adminDb.doc('users/organizer-1').set({ role: 'organizer', name: validDetails.organizerName, email: validDetails.organizerEmail, phone: validDetails.organizerPhone });
     await adminDb.doc('events/lifecycle-1').set({
       organizerId: 'organizer-1', eventDetails: validDetails, templateSelection: validTemplateSelection,
       status: 'Pending', currentVersionId: 'v1', currentVersionNumber: 1, editableVersionId: null,
@@ -325,7 +325,7 @@ describe('Firestore security rules', () => {
 
   it('cancels only pre-review Pending applications and withdraws eligible records atomically from public view', async () => {
     const adminDb = getFirestore(adminApp);
-    await adminDb.doc('users/organizer-1').set({ role: 'organizer' });
+    await adminDb.doc('users/organizer-1').set({ role: 'organizer', name: validDetails.organizerName, email: validDetails.organizerEmail, phone: validDetails.organizerPhone });
     const base = {
       organizerId: 'organizer-1', eventDetails: validDetails, status: 'Pending', currentVersionId: 'v1', currentVersionNumber: 1,
       editableVersionId: null, draftDocumentPaths: [], requiredAuthorities: [], assignedOfficerUids: [], assignedOfficerByAuthority: {}, reviewStage: 'initial', createdAt: 1, updatedAt: 1,
@@ -367,7 +367,7 @@ describe('Firestore security rules', () => {
   });
 
   it('allows organizer drafts but rejects direct Pending creation and generated-field changes', async () => {
-    await environment.withSecurityRulesDisabled((context) => setDoc(doc(context.firestore(), 'users/organizer-1'), { role: 'organizer' }));
+    await environment.withSecurityRulesDisabled((context) => setDoc(doc(context.firestore(), 'users/organizer-1'), { role: 'organizer', name: validDetails.organizerName, email: validDetails.organizerEmail, phone: validDetails.organizerPhone }));
     const db = environment.authenticatedContext('organizer-1').firestore();
     const draft = {
       eventId: 'draft-1', organizerId: 'organizer-1', eventDetails: validDetails, templateSelection: validTemplateSelection, status: 'Draft', currentVersionNumber: 0,
@@ -447,7 +447,7 @@ describe('Firestore security rules', () => {
     const submissionAssets = await createValidDraftSubmissionAssets('draft-1');
     await environment.withSecurityRulesDisabled(async (context) => {
       const db = context.firestore();
-      await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer' });
+      await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer', name: validDetails.organizerName, email: validDetails.organizerEmail, phone: validDetails.organizerPhone });
       await setDoc(doc(db, 'users/admin-1'), { role: 'admin', email: 'admin1@steras.test' });
       await setDoc(doc(db, 'users/admin-2'), { role: 'admin', email: 'admin2@steras.test' });
       await setDoc(doc(db, 'users/authority-1'), { role: 'authority', authorityType: 'PDRM' });
@@ -496,7 +496,7 @@ describe('Firestore security rules', () => {
     const extractionId = 'extract_current';
     await environment.withSecurityRulesDisabled(async (context) => {
       const db = context.firestore();
-      await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer' });
+      await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer', name: validDetails.organizerName, email: validDetails.organizerEmail, phone: validDetails.organizerPhone });
       await setDoc(doc(db, 'events/structured-1'), {
         eventId: 'structured-1', organizerId: 'organizer-1', eventDetails: validDetails, templateSelection: validTemplateSelection,
         status: 'Draft', currentVersionNumber: 0, editableVersionId: 'v1',
@@ -523,7 +523,7 @@ describe('Firestore security rules', () => {
   it('resubmits a rejected application as v2 while preserving v1 and rejection provenance', async () => {
     const eventId = 'revision-submit';
     const adminDb = getFirestore(adminApp);
-    await adminDb.doc('users/organizer-1').set({ role: 'organizer' });
+    await adminDb.doc('users/organizer-1').set({ role: 'organizer', name: validDetails.organizerName, email: validDetails.organizerEmail, phone: validDetails.organizerPhone });
     await adminDb.doc('users/admin-1').set({ role: 'admin' });
     await adminDb.doc(`events/${eventId}`).set({
       organizerId: 'organizer-1', eventDetails: validDetails, templateSelection: validTemplateSelection,
@@ -589,7 +589,7 @@ describe('Firestore security rules', () => {
     const templateEvidencePath = await uploadTestEvidence('tampered-template', 'v1');
     const adminDb = getFirestore(adminApp);
     await Promise.all([
-      adminDb.doc('users/organizer-1').set({ role: 'organizer' }),
+      adminDb.doc('users/organizer-1').set({ role: 'organizer', name: validDetails.organizerName, email: validDetails.organizerEmail, phone: validDetails.organizerPhone }),
       adminDb.doc('venues/venue-1').set({
         venueId: 'venue-1', active: true, name: 'Canonical Hall', address: 'Canonical Address',
         capacity: 2_000, location: { lat: 3.139, lng: 101.687 },
@@ -621,8 +621,8 @@ describe('Firestore security rules', () => {
   it('allows only the owner to withdraw an eligible event', async () => {
     await environment.withSecurityRulesDisabled(async (context) => {
       const db = context.firestore();
-      await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer' });
-      await setDoc(doc(db, 'users/organizer-2'), { role: 'organizer' });
+      await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer', name: validDetails.organizerName, email: validDetails.organizerEmail, phone: validDetails.organizerPhone });
+      await setDoc(doc(db, 'users/organizer-2'), { role: 'organizer', name: validDetails.organizerName, email: validDetails.organizerEmail, phone: validDetails.organizerPhone });
       await setDoc(doc(db, 'events/draft-1'), {
         organizerId: 'organizer-1', eventDetails: validDetails, templateSelection: validTemplateSelection, status: 'Approved', currentVersionId: 'v1', currentVersionNumber: 1,
         editableVersionId: null, draftDocumentPaths: [], requiredAuthorities: [], createdAt: 1, updatedAt: 1,
@@ -642,7 +642,7 @@ describe('Firestore security rules', () => {
     const submissionAssets = await createValidDraftSubmissionAssets('draft-1');
     await environment.withSecurityRulesDisabled(async (context) => {
       const db = context.firestore();
-      await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer' });
+      await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer', name: validDetails.organizerName, email: validDetails.organizerEmail, phone: validDetails.organizerPhone });
       await setDoc(doc(db, 'events/draft-1'), {
         organizerId: 'organizer-1', eventDetails: validDetails, templateSelection: validTemplateSelection, status: 'Draft', currentVersionNumber: 0,
         editableVersionId: 'v1', ...submissionAssets, requiredAuthorities: [], createdAt: 1, updatedAt: 1,
@@ -1172,7 +1172,7 @@ describe('Firestore security rules', () => {
     await assertSucceeds(getDoc(doc(authorityDb, 'users/authority-1')));
     await assertFails(getDoc(doc(authorityDb, 'users/organizer-1')));
 
-    const attackerDb = environment.authenticatedContext('attacker-1').firestore();
+    const attackerDb = environment.authenticatedContext('attacker-1', { email: 'organizer@example.com' }).firestore();
     await assertFails(setDoc(doc(attackerDb, 'users/attacker-1'), {
       uid: 'attacker-1', name: 'Attacker', email: 'attacker@example.com', role: 'organizer', authorityType: 'PDRM', createdAt: 1, updatedAt: 1,
     }));
@@ -1180,6 +1180,7 @@ describe('Firestore security rules', () => {
       uid: 'attacker-1', name: 'Organizer', email: 'organizer@example.com', role: 'organizer', createdAt: 1, updatedAt: 1,
     }));
     await assertFails(updateDoc(doc(attackerDb, 'users/attacker-1'), { createdAt: 2 }));
+    await assertFails(updateDoc(doc(attackerDb, 'users/attacker-1'), { email: 'someone-else@example.com' }));
   });
 
   it('records append-only authority reviews and atomically publishes official assessment and resources', async () => {
@@ -2444,7 +2445,7 @@ describe('Firestore security rules', () => {
   it('limits historical evidence and dataset manifests to authority reviewers', async () => {
     await environment.withSecurityRulesDisabled(async (context) => {
       const db = context.firestore();
-      await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer' });
+      await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer', name: validDetails.organizerName, email: validDetails.organizerEmail, phone: validDetails.organizerPhone });
       await setDoc(doc(db, 'users/authority-1'), { role: 'authority', authorityType: 'KKM' });
       await setDoc(doc(db, 'historical_events/history-1'), { synthetic: true });
       await setDoc(doc(db, 'dataset_manifests/demo-v1'), { synthetic: true });
@@ -2478,7 +2479,7 @@ describe('Firestore security rules', () => {
 async function seedReviewableEvent(requiredAuthorities: string[]) {
   await environment.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
-    await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer' });
+    await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer', name: validDetails.organizerName, email: validDetails.organizerEmail, phone: validDetails.organizerPhone });
     await setDoc(doc(db, 'users/pdrm-1'), { role: 'authority', authorityType: 'PDRM' });
     await setDoc(doc(db, 'users/bomba-1'), { role: 'authority', authorityType: 'BOMBA' });
     await setDoc(doc(db, 'events/review-1'), {
@@ -2500,7 +2501,7 @@ async function seedManualReviewEvent(detailsPatch: Partial<typeof validDetails> 
   const adminDb = getFirestore(adminApp);
   const eventDetails = { ...validDetails, ...detailsPatch };
   await Promise.all([
-    adminDb.doc('users/organizer-1').set({ role: 'organizer' }),
+    adminDb.doc('users/organizer-1').set({ role: 'organizer', name: validDetails.organizerName, email: validDetails.organizerEmail, phone: validDetails.organizerPhone }),
     adminDb.doc('users/pdrm-1').set({ role: 'authority', authorityType: 'PDRM' }),
     adminDb.doc('users/admin-1').set({ role: 'admin' }),
     adminDb.doc('events/manual-1').set({
@@ -2541,7 +2542,7 @@ async function seedProvisionalReviewEvent(requiredAuthorities: string[]) {
   void _officialResult;
   void _authorityReviewState;
   await Promise.all([
-    adminDb.doc('users/organizer-1').set({ role: 'organizer' }),
+    adminDb.doc('users/organizer-1').set({ role: 'organizer', name: validDetails.organizerName, email: validDetails.organizerEmail, phone: validDetails.organizerPhone }),
     adminDb.doc('users/pdrm-1').set({ role: 'authority', authorityType: 'PDRM' }),
     adminDb.doc('users/bomba-1').set({ role: 'authority', authorityType: 'BOMBA' }),
     adminDb.doc('users/admin-1').set({ role: 'admin' }),

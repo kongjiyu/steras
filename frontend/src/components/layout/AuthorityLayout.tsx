@@ -33,7 +33,8 @@ export default function AuthorityLayout({ mockUser, children }: AuthorityLayoutP
         navSections={AUTHORITY_NAV}
         workspaceLabel="Authority workspace"
         userRoleSuffix="authority"
-        onSignOut={async () => { await signOut(); navigate('/login', { replace: true }); }}
+        onSignOut={async () => { if (!window.confirm('Sign out of STERAS? Unsaved changes will be lost.')) return;
+    await signOut(); navigate('/login', { replace: true }); }}
       />
       <div id="authority-content" tabIndex={-1} className="flex min-w-0 flex-1 flex-col">
         {children ?? <Outlet />}

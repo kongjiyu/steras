@@ -35,8 +35,6 @@ import {
   ResourceRecommendation,
   AuthorityDecision,
   Assignment,
-  UserProfile,
-  AuthorityType,
   EventVersion,
   REJECTION_REASON_CATEGORIES,
   RejectionReasonCategory,
@@ -115,7 +113,6 @@ function assessmentDisplay(assessment: RiskAssessment): {
   };
 }
 
-const ALL_AUTHORITIES: AuthorityType[] = ['PDRM', 'BOMBA', 'KKM', 'DBKL', 'MOTAC'];
 
 interface SectionProps {
   title: string;
@@ -156,19 +153,10 @@ export default function AdminApplicationReview() {
   const [resource, setResource] = useState<ResourceRecommendation | null>(null);
   const [decisions, setDecisions] = useState<AuthorityDecision[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
-  const [officers, setOfficers] = useState<UserProfile[]>([]);
   const [audit, setAudit] = useState<Array<{ id: string; action: string; timestamp: number; actorId: string; notes?: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reloadToken, setReloadToken] = useState(0);
-
-  // Officer assignment checklist
-  const [assigned, setAssigned] = useState<Record<AuthorityType, boolean>>({
-    PDRM: false, BOMBA: false, KKM: false, DBKL: false, MOTAC: false,
-  });
-  const [selectedOfficer, setSelectedOfficer] = useState<Record<AuthorityType, string>>({
-    PDRM: '', BOMBA: '', KKM: '', DBKL: '', MOTAC: '',
-  });
 
   // Decision form
   const [decisionMode, setDecisionMode] = useState<'approve' | 'reject' | null>(null);
@@ -206,11 +194,6 @@ export default function AdminApplicationReview() {
         setAssessmentFailure(null);
         setResource(null);
 
-        // Default-check authorities based on event's required authorities
-        const initial: Record<AuthorityType, boolean> = { PDRM: false, BOMBA: false, KKM: false, DBKL: false, MOTAC: false };
-        for (const a of eventData.requiredAuthorities) initial[a] = true;
-        setAssigned(initial);
-
         // Load all related sub-collections in parallel
         const promises: Promise<unknown>[] = [];
         if (eventData.currentVersionId) {
@@ -245,10 +228,6 @@ export default function AdminApplicationReview() {
             .then((s) => setAssignments(s.docs.map((d) => ({ ...(d.data() as Assignment), assignmentId: d.id })))),
         );
         promises.push(
-          getDocs(query(collection(db, COLLECTIONS.USERS), where('role', '==', 'authority')))
-            .then((s) => setOfficers(s.docs.map((d) => d.data() as UserProfile))),
-        );
-        promises.push(
           getDocs(query(collection(eventRef, COLLECTIONS.AUDIT_LOGS), where('eventId', '==', eventId)))
             .then((s) => setAudit(s.docs.map((d) => d.data() as { id: string; action: string; timestamp: number; actorId: string; notes?: string }))),
         );
@@ -271,13 +250,6 @@ export default function AdminApplicationReview() {
     }
   }, [loading, searchParams]);
 
-  const officersByAuth = useMemo(() => {
-    const m: Record<AuthorityType, UserProfile[]> = { PDRM: [], BOMBA: [], KKM: [], DBKL: [], MOTAC: [] };
-    for (const o of officers) {
-      if (o.authorityType && m[o.authorityType]) m[o.authorityType].push(o);
-    }
-    return m;
-  }, [officers]);
   const displayedOfficerDecisions = useMemo(
     () => event ? adminOfficerDecisionRows(event, assignments, decisions) : [],
     [event, assignments, decisions],
@@ -295,7 +267,7 @@ export default function AdminApplicationReview() {
     && !event?.assignedOfficerUids?.length
     && !['authority', 'second', 'closed'].includes(event?.reviewStage ?? ''));
   const attachableOfficerFeedback = assignments.filter((assignment) => Boolean(assignment.decision && assignment.reason && assignment.versionId === event?.currentVersionId));
-  const minRationaleLen = 10;
+  const minRationaleLen = decisionMode === 'approve' && !rationale.trim() ? 0 : 10;
 
   const submitDecision = async () => {
     if (!eventId || !event || !decisionMode || !initialReviewOpen) return;
@@ -478,7 +450,7 @@ export default function AdminApplicationReview() {
                   const riskLevel = display.riskLevel;
                   const score = display.score;
                   const versionLabel = display.schemaVersion
-                    ? `Schema v${display.schemaVersion} · Logic v${display.formulaVersion}`
+                    ? `Assessment version ${display.schemaVersion} · Calculation ${display.formulaVersion}`
                     : '';
                   return (
                     <Section title="Risk assessment" icon={ShieldCheck}>
@@ -604,12 +576,12 @@ export default function AdminApplicationReview() {
                         .sort((a, b) => b.timestamp - a.timestamp)
                         .slice(0, 8)
                         .map((a) => (
-                          <li key={a.id} className="flex items-start gap-2 border-l-2 border-[#c8d1a8] pl-3">
+                          <li key={a.id} className="flex flex-col items-start gap-2 border-l-2 border-[#c8d1a8] pl-3 sm:flex-row">
                             <div>
                               <p className="font-semibold capitalize text-ink-800">{a.action.replaceAll('_', ' ')}</p>
                               {a.notes && <p className="text-xs text-ink-500">{userFacingSystemText(a.notes)}</p>}
                             </div>
-                            <span className="ml-auto text-xs text-ink-500">{formatDateTime(a.timestamp)}</span>
+                            <span className="shrink-0 text-xs text-ink-500 sm:ml-auto">{formatDateTime(a.timestamp)}</span>
                           </li>
                         ))}
                     </ol>
@@ -621,43 +593,8 @@ export default function AdminApplicationReview() {
               <aside className="space-y-4">
                 {/* Officer assignment */}
                 <Section title="Officer assignment" icon={Users}>
-                  <p className="mb-3 text-xs text-ink-500">
-                    Default-checked from the event&apos;s required authorities. Edit before assigning.
-                  </p>
-                  <div className="space-y-2">
-                    {ALL_AUTHORITIES.map((auth) => {
-                      const isRequired = event.requiredAuthorities.includes(auth);
-                      const list = officersByAuth[auth];
-                      return (
-                        <div key={auth} className="flex items-center gap-2 rounded-md border border-[#e8e0cf] bg-cream-50/40 px-3 py-2">
-                          <input
-                            id={`assign-${auth}`}
-                            type="checkbox"
-                            checked={assigned[auth]}
-                            disabled={!isRequired}
-                            onChange={(e) => setAssigned((p) => ({ ...p, [auth]: e.target.checked }))}
-                            className="h-4 w-4 accent-brand-600"
-                          />
-                          <label htmlFor={`assign-${auth}`} className="flex-1 text-sm">
-                            <span className="font-semibold text-ink-800">{auth}</span>
-                            {!isRequired && <span className="ml-1 text-[10px] uppercase text-ink-400">(not required)</span>}
-                          </label>
-                          {assigned[auth] && list.length > 0 && (
-                            <select
-                              value={selectedOfficer[auth]}
-                              onChange={(e) => setSelectedOfficer((p) => ({ ...p, [auth]: e.target.value }))}
-                              className="input !h-8 !text-xs"
-                            >
-                              <option value="">Auto-assign</option>
-                              {list.map((o) => (
-                                <option key={o.uid} value={o.uid}>{o.name}</option>
-                              ))}
-                            </select>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
+                  <p className="mb-3 text-sm text-ink-600">Required agencies: {event.requiredAuthorities.join(', ')}. Choose named officers and review their eligibility in the assignment checklist.</p>
+                  <p className="text-sm font-semibold">{event.assignedOfficerUids?.length ?? 0} officer(s) currently assigned</p>
                   <Link to={`/admin/applications/${event.eventId}/assign`} className="btn-primary mt-3 w-full">
                     <Users size={14} /> Open assignment checklist
                   </Link>
@@ -684,7 +621,7 @@ export default function AdminApplicationReview() {
                         className="space-y-3"
                       >
                         <p className="text-xs uppercase tracking-[0.06em] text-ink-500">
-                          {decisionMode === 'approve' ? 'Approval rationale' : 'Rejection reason + suggestion'}
+                          {decisionMode === 'approve' ? 'Approval rationale (optional)' : 'Rejection reason + suggestion'}
                         </p>
                         <textarea
                           rows={4}
@@ -699,7 +636,7 @@ export default function AdminApplicationReview() {
                           }
                         />
                         <div className="flex items-center justify-between text-xs text-ink-500">
-                          <span>{rationale.trim().length}/1000 · minimum 10</span>
+                          <span>{rationale.trim().length}/1000 · optional for approval; minimum 10 when provided</span>
                           <span>
                             {rationale.trim().length >= minRationaleLen
                               ? <Check size={12} className="inline text-emerald-600" />
@@ -741,7 +678,7 @@ export default function AdminApplicationReview() {
                         {event.status === 'Manual Review Required' && !manualOfficialReady && (
                           <div className="rounded-md border border-gold-300 bg-gold-50 p-3 text-sm text-ink-700">
                             <p className="font-semibold text-gold-700">Manual assessment required before initial review</p>
-                            <p className="mt-1 text-xs leading-5">Complete the locked eight-category assessment in the Admin manual assessment queue. This screen cannot create a legacy inline assessment or resource record.</p>
+                            <p className="mt-1 text-xs leading-5">Complete the locked eight-category assessment in the Admin manual assessment queue before making an application decision.</p>
                             <Link to="/admin" className="btn-secondary mt-3 inline-flex !px-3 !py-1.5 text-xs">Open manual assessment queue →</Link>
                           </div>
                         )}
@@ -772,8 +709,10 @@ export default function AdminApplicationReview() {
                   </Section>
                 ) : (
                   <div className="rounded-lg border border-[#ded5c5] bg-cream-50 p-4 text-sm text-ink-500">
-                    This review is closed (status: {event.status}). Re-open not available in the
-                    current build.
+                    <strong className="block text-ink-800">Admin decision</strong>
+                    {event.initialReview ? <p className="mt-2">Initial review: {event.initialReview.decision}{event.initialReview.reason ? ` — ${event.initialReview.reason}` : ''}</p> : <p>No initial admin decision recorded.</p>}
+                    <p className="mt-2">Current stage: {event.reviewStage ?? event.status}</p>
+                    {event.reviewStage === 'second' && <Link className="btn-primary mt-3" to={`/admin/applications/${event.eventId}/assign`}>Open final admin decision</Link>}
                   </div>
                 )}
               </aside>
@@ -788,10 +727,10 @@ export default function AdminApplicationReview() {
                   <Link to={`/admin/applications/${event.eventId}/assign`} className="btn-secondary !py-1.5 !px-3 text-xs">
                     Open officer assignment →
                   </Link>
-                  <Link to={`/admin/applications/${event.eventId}/controls`} className="btn-secondary !py-1.5 !px-3 text-xs">
+                  {(event.status === 'Approved' || Boolean(event.authorityReviewCompletedAt)) && <Link to={`/admin/applications/${event.eventId}/controls`} className="btn-secondary !py-1.5 !px-3 text-xs">
                     Open event control list →
-                  </Link>
-                  {event.controlListGenerated === true && (
+                  </Link>}
+                  {event.controlListGenerated === true && Boolean(event.controlListSnapshot?.length) && (event.status === 'Approved' || Boolean(event.authorityReviewCompletedAt)) && (
                     <Link to={`/admin/applications/${event.eventId}/stage2-review`} className="btn-secondary !py-1.5 !px-3 text-xs">
                       Review Stage 2 images →
                     </Link>

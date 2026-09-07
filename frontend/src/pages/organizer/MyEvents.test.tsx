@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import MyEvents from './MyEvents';
+import { assessmentLabel } from './organizerApplication';
 
 const { listener, authValue } = vi.hoisted(() => ({
   listener: { mode: 'success' as 'success' | 'error' },
@@ -60,5 +61,21 @@ describe('MyEvents', () => {
     listener.mode = 'success';
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     await waitFor(() => expect(screen.getAllByText('Draft Forum').length).toBeGreaterThan(0));
+  });
+});
+
+describe('assessmentLabel', () => {
+  const base = {
+    eventId: 'event-1', organizerId: 'organizer-1', currentVersionNumber: 1,
+    draftDocumentPaths: [], requiredAuthorities: [], createdAt: 1, updatedAt: 1,
+    eventDetails: { name: 'Forum', type: 'conference' as const, venueName: 'PICC', expectedAttendance: 100, startDatetime: 1, endDatetime: 2, environment: 'indoor' as const, coverage: 'covered' as const, seating: 'seated' as const, riskProfile: {} },
+  };
+
+  it('shows manual intervention before the existence of an assessment pointer', () => {
+    expect(assessmentLabel({ ...base, status: 'Manual Review Required', currentAssessmentId: 'assessment-1' })).toBe('Manual assessment required');
+  });
+
+  it('uses user-facing availability language instead of database record language', () => {
+    expect(assessmentLabel({ ...base, status: 'UnderReview', currentAssessmentId: 'assessment-1' })).toBe('Risk assessment available');
   });
 });

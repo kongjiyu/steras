@@ -615,7 +615,7 @@ export function validateDecisionRequest(request: unknown): {
   if (!eventId) throw new HttpsError('invalid-argument', 'eventId is required.');
   if (!isSafeDocumentId(eventId)) throw new HttpsError('invalid-argument', 'eventId must be a valid document id.');
   if (!isDecision(decision)) throw new HttpsError('invalid-argument', 'A valid decision is required.');
-  if (rationale.length < STANDARD_MIN_RATIONALE || rationale.length > 1_000) {
+  if ((decision !== 'Approved' && rationale.length < STANDARD_MIN_RATIONALE) || rationale.length > 1_000 || (rationale.length > 0 && rationale.length < STANDARD_MIN_RATIONALE)) {
     throw new HttpsError('invalid-argument', `Rationale must be between ${STANDARD_MIN_RATIONALE} and 1,000 characters.`);
   }
   if (decision === 'Approved' && value.materialsReviewed !== true && value.confirmedReview !== true) {

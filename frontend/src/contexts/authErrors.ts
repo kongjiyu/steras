@@ -4,7 +4,7 @@ const AUTH_MESSAGES: Record<string, string> = {
   'auth/user-not-found': 'The email or password is incorrect.',
   'auth/wrong-password': 'The email or password is incorrect.',
   'auth/invalid-email': 'Enter a valid email address.',
-  'auth/weak-password': 'Use a stronger password with at least 6 characters.',
+  'auth/weak-password': 'Use a stronger password with at least 8 characters, including uppercase, lowercase, a number and a symbol.',
   'auth/network-request-failed': 'Network error. Check your connection and try again.',
   'auth/too-many-requests': 'Too many attempts. Wait a moment before trying again.',
 };

@@ -1,3 +1,4 @@
+import '../../pages/authority/authority-dashboard.css';
 import { NavLink } from 'react-router-dom';
 import {
   Activity,
@@ -250,7 +251,7 @@ export function WorkspaceTopBar({
       </div>
       <div className="authority-topbar__tools">
         <div className="authority-topbar__system hidden md:flex">
-          <i /> Systems operational
+          <i /> Secure workspace
         </div>
         <div className="authority-topbar__date hidden sm:flex">
           <CalendarDays size={15} aria-hidden="true" />

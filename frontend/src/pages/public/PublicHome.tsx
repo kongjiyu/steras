@@ -1,73 +1,294 @@
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowRight,
-  BarChart3,
   Building2,
   CalendarDays,
   Check,
+  CheckCircle2,
   ClipboardCheck,
+  CloudSun,
+  FileCheck2,
   FileSearch,
-  LockKeyhole,
+  Fingerprint,
   MapPin,
-  RadioTower,
   ShieldCheck,
-  Siren,
+  Sparkles,
   UserRoundCheck,
 } from 'lucide-react';
 import PublicHeader from '../../components/layout/PublicHeader';
+import logoUrl from '../../assets/brand/steras-mark.svg';
 import heroUrl from '../../assets/imagery/public-event-hero.webp';
+import planningUrl from '../../assets/imagery/auth-event-planning.webp';
 
 const journey = [
   {
     step: '01',
-    phase: 'Application',
-    title: 'Prepare one complete application',
-    body: 'Choose an event scenario, preview the right templates, upload your completed documents and verify every extracted field before submission.',
-    detail: 'Guided templates · venue registry · evidence checks',
+    title: 'Prepare application',
+    body: 'Choose a scenario, preview the right templates and verify every extracted field before submission.',
+    note: 'Guided templates and evidence checks',
     icon: ClipboardCheck,
   },
   {
     step: '02',
-    phase: 'Risk & resources',
-    title: 'Understand risk before review',
-    body: 'STERAS brings event data and contextual evidence together, then produces traceable category risks and practical safety-resource planning ranges.',
-    detail: 'Eight risk categories · provenance · resource ranges',
+    title: 'Evidence & risk assessment',
+    body: 'Venue, weather and eligible evidence become a traceable eight-category risk assessment.',
+    note: 'Context, provenance and resource ranges',
     icon: FileSearch,
   },
   {
     step: '03',
-    phase: 'Approval',
-    title: 'Coordinate accountable approval',
-    body: 'Administrators and assigned agencies review the same submitted version, record their rationale and complete the required event-control workflow.',
-    detail: 'Named reviewers · immutable decisions · event controls',
-    icon: ShieldCheck,
+    title: 'Multi-agency review',
+    body: 'Assigned authorities inspect the same version and record named, reasoned decisions.',
+    note: 'Accountable review without lost context',
+    icon: UserRoundCheck,
   },
   {
     step: '04',
-    phase: 'Incident response',
-    title: 'Respond when an incident happens',
-    body: 'Registered reporters can raise an incident, while organizers and authorities coordinate response, escalation, evidence and final resolution.',
-    detail: 'Incident triage · authority referral · resolution history',
-    icon: Siren,
+    title: 'Approved public record',
+    body: 'A final decision publishes only the safe event details visitors need to plan with confidence.',
+    note: 'Verified outcome and protected evidence',
+    icon: ShieldCheck,
+  },
+];
+
+const organizerCapabilities = [
+  ['Smart templates', 'Scenario-matched documents and required fields.'],
+  ['Extracted fields', 'Key details captured and ready for verification.'],
+  ['Evidence completeness', 'Missing items surfaced before submission.'],
+  ['Application progress', 'A clear view of review status and next actions.'],
+];
+
+const authorityCapabilities = [
+  ['Provenance first', 'See who provided what, when and why.'],
+  ['Risk categories', 'Traceable scores with deterministic guardrails.'],
+  ['Resource ranges', 'Planning recommendations tied to event demand.'],
+  ['Named decisions', 'Accountable outcomes with a full audit trail.'],
+];
+
+const decisionFlow = [
+  {
+    label: 'Source evidence',
+    icon: FileCheck2,
+    title: 'Verified inputs',
+    detail: 'Venue plan · medical plan · traffic plan',
+    accent: 'A complete evidence pack',
   },
   {
-    step: '05',
-    phase: 'Analytics',
-    title: 'Learn across the event portfolio',
-    body: 'Privacy-safe operational reports reveal application outcomes, risk patterns, incidents, controls and resource trends without exposing private evidence.',
-    detail: 'Read-only analytics · PDF and CSV reports',
-    icon: BarChart3,
+    label: 'AI proposal',
+    icon: Sparkles,
+    title: 'Structured assessment',
+    detail: 'Hazards · category scores · concerns',
+    accent: 'Proposal preserved as provenance',
+  },
+  {
+    label: 'Deterministic rules',
+    icon: Fingerprint,
+    title: 'Versioned calculation',
+    detail: 'Hard floors · weights · resource ranges',
+    accent: 'Same inputs, same result',
+  },
+  {
+    label: 'Human decision',
+    icon: ShieldCheck,
+    title: 'Accountable outcome',
+    detail: 'Named reviewers · reasons · conditions',
+    accent: 'People remain responsible',
   },
 ];
 
-const trustSteps = [
-  ['Evidence in context', 'Weather, venue, calendar and eligible historical evidence are recorded with source and retrieval details.'],
-  ['AI proposes', 'MiniMax identifies hazards and proposes structured category scores, concerns and missing information.'],
-  ['Rules calculate', 'Versioned hard rules and formulas validate the proposal and calculate provisional risk and planning ranges.'],
-  ['People decide', 'Assigned officers confirm or override scores with reasons before an official result can support approval.'],
-];
+function JourneyDocumentPreview({ step }: { step: number }) {
+  const sheetClass = 'absolute border border-[#d5cab6] bg-[#fffdf8] shadow-[0_18px_38px_rgba(63,53,34,0.11)]';
+
+  if (step === 0) {
+    return (
+      <div className="relative mt-8 h-[17rem]" aria-hidden="true">
+        <div className={`${sheetClass} left-2 top-3 h-52 w-[82%] -rotate-2`} />
+        <div className={`${sheetClass} bottom-0 right-1 w-[88%] rotate-1 p-4`}>
+          <div className="flex items-start justify-between border-b border-[#ddd3c1] pb-3">
+            <div><p className="text-[8px] font-bold uppercase tracking-[0.1em] text-gold-700">Core application</p><p className="mt-1 font-display text-xs font-bold text-ink-900">Event submission</p></div>
+            <span className="bg-brand-100 px-2 py-1 text-[8px] font-bold uppercase text-brand-700">Ready</span>
+          </div>
+          <img src={heroUrl} alt="" className="mt-3 h-16 w-full object-cover object-[63%_52%]" />
+          <dl className="mt-3 space-y-2 text-[9px]">
+            <div className="flex justify-between"><dt className="text-ink-400">Scenario</dt><dd className="font-bold text-ink-700">Cultural event</dd></div>
+            <div className="flex justify-between"><dt className="text-ink-400">Venue</dt><dd className="font-bold text-brand-700">Registry matched</dd></div>
+            <div className="flex justify-between"><dt className="text-ink-400">Documents</dt><dd className="font-bold text-brand-700">6 of 6</dd></div>
+          </dl>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 1) {
+    return (
+      <div className="relative mt-8 h-[17rem]" aria-hidden="true">
+        <div className={`${sheetClass} bottom-1 left-0 w-full p-4`}>
+          <div className="flex items-start justify-between border-b border-[#ddd3c1] pb-3">
+            <div><p className="text-[8px] font-bold uppercase tracking-[0.1em] text-gold-700">Risk assessment</p><p className="mt-1 font-display text-xs font-bold text-ink-900">Category analysis</p></div>
+            <span className="bg-gold-200 px-2 py-1 text-[8px] font-extrabold uppercase text-gold-800">Medium</span>
+          </div>
+          <div className="mt-4 space-y-3 text-[9px]">
+            {[['Crowd safety', '12'], ['Fire safety', '8'], ['Public health', '6'], ['Transport', '6']].map(([category, score], row) => (
+              <div key={category} className="grid grid-cols-[1fr_3rem] items-center gap-3">
+                <div><p className="font-bold text-ink-600">{category}</p><div className="mt-1 h-1 bg-[#e3dccf]"><div className={`${row === 0 ? 'w-4/5 bg-gold-400' : 'w-1/2 bg-brand-400'} h-full`} /></div></div>
+                <span className="border border-[#d8cebc] py-1 text-center font-bold text-ink-700">{score}</span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-4 border-t border-[#ddd3c1] pt-3 text-[9px] font-bold text-brand-700">Evidence-linked and rules validated</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 2) {
+    return (
+      <div className="relative mt-8 h-[17rem]" aria-hidden="true">
+        <div className={`${sheetClass} bottom-1 left-0 w-full p-4`}>
+          <div className="flex items-start justify-between border-b border-[#ddd3c1] pb-3">
+            <div><p className="text-[8px] font-bold uppercase tracking-[0.1em] text-gold-700">Agency review ledger</p><p className="mt-1 font-display text-xs font-bold text-ink-900">Assigned reviewers</p></div>
+            <UserRoundCheck size={15} className="text-brand-600" />
+          </div>
+          <ul className="mt-4 space-y-3 text-[9px]">
+            {['Police review', 'Fire & Rescue review', 'Health review'].map((agency) => (
+              <li key={agency} className="flex items-center justify-between border-b border-[#e4dccf] pb-2.5">
+                <span className="font-semibold text-ink-600">{agency}</span>
+                <span className="flex items-center gap-1 font-bold text-brand-700"><Check size={10} />Signed</span>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-5 flex items-center justify-between">
+            <div><p className="text-[8px] font-bold uppercase tracking-[0.08em] text-ink-400">Review progress</p><p className="mt-1 font-display text-lg font-bold text-ink-900">3 / 3 complete</p></div>
+            <span className="-rotate-6 rounded-full border-2 border-brand-600 px-2 py-3 text-[8px] font-extrabold uppercase text-brand-700">Reviewed</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative mt-8 h-[17rem]" aria-hidden="true">
+      <div className={`${sheetClass} bottom-1 left-0 w-full p-4`}>
+        <div className="flex items-start justify-between border-b border-[#ddd3c1] pb-3">
+          <div><p className="text-[8px] font-bold uppercase tracking-[0.1em] text-gold-700">Public event record</p><p className="mt-1 font-display text-xs font-bold text-ink-900">Approval certificate</p></div>
+          <span className="border-2 border-brand-600 px-2 py-1 text-[8px] font-extrabold uppercase tracking-[0.08em] text-brand-700">Approved</span>
+        </div>
+        <div className="mt-5 text-center">
+          <img src={logoUrl} alt="" className="mx-auto h-14 w-14 opacity-75" />
+          <p className="mt-3 font-display text-base font-bold text-ink-900">Approved public event</p>
+          <p className="mt-1 text-[9px] text-ink-500">Safe event details ready for publication</p>
+        </div>
+        <div className="mt-5 flex items-end justify-between border-t border-[#ddd3c1] pt-3">
+          <div><p className="font-display text-sm italic text-ink-700">Authorised</p><span className="block h-px w-20 bg-[#b8ac97]" /></div>
+          <span className="text-[8px] font-bold uppercase tracking-[0.08em] text-brand-700">Record verified</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProcessDocumentPreview({ step }: { step: number }) {
+  const paperClass = 'relative min-h-[18rem] border border-[#d5cab6] bg-[#fffdf8] p-5 shadow-[9px_10px_0_#eee7d8] transition-transform duration-300 ease-out group-hover:-translate-y-1';
+
+  if (step === 0) {
+    return (
+      <div className={paperClass}>
+        <div className="flex items-start justify-between border-b border-[#ddd3c1] pb-3">
+          <div><p className="text-[9px] font-bold uppercase tracking-[0.1em] text-gold-700">Supporting evidence</p><p className="mt-1 font-display text-sm font-bold text-ink-900">Event evidence pack</p></div>
+          <span className="bg-brand-100 px-2 py-1 text-[9px] font-bold uppercase text-brand-700">Complete</span>
+        </div>
+        <img src={heroUrl} alt="Prepared cultural event venue" className="mt-4 h-20 w-full object-cover object-[65%_52%]" />
+        <dl className="mt-4 grid grid-cols-[1fr_auto] gap-x-3 gap-y-2 text-[10px]">
+          <dt className="font-semibold text-ink-500">Venue plan</dt><dd className="font-bold text-brand-700">Verified</dd>
+          <dt className="font-semibold text-ink-500">Medical plan</dt><dd className="font-bold text-brand-700">Attached</dd>
+          <dt className="font-semibold text-ink-500">Traffic plan</dt><dd className="font-bold text-brand-700">Attached</dd>
+        </dl>
+        <p className="mt-4 border-t border-[#ddd3c1] pt-3 text-[10px] font-bold text-brand-700">A complete, versioned evidence pack</p>
+      </div>
+    );
+  }
+
+  if (step === 1) {
+    return (
+      <div className={paperClass}>
+        <div className="flex items-start justify-between border-b border-[#ddd3c1] pb-3">
+          <div><p className="text-[9px] font-bold uppercase tracking-[0.1em] text-gold-700">Assessment proposal</p><p className="mt-1 font-display text-sm font-bold text-ink-900">AI risk proposal</p></div>
+          <Sparkles size={16} className="text-brand-600" />
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-2 text-[9px] font-semibold text-ink-500">
+          <span className="border border-[#ddd3c1] px-2 py-1.5">Crowd safety</span>
+          <span className="border border-[#ddd3c1] px-2 py-1.5">Fire safety</span>
+          <span className="border border-[#ddd3c1] px-2 py-1.5">Public health</span>
+          <span className="border border-[#ddd3c1] px-2 py-1.5">Transport</span>
+        </div>
+        <div className="mt-4 flex items-center justify-between bg-cream-100 px-3 py-2.5">
+          <span className="text-[9px] font-bold uppercase tracking-[0.08em] text-ink-500">Suggested risk</span>
+          <span className="bg-gold-200 px-2 py-1 text-[9px] font-extrabold uppercase text-gold-800">Moderate</span>
+        </div>
+        <div className="mt-4 space-y-2" aria-hidden="true"><div className="h-1.5 w-full bg-[#ded6c7]" /><div className="h-1.5 w-5/6 bg-[#ded6c7]" /><div className="h-1.5 w-2/3 bg-[#ded6c7]" /></div>
+        <p className="mt-4 border-t border-[#ddd3c1] pt-3 text-[10px] font-bold text-brand-700">Proposal retained as provenance</p>
+      </div>
+    );
+  }
+
+  if (step === 2) {
+    return (
+      <div className={paperClass}>
+        <div className="flex items-start justify-between border-b border-[#ddd3c1] pb-3">
+          <div><p className="text-[9px] font-bold uppercase tracking-[0.1em] text-gold-700">Rules validation</p><p className="mt-1 font-display text-sm font-bold text-ink-900">Risk calculation</p></div>
+          <Fingerprint size={16} className="text-brand-600" />
+        </div>
+        <div className="mt-4 grid grid-cols-[auto_1fr] gap-4">
+          <div className="grid h-24 w-24 grid-cols-5 gap-0.5 border border-[#d8cebc] bg-[#d8cebc] p-0.5" aria-label="Five by five risk matrix">
+            {Array.from({ length: 25 }, (_, index) => (
+              <span key={index} className={index === 8 || index === 13 ? 'bg-gold-300' : index > 14 ? 'bg-[#e8c3b4]' : 'bg-brand-100'} />
+            ))}
+          </div>
+          <dl className="space-y-2 text-[9px]">
+            <div><dt className="font-semibold text-ink-400">Likelihood</dt><dd className="font-bold text-ink-700">3 / 5</dd></div>
+            <div><dt className="font-semibold text-ink-400">Severity</dt><dd className="font-bold text-ink-700">4 / 5</dd></div>
+            <div><dt className="font-semibold text-ink-400">Matrix</dt><dd className="font-bold text-gold-700">12 · Medium</dd></div>
+          </dl>
+        </div>
+        <div className="mt-4 space-y-2 text-[9px] font-semibold text-ink-500">
+          <p className="flex items-center gap-2"><Check size={11} className="text-brand-600" />Hard-rule floors applied</p>
+          <p className="flex items-center gap-2"><Check size={11} className="text-brand-600" />Resource ranges calculated</p>
+        </div>
+        <p className="mt-4 border-t border-[#ddd3c1] pt-3 text-[10px] font-bold text-brand-700">Same inputs, same result</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className={paperClass}>
+      <div className="flex items-start justify-between border-b border-[#ddd3c1] pb-3">
+        <div><p className="text-[9px] font-bold uppercase tracking-[0.1em] text-gold-700">Review outcome</p><p className="mt-1 font-display text-sm font-bold text-ink-900">Authority decision</p></div>
+        <span className="border-2 border-brand-600 px-2 py-1 text-[9px] font-extrabold uppercase tracking-[0.08em] text-brand-700">Approved</span>
+      </div>
+      <dl className="mt-4 space-y-3 text-[9px]">
+        <div className="flex justify-between border-b border-[#e2d9ca] pb-2"><dt className="font-semibold text-ink-400">Reviewed by</dt><dd className="font-bold text-ink-700">Multi-agency panel</dd></div>
+        <div className="flex justify-between border-b border-[#e2d9ca] pb-2"><dt className="font-semibold text-ink-400">Risk outcome</dt><dd className="font-bold text-gold-700">Medium</dd></div>
+        <div className="flex justify-between border-b border-[#e2d9ca] pb-2"><dt className="font-semibold text-ink-400">Conditions</dt><dd className="font-bold text-ink-700">Recorded</dd></div>
+      </dl>
+      <div className="mt-6 flex items-end justify-between">
+        <div><p className="font-display text-lg italic text-ink-700">Approved</p><span className="mt-1 block h-px w-24 bg-[#b9ad98]" /><span className="mt-1 block text-[8px] font-semibold uppercase text-ink-400">Authorised signature</span></div>
+        <img src={logoUrl} alt="" className="h-12 w-12 opacity-75" />
+      </div>
+      <p className="mt-4 border-t border-[#ddd3c1] pt-3 text-[10px] font-bold text-brand-700">People remain responsible</p>
+    </div>
+  );
+}
 
 export default function PublicHome() {
+  const [showTop, setShowTop] = useState(false);
+  const [selectedBenefit, setSelectedBenefit] = useState(0);
+  useEffect(() => {
+    const section = document.getElementById('how-it-works');
+    const update = () => setShowTop(Boolean(section && section.getBoundingClientRect().top <= 100));
+    update(); window.addEventListener('scroll', update, { passive: true });
+    return () => window.removeEventListener('scroll', update);
+  }, []);
   return (
     <div className="min-h-screen overflow-hidden bg-cream-50">
       <PublicHeader />
@@ -107,81 +328,92 @@ export default function PublicHome() {
                 <li className="flex items-center gap-2"><Check size={16} className="text-brand-600" />Public-safe records</li>
               </ul>
             </div>
-
           </div>
         </section>
 
-        <section id="how-it-works" className="mx-auto max-w-6xl scroll-mt-24 px-5 py-20 sm:px-8 sm:py-28" aria-labelledby="journey-title">
-          <div className="grid gap-10 lg:grid-cols-[0.72fr_1.28fr] lg:gap-20">
-            <div className="lg:sticky lg:top-28 lg:self-start">
-              <p className="text-xs font-bold uppercase tracking-[0.1em] text-gold-700">One connected journey</p>
-              <h2 id="journey-title" className="mt-4 max-w-[12ch] font-display text-[clamp(2rem,4vw,3.5rem)] font-bold leading-[1.05] tracking-[-0.04em] text-ink-900">
-                From idea to public confidence
-              </h2>
-              <p className="mt-6 max-w-sm text-base leading-7 text-ink-600">
-                Five connected stages keep work moving without losing the evidence, people or decisions that came before.
-              </p>
-              <Link to="/login" className="mt-8 inline-flex min-h-11 items-center gap-2 font-semibold text-brand-700 underline decoration-brand-300 underline-offset-4 hover:text-brand-600">
-                Continue to your workspace <ArrowRight size={16} />
-              </Link>
+        <section id="how-it-works" className="relative scroll-mt-24 overflow-hidden border-b border-[#ded3c0]" aria-labelledby="journey-title">
+          <div className="relative mx-auto max-w-[80rem] px-5 py-14 sm:py-16 sm:px-8">
+            <div className="grid items-end gap-8 lg:grid-cols-[0.8fr_1.2fr]">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.11em] text-gold-700">The Malaysian approval journey</p>
+                <h2 id="journey-title" className="mt-4 max-w-[14ch] font-display text-[clamp(2.25rem,4.6vw,4.4rem)] font-bold leading-[1.01] tracking-[-0.055em] text-ink-900">
+                  How an application becomes approval
+                </h2>
+              </div>
+              <div className="max-w-xl lg:justify-self-end">
+                <p className="text-lg leading-8 text-ink-600">One connected route carries evidence from preparation to a public record you can trust.</p>
+                <Link to="/login" className="mt-5 inline-flex min-h-11 items-center gap-2 font-bold text-brand-700 underline decoration-brand-300 underline-offset-4 hover:text-brand-600">
+                  Continue to your workspace <ArrowRight size={16} />
+                </Link>
+              </div>
             </div>
 
-            <ol className="relative border-l border-[#cfc3ad] pl-7 sm:pl-10">
-              {journey.map(({ step, phase, title, body, detail, icon: Icon }) => (
-                <li key={step} className="relative pb-12 last:pb-0 sm:pb-16">
-                  <span className="absolute -left-[2.28rem] top-0 grid h-4 w-4 place-items-center rounded-full border-[3px] border-cream-50 bg-brand-600 sm:-left-[2.78rem]" aria-hidden="true" />
-                  <div className="grid gap-4 sm:grid-cols-[5rem_1fr] sm:gap-7">
-                    <div>
-                      <span className="font-display text-4xl font-bold tracking-[-0.06em] text-[#c9bea9]">{step}</span>
-                      <span className="mt-1 block text-xs font-bold uppercase tracking-[0.09em] text-gold-700">{phase}</span>
-                    </div>
-                    <article>
-                      <div className="flex items-start gap-3">
-                        <Icon size={21} className="mt-1 shrink-0 text-brand-600" aria-hidden="true" />
-                        <h3 className="font-display text-xl font-bold leading-snug text-ink-900 sm:text-2xl">{title}</h3>
+            <div className="relative mt-16 lg:mt-24">
+
+
+              <ol className="grid gap-12 lg:grid-cols-4 lg:gap-5">
+                {journey.map(({ step, title, body, note, icon: Icon }, index) => (
+                  <li key={step} className={`relative ${['lg:pt-24', 'lg:pt-16', 'lg:pt-8', 'lg:pt-0'][index]}`}>
+                    <article className="pt-5">
+                      <span className="font-display text-5xl font-bold tracking-[-0.08em] text-[#c9bea9]">{step}</span>
+                      <div className="mt-3 flex items-start gap-3">
+                        <Icon size={20} className="mt-1 shrink-0 text-brand-600" aria-hidden="true" />
+                        <h3 className="font-display text-xl font-bold leading-tight text-ink-900">{title}</h3>
                       </div>
-                      <p className="mt-3 max-w-[40rem] text-base leading-7 text-ink-600">{body}</p>
-                      <p className="mt-4 text-xs font-bold uppercase tracking-[0.07em] text-brand-700">{detail}</p>
+                      <p className="mt-4 text-sm leading-6 text-ink-600">{body}</p>
+                      <p className="mt-5 text-[11px] font-bold uppercase tracking-[0.08em] text-gold-700">{note}</p>
+
+                      <JourneyDocumentPreview step={index} />
                     </article>
-                  </div>
-                </li>
-              ))}
-            </ol>
+                  </li>
+                ))}
+              </ol>
+            </div>
           </div>
         </section>
 
         <section id="who-it-is-for" className="relative scroll-mt-24 overflow-hidden bg-brand-950 text-cream-50" aria-labelledby="roles-title">
-          <div className="absolute inset-0 opacity-[0.12] [background-image:linear-gradient(45deg,transparent_46%,#f0c340_47%,#f0c340_48%,transparent_49%),linear-gradient(-45deg,transparent_46%,#f0c340_47%,#f0c340_48%,transparent_49%)] [background-size:42px_42px]" aria-hidden="true" />
-          <div className="relative mx-auto max-w-6xl px-5 py-20 sm:px-8 sm:py-28">
-            <div className="grid gap-8 border-b border-white/20 pb-12 lg:grid-cols-[1fr_0.85fr] lg:items-end">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-[0.1em] text-gold-300">Designed around real responsibilities</p>
-                <h2 id="roles-title" className="mt-4 max-w-[16ch] font-display text-[clamp(2rem,4vw,3.5rem)] font-bold leading-[1.08] tracking-[-0.04em] text-cream-50">Every role sees the detail it needs—and no more.</h2>
-              </div>
-              <p className="max-w-xl text-base leading-7 text-cream-100 lg:justify-self-end">
-                STERAS separates public information, organizer progress and restricted review evidence while keeping every actor connected to the same event history.
-              </p>
+          <div className="relative mx-auto max-w-[90rem] py-14 sm:py-16">
+            <div className="px-5 sm:px-8 lg:px-14">
+              <p className="text-xs font-bold uppercase tracking-[0.11em] text-gold-300">Two perspectives. One trusted outcome.</p>
+              <h2 id="roles-title" className="mt-4 max-w-[20ch] font-display text-[clamp(2.25rem,4.7vw,4.5rem)] font-bold leading-[1.03] tracking-[-0.05em] text-cream-50">
+                Built for organizers. Accountable to authorities.
+              </h2>
             </div>
 
-            <div className="grid gap-0 lg:grid-cols-2">
-              <article className="border-b border-white/20 py-12 lg:border-b-0 lg:border-r lg:pr-14">
-                <div className="flex items-center gap-3 text-gold-300"><Building2 size={21} /><span className="text-xs font-bold uppercase tracking-[0.11em]">For event organizers</span></div>
-                <h3 className="mt-5 font-display text-2xl font-bold text-cream-50">Know what to prepare before review begins.</h3>
-                <ul className="mt-7 space-y-4 text-base leading-7 text-cream-100">
-                  <li className="flex gap-3"><span className="mt-3 h-px w-5 shrink-0 bg-gold-300" />Get the right core and scenario templates.</li>
-                  <li className="flex gap-3"><span className="mt-3 h-px w-5 shrink-0 bg-gold-300" />Review extracted fields, evidence gaps and application progress.</li>
-                  <li className="flex gap-3"><span className="mt-3 h-px w-5 shrink-0 bg-gold-300" />Follow decisions, corrections, controls and incident responses.</li>
+            <div className="mt-14 grid lg:grid-cols-[0.85fr_0.62fr_0.85fr]">
+              <article className="border-y border-white/15 px-5 py-10 sm:px-8 lg:border-r lg:px-14 lg:py-14">
+                <div className="flex items-center gap-3 text-gold-300"><Building2 size={20} /><span className="text-xs font-bold uppercase tracking-[0.11em]">For event organizers</span></div>
+                <h3 className="mt-5 max-w-sm font-display text-2xl font-bold text-cream-50">Know what is ready before review begins.</h3>
+                <ul className="mt-8 space-y-5">
+                  {organizerCapabilities.map(([title, body]) => (
+                    <li key={title} className="grid grid-cols-[1.25rem_1fr] gap-3">
+                      <CheckCircle2 size={17} className="mt-0.5 text-gold-300" />
+                      <div><p className="font-bold text-cream-50">{title}</p><p className="mt-1 text-sm leading-6 text-cream-100/80">{body}</p></div>
+                    </li>
+                  ))}
                 </ul>
                 <Link to="/register" className="mt-9 inline-flex min-h-11 items-center gap-2 font-bold text-gold-300 hover:text-gold-200">Create organizer account <ArrowRight size={16} /></Link>
               </article>
 
-              <article className="py-12 lg:pl-14">
-                <div className="flex items-center gap-3 text-gold-300"><UserRoundCheck size={21} /><span className="text-xs font-bold uppercase tracking-[0.11em]">For Admin and authorities</span></div>
-                <h3 className="mt-5 font-display text-2xl font-bold text-cream-50">Review the evidence behind every recommendation.</h3>
-                <ul className="mt-7 space-y-4 text-base leading-7 text-cream-100">
-                  <li className="flex gap-3"><span className="mt-3 h-px w-5 shrink-0 bg-gold-300" />Inspect provenance, warnings, risk categories and resource ranges.</li>
-                  <li className="flex gap-3"><span className="mt-3 h-px w-5 shrink-0 bg-gold-300" />Record named, reasoned decisions against an immutable version.</li>
-                  <li className="flex gap-3"><span className="mt-3 h-px w-5 shrink-0 bg-gold-300" />Coordinate event controls, incidents and privacy-safe analytics.</li>
+              <div className="relative min-h-[26rem] overflow-hidden border-b border-white/15 lg:min-h-0 lg:border-y" aria-hidden="true">
+                <img src={planningUrl} alt="" className="absolute inset-0 h-full w-full object-cover object-[56%_center]" />
+                <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(26,35,13,0.05),rgba(26,35,13,0.55))]" />
+                <div className="absolute inset-x-5 bottom-6 border-l-2 border-gold-300 pl-4 text-sm font-semibold leading-6 text-cream-50">
+                  One shared event history.<br />Clear responsibility at every handoff.
+                </div>
+              </div>
+
+              <article className="border-b border-white/15 px-5 py-10 sm:px-8 lg:border-y lg:border-l lg:px-14 lg:py-14">
+                <div className="flex items-center gap-3 text-gold-300"><UserRoundCheck size={20} /><span className="text-xs font-bold uppercase tracking-[0.11em]">For Admin and authorities</span></div>
+                <h3 className="mt-5 max-w-sm font-display text-2xl font-bold text-cream-50">See the evidence behind every recommendation.</h3>
+                <ul className="mt-8 space-y-5">
+                  {authorityCapabilities.map(([title, body]) => (
+                    <li key={title} className="grid grid-cols-[1.25rem_1fr] gap-3">
+                      <CheckCircle2 size={17} className="mt-0.5 text-gold-300" />
+                      <div><p className="font-bold text-cream-50">{title}</p><p className="mt-1 text-sm leading-6 text-cream-100/80">{body}</p></div>
+                    </li>
+                  ))}
                 </ul>
                 <Link to="/login" className="mt-9 inline-flex min-h-11 items-center gap-2 font-bold text-gold-300 hover:text-gold-200">Open secure workspace <ArrowRight size={16} /></Link>
               </article>
@@ -189,75 +421,135 @@ export default function PublicHome() {
           </div>
         </section>
 
-        <section id="trust-model" className="mx-auto max-w-6xl scroll-mt-24 px-5 py-20 sm:px-8 sm:py-28" aria-labelledby="trust-title">
-          <div className="grid gap-12 lg:grid-cols-[1fr_1.25fr] lg:gap-20">
-            <div>
-              <p className="text-xs font-bold uppercase tracking-[0.1em] text-gold-700">Human-governed intelligence</p>
-              <h2 id="trust-title" className="mt-4 max-w-[14ch] font-display text-[clamp(2rem,4vw,3.5rem)] font-bold leading-[1.06] tracking-[-0.04em] text-ink-900">AI can advise. Evidence and accountable people decide.</h2>
-              <p className="mt-6 max-w-md text-base leading-7 text-ink-600">
-                The original AI proposal is preserved, deterministic rules remain visible, and official outcomes require an auditable human review path.
-              </p>
+        <section id="trust-model" className="relative scroll-mt-24 overflow-hidden border-b border-[#ddd1bd]" aria-labelledby="trust-title">
+          <div className="relative mx-auto max-w-[80rem] px-5 py-14 sm:py-16 sm:px-8">
+            <div className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr] lg:items-end">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.11em] text-gold-700">Evidence to decision</p>
+                <h2 id="trust-title" className="mt-4 max-w-[18ch] font-display text-[clamp(2.25rem,4.5vw,4.25rem)] font-bold leading-[1.03] tracking-[-0.05em] text-ink-900">
+                  AI can advise. Evidence and accountable people decide.
+                </h2>
+              </div>
+              <p className="max-w-md text-lg leading-8 text-ink-600 lg:justify-self-end">STERAS preserves what the system suggested, what the rules calculated and who made the final call.</p>
             </div>
 
-            <ol className="divide-y divide-[#d8cdb9] border-y border-[#d8cdb9]">
-              {trustSteps.map(([title, body], index) => (
-                <li key={title} className="grid gap-3 py-6 sm:grid-cols-[3rem_9rem_1fr] sm:items-start sm:gap-5">
-                  <span className="font-display text-2xl font-bold text-[#b0a58f]">0{index + 1}</span>
-                  <h3 className="font-display text-base font-bold text-ink-900">{title}</h3>
-                  <p className="text-sm leading-6 text-ink-600">{body}</p>
-                </li>
-              ))}
-            </ol>
+            <div className="mt-10 grid gap-8 lg:grid-cols-[0.8fr_1.2fr]">
+              <div className="space-y-3" aria-label="Explore the benefits">{decisionFlow.map((item, index) => <button type="button" key={item.label} aria-pressed={selectedBenefit === index} onClick={() => setSelectedBenefit(index)} className={`w-full rounded-lg border p-5 text-left ${selectedBenefit === index ? 'border-brand-600 bg-brand-50' : 'border-cream-200 bg-white'}`}><span className="text-xs font-bold text-gold-700">0{index + 1}</span><h3 className="mt-2 font-display text-xl font-bold">{item.label}</h3><p className="mt-2 text-sm text-ink-600">{item.detail}</p></button>)}</div>
+              <section aria-live="polite" className="rounded-lg bg-[#f7f2e8] p-6 sm:p-8"><p className="page-eyebrow">What this gives you</p><h3 className="font-display text-2xl font-bold">{decisionFlow[selectedBenefit].title}</h3><p className="mt-3 text-ink-600">{decisionFlow[selectedBenefit].accent}</p><div className="mx-auto mt-6 max-w-md"><ProcessDocumentPreview step={selectedBenefit} /></div></section>
+            </div>
+
           </div>
         </section>
 
-        <section className="border-y border-[#d9cdb8] bg-[#f4ecd9]" aria-labelledby="privacy-title">
-          <div className="mx-auto grid max-w-6xl gap-10 px-5 py-16 sm:px-8 md:grid-cols-[0.8fr_1.2fr] md:items-center md:py-20">
-            <div className="relative min-h-52 overflow-hidden bg-brand-900 p-7 text-cream-50">
-              <div className="absolute -right-12 -top-12 h-40 w-40 rounded-full border border-gold-300/25" />
-              <div className="absolute -right-3 -top-3 h-24 w-24 rounded-full border border-gold-300/35" />
-              <LockKeyhole size={27} className="text-gold-300" />
-              <p className="mt-10 max-w-xs font-display text-xl font-bold leading-snug text-cream-50">Private evidence stays inside the review boundary.</p>
-            </div>
-            <div>
-              <p className="text-xs font-bold uppercase tracking-[0.1em] text-gold-700">Public confidence without private exposure</p>
-              <h2 id="privacy-title" className="mt-4 font-display text-3xl font-bold tracking-[-0.035em] text-ink-900">Approval is visible. Restricted review detail is not.</h2>
-              <p className="mt-5 max-w-2xl text-base leading-7 text-ink-600">The public calendar contains only approved, sanitised event information. Organizer identity details, private evidence, risk internals, officer notes and incident narratives stay protected by role-based access.</p>
-              <div className="mt-7 flex flex-wrap gap-x-8 gap-y-3 text-sm font-semibold text-ink-700">
-                <span className="flex items-center gap-2"><CalendarDays size={17} className="text-brand-600" />Approved events</span>
-                <span className="flex items-center gap-2"><MapPin size={17} className="text-brand-600" />Safe venue details</span>
-                <span className="flex items-center gap-2"><RadioTower size={17} className="text-brand-600" />Published controls</span>
+        <section className="bg-[#f3ead7]" aria-labelledby="privacy-title">
+          <div className="mx-auto max-w-[80rem] px-5 py-14 sm:py-16 sm:px-8">
+            <div className="grid gap-12 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.11em] text-gold-700">Public trust by design</p>
+                <h2 id="privacy-title" className="mt-4 max-w-[13ch] font-display text-[clamp(2.25rem,4.3vw,4rem)] font-bold leading-[1.03] tracking-[-0.05em] text-ink-900">
+                  Approval is visible. Restricted review detail is not.
+                </h2>
+                <p className="mt-6 max-w-lg text-base leading-7 text-ink-600">Visitors can verify approved event details. Sensitive evidence, reviewer identity and internal risk information remain protected.</p>
+                <Link to="/calendar" className="mt-8 inline-flex min-h-11 items-center gap-2 font-bold text-brand-700 underline decoration-brand-300 underline-offset-4 hover:text-brand-600">
+                  Explore approved events <ArrowRight size={16} />
+                </Link>
+
+                <div className="mt-12 border border-[#d3c6ae] bg-[#fffdf8] p-6 sm:p-8">
+                  <div className="flex items-center justify-between border-b border-[#ddd2bf] pb-5">
+                    <div>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-gold-700">Public register</p>
+                      <h3 className="mt-2 font-display text-xl font-bold text-ink-900">Approved events</h3>
+                    </div>
+                    <CalendarDays size={22} className="text-brand-600" />
+                  </div>
+                  <div className="mt-6 grid gap-6 sm:grid-cols-[7rem_1fr]">
+                    <div className="grid place-items-center border border-[#d8cdb9] bg-cream-100 px-3 py-5 text-center">
+                      <span className="text-xs font-bold uppercase tracking-[0.1em] text-gold-700">Event date</span>
+                      <span className="mt-2 font-display text-4xl font-bold text-ink-900">30</span>
+                      <span className="font-bold text-brand-700">SEP</span>
+                    </div>
+                    <div>
+                      <span className="inline-flex bg-brand-100 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em] text-brand-700">Approved</span>
+                      <p className="mt-3 font-display text-xl font-bold text-ink-900">A verified public event record</p>
+                      <p className="mt-3 flex items-center gap-2 text-sm text-ink-600"><MapPin size={15} className="text-brand-600" />Safe venue and schedule details</p>
+                      <p className="mt-2 flex items-center gap-2 text-sm text-ink-600"><ShieldCheck size={15} className="text-brand-600" />Published conditions and controls</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="relative">
+
+                <div className="border border-[#bbb09b] bg-[#dfd9ca] p-5 shadow-[0_26px_70px_rgba(57,49,32,0.16)] sm:p-8">
+                  <div className="flex items-center justify-between border-b border-[#b9ae9a] pb-5">
+                    <div>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-brand-700">Restricted review dossier</p>
+                      <p className="mt-2 text-sm text-ink-600">Visible only to authorised roles</p>
+                    </div>
+                    <span className="rotate-2 border-2 border-[#a63d32] px-3 py-1.5 text-xs font-extrabold uppercase tracking-[0.08em] text-[#a63d32]">Internal use only</span>
+                  </div>
+                  <div className="mt-8 grid gap-5 sm:grid-cols-[0.8fr_1.2fr]">
+                    <div className="border border-[#c9bfac] bg-[#fffdf8] p-5">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-gold-700">Evidence index</p>
+                      <ul className="mt-5 space-y-4 text-sm font-semibold text-ink-600">
+                        <li className="flex items-center gap-2"><FileCheck2 size={15} className="text-brand-600" />Police comments</li>
+                        <li className="flex items-center gap-2"><CloudSun size={15} className="text-brand-600" />Weather context</li>
+                        <li className="flex items-center gap-2"><FileCheck2 size={15} className="text-brand-600" />Medical plan</li>
+                        <li className="flex items-center gap-2"><FileCheck2 size={15} className="text-brand-600" />Resource policy</li>
+                      </ul>
+                    </div>
+                    <div className="border border-[#c9bfac] bg-[#fffdf8] p-5">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-gold-700">Review notes</p>
+                      <div className="mt-5 space-y-3" aria-hidden="true">
+                        <div className="h-2 w-full bg-[#ddd5c6]" /><div className="h-2 w-4/5 bg-[#ddd5c6]" /><div className="h-2 w-11/12 bg-[#ddd5c6]" />
+                      </div>
+                      <p className="mt-7 text-[10px] font-bold uppercase tracking-[0.1em] text-gold-700">Risk calculation</p>
+                      <div className="mt-4 grid grid-cols-5 gap-1" aria-hidden="true">
+                        {[1, 2, 3, 4, 5].map((value) => <span key={value} className={`h-7 ${value < 4 ? 'bg-brand-200' : 'bg-gold-300'}`} />)}
+                      </div>
+                      <p className="mt-6 text-xs leading-5 text-ink-500">Contains personal data, operational plans and reviewer rationale protected by role-based access.</p>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
         </section>
 
-        <section className="mx-auto max-w-6xl px-5 py-20 sm:px-8 sm:py-28">
-          <div className="grid overflow-hidden border border-[#d1c5ae] bg-[#fffdf8] lg:grid-cols-[1fr_auto] lg:items-center">
-            <div className="p-8 sm:p-12">
-              <p className="text-xs font-bold uppercase tracking-[0.1em] text-gold-700">Ready when your event is</p>
-              <h2 className="mt-4 max-w-[18ch] font-display text-3xl font-bold tracking-[-0.04em] text-ink-900 sm:text-4xl">Make the first review easier by preparing the right evidence now.</h2>
-              <p className="mt-5 max-w-2xl text-base leading-7 text-ink-600">Start with a guided application, or browse the public register to see events that have completed the approval journey.</p>
+        <section className="relative overflow-hidden bg-brand-900 text-cream-50">
+          <div className="relative mx-auto grid max-w-[80rem] items-center gap-10 px-5 py-16 sm:px-8 md:grid-cols-[1fr_auto] md:py-20">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.11em] text-gold-300">A single workspace. A reasoned outcome.</p>
+              <h2 className="mt-4 max-w-[16ch] font-display text-[clamp(2.25rem,4.4vw,4rem)] font-bold leading-[1.03] tracking-[-0.05em] text-cream-50">Prepare once. Review with confidence.</h2>
             </div>
-            <div className="flex flex-col gap-3 border-t border-[#d1c5ae] bg-cream-100 p-8 sm:flex-row lg:min-w-72 lg:flex-col lg:border-l lg:border-t-0 lg:p-10">
-              <Link to="/register" className="btn-primary group">Start an application <ArrowRight size={17} className="transition-transform group-hover:translate-x-0.5" /></Link>
-              <Link to="/calendar" className="btn-secondary">View approved events</Link>
+            <div className="flex flex-col gap-3 sm:flex-row md:flex-col">
+              <Link to="/register" className="btn bg-gold-300 text-brand-950 hover:bg-gold-200 group">Start an application <ArrowRight size={17} className="transition-transform group-hover:translate-x-0.5" /></Link>
+              <Link to="/calendar" className="btn border border-cream-50/40 bg-cream-50 text-brand-950 hover:bg-cream-100">Explore approved events</Link>
             </div>
           </div>
         </section>
       </main>
 
+      {showTop && <button type="button" aria-label="Back to top" className="fixed bottom-6 right-6 z-40 rounded-full bg-brand-800 px-5 py-3 font-semibold text-white shadow-lg" onClick={() => window.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' })}>↑ Back to top</button>}
       <footer className="border-t border-white/15 bg-brand-950 text-cream-100">
-        <div className="mx-auto flex max-w-6xl flex-col gap-6 px-5 py-9 sm:px-8 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="font-display text-base font-bold text-cream-50">STERAS</p>
-            <p className="mt-1 text-sm">Smart Tourism Event Risk &amp; Approval System</p>
+        <div className="mx-auto grid max-w-[80rem] gap-10 px-5 py-12 sm:px-8 md:grid-cols-[1fr_auto] md:items-end">
+          <div className="flex items-center gap-3">
+            <img src={logoUrl} alt="" className="h-11 w-11 brightness-0 invert" />
+            <div>
+              <p className="font-display text-lg font-bold text-cream-50">STERAS</p>
+              <p className="mt-1 text-sm text-cream-100/70">Smart Tourism Event Risk &amp; Approval System</p>
+            </div>
           </div>
-          <nav className="flex flex-wrap gap-x-6 gap-y-2 text-sm font-semibold" aria-label="Footer navigation">
+          <nav className="flex flex-wrap gap-x-7 gap-y-3 text-sm font-semibold" aria-label="Footer navigation">
             <a href="#how-it-works" className="hover:text-gold-300">How it works</a>
+            <a href="#who-it-is-for" className="hover:text-gold-300">For organizers &amp; authorities</a>
             <Link to="/calendar" className="hover:text-gold-300">Approved events</Link>
             <Link to="/login" className="hover:text-gold-300">Sign in</Link>
           </nav>
+        </div>
+        <div className="mx-auto flex max-w-[80rem] flex-col gap-2 border-t border-white/10 px-5 py-5 text-xs text-cream-100/55 sm:px-8 md:flex-row md:items-center md:justify-between">
+          <span>© 2026 STERAS. Public information is published only after approval.</span>
+          <span>Malaysia tourism-event safety coordination</span>
         </div>
       </footer>
     </div>

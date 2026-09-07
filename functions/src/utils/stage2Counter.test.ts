@@ -9,5 +9,6 @@ describe('Stage 2 per-upload counters', () => {
     expect(counterMatchesStage2({ stage2UploadedAt: 200 }, stage2)).toBe(true);
     expect(counterMatchesStage2({ stage2UploadedAt: 199 }, stage2)).toBe(false);
     expect(counterMatchesStage2({}, stage2)).toBe(false);
+    expect(counterMatchesStage2({ stage2UploadedAt: 200, stage2PublishedAt: 1 }, { ...stage2, publishedAt: 2 })).toBe(false);
   });
 });

@@ -1,50 +1,54 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { lazy, Suspense } from 'react';
+const TermsPage = lazy(() => import('./pages/public/TermsPage'));
+const ResetPasswordPage = lazy(() => import('./pages/auth/ResetPasswordPage'));
+const ProfilePage = lazy(() => import('./pages/organizer/ProfilePage'));
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 import AppLayout from './components/layout/AppLayout';
 import AuthorityLayout from './components/layout/AuthorityLayout';
 import ProtectedRoute from './components/layout/ProtectedRoute';
 import LoadingScreen from './components/ui/LoadingScreen';
 import RoleAwareFallback from './components/layout/RoleAwareFallback';
-import DashboardPreview from './pages/DashboardPreview';
+const DashboardPreview = lazy(() => import('./pages/DashboardPreview'));
 import { getIncidentPath } from './routing';
 
 // Public pages
 import PublicHome from './pages/public/PublicHome';
-import PublicCalendar from './pages/public/PublicCalendar';
-import PublicEventDetail from './pages/public/PublicEventDetail';
+const PublicCalendar = lazy(() => import('./pages/public/PublicCalendar'));
+const PublicEventDetail = lazy(() => import('./pages/public/PublicEventDetail'));
 
 // Auth pages
-import LoginPage from './pages/auth/LoginPage';
-import RegisterPage from './pages/auth/RegisterPage';
+const LoginPage = lazy(() => import('./pages/auth/LoginPage'));
+const RegisterPage = lazy(() => import('./pages/auth/RegisterPage'));
 
 // Organizer pages
-import OrganizerDashboard from './pages/organizer/OrganizerDashboard';
-import NewEvent from './pages/organizer/NewEvent';
-import TemplateRecommendationPage from './pages/organizer/TemplateRecommendationPage';
-import MyEvents from './pages/organizer/MyEvents';
-import EventDetail from './pages/organizer/EventDetail';
+const OrganizerDashboard = lazy(() => import('./pages/organizer/OrganizerDashboard'));
+const NewEvent = lazy(() => import('./pages/organizer/NewEvent'));
+const TemplateRecommendationPage = lazy(() => import('./pages/organizer/TemplateRecommendationPage'));
+const MyEvents = lazy(() => import('./pages/organizer/MyEvents'));
+const EventDetail = lazy(() => import('./pages/organizer/EventDetail'));
 
 // Authority pages
-import AuthorityDashboard from './pages/authority/AuthorityDashboard';
-import ReviewQueue from './pages/authority/ReviewQueue';
-import AuthorityEventReview from './pages/authority/AuthorityEventReview';
-import RiskAssessments from './pages/authority/RiskAssessments';
-import ResourceRecommendations from './pages/authority/ResourceRecommendations';
+const AuthorityDashboard = lazy(() => import('./pages/authority/AuthorityDashboard'));
+const ReviewQueue = lazy(() => import('./pages/authority/ReviewQueue'));
+const AuthorityEventReview = lazy(() => import('./pages/authority/AuthorityEventReview'));
+const RiskAssessments = lazy(() => import('./pages/authority/RiskAssessments'));
+const ResourceRecommendations = lazy(() => import('./pages/authority/ResourceRecommendations'));
 
 // Admin pages
 import AdminLayout from './components/layout/AdminLayout';
-import AdminDashboard from './pages/admin/AdminDashboard';
-import AdminApplicationQueue from './pages/admin/AdminApplicationQueue';
-import AdminApplicationReview from './pages/admin/AdminApplicationReview';
-import AdminUsers from './pages/admin/AdminUsers';
-import AdminVenues from './pages/admin/AdminVenues';
-import AdminAnalytics from './pages/admin/AdminAnalytics';
-import AdminAudit from './pages/admin/AdminAudit';
-import AdminAssignment from './pages/admin/AdminAssignment';
-import AdminControlListEditor from './pages/admin/AdminControlListEditor';
-import AdminStage2Review from './pages/admin/AdminStage2Review';
-import OrganizerEventControls from './pages/organizer/OrganizerEventControls';
-import Incidents from './pages/incidents/Incidents';
+const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'));
+const AdminApplicationQueue = lazy(() => import('./pages/admin/AdminApplicationQueue'));
+const AdminApplicationReview = lazy(() => import('./pages/admin/AdminApplicationReview'));
+const AdminUsers = lazy(() => import('./pages/admin/AdminUsers'));
+const AdminVenues = lazy(() => import('./pages/admin/AdminVenues'));
+const AdminAnalytics = lazy(() => import('./pages/admin/AdminAnalytics'));
+const AdminAudit = lazy(() => import('./pages/admin/AdminAudit'));
+const AdminAssignment = lazy(() => import('./pages/admin/AdminAssignment'));
+const AdminControlListEditor = lazy(() => import('./pages/admin/AdminControlListEditor'));
+const AdminStage2Review = lazy(() => import('./pages/admin/AdminStage2Review'));
+const OrganizerEventControls = lazy(() => import('./pages/organizer/OrganizerEventControls'));
+const Incidents = lazy(() => import('./pages/incidents/Incidents'));
 
 function IncidentRouteEntry() {
   const { profile } = useAuth();
@@ -55,19 +59,23 @@ function IncidentRouteEntry() {
 export default function App() {
   const { loading } = useAuth();
 
-  if (loading) return <LoadingScreen />;
+  const { pathname } = useLocation();
+  const publicRoute = ['/', '/login', '/register', '/terms', '/reset-password', '/calendar'].includes(pathname) || pathname.startsWith('/events/');
+  if (loading && !publicRoute) return <LoadingScreen />;
 
   return (
-    <Routes>
+    <Suspense fallback={<LoadingScreen />}><Routes>
       {/* Public routes (no auth required) */}
       <Route path="/" element={<PublicHome />} />
+      <Route path="/terms" element={<TermsPage />} />
       <Route path="/calendar" element={<PublicCalendar />} />
       <Route path="/events/:eventId" element={<PublicEventDetail />} />
 
       {/* Auth routes */}
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/register" element={<RegisterPage />} />
-      <Route path="/dashboard-preview" element={<DashboardPreview />} />
+      <Route path="/dashboard-preview" element={import.meta.env.DEV ? <DashboardPreview /> : <Navigate to="/" replace />} />
       <Route path="/incidents" element={<ProtectedRoute><IncidentRouteEntry /></ProtectedRoute>} />
 
       {/* Organizer routes (auth + role=organizer) */}
@@ -78,6 +86,7 @@ export default function App() {
           </ProtectedRoute>
         }
       >
+        <Route path="/organizer/profile" element={<ProfilePage />} />
         <Route path="/organizer" element={<OrganizerDashboard />} />
         <Route path="/organizer/events/new" element={<TemplateRecommendationPage />} />
         <Route path="/organizer/events/new/details" element={<NewEvent />} />
@@ -133,6 +142,6 @@ export default function App() {
 
       {/* Fallback */}
       <Route path="*" element={<RoleAwareFallback />} />
-    </Routes>
+    </Routes></Suspense>
   );
 }

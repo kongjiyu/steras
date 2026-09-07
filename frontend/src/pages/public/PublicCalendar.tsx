@@ -48,7 +48,7 @@ export default function PublicCalendar() {
         <div className="max-w-3xl">
           <p className="text-xs font-bold uppercase text-[#8e6918]">Public event register</p>
           <h1 className="mt-2 font-display text-3xl font-bold text-[#20251d] sm:text-4xl">Approved tourism events</h1>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-[#696351]">Browse Malaysian tourism events that have completed the required authority review.</p>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-[#696351]">Browse Malaysian tourism events that have completed the required authority review. Latest event dates appear first.</p>
         </div>
 
         <section aria-label="Event filters" className="my-8 grid gap-3 border-y border-[#dcd0bb] py-5 md:grid-cols-[minmax(0,1fr)_13rem_12rem]">
@@ -67,7 +67,7 @@ export default function PublicCalendar() {
         </section>
 
         <div className="mb-6 flex items-center justify-between gap-4">
-          <p className="text-sm font-medium text-[#5d594c]">{loading ? 'Loading events...' : `${filtered.length} approved ${filtered.length === 1 ? 'event' : 'events'}`}</p>
+          <p className="text-sm font-medium text-[#5d594c]" role="status">{loading ? 'Loading events...' : error ? 'Event count unavailable' : `${filtered.length} approved ${filtered.length === 1 ? 'event' : 'events'}`}</p>
           {filtersActive && <button type="button" className="text-sm font-semibold text-[#52651c] hover:text-[#384611]" onClick={() => { setSearch(''); setEventType('all'); setMonth(''); }}>Clear filters</button>}
         </div>
 

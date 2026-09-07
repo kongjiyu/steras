@@ -17,6 +17,7 @@
     font-family: 'Source Sans 3', system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    scroll-behavior: smooth;
   }
 
   body {
@@ -273,3 +274,13 @@
     height: 0;
   }
 }
+
+/* UI feedback: restrained brand loading and consistent table alignment. */
+.steras-loader { display: flex; align-items: center; justify-content: center; gap: 8px; height: 52px; }
+.steras-loader span { width: 14px; height: 36px; border-radius: 6px; background: #4f6120; animation: steras-loading 1s ease-in-out infinite alternate; }
+.steras-loader span:nth-child(2) { background: #f0c340; animation-delay: .2s; }
+.steras-loader span:nth-child(3) { animation-delay: .4s; }
+@keyframes steras-loading { from { transform: scaleY(.4); opacity: .55; } to { transform: scaleY(1); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .steras-loader span { animation: none; } }
+thead th { vertical-align: bottom; }
+tbody td { vertical-align: top; }

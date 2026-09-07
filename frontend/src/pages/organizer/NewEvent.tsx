@@ -1,14 +1,17 @@
+import { extractionErrorMessage } from './extractionErrorMessage';
+import { documentMime } from '../../utils/documentMime';
+import EvidencePreview from '../../components/ui/EvidencePreview';
 import PageHeader from '../../components/ui/PageHeader';
 import { EVENT_TYPES, EventType, EventDetails, EventRiskProfile, M1_DOCUMENT_SCHEMA_VERSION, M1_EVIDENCE_MANIFEST_SCHEMA_VERSION, M1ApplicationRevisionSource, M1DocumentExtraction, M1DocumentRole, M1DraftDocument, M1EvidenceRequirementResponse, M1TemplateSelection, Venue } from '@shared/types';
 import { useEffect, useState, FormEvent, ChangeEvent } from 'react';
 import { collection, doc, getDoc, getDocs, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { getBlob, ref, uploadBytesResumable } from 'firebase/storage';
+import { ref, uploadBytesResumable } from 'firebase/storage';
 import { db, functions, isFirebaseConfigured, storage } from '../../config/firebase';
 import { COLLECTIONS } from '@shared/types';
 import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import OrganizerStatusBadge from './OrganizerStatusBadge';
 import { applyM1ExtractedFields, bindCanonicalVenue, completeRiskProfile, createInitialEventDetails, createM1DraftRecord, extractionMatchesDraftDocuments, findUniqueRegistryVenueMatch, isEditableApplicationStatus, isSelectableRegistryVenue, nextVersionId, reconcileM1EvidenceManifest, validateEventApplication, validateTemplateCompatibility } from './organizerApplication';
 import { mockVenues } from '../../mock_data/venues';
@@ -26,6 +29,12 @@ export default function NewEvent() {
   const navigate = useNavigate();
   const location = useLocation();
   const { eventId } = useParams<{ eventId: string }>();
+  const [editing, setEditing] = useState(false);
+  const [editSnapshot, setEditSnapshot] = useState<EventDetails>();
+  const [notice, setNotice] = useState('');
+  const [previewPath, setPreviewPath] = useState('');
+  const [savedDraft, setSavedDraft] = useState('');
+  const [manuallyEdited, setManuallyEdited] = useState(false);
   const [draftId, setDraftId] = useState(eventId ?? '');
   const [activeRevision, setActiveRevision] = useState<M1ApplicationRevisionSource>();
   const [currentVersionNumber, setCurrentVersionNumber] = useState(0);
@@ -56,6 +65,11 @@ export default function NewEvent() {
   const [evidenceManifest, setEvidenceManifest] = useState<M1EvidenceRequirementResponse[]>(() => templateSelection
     ? reconcileM1EvidenceManifest(templateSelection, form, [])
     : []);
+
+  useEffect(() => {
+    if (!profile) return;
+    setForm(current => ({ ...current, organizerName: profile.name, organizerEmail: profile.email, organizerPhone: profile.phone ?? '' }));
+  }, [profile, form.organizerName, form.organizerEmail, form.organizerPhone]);
 
   const update = <K extends keyof EventDetails>(key: K, value: EventDetails[K]) => {
     setValidationErrors([]);
@@ -99,12 +113,12 @@ export default function NewEvent() {
     if (!isFirebaseConfigured) {
       const event = findEventById(eventId);
       if (!event) {
-        toast.error('Event draft not found.');
+        setNotice('Event draft not found.');
         navigate('/organizer/events');
         return;
       }
       if (!isEditableApplicationStatus(event.status)) {
-        toast.error('Only draft or revision-requested applications can be edited.');
+        setNotice('Only draft or revision-requested applications can be edited.');
         navigate('/organizer/events');
         return;
       }
@@ -168,7 +182,7 @@ export default function NewEvent() {
         ));
       }
     }).catch((error) => {
-      toast.error(error instanceof Error ? error.message : 'Unable to load draft.');
+      setNotice(error instanceof Error ? error.message : 'Unable to load draft.');
       navigate('/organizer/events');
     }).finally(() => setLoading(false));
   }, [eventId, navigate]);
@@ -206,13 +220,14 @@ export default function NewEvent() {
   };
 
   const handleSaveDraft = async () => {
-    if (!isFirebaseConfigured) return toast.error('Firebase is not configured.');
+    if (!isFirebaseConfigured) return setNotice('Firebase is not configured.');
     setSaving(true);
     try {
-      await ensureDraft();
-      toast.success('Draft saved.');
+      const savedId = await ensureDraft();
+      setSavedDraft(savedId);
+      setNotice('Draft saved.');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Draft save failed.');
+      setNotice(error instanceof Error ? error.message : 'Draft save failed.');
     } finally {
       setSaving(false);
     }
@@ -224,11 +239,11 @@ export default function NewEvent() {
     const errors = validateEventApplication(form, documentPaths, templateSelection, draftDocuments, currentExtractionId, evidenceManifest);
     if (errors.length > 0) {
       setValidationErrors(errors);
-      toast.error(errors[0]);
+      setNotice(errors[0]);
       return;
     }
     if (!isFirebaseConfigured) {
-      toast.error('Firebase is not configured. Submission disabled.');
+      setNotice('Firebase is not configured. Submission disabled.');
       return;
     }
     setSubmitting(true);
@@ -240,7 +255,7 @@ export default function NewEvent() {
       navigate(`/organizer/events/${id}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Submission failed';
-      toast.error(msg);
+      setNotice(msg);
     } finally {
       setSubmitting(false);
     }
@@ -249,24 +264,24 @@ export default function NewEvent() {
   const handleFiles = async (event: ChangeEvent<HTMLInputElement>, role: M1DocumentRole, requirementId?: string) => {
     const files = [...(event.target.files ?? [])];
     if (files.length === 0) return;
-    if (files.length !== 1) return toast.error('Choose exactly one file.');
-    if (role === 'supporting_evidence' && !requirementId) return toast.error('Choose the checklist requirement for this evidence file.');
+    if (role !== 'supporting_evidence' && files.length !== 1) return setNotice('Choose exactly one application file.');
+    const detectedTypes: string[] = [];
+    try {
+      for (const file of files) {
+        if (!file.size || file.size > 10 * 1024 * 1024) return setNotice(`${file.name} must be a non-empty file no larger than 10 MB.`);
+        const detected = documentMime(new Uint8Array(await file.slice(0, 16).arrayBuffer()));
+        if (!detected || (file.type && file.type !== 'application/octet-stream' && file.type !== detected)) return setNotice(`${file.name}: the contents do not match a supported PDF, DOCX or image. Choose the original file.`);
+        if (role !== 'supporting_evidence' && ![PDF_MIME, DOCX_MIME].includes(detected)) return setNotice('Application templates must be PDF or DOCX. Images can be added as supporting evidence.');
+        detectedTypes.push(detected);
+      }
+    } catch { return setNotice('This file could not be read. Select it again from your device.'); }
     const applicationRoles = new Set<M1DocumentRole>(['core_template', 'scenario_template', 'combined_application']);
     const retained = role === 'supporting_evidence'
       ? draftDocuments
       : draftDocuments.filter((document) => role === 'combined_application'
         ? !applicationRoles.has(document.role)
         : document.role !== role && document.role !== 'combined_application');
-    if (retained.length + files.length > 20) return toast.error('Submit no more than 20 application documents.');
-    const allowedEvidenceTypes = new Set([PDF_MIME, DOCX_MIME, 'image/jpeg', 'image/png', 'image/webp']);
-    const invalid = files.find((file) => file.size === 0
-      || file.size > 10 * 1024 * 1024
-      || (role === 'supporting_evidence'
-        ? !allowedEvidenceTypes.has(normalizedUploadMime(file))
-        : !applicationDocumentMime(file)));
-    if (invalid) return toast.error(role === 'supporting_evidence'
-      ? `${invalid.name} must be a non-empty PDF, DOCX, JPEG, PNG, or WebP file no larger than 10 MB.`
-      : `${invalid.name} must be a non-empty PDF or DOCX file no larger than 10 MB.`);
+    if (retained.length + files.length > 20) return setNotice('Submit no more than 20 application documents.');
     setUploading(true);
     try {
       const id = await ensureDraft();
@@ -275,7 +290,7 @@ export default function NewEvent() {
         const file = files[index];
         const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-150) || 'document';
         const path = `event_documents/${id}/${editableVersionId}/${crypto.randomUUID()}-${safeName}`;
-        const mimeType = normalizedUploadMime(file);
+        const mimeType = detectedTypes[index];
         const task = uploadBytesResumable(ref(storage, path), file, { contentType: mimeType });
         await new Promise<void>((resolve, reject) => task.on('state_changed', (snapshot) => {
           const fileProgress = snapshot.bytesTransferred / snapshot.totalBytes;
@@ -292,14 +307,12 @@ export default function NewEvent() {
         });
       }
       let nextManifest = evidenceManifest;
-      let nextDocuments = [...retained, ...uploaded];
+      const nextDocuments = [...retained, ...uploaded];
       if (role === 'supporting_evidence' && requirementId) {
         const replacementPath = uploaded[0].path;
         nextManifest = evidenceManifest.map((response) => response.requirementId === requirementId
           ? { requirementId, applicability: 'required', documentPath: replacementPath }
           : response);
-        const referencedPaths = new Set(nextManifest.flatMap((response) => response.documentPath ? [response.documentPath] : []));
-        nextDocuments = nextDocuments.filter((document) => document.role !== 'supporting_evidence' || referencedPaths.has(document.path));
       }
       const structuredPaths = new Set(draftDocuments.map((document) => document.path));
       const unstructuredLegacyPaths = documentPaths.filter((path) => !structuredPaths.has(path));
@@ -319,9 +332,9 @@ export default function NewEvent() {
         setCurrentExtractionId('');
       }
       setValidationErrors([]);
-      toast.success(`${uploaded.length} document${uploaded.length === 1 ? '' : 's'} uploaded.`);
+      setNotice(`${uploaded.length} document${uploaded.length === 1 ? '' : 's'} uploaded. Select the matching evidence item below.`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Document upload failed.');
+      setNotice(error instanceof Error ? error.message : 'Document upload failed.');
     } finally {
       setUploading(false);
       setUploadProgress(0);
@@ -353,40 +366,28 @@ export default function NewEvent() {
         setCurrentExtractionId('');
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Unable to remove document.');
+      setNotice(error instanceof Error ? error.message : 'Unable to remove document.');
     }
   };
 
   const updateEvidenceResponse = (requirementId: string, response: M1EvidenceRequirementResponse) => {
     const nextManifest = evidenceManifest.map((item) => item.requirementId === requirementId ? response : item);
-    const referencedPaths = new Set(nextManifest.flatMap((item) => item.documentPath ? [item.documentPath] : []));
-    const nextDocuments = draftDocuments.filter((document) => document.role !== 'supporting_evidence' || referencedPaths.has(document.path));
     setEvidenceManifest(nextManifest);
-    setDraftDocuments(nextDocuments);
-    setDocumentPaths((current) => {
-      const removed = new Set(draftDocuments.filter((document) => !nextDocuments.includes(document)).map((document) => document.path));
-      return current.filter((path) => !removed.has(path));
-    });
     setValidationErrors([]);
   };
 
-  const viewDocument = async (path: string) => {
-    try {
-      const blob = await getBlob(ref(storage, path), 10 * 1024 * 1024);
-      const url = URL.createObjectURL(blob);
-      window.open(url, '_blank', 'noopener,noreferrer');
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Unable to open the evidence file.');
-    }
-  };
+  const viewDocument = (path: string) => setPreviewPath(path);
 
   const extractDocuments = async () => {
-    if (!draftId) return toast.error('Save the Draft before extracting documents.');
+    if (!draftId) return setNotice('Save the Draft before extracting documents.');
+    if (manuallyEdited && !window.confirm('Extract again and replace your edited details with the uploaded document?')) return;
+    setNotice('');
     setExtracting(true);
     try {
       const extract = httpsCallable<{ eventId: string }, M1DocumentExtraction>(functions, 'extractApplicationDocuments');
       const result = (await extract({ eventId: draftId })).data;
+      setEditing(false);
+      setManuallyEdited(false);
       setExtraction(result);
       setCurrentExtractionId(result.extractionId);
       setForm((current) => {
@@ -397,9 +398,9 @@ export default function NewEvent() {
         return selectedVenue ? bindCanonicalVenue(extracted, selectedVenue) : extracted;
       });
       setValidationErrors([]);
-      toast.success(`Auto-filled ${result.extractedFields.length} fields. Review all highlighted warnings before submission.`);
+      setNotice(`Auto-filled ${result.extractedFields.length} fields. Review all highlighted warnings before submission.`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Document extraction failed.');
+      setNotice(extractionErrorMessage(error));
     } finally {
       setExtracting(false);
     }
@@ -436,11 +437,14 @@ export default function NewEvent() {
     ...M1_CORE_TEMPLATE.supportingDocuments,
     ...(selectedScenario?.supportingDocuments ?? []),
   ].map((guidance) => [guidance.id, guidance]));
-  const completeEvidenceCount = evidenceDefinitions.filter((definition) => {
-    const response = evidenceManifest.find((item) => item.requirementId === definition.id);
-    return response?.applicability === 'required'
-      ? supportingUploads.some((document) => document.path === response.documentPath)
-      : response?.applicability === 'not_applicable' && (response.notApplicableReason?.trim().length ?? 0) >= 10;
+  const validNotApplicable = evidenceDefinitions.filter(definition => {
+    const response = evidenceManifest.find(item => item.requirementId === definition.id);
+    return !isM1EvidenceForcedRequired(definition, form.riskProfile) && response?.applicability === 'not_applicable' && (response.notApplicableReason?.trim().length ?? 0) >= 10;
+  });
+  const requiredEvidenceCount = evidenceDefinitions.length - validNotApplicable.length;
+  const completeEvidenceCount = evidenceDefinitions.filter(definition => {
+    const response = evidenceManifest.find(item => item.requirementId === definition.id);
+    return response?.applicability === 'required' && supportingUploads.some(document => document.path === response.documentPath);
   }).length;
 
   return (
@@ -450,6 +454,8 @@ export default function NewEvent() {
         description="Complete the operational details and supporting evidence used for the official category assessment and AI advisory explanation."
       />
 
+      <nav aria-label="Application progress" className="sticky top-[72px] z-20 mb-5 flex gap-4 overflow-x-auto border border-brand-200 bg-cream-50 p-4 text-sm font-semibold shadow-sm"><span>1. Templates</span><span aria-current={!currentExtractionId ? 'step' : undefined}>2. Upload &amp; extract</span><span aria-current={currentExtractionId ? 'step' : undefined}>3. Review &amp; evidence</span><span>4. Submit</span></nav>
+      {notice && <div role="status" className="mb-5 rounded-md border border-gold-300 bg-gold-50 p-4 text-sm">{notice}{savedDraft && notice === 'Draft saved.' && <Link className="ml-3 font-bold underline" to={`/organizer/events?status=Draft&highlight=${encodeURIComponent(savedDraft)}`}>View drafts</Link>}</div>}
       <section className={`mb-6 border ${templateSelection && !templateCompatibilityError ? 'border-brand-200 bg-brand-50' : 'border-gold-300 bg-gold-50'} p-4 sm:p-5`} aria-labelledby="template-choice-heading">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-3">
@@ -461,7 +467,7 @@ export default function NewEvent() {
               ) : selectedScenario ? (
                 <p className="mt-1 text-sm leading-5 text-ink-600">{M1_CORE_TEMPLATE.title} + {selectedScenario.title}</p>
               ) : (
-                <p className="mt-1 text-sm leading-5 text-ink-600">This legacy Draft is safe to edit, but you must choose a Core and scenario template before submission.</p>
+                <p className="mt-1 text-sm leading-5 text-ink-600">This draft was created with an earlier application format. Choose a Core and scenario template before submission.</p>
               )}
             </div>
           </div>
@@ -488,7 +494,7 @@ export default function NewEvent() {
         <div className="space-y-8 p-4 sm:p-6 lg:p-8">
           {validationErrors.length > 0 && (
             <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800" role="alert">
-              <p className="font-semibold">Review the application before submitting</p>
+              <p className="font-semibold">Required information is missing or needs correction</p>
               <ul className="mt-2 list-disc space-y-1 pl-5">
                 {validationErrors.map((error) => <li key={error}>{error}</li>)}
               </ul>
@@ -507,6 +513,44 @@ export default function NewEvent() {
             </div>
           )}
 
+          <fieldset className="space-y-5 border-t border-[#e3dacb] pt-8">
+            <legend className="section-title mb-2 pr-4">Completed application documents</legend>
+            <p className="text-sm leading-6 text-ink-500">Upload one combined, text-searchable PDF/DOCX, or upload the completed Core and recommended scenario as PDF/DOCX files separately. STERAS detects both template IDs and Field IDs before auto-filling this form.</p>
+            <TemplateUploadCard label="Combined Core + scenario application" document={combinedUpload} uploading={uploading} onChange={(event) => handleFiles(event, 'combined_application')} onRemove={removeDocument} onView={viewDocument} />
+            <div className="flex items-center gap-3 text-xs font-bold uppercase tracking-[0.08em] text-ink-400"><span className="h-px flex-1 bg-[#e3dacb]" /><span>or upload separately</span><span className="h-px flex-1 bg-[#e3dacb]" /></div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <TemplateUploadCard label="Core application PDF or DOCX" document={coreUpload} uploading={uploading} onChange={(event) => handleFiles(event, 'core_template')} onRemove={removeDocument} onView={viewDocument} />
+              <TemplateUploadCard label="Scenario-specific PDF or DOCX" document={scenarioUpload} uploading={uploading} onChange={(event) => handleFiles(event, 'scenario_template')} onRemove={removeDocument} onView={viewDocument} />
+            </div>
+            {uploading && <div className="h-1.5 overflow-hidden rounded bg-cream-200"><div className="h-full bg-brand-600 transition-transform" style={{ transform: `scaleX(${uploadProgress / 100})`, transformOrigin: 'left' }} /></div>}
+            <button type="button" className="btn-primary" disabled={(!combinedUpload && (!coreUpload || !scenarioUpload)) || uploading || extracting} onClick={extractDocuments}>
+              <Sparkles size={16} className={extracting ? 'animate-pulse motion-reduce:animate-none' : ''} />{extracting ? 'Extracting documents…' : 'Extract and auto-fill'}
+            </button>
+            {extraction && (
+              <div className="sticky top-[140px] z-10 rounded-lg border border-brand-200 bg-brand-50 p-4 shadow-sm" role="status">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div><p className="font-semibold text-ink-900">Auto-fill review</p><p className="mt-1 text-sm text-ink-600">{extraction.extractedFields.length} fields populated from {extraction.rawFieldIds.length} recognised Field IDs.</p></div>
+                  <span className="badge bg-white text-brand-700">{extraction.completionPercent}% extracted</span>
+                </div>
+                <div className="mt-3 h-2 overflow-hidden rounded-full bg-white"><div className="h-full rounded-full bg-brand-600" style={{ width: `${extraction.completionPercent}%` }} /></div>
+                {extraction.warnings.length > 0 && <div className="mt-4 rounded-md border border-gold-300 bg-gold-50 p-3 text-sm text-gold-700"><p className="font-semibold">Check missing or uncertain responses</p><p className="mt-1">{extraction.warnings.length} item(s) need checking against your uploaded templates.</p><details className="mt-2"><summary className="cursor-pointer font-semibold">Show items to check</summary><ul className="mt-2 list-disc space-y-1 pl-5">{extraction.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></details></div>}
+                <div className="mt-4 flex gap-3 overflow-x-auto pb-1" aria-label="Auto-filled fields by section">
+                  {groupExtractedFields(extraction).map((group) => <div key={group.label} className="min-w-[15rem] rounded-md border border-[#dce3c6] bg-white p-3"><p className="text-xs font-bold uppercase tracking-[0.06em] text-brand-700">{group.label}</p><p className="mt-2 text-sm text-ink-700">{group.count} field{group.count === 1 ? '' : 's'} filled</p></div>)}
+                </div>
+                <p className="mt-3 text-xs text-ink-500">Compare these details with your uploaded documents. Select Edit details only if something needs correcting.</p>
+              </div>
+            )}
+          </fieldset>
+
+          <section aria-labelledby="application-details-heading">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div><h2 id="application-details-heading" className="section-title">Application details</h2><p className="mt-1 text-sm text-ink-500">Upload and extract your completed templates above. Review the details below; edit only when a correction is needed.</p></div>
+              {!editing ? <button type="button" className="btn-secondary" onClick={() => { setEditSnapshot(structuredClone(form)); setEditing(true); }}>Edit details</button> : <div className="flex gap-2"><button type="button" className="btn-secondary" onClick={() => { if (editSnapshot) setForm(editSnapshot); setEditing(false); }}>Cancel edits</button><button type="button" className="btn-primary" onClick={() => { setEditing(false); setManuallyEdited(true); }}>Save details</button></div>}
+            </div>
+            {!editing && <dl className="grid gap-4 rounded-lg bg-cream-50 p-5 sm:grid-cols-2">{[
+              ['Event', form.name], ['Type', form.type], ['Venue', form.venueName], ['Address', form.venueAddress], ['State', form.venueState], ['Attendance / capacity', `${form.expectedAttendance || '—'} / ${form.venueCapacity || '—'}`], ['Starts', form.startDatetime ? new Date(form.startDatetime).toLocaleString() : '—'], ['Ends', form.endDatetime ? new Date(form.endDatetime).toLocaleString() : '—'], ['Environment', form.environment], ['Coverage / seating', `${form.coverage} / ${form.seating}`], ['Coordinates', `${form.venueLocation?.lat ?? '—'}, ${form.venueLocation?.lng ?? '—'}`], ['Description', form.description], ['Emergency plan', form.emergencyPlanSummary], ...Object.entries(form.riskProfile ?? {}).filter(([, value]) => typeof value === 'number').map(([key, value]) => [key.replace(/([A-Z])/g, ' $1'), String(value)]), ['Safety declarations', RISK_PROFILE_OPTIONS.filter(option => form.riskProfile?.[option.key]).map(option => option.label).join(', ') || 'No declarations extracted'],
+            ].map(([label, value]) => <div key={label}><dt className="text-xs font-semibold text-ink-500">{label}</dt><dd className="mt-1 whitespace-pre-wrap text-sm text-ink-900">{value || 'Not provided'}</dd></div>)}</dl>}
+            <fieldset hidden={!editing} disabled={!editing || extracting} className="space-y-8">
           <fieldset className="space-y-5">
             <legend className="section-title mb-5">Event and venue</legend>
 
@@ -517,7 +561,7 @@ export default function NewEvent() {
               </div>
               <div>
                 <label htmlFor="event-type" className="field-label">Event type *</label>
-                <select id="event-type" className="input mt-1" value={form.type} onChange={(e) => update('type', e.target.value as EventType)}>
+                <select id="event-type" disabled title="Event type follows the selected template scenario. Change templates before uploading to choose a different scenario." className="input mt-1" value={form.type} onChange={(e) => update('type', e.target.value as EventType)}>
                   {EVENT_TYPES.map((t) => (
                     <option key={t.value} value={t.value}>{t.label}</option>
                   ))}
@@ -633,9 +677,9 @@ export default function NewEvent() {
           </fieldset>
 
           <fieldset className="space-y-4 border-t border-[#e3dacb] pt-8">
-            <legend className="section-title mb-2 pr-4">All-hazards profile</legend>
+            <legend className="section-title mb-2 pr-4">Event safety details</legend>
             <p className="text-sm leading-6 text-ink-500">
-              Declared controls are recorded as evidence but do not reduce residual risk until an authority or trusted registry verifies them.
+              These details describe the crowd, venue and planned activities. They are extracted from your templates and help reviewers assess event safety.
             </p>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {RISK_PROFILE_OPTIONS.map(({ key, label }) => (
@@ -665,42 +709,17 @@ export default function NewEvent() {
             </div>
           </fieldset>
 
-          <fieldset className="space-y-5 border-t border-[#e3dacb] pt-8">
-            <legend className="section-title mb-2 pr-4">Completed application documents</legend>
-            <p className="text-sm leading-6 text-ink-500">Upload one combined, text-searchable PDF/DOCX, or upload the completed Core and recommended scenario as PDF/DOCX files separately. STERAS detects both template IDs and Field IDs before auto-filling this form.</p>
-            <TemplateUploadCard label="Combined Core + scenario application" document={combinedUpload} uploading={uploading} onChange={(event) => handleFiles(event, 'combined_application')} onRemove={removeDocument} />
-            <div className="flex items-center gap-3 text-xs font-bold uppercase tracking-[0.08em] text-ink-400"><span className="h-px flex-1 bg-[#e3dacb]" /><span>or upload separately</span><span className="h-px flex-1 bg-[#e3dacb]" /></div>
-            <div className="grid gap-4 md:grid-cols-2">
-              <TemplateUploadCard label="Core application PDF or DOCX" document={coreUpload} uploading={uploading} onChange={(event) => handleFiles(event, 'core_template')} onRemove={removeDocument} />
-              <TemplateUploadCard label="Scenario-specific PDF or DOCX" document={scenarioUpload} uploading={uploading} onChange={(event) => handleFiles(event, 'scenario_template')} onRemove={removeDocument} />
-            </div>
-            {uploading && <div className="h-1.5 overflow-hidden rounded bg-cream-200"><div className="h-full bg-brand-600 transition-transform" style={{ transform: `scaleX(${uploadProgress / 100})`, transformOrigin: 'left' }} /></div>}
-            <button type="button" className="btn-primary" disabled={(!combinedUpload && (!coreUpload || !scenarioUpload)) || uploading || extracting} onClick={extractDocuments}>
-              <Sparkles size={16} />{extracting ? 'Extracting documents…' : 'Extract and auto-fill'}
-            </button>
-            {extraction && (
-              <div className="rounded-lg border border-brand-200 bg-brand-50 p-4" role="status">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div><p className="font-semibold text-ink-900">Auto-fill review</p><p className="mt-1 text-sm text-ink-600">{extraction.extractedFields.length} fields populated from {extraction.rawFieldIds.length} recognised Field IDs.</p></div>
-                  <span className="badge bg-white text-brand-700">{extraction.completionPercent}% extracted</span>
-                </div>
-                <div className="mt-3 h-2 overflow-hidden rounded-full bg-white"><div className="h-full rounded-full bg-brand-600" style={{ width: `${extraction.completionPercent}%` }} /></div>
-                {extraction.warnings.length > 0 && <div className="mt-4 rounded-md border border-gold-300 bg-gold-50 p-3 text-sm text-gold-700"><p className="font-semibold">Check missing or uncertain responses</p><ul className="mt-2 list-disc space-y-1 pl-5">{extraction.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
-                <div className="mt-4 flex gap-3 overflow-x-auto pb-1" aria-label="Auto-filled fields by section">
-                  {groupExtractedFields(extraction).map((group) => <div key={group.label} className="min-w-[15rem] rounded-md border border-[#dce3c6] bg-white p-3"><p className="text-xs font-bold uppercase tracking-[0.06em] text-brand-700">{group.label}</p><p className="mt-2 text-sm text-ink-700">{group.count} field{group.count === 1 ? '' : 's'} filled</p></div>)}
-                </div>
-                <p className="mt-3 text-xs text-ink-500">The form remains editable. Compare every auto-filled value with the uploaded application document(s) before submitting.</p>
-              </div>
-            )}
-          </fieldset>
+            </fieldset>
+          </section>
 
           <fieldset className="space-y-4 border-t border-[#e3dacb] pt-8">
             <legend className="section-title mb-2 pr-4">Supporting evidence</legend>
             <p className="text-sm leading-6 text-ink-500">Complete every Core and scenario checklist item. A current PDF, DOCX, or image can support more than one requirement; conditional items need either evidence or a clear not-applicable reason.</p>
-            <div className="rounded-lg border border-brand-200 bg-brand-50 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2"><p className="font-semibold text-ink-900">Evidence completeness</p><span className="badge bg-white text-brand-700">{completeEvidenceCount} / {evidenceDefinitions.length} complete</span></div>
-              <div className="mt-3 h-2 overflow-hidden rounded-full bg-white"><div className="h-full rounded-full bg-brand-600" style={{ width: `${evidenceDefinitions.length ? Math.round((completeEvidenceCount / evidenceDefinitions.length) * 100) : 0}%` }} /></div>
+            <div className="sticky top-[140px] z-10 rounded-lg border border-brand-200 bg-brand-50 p-4 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2"><p className="font-semibold text-ink-900">Evidence completeness</p><span className="badge bg-white text-brand-700">{completeEvidenceCount} / {requiredEvidenceCount} evidence items linked · {validNotApplicable.length} not applicable</span></div>
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-white"><div className="h-full rounded-full bg-brand-600" style={{ width: `${requiredEvidenceCount ? Math.round((completeEvidenceCount / requiredEvidenceCount) * 100) : 100}%` }} /></div>
             </div>
+            <div className="rounded-lg border border-cream-200 p-4"><p className="text-sm text-ink-600">Upload supporting files together, then select the matching file for each requirement below. Check the document contents; filenames alone do not prove that evidence is correct.</p><label className="btn-secondary mt-3 cursor-pointer">Upload supporting files<input type="file" multiple accept=".pdf,.docx,.jpg,.jpeg,.png,.webp" disabled={uploading} onChange={event => handleFiles(event, 'supporting_evidence')} className="sr-only" /></label><ul className="mt-3 space-y-2">{supportingUploads.map(file => <li key={file.path} className="flex flex-wrap items-center justify-between gap-2 text-sm"><span className="break-all">{file.originalName}</span><div><button type="button" className="btn-secondary" onClick={() => viewDocument(file.path)}>View</button><button type="button" className="btn-secondary ml-2" onClick={() => removeDocument(file.path)}>Remove</button></div></li>)}</ul></div>
             <div className="space-y-4">
               {evidenceDefinitions.map((definition) => {
                 const guidance = evidenceGuidance.get(definition.id);
@@ -726,23 +745,23 @@ export default function NewEvent() {
               })}
             </div>
             {uploading && <div className="h-1.5 overflow-hidden rounded bg-cream-200"><div className="h-full bg-brand-600 transition-transform" style={{ transform: `scaleX(${uploadProgress / 100})`, transformOrigin: 'left' }} /></div>}
-            {legacySupportingPaths.length > 0 && <div className="rounded-md border border-gold-200 bg-gold-50 p-3"><p className="text-xs font-semibold text-gold-700">Files uploaded before structured document roles were introduced</p><ul className="mt-2 divide-y divide-gold-200">{legacySupportingPaths.map((path) => <li key={path} className="flex items-center justify-between gap-3 py-2 text-sm"><span className="min-w-0 truncate">{legacyDocumentName(path)}</span><div className="flex"><button type="button" onClick={() => viewDocument(path)} className="min-h-11 px-2 font-semibold text-brand-700">View</button><button type="button" onClick={() => removeDocument(path)} className="min-h-11 px-2 font-semibold text-red-700">Remove</button></div></li>)}</ul></div>}
+            {legacySupportingPaths.length > 0 && <div className="rounded-md border border-gold-200 bg-gold-50 p-3"><p className="text-xs font-semibold text-gold-700">Previously uploaded supporting files</p><ul className="mt-2 divide-y divide-gold-200">{legacySupportingPaths.map((path) => <li key={path} className="flex items-center justify-between gap-3 py-2 text-sm"><span className="min-w-0 truncate">{legacyDocumentName(path)}</span><div className="flex"><button type="button" onClick={() => viewDocument(path)} className="min-h-11 px-2 font-semibold text-brand-700">View</button><button type="button" onClick={() => removeDocument(path)} className="min-h-11 px-2 font-semibold text-red-700">Remove</button></div></li>)}</ul></div>}
           </fieldset>
 
           <fieldset className="space-y-4 border-t border-[#e3dacb] pt-8">
-            <legend className="section-title mb-2 pr-4">Organizer contact</legend>
+            <legend className="section-title mb-2 pr-4">Organizer contact</legend><p className="text-sm text-ink-500">These details are linked to your account. <Link className="font-semibold text-brand-700 underline" to="/organizer/profile">Edit profile</Link> to update them.</p>
             <div className="grid gap-4 sm:grid-cols-3">
               <div>
                 <label htmlFor="organizer-name" className="field-label">Organizer name *</label>
-                <input id="organizer-name" className="input mt-1" required value={form.organizerName} onChange={(e) => update('organizerName', e.target.value)} />
+                <input id="organizer-name" className="input mt-1" required value={form.organizerName} readOnly />
               </div>
               <div>
                 <label htmlFor="organizer-email" className="field-label">Email *</label>
-                <input id="organizer-email" type="email" className="input mt-1" required value={form.organizerEmail} onChange={(e) => update('organizerEmail', e.target.value)} />
+                <input id="organizer-email" type="email" className="input mt-1" required value={form.organizerEmail} readOnly />
               </div>
               <div>
                 <label htmlFor="organizer-phone" className="field-label">Phone *</label>
-                <input id="organizer-phone" type="tel" className="input mt-1" required value={form.organizerPhone} onChange={(e) => update('organizerPhone', e.target.value)} />
+                <input id="organizer-phone" type="tel" className="input mt-1" required value={form.organizerPhone} readOnly />
               </div>
             </div>
           </fieldset>
@@ -750,12 +769,13 @@ export default function NewEvent() {
           <div className="sticky bottom-20 z-10 -mx-4 flex flex-wrap justify-end gap-2 border-t border-[#d8cebd] bg-[#fffdf8]/95 px-4 pb-1 pt-4 backdrop-blur-sm sm:static sm:mx-0 sm:px-0 md:bottom-0">
             <button type="button" className="btn-secondary" onClick={() => navigate(-1)}>Cancel</button>
             <button type="button" disabled={saving || submitting || uploading} className="btn-secondary" onClick={handleSaveDraft}>{saving ? 'Saving...' : 'Save draft'}</button>
-            <button type="submit" disabled={submitting || saving || uploading} className="btn-primary">
+            <button type="submit" disabled={submitting || saving || uploading || extracting || editing} className="btn-primary">
               {submitting ? 'Submitting…' : activeRevision ? 'Submit new version' : 'Submit application'}
             </button>
           </div>
         </div>
       </form>
+      {previewPath && <EvidencePreview path={previewPath} onClose={() => setPreviewPath('')} />}
 
     </div>
   );
@@ -770,31 +790,22 @@ function legacyDocumentName(path: string): string {
   }
 }
 
-function TemplateUploadCard({ label, document, uploading, onChange, onRemove }: {
+function TemplateUploadCard({ label, document, uploading, onChange, onRemove, onView }: {
   label: string;
   document?: M1DraftDocument;
   uploading: boolean;
   onChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onRemove: (path: string) => void;
+  onView: (path: string) => void;
 }) {
   return <div className={`rounded-lg border p-4 ${document ? 'border-brand-200 bg-brand-50' : 'border-[#ded5c5] bg-cream-50'}`}>
     <div className="flex items-start gap-3"><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${document ? 'bg-brand-700 text-white' : 'bg-cream-200 text-ink-500'}`}>{document ? <FileCheck2 size={17} /> : <FileText size={17} />}</span><div className="min-w-0"><p className="text-sm font-semibold text-ink-900">{label}</p><p className="mt-1 truncate text-xs text-ink-500">{document?.originalName ?? 'No completed file uploaded'}</p></div></div>
     <div className="mt-4 flex flex-wrap gap-2">
       <label className="btn-secondary cursor-pointer"><span>{document ? 'Replace PDF/DOCX' : 'Upload PDF/DOCX'}</span><input type="file" accept={APPLICATION_DOCUMENT_ACCEPT} disabled={uploading} onChange={onChange} className="sr-only" /></label>
+      {document && <button type="button" className="btn-secondary" onClick={() => onView(document.path)}>View</button>}
       {document && <button type="button" className="min-h-11 px-3 text-sm font-semibold text-red-700" onClick={() => onRemove(document.path)}>Remove</button>}
     </div>
   </div>;
-}
-
-function applicationDocumentMime(file: File): string | undefined {
-  const lowerName = file.name.toLocaleLowerCase();
-  if ((file.type === PDF_MIME || file.type === '') && lowerName.endsWith('.pdf')) return PDF_MIME;
-  if ((file.type === DOCX_MIME || file.type === '') && lowerName.endsWith('.docx')) return DOCX_MIME;
-  return undefined;
-}
-
-function normalizedUploadMime(file: File): string {
-  return applicationDocumentMime(file) ?? file.type;
 }
 
 function groupExtractedFields(extraction: M1DocumentExtraction): Array<{ label: string; count: number }> {

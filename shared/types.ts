@@ -27,6 +27,9 @@ export const RESOURCE_OVERRIDE_REASON_CATEGORIES = [
 export type ResourceOverrideReasonCategory = typeof RESOURCE_OVERRIDE_REASON_CATEGORIES[number];
 
 export interface UserProfile {
+  termsVersion?: string;
+  termsAcceptedAt?: number;
+  onboardingCompleted?: boolean;
   uid: string;
   name: string;
   email: string;
@@ -1692,6 +1695,7 @@ export interface Assignment {
  *  M3 listens (Q4) and updates the control's `label` via the
  *  `onM4ReportOutcome` trigger. */
 export interface PublicReport {
+  withdrawnAt?: number;
   ticketId: string;
   eventId: string;
   controlId: string;

@@ -32,7 +32,8 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
         navSections={ADMIN_NAV}
         workspaceLabel="Admin workspace"
         userRoleSuffix="administrator"
-        onSignOut={async () => { await signOut(); navigate('/login', { replace: true }); }}
+        onSignOut={async () => { if (!window.confirm('Sign out of STERAS? Unsaved changes will be lost.')) return;
+    await signOut(); navigate('/login', { replace: true }); }}
       />
       <div id="admin-content" tabIndex={-1} className="flex min-w-0 flex-1 flex-col">
         {children ?? <Outlet />}

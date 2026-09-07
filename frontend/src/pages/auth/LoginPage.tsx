@@ -1,3 +1,4 @@
+import { ADMIN_CONTACT_EMAIL } from '@shared/accountValidation';
 import { FormEvent, useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -13,14 +14,18 @@ export default function LoginPage() {
   const location = useLocation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const existingSessionHome = user ? getRoleHome(profile?.role) : null;
 
   const handleSignOut = async () => {
+    if (!window.confirm('Sign out of STERAS?')) return;
     setSigningOut(true);
     try {
       await signOut();
+    } catch (error) {
+      toast.error(authErrorMessage(error));
     } finally {
       setSigningOut(false);
     }
@@ -28,6 +33,7 @@ export default function LoginPage() {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    setError('');
     const requestedRoute = (location.state as { from?: ReturnLocation } | null)?.from;
     setSubmitting(true);
     try {
@@ -37,10 +43,10 @@ export default function LoginPage() {
         await signOut();
         throw new Error('This account does not have a valid STERAS workspace profile. Contact the project administrator.');
       }
-      toast.success('Signed in.');
+      sessionStorage.setItem('steras-signed-in', 'true');
       navigate(destination, { replace: true });
     } catch (err) {
-      toast.error(authErrorMessage(err));
+      setError(authErrorMessage(err));
       setSubmitting(false);
     }
   };
@@ -140,11 +146,12 @@ export default function LoginPage() {
                 placeholder="••••••••"
               />
             </div>
+            {error && <p role="alert" className="rounded bg-red-50 p-3 text-sm text-red-700">{error}</p>}
             <button type="submit" disabled={submitting || !configured} className="btn-primary w-full">
               {submitting ? 'Signing in…' : 'Sign in'}
             </button>
             <p className="text-center text-sm leading-6 text-ink-600">
-              Forgot your password? Contact a STERAS administrator to receive a temporary password.
+              <Link to="/reset-password" className="font-semibold text-brand-700 underline">Forgot your password?</Link><br />Need account help? Email <a className="underline" href={`mailto:${ADMIN_CONTACT_EMAIL}`}>{ADMIN_CONTACT_EMAIL}</a>.
             </p>
           </form>
 

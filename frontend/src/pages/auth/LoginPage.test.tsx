@@ -38,7 +38,7 @@ describe('LoginPage', () => {
     expect(logoLinks.every((link) => link.getAttribute('href') === '/')).toBe(true);
   });
 
-  it('directs users with a forgotten password to an administrator', () => {
+  it('links forgotten passwords to email recovery', () => {
     render(
       <MemoryRouter initialEntries={['/login']}>
         <Routes>
@@ -47,7 +47,7 @@ describe('LoginPage', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText(/Contact a STERAS administrator to receive a temporary password/i)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Forgot your password/i })).toHaveAttribute('href', '/reset-password');
     expect(screen.queryByRole('button', { name: /Forgot password/i })).not.toBeInTheDocument();
   });
 

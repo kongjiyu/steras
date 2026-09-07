@@ -204,10 +204,10 @@ export default function TemplateRecommendationPage() {
             <section aria-labelledby="documents-heading" className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.1em] text-gold-600">Prepare before applying</p>
-                <h2 id="documents-heading" className="mt-1 text-xl font-bold">Scenario-based supporting documents</h2>
-                <p className="mt-2 max-w-[70ch] text-sm leading-6 text-ink-500">These are additional to the nine Core supporting documents. Conditional items only become required when the matching activity or risk applies to your event.</p>
+                <h2 id="documents-heading" className="mt-1 text-xl font-bold">Core and scenario supporting documents</h2>
+                <p className="mt-2 max-w-[70ch] text-sm leading-6 text-ink-500">This checklist includes the Core documents and the selected scenario requirements. Conditional items only become required when the matching activity or risk applies to your event.</p>
                 <ul className="mt-5 divide-y divide-[#e3dacb] border-y border-[#d8cebd]">
-                  {scenario.supportingDocuments.map((document) => (
+                  {[...M1_CORE_TEMPLATE.supportingDocuments, ...scenario.supportingDocuments].map((document) => (
                     <li key={document.id} className="grid gap-2 py-4 sm:grid-cols-[8rem_1fr] sm:gap-4">
                       <span className="text-xs font-bold tracking-wide text-brand-700">{document.id}</span>
                       <span><span className="block font-semibold text-ink-800">{document.title}</span><span className="mt-1 block text-sm leading-5 text-ink-500">{document.condition}</span></span>

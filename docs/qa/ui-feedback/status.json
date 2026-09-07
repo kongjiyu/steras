@@ -1,0 +1,478 @@
+[
+  {
+    "id": "UI-001",
+    "issue": "Initial loading appearance",
+    "solution": "Brand green/gold loading animation with Loading STERAS text. Exact external loader source was blocked by Cloudflare; this is an original alternative, not a pixel-identical reproduction.",
+    "status": "Alternative implemented · visual review",
+    "evidence": "Figure N: original green/gold loader alternative"
+  },
+  {
+    "id": "UI-002",
+    "issue": "Slow initial load",
+    "solution": "Split route bundles and show the public page independently of account profile loading.",
+    "status": "Implemented locally · automated checks passed",
+    "evidence": "Production build separates routes; initial application entry about 83 kB before gzip, Firebase vendor cached separately. No fabricated network latency claim."
+  },
+  {
+    "id": "UI-003",
+    "issue": "Back to top",
+    "solution": "Show a return-to-top action from section two onward.",
+    "status": "Local browser verified",
+    "evidence": "Figures A–B: landing journey and benefits"
+  },
+  {
+    "id": "UI-004",
+    "issue": "Journey curve and circles",
+    "solution": "Remove connecting curves/circles; use simple numbered desktop steps.",
+    "status": "Local browser verified",
+    "evidence": "Figures A–B: landing journey and benefits"
+  },
+  {
+    "id": "UI-005",
+    "issue": "Excess margins and alignment",
+    "solution": "Reduce decorative whitespace and align section content.",
+    "status": "Local browser verified",
+    "evidence": "Figures A–B: landing journey and benefits"
+  },
+  {
+    "id": "UI-006",
+    "issue": "Background lines",
+    "solution": "Remove decorative lines and rings; retain functional borders.",
+    "status": "Local browser verified",
+    "evidence": "Figures A–B: landing journey and benefits"
+  },
+  {
+    "id": "UI-007",
+    "issue": "Repeated landing sections",
+    "solution": "Separate application steps from system benefits.",
+    "status": "Local browser verified",
+    "evidence": "Figures A–B: landing journey and benefits"
+  },
+  {
+    "id": "UI-008",
+    "issue": "More card information",
+    "solution": "Selectable benefit cards with a related visual and explanation.",
+    "status": "Local browser verified",
+    "evidence": "Figures A–B: landing journey and benefits"
+  },
+  {
+    "id": "UI-009",
+    "issue": "Extra audit badge and lower spacing",
+    "solution": "Remove the isolated audit-trail badge beneath the benefits section and reduce decorative spacing.",
+    "status": "Local browser verified",
+    "evidence": "Figures A–B: landing journey and benefits"
+  },
+  {
+    "id": "UI-010",
+    "issue": "Isolated lock icon",
+    "solution": "Remove the floating decorative lock; retain clear privacy text.",
+    "status": "Local browser verified",
+    "evidence": "Figures A–B: landing journey and benefits"
+  },
+  {
+    "id": "UI-011",
+    "issue": "Contact administrator",
+    "solution": "Show configured admin email with a mailto link; demo mailbox delivery is unverified.",
+    "status": "Local browser + auth tests verified",
+    "evidence": "Figure O: sign-in form and administrator contact"
+  },
+  {
+    "id": "UI-012",
+    "issue": "Login error placement",
+    "solution": "Show errors near the form action and relevant fields.",
+    "status": "Local browser + auth tests verified",
+    "evidence": "Figure O: sign-in form and administrator contact"
+  },
+  {
+    "id": "UI-013",
+    "issue": "Same auth images",
+    "solution": "Use distinct sign-in and registration visuals.",
+    "status": "Local browser + auth tests verified",
+    "evidence": "Figures C–D: authentication and validation"
+  },
+  {
+    "id": "UI-014",
+    "issue": "Organiser reminder",
+    "solution": "Label the submit button Create organiser account and repeat the role reminder.",
+    "status": "Local browser + auth tests verified",
+    "evidence": "Figures C–D: authentication and validation"
+  },
+  {
+    "id": "UI-015",
+    "issue": "Terms and Conditions",
+    "solution": "Add an English project-specific terms page, consent checkbox and recorded version/time.",
+    "status": "T&C draft implemented · wording for review",
+    "evidence": "Full English draft follows the gallery; consent and version are recorded at signup"
+  },
+  {
+    "id": "UI-016",
+    "issue": "Numeric registration name",
+    "solution": "Reject numeric-only names; accept Unicode names and normal name punctuation.",
+    "status": "Local browser + auth tests verified",
+    "evidence": "Figures C–D: authentication and validation"
+  },
+  {
+    "id": "UI-017",
+    "issue": "Password rules",
+    "solution": "Eight-character minimum with uppercase, lowercase, number and symbol checklist.",
+    "status": "Local browser + auth tests verified",
+    "evidence": "Figures C–D: authentication and validation"
+  },
+  {
+    "id": "UI-018",
+    "issue": "Optional phone",
+    "solution": "Require and normalize phone numbers.",
+    "status": "Local browser + auth tests verified",
+    "evidence": "Figures C–D: authentication and validation"
+  },
+  {
+    "id": "UI-019",
+    "issue": "Signup error and missing reset link",
+    "solution": "Inline error and direct reset-password entry.",
+    "status": "Local browser + auth tests verified",
+    "evidence": "Figures C–D: authentication and validation"
+  },
+  {
+    "id": "UI-020",
+    "issue": "Password reset email",
+    "solution": "Use Firebase email reset and its hosted reset flow; real mailbox demo remains separate.",
+    "status": "Local tests passed · real inbox demo pending",
+    "evidence": "Figure E: Firebase email reset"
+  },
+  {
+    "id": "UI-021",
+    "issue": "Small login success toast",
+    "solution": "Show a clear in-page welcome state.",
+    "status": "Emulator browser verified",
+    "evidence": "Figures F–G: dashboard, guide and profile"
+  },
+  {
+    "id": "UI-022",
+    "issue": "First-use guide",
+    "solution": "Skippable, replayable guide with per-account completion.",
+    "status": "Emulator browser verified",
+    "evidence": "Figures F–G: dashboard, guide and profile"
+  },
+  {
+    "id": "UI-023",
+    "issue": "Welcome start screen",
+    "solution": "First-use welcome with Start and Skip actions.",
+    "status": "Emulator browser verified",
+    "evidence": "Figures F–G: dashboard, guide and profile"
+  },
+  {
+    "id": "UI-024",
+    "issue": "Profile editing",
+    "solution": "Allow name/phone updates and link to email password reset.",
+    "status": "Emulator browser verified",
+    "evidence": "Figures F–G: dashboard, guide and profile"
+  },
+  {
+    "id": "UI-025",
+    "issue": "Immediate sign out",
+    "solution": "Ask for confirmation and explain unsaved changes.",
+    "status": "Emulator browser verified",
+    "evidence": "Figures F–G: dashboard, guide and profile"
+  },
+  {
+    "id": "UI-026",
+    "issue": "Dashboard background lines",
+    "solution": "Remove diagonal decorative lines.",
+    "status": "Emulator browser verified",
+    "evidence": "Figures F–G: dashboard, guide and profile"
+  },
+  {
+    "id": "UI-027",
+    "issue": "Evidence first side panel",
+    "solution": "Remove the redundant panel and widen the primary action.",
+    "status": "Emulator browser verified",
+    "evidence": "Figure F1: widened dashboard without Evidence first panel"
+  },
+  {
+    "id": "UI-028",
+    "issue": "Read/unread notifications",
+    "solution": "Use real notifications and persistent All/Unread/Read state.",
+    "status": "Implemented locally · automated checks passed",
+    "evidence": "Real notifications with All / Read / Unread, persistent read action and retry state"
+  },
+  {
+    "id": "UI-029",
+    "issue": "Persistent application progress",
+    "solution": "Sticky progress navigation throughout preparation.",
+    "status": "Emulator browser verified",
+    "evidence": "Figures H–I: upload, review, evidence and drafts"
+  },
+  {
+    "id": "UI-030",
+    "issue": "Missing Core supporting list",
+    "solution": "Show Core and scenario requirements together.",
+    "status": "Implemented locally · automated checks passed",
+    "evidence": "Verification notes below"
+  },
+  {
+    "id": "UI-031",
+    "issue": "Upload below long form",
+    "solution": "Move upload/extraction before application details.",
+    "status": "Emulator browser verified",
+    "evidence": "Figures H–I: upload, review, evidence and drafts"
+  },
+  {
+    "id": "UI-032",
+    "issue": "Repeated manual entry",
+    "solution": "Show extracted read-only details; edit only when requested.",
+    "status": "Emulator browser verified",
+    "evidence": "Figures H–I: upload, review, evidence and drafts"
+  },
+  {
+    "id": "UI-033",
+    "issue": "Delete repeated Core fields",
+    "solution": "Keep required backend data; eliminate duplicate manual entry.",
+    "status": "Emulator browser verified",
+    "evidence": "Figures H–I: upload, review, evidence and drafts"
+  },
+  {
+    "id": "UI-034",
+    "issue": "All-hazards terminology",
+    "solution": "Use Event safety details with plain-language explanation.",
+    "status": "Emulator browser verified",
+    "evidence": "Figures H–I: upload, review, evidence and drafts"
+  },
+  {
+    "id": "UI-035",
+    "issue": "Top-right upload/extraction messages",
+    "solution": "Show persistent messages in the application page.",
+    "status": "Emulator browser verified",
+    "evidence": "Figures H–I: upload, review, evidence and drafts"
+  },
+  {
+    "id": "UI-036",
+    "issue": "View main application documents",
+    "solution": "Add View to combined, Core and scenario uploads.",
+    "status": "Implemented locally · preview component browser verified",
+    "evidence": "Figure H1: main upload View actions; Figure J: shared preview component"
+  },
+  {
+    "id": "UI-037",
+    "issue": "Long empty-template errors",
+    "solution": "Concise main message plus actionable missing-field detail.",
+    "status": "Implemented locally · automated checks passed",
+    "evidence": "Verification notes below"
+  },
+  {
+    "id": "UI-038",
+    "issue": "JPG supporting evidence",
+    "solution": "JPG/JPEG, PNG and WebP are valid supporting evidence. Main Core/scenario templates remain PDF/DOCX because extraction needs structured document content. File signatures and size are checked.",
+    "status": "Reviewed · explanation / validation retained",
+    "evidence": "Figure J: actual JPG preview"
+  },
+  {
+    "id": "UI-039",
+    "issue": "Broken View action",
+    "solution": "Authenticated in-page PDF/image preview, retry and DOCX download.",
+    "status": "Emulator JPG upload/preview verified",
+    "evidence": "Figure J: actual JPG preview"
+  },
+  {
+    "id": "UI-040",
+    "issue": "Not applicable declarations",
+    "solution": "Retain conditional evidence rules and a minimum meaningful reason. Mandatory/triggered evidence cannot be waived. Do not invent a universal local-performer document; reviewers validate applicability and contents.",
+    "status": "Reviewed · explanation / validation retained",
+    "evidence": "Figures H–I: upload, review, evidence and drafts"
+  },
+  {
+    "id": "UI-041",
+    "issue": "Editable organiser contact",
+    "solution": "Bind name/email/phone to account; Profile updates affect new submissions, not old versions.",
+    "status": "Emulator browser verified",
+    "evidence": "Figures H–I: upload, review, evidence and drafts"
+  },
+  {
+    "id": "UI-042",
+    "issue": "Draft saved navigation",
+    "solution": "Persistent View drafts action to the Draft filter.",
+    "status": "Emulator browser verified",
+    "evidence": "Figures H–I: upload, review, evidence and drafts"
+  },
+  {
+    "id": "UI-043",
+    "issue": "Document-reading loading",
+    "solution": "Animated extraction action and busy label prevent duplicate extraction. The linked external animation is not copied; review the local treatment.",
+    "status": "Alternative implemented · visual review",
+    "evidence": "Verification notes below"
+  },
+  {
+    "id": "UI-044",
+    "issue": "Admin application table alignment",
+    "solution": "Consistent headers, content, dates and action columns.",
+    "status": "Local admin view + checks verified",
+    "evidence": "Figure K: queue, review and control gates"
+  },
+  {
+    "id": "UI-045",
+    "issue": "Admin details alignment",
+    "solution": "Consistent detail layout and missing-data states.",
+    "status": "Local admin view + checks verified",
+    "evidence": "Figure K: queue, review and control gates"
+  },
+  {
+    "id": "UI-046",
+    "issue": "Published empty control list / regenerate",
+    "solution": "Separate generation and publication states; gate regeneration and preserve reviewed evidence.",
+    "status": "Local admin view + checks verified",
+    "evidence": "Figure K: queue, review and control gates"
+  },
+  {
+    "id": "UI-047",
+    "issue": "Premature control/Stage 2 actions",
+    "solution": "Only offer actions once their workflow prerequisites are satisfied.",
+    "status": "Local admin view + checks verified",
+    "evidence": "Figure K: queue, review and control gates"
+  },
+  {
+    "id": "UI-048",
+    "issue": "Repeated officer assignment",
+    "solution": "Show assigned officer; disable unchanged assignment and offer explicit reassignment.",
+    "status": "Local admin view + checks verified",
+    "evidence": "Figure K: queue, review and control gates"
+  },
+  {
+    "id": "UI-049",
+    "issue": "Assignment error placement",
+    "solution": "Local actionable checklist errors and preserved selections.",
+    "status": "Local admin view + checks verified",
+    "evidence": "Figure K: queue, review and control gates"
+  },
+  {
+    "id": "UI-050",
+    "issue": "Missing admin decision",
+    "solution": "Display current review stage, recorded decisions and available next action.",
+    "status": "Local admin view + checks verified",
+    "evidence": "Figure K: queue, review and control gates"
+  },
+  {
+    "id": "UI-051",
+    "issue": "Pending vs review",
+    "solution": "Use explicit workflow-stage labels consistently.",
+    "status": "Implemented locally · automated checks passed",
+    "evidence": "Verification notes below"
+  },
+  {
+    "id": "UI-052",
+    "issue": "Unavailable data becomes zeros",
+    "solution": "Keep error/retry state distinct from an empty queue; show unknown counts on load failure and default to All.",
+    "status": "Implemented locally · automated checks passed",
+    "evidence": "Verification notes below"
+  },
+  {
+    "id": "UI-053",
+    "issue": "Approval reason requirement",
+    "solution": "Optional ordinary approval rationale; rejection and professional overrides still require reasons.",
+    "status": "Implemented locally · automated checks passed",
+    "evidence": "Verification notes below"
+  },
+  {
+    "id": "UI-054",
+    "issue": "Missing MOTAC account",
+    "solution": "Verify and repair demo officer account, scope and assignment eligibility.",
+    "status": "Demo account repaired · live login verified",
+    "evidence": "Figure L: MOTAC workspace; credentials stored locally"
+  },
+  {
+    "id": "UI-055",
+    "issue": "Choose named officers",
+    "solution": "Persist the explicitly selected officer UID from the candidate checklist.",
+    "status": "Implemented locally · automated checks passed",
+    "evidence": "Verification notes below"
+  },
+  {
+    "id": "UI-056",
+    "issue": "Public table alignment",
+    "solution": "Align event details, dates and actions across desktop/mobile.",
+    "status": "Implemented locally · automated checks passed",
+    "evidence": "Verification notes below"
+  },
+  {
+    "id": "UI-057",
+    "issue": "Latest events first",
+    "solution": "Descending event start date with stable tie-break.",
+    "status": "Implemented locally · automated checks passed",
+    "evidence": "Verification notes below"
+  },
+  {
+    "id": "UI-058",
+    "issue": "Confirm and report together",
+    "solution": "Server and client enforce mutually exclusive per-image actions.",
+    "status": "Real emulator transactions verified",
+    "evidence": "4 transaction tests: opposing actions, concurrency, idempotency, withdrawal preserving other reports/history"
+  },
+  {
+    "id": "UI-059",
+    "issue": "Undo confirmation",
+    "solution": "Idempotent withdrawal and atomic count update.",
+    "status": "Real emulator transactions verified",
+    "evidence": "4 transaction tests: opposing actions, concurrency, idempotency, withdrawal preserving other reports/history"
+  },
+  {
+    "id": "UI-060",
+    "issue": "Withdraw report",
+    "solution": "Withdraw personal report without deleting incident/audit history or other reports.",
+    "status": "Real emulator transactions verified",
+    "evidence": "4 transaction tests: opposing actions, concurrency, idempotency, withdrawal preserving other reports/history"
+  },
+  {
+    "id": "UI-061",
+    "issue": "Report absent from incidents",
+    "solution": "Both existing public reports have corresponding M4 incidents. New reports show a reference and mention asynchronous queue update; trigger retries and withdrawal provenance are retained.",
+    "status": "Live data checked · not reproduced",
+    "evidence": "Live Firestore read: 2 public reports, 0 missing incidents"
+  },
+  {
+    "id": "UI-062",
+    "issue": "Application filename validation",
+    "solution": "Keep original filenames; validate file contents and template identifiers instead. Renaming the wrong document does not make it valid.",
+    "status": "Reviewed · explanation / validation retained",
+    "evidence": "Verification notes below"
+  },
+  {
+    "id": "UI-063",
+    "issue": "Pin evidence completeness",
+    "solution": "Keep the evidence meter visible while scrolling through the checklist.",
+    "status": "Emulator browser verified",
+    "evidence": "Figures H–I: upload, review, evidence and drafts"
+  },
+  {
+    "id": "UI-064",
+    "issue": "Not-applicable count",
+    "solution": "Exclude valid not-applicable items from the required-evidence denominator; show them separately.",
+    "status": "Emulator browser verified",
+    "evidence": "Figures H–I: upload, review, evidence and drafts"
+  },
+  {
+    "id": "UI-065",
+    "issue": "Bulk supporting upload",
+    "solution": "Upload multiple supporting files first, retain the file pool, then assign files to checklist requirements.",
+    "status": "Emulator browser verified",
+    "evidence": "Figures H–I: upload, review, evidence and drafts"
+  },
+  {
+    "id": "UI-066",
+    "issue": "Correct supporting evidence / path",
+    "solution": "Storage paths remain application/version-bound. File type checks and explicit requirement links prevent accidental mismatches; reviewers must still judge the document content.",
+    "status": "Reviewed · explanation / validation retained",
+    "evidence": "Verification notes below"
+  },
+  {
+    "id": "UI-067",
+    "issue": "9/15 shown despite allowed submission",
+    "solution": "Unify the displayed meter with valid conditional applicability. Backend checks remain mandatory; an N/A reason is a response, not an attached file.",
+    "status": "Emulator browser verified",
+    "evidence": "Figures H–I: upload, review, evidence and drafts"
+  },
+  {
+    "id": "UI-068",
+    "issue": "Event type editable after scenario choice",
+    "solution": "Event type is read-only in the details editor. Choose another template scenario before uploading to change the event category.",
+    "status": "Emulator browser verified",
+    "evidence": "Figures H–I: upload, review, evidence and drafts"
+  }
+]

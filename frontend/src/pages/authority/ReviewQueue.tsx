@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { collection, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { format } from 'date-fns';
 import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import { COLLECTIONS, EventRecord, EventStatus } from '@shared/types';
@@ -19,7 +19,7 @@ export default function ReviewQueue() {
   const [events, setEvents] = useState<EventRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [filter, setFilter] = useState<EventStatus | 'all'>('Pending');
+  const [filter, setFilter] = useState<EventStatus | 'all'>('all');
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<QueueSort>('newest');
   const [page, setPage] = useState(1);
@@ -33,15 +33,15 @@ export default function ReviewQueue() {
     const eventsQuery = query(
       collection(db, COLLECTIONS.EVENTS),
       where('assignedOfficerUids', 'array-contains', profile.uid),
-      where('status', 'in', ACTIVE_STATUSES),
-      orderBy('createdAt', 'desc'),
-      limit(100),
     );
     return onSnapshot(eventsQuery, (snapshot) => {
-      setEvents(snapshot.docs.map((document) => ({ eventId: document.id, ...document.data() }) as EventRecord));
+      setEvents(snapshot.docs
+        .map((document) => ({ eventId: document.id, ...document.data() }) as EventRecord)
+        .filter((event) => (ACTIVE_STATUSES as readonly EventStatus[]).includes(event.status)));
       setError('');
       setLoading(false);
-    }, () => {
+    }, (snapshotError) => {
+      console.error('[ReviewQueue] load failed', snapshotError);
       setError('The review queue could not be loaded.');
       setLoading(false);
     });
@@ -51,7 +51,7 @@ export default function ReviewQueue() {
   const totalPages = pageCount(filtered.length, PAGE_SIZE);
   const currentPage = Math.min(page, totalPages);
   const visible = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
-  const statusCount = (status: EventStatus | 'all') => status === 'all' ? events.length : events.filter((event) => event.status === status).length;
+  const statusCount = (status: EventStatus | 'all') => loading ? '…' : error ? '—' : status === 'all' ? events.length : events.filter((event) => event.status === status).length;
   const updateFilters = (action: () => void) => { action(); setPage(1); };
 
   return (
@@ -73,6 +73,7 @@ export default function ReviewQueue() {
         </label>
       </div>
 
+      <p className="mb-3 text-sm text-ink-500">Pending: awaiting the initial review. Under Review: the application is in the authority review workflow.</p>
       <div className="mb-5 flex flex-wrap gap-2" aria-label="Filter queue by status">
         {(['all', ...ACTIVE_STATUSES] as const).map((status) => (
           <button

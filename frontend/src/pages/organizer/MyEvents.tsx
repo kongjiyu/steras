@@ -9,7 +9,7 @@ import EmptyState from '../../components/ui/EmptyState';
 import { format } from 'date-fns';
 import { ArrowRight, CalendarPlus, MapPin } from 'lucide-react';
 import OrganizerStatusBadge from './OrganizerStatusBadge';
-import { applicationStatusLabel, isEditableApplicationStatus, ORGANIZER_STATUS_FILTERS, organizerAdminDecisionLabel, organizerPublicationLabel, organizerPublicationStateFromProjection, OrganizerStatusFilter } from './organizerApplication';
+import { applicationStatusLabel, assessmentLabel, isEditableApplicationStatus, ORGANIZER_STATUS_FILTERS, organizerAdminDecisionLabel, organizerPublicationLabel, organizerPublicationStateFromProjection, OrganizerStatusFilter } from './organizerApplication';
 import { mockEvents } from '../../mock_data/events';
 import { mockPublicEvents } from '../../mock_data/public_events';
 
@@ -17,7 +17,7 @@ export default function MyEvents() {
   const { user } = useAuth();
   const [events, setEvents] = useState<EventRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<OrganizerStatusFilter>('all');
+  const [filter, setFilter] = useState<OrganizerStatusFilter>(() => new URLSearchParams(window.location.search).get('status') === 'Draft' ? 'Draft' : 'all');
   const [error, setError] = useState('');
   const [retryKey, setRetryKey] = useState(0);
   const [publicProjections, setPublicProjections] = useState<Map<string, unknown>>(new Map());
@@ -83,7 +83,7 @@ export default function MyEvents() {
     <div>
       <PageHeader
         title="My Events"
-        description="Real-time list of your submitted events. Status updates push live via Firestore."
+        description="Your submitted events and their latest review status. Updates appear automatically as each review progresses."
         action={
           <Link to="/organizer/events/new" className="btn-primary"><CalendarPlus size={17} />New event</Link>
         }
@@ -131,7 +131,7 @@ export default function MyEvents() {
             </thead>
             <tbody className="divide-y divide-[#e3dacb]">
               {filtered.map((e) => (
-                <tr key={e.eventId} className="transition-colors hover:bg-cream-50">
+                <tr key={e.eventId} className={`transition-colors hover:bg-cream-50 ${new URLSearchParams(window.location.search).get('highlight') === e.eventId ? 'bg-brand-50 ring-2 ring-inset ring-brand-500' : ''}`}>
                   <td className="px-4 py-3">
                     <div className="font-semibold text-ink-800">{e.eventDetails.name || 'Untitled event'}</div>
                     <div className="mt-0.5 text-xs text-ink-500">{e.eventDetails.venueName || 'Venue not set'} - {e.eventDetails.type}</div>
@@ -178,12 +178,4 @@ function versionLabel(event: EventRecord): string {
     return `${event.activeRevision ? 'Revision' : 'Draft'} ${event.editableVersionId ?? `v${(event.currentVersionNumber ?? 0) + 1}`}`;
   }
   return event.currentVersionId ? `Submitted ${event.currentVersionId}` : 'No submitted version';
-}
-
-function assessmentLabel(event: EventRecord): string {
-  if (event.currentAssessmentId) return 'Assessment record created';
-  if (event.status === 'Pending') return 'Assessment processing';
-  if (isEditableApplicationStatus(String(event.status))) return 'Not submitted';
-  if (event.status === 'Manual Review Required') return 'Manual assessment required';
-  return 'Assessment unavailable';
 }

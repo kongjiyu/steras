@@ -2,8 +2,8 @@
  * PublicEventDetail — M3 Workstream 4 public viewer.
  *
  *   Shows the approved event + its per-authority Stage 2 images
- *   (visual evidence of items at the venue). Any signed-in user
- *   can 👍 confirm or 🚩 report a Stage 2 image.
+ *   (visual evidence of items at the venue). Registered public viewers
+ *   can confirm or report a published image.
  *
  *   The data lives in:
  *     - public_events/{eventId}                     (the event metadata)
@@ -43,13 +43,17 @@ import { auth, db, functions, isFirebaseConfigured } from '../../config/firebase
 import PublicHeader from '../../components/layout/PublicHeader';
 import EmptyState from '../../components/ui/EmptyState';
 import { findPublicEventById } from '../../mock_data/public_events';
+import { useAuth } from '../../contexts/AuthContext';
+import { formatEventDateRange } from './publicEventPresentation';
 
 export default function PublicEventDetail() {
   const { eventId } = useParams<{ eventId: string }>();
+  const { profile } = useAuth();
   const [event, setEvent] = useState<PublicEvent | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [retryKey, setRetryKey] = useState(0);
+  const [controlsError, setControlsError] = useState('');
   const [controls, setControls] = useState<PublicEventControl[]>([]);
   const [stage2Docs, setStage2Docs] = useState<Record<string, Stage2Doc | null>>({});
   const [currentUid, setCurrentUid] = useState<string | null>(null);
@@ -86,6 +90,9 @@ export default function PublicEventDetail() {
   // viewers never read organiser evidence or private event_controls.
   useEffect(() => {
     if (!isFirebaseConfigured || !eventId) return;
+    setControlsError('');
+    setControls([]);
+    setStage2Docs({});
     return onSnapshot(collection(db, COLLECTIONS.PUBLIC_EVENT_CONTROLS, eventId, COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS), (snapshot) => {
       const list = snapshot.docs.map((d) => ({ publicControlId: d.id, ...(d.data() as Partial<PublicEventControl>) }) as PublicEventControl);
       list.sort((a, b) => a.authority.localeCompare(b.authority));
@@ -107,8 +114,9 @@ export default function PublicEventDetail() {
       setStage2Docs(next);
     }, (err) => {
       console.warn('[PublicEventDetail] sanitised public controls subscribe failed', err);
+      setControlsError('Published event evidence could not be loaded.');
     });
-  }, [eventId]);
+  }, [eventId, retryKey]);
 
   function showToast(kind: 'success' | 'error', message: string) {
     setToast({ kind, message });
@@ -119,20 +127,23 @@ export default function PublicEventDetail() {
   if (error) return <div className="min-h-screen bg-[#f4eddf]"><PublicHeader /><main className="mx-auto max-w-5xl px-5 py-8 sm:px-8 sm:py-12"><div className="py-10"><EmptyState title="Event unavailable" description={error}><button type="button" className="btn-secondary" onClick={() => { setLoading(true); setRetryKey((value) => value + 1); }}>Try again</button></EmptyState></div></main></div>;
   if (!event) return <div className="min-h-screen bg-[#f4eddf]"><PublicHeader /><main className="mx-auto max-w-5xl px-5 py-8 sm:px-8 sm:py-12"><div className="py-10"><EmptyState title="Event not publicly listed" description="The event may not be approved, or its public listing has been removed." /><div className="mt-5 text-center"><Link to="/calendar" className="text-sm font-semibold text-[#52651c]">Back to approved events</Link></div></div></main></div>;
 
-  return <EventContent event={event} controls={controls} stage2Docs={stage2Docs} currentUid={currentUid} showToast={showToast} eventId={eventId!} toast={toast} />;
+  return <EventContent controlsError={controlsError} retryControls={() => setRetryKey((value) => value + 1)} event={event} controls={controls} stage2Docs={stage2Docs} currentUid={currentUid} viewerEligible={profile?.role === 'public'} showToast={showToast} eventId={eventId!} toast={toast} />;
 }
 
 interface EventContentProps {
+  controlsError: string;
+  retryControls: () => void;
   event: PublicEvent;
   controls: PublicEventControl[];
   stage2Docs: Record<string, Stage2Doc | null>;
   currentUid: string | null;
+  viewerEligible: boolean;
   eventId: string;
   toast: { kind: 'success' | 'error'; message: string } | null;
   showToast: (kind: 'success' | 'error', message: string) => void;
 }
 
-function EventContent({ event, controls, stage2Docs, currentUid, eventId, toast, showToast }: EventContentProps) {
+function EventContent({ controlsError, retryControls, event, controls, stage2Docs, currentUid, viewerEligible, eventId, toast, showToast }: EventContentProps) {
   // Workstream 5: only show controls where the admin has actually
   // published the Stage 2 doc. Pending + rejected images stay hidden
   // from the public view (per FR-M3-21 / UC-14). The Firestore rule
@@ -164,7 +175,7 @@ function EventContent({ event, controls, stage2Docs, currentUid, eventId, toast,
           <section aria-labelledby="event-schedule">
             <h2 id="event-schedule" className="font-display text-lg font-bold text-[#303528]">Event information</h2>
             <dl className="mt-5 divide-y divide-[#ded4c1] border-y border-[#ded4c1]">
-              <Detail icon={<CalendarDays size={18} />} label="Date" value={formatLongDate(event.startDatetime)} />
+              <Detail icon={<CalendarDays size={18} />} label="Date" value={formatEventDateRange(event.startDatetime, event.endDatetime)} />
               <Detail icon={<Clock3 size={18} />} label="Time" value={`${formatTime(event.startDatetime)} – ${formatTime(event.endDatetime)}`} />
               <Detail icon={<MapPin size={18} />} label="Venue" value={event.venueName} />
             </dl>
@@ -174,14 +185,14 @@ function EventContent({ event, controls, stage2Docs, currentUid, eventId, toast,
             <div className="mt-10">
               <h2 className="font-display text-lg font-bold text-[#303528]">Verified controls</h2>
               <p className="mt-1 max-w-2xl text-sm leading-6 text-[#6b6555]">
-                Visual evidence submitted by the organiser for each required authority. Anyone with a STERAS account can 👍 confirm or 🚩 report.
+                Visual evidence submitted by the organiser for each required authority. Registered public viewer accounts can confirm or report an image.
               </p>
               {toast && (
                 <div className={`mt-3 rounded-md px-3 py-2 text-sm ${toast.kind === 'success' ? 'bg-status-approved/10 text-status-approved' : 'bg-red-50 text-red-800'}`} role="status" data-testid="public-toast">
                   {toast.message}
                 </div>
               )}
-              {visibleControls.length === 0 ? (
+              {controlsError ? <div role="alert" className="mt-4 p-5 text-sm text-ink-600">{controlsError}<button type="button" className="btn-secondary ml-3" onClick={retryControls}>Try again</button></div> : visibleControls.length === 0 ? (
                 <div className="mt-4 rounded-lg border border-[#ded4c1] bg-[#fffdf7] p-5 text-sm text-[#6b6555]" data-testid="public-stage2-empty">
                   The organiser hasn't published any Stage 2 images yet. Check back closer to the event date.
                 </div>
@@ -194,7 +205,8 @@ function EventContent({ event, controls, stage2Docs, currentUid, eventId, toast,
                         key={ctrl.controlId}
                         ctrl={ctrl}
                         doc={doc}
-                        currentUid={currentUid}
+                        currentUid={viewerEligible ? currentUid : null}
+                        signedInAsAnotherRole={Boolean(currentUid && !viewerEligible)}
                         eventId={eventId}
                         onStartReport={() => setReportingControl(ctrl)}
                         showToast={showToast}
@@ -216,7 +228,7 @@ function EventContent({ event, controls, stage2Docs, currentUid, eventId, toast,
           </aside>
         </div>
 
-        {reportingControl && currentUid && (
+        {reportingControl && currentUid && viewerEligible && (
           <ReportModal
             ctrl={reportingControl}
             eventId={eventId}
@@ -234,14 +246,18 @@ interface ControlCardProps {
   ctrl: PublicEventControl;
   doc: Stage2Doc;
   currentUid: string | null;
+  signedInAsAnotherRole: boolean;
   eventId: string;
   onStartReport: () => void;
   showToast: (kind: 'success' | 'error', message: string) => void;
 }
 
-function ControlCard({ ctrl, doc: stage2Doc, currentUid, eventId, onStartReport, showToast }: ControlCardProps) {
+function ControlCard({ ctrl, doc: stage2Doc, currentUid, signedInAsAnotherRole, eventId, onStartReport, showToast }: ControlCardProps) {
   const [confirming, setConfirming] = useState(false);
   const [iConfirmed, setIConfirmed] = useState(false);
+  const [confirmReady, setConfirmReady] = useState(false);
+  const [reportReady, setReportReady] = useState(false);
+  const [actionReadError, setActionReadError] = useState('');
   const [confirmCount, setConfirmCount] = useState(stage2Doc.publicConfirmCount ?? 0);
   const reported = !!stage2Doc.m4TicketId;
 
@@ -252,8 +268,9 @@ function ControlCard({ ctrl, doc: stage2Doc, currentUid, eventId, onStartReport,
       return;
     }
     const ref = firestoreDoc(db, COLLECTIONS.EVENTS, eventId, COLLECTIONS.EVENT_CONTROLS, ctrl.controlId, COLLECTIONS.STAGE2_CONFIRMS, currentUid);
-    return onSnapshot(ref, (snap) => setIConfirmed(snap.exists()), () => setIConfirmed(false));
-  }, [ctrl.controlId, currentUid, eventId]);
+    setConfirmReady(false);
+    return onSnapshot(ref, (snap) => { setIConfirmed(snap.exists() && (!snap.data().stage2PublishedAt || snap.data().stage2PublishedAt === stage2Doc.publishedAt)); setConfirmReady(true); }, () => { setConfirmReady(false); setActionReadError('Your previous actions could not be loaded. Reload the page before confirming or reporting.'); });
+  }, [ctrl.controlId, currentUid, eventId, stage2Doc.publishedAt]);
 
   // Watch the per-user report counter so we can disable the report button.
   const [iReported, setIReported] = useState(false);
@@ -263,8 +280,9 @@ function ControlCard({ ctrl, doc: stage2Doc, currentUid, eventId, onStartReport,
       return;
     }
     const ref = firestoreDoc(db, COLLECTIONS.EVENTS, eventId, COLLECTIONS.EVENT_CONTROLS, ctrl.controlId, COLLECTIONS.STAGE2_REPORTS, currentUid);
-    return onSnapshot(ref, (snap) => setIReported(snap.exists()), () => setIReported(false));
-  }, [ctrl.controlId, currentUid, eventId]);
+    setReportReady(false);
+    return onSnapshot(ref, (snap) => { setIReported(snap.exists() && (!snap.data().stage2PublishedAt || snap.data().stage2PublishedAt === stage2Doc.publishedAt)); setReportReady(true); }, () => { setReportReady(false); setActionReadError('Your previous actions could not be loaded. Reload the page before confirming or reporting.'); });
+  }, [ctrl.controlId, currentUid, eventId, stage2Doc.publishedAt]);
 
   // Keep confirmCount in sync with the doc snapshot.
   useEffect(() => {
@@ -275,11 +293,11 @@ function ControlCard({ ctrl, doc: stage2Doc, currentUid, eventId, onStartReport,
     if (!currentUid) return;
     setConfirming(true);
     try {
-      const fn = httpsCallable<{ eventId: string; controlId: string }, { alreadyConfirmed: boolean; publicConfirmCount: number }>(functions, 'confirmStage2Doc');
-      const result = await fn({ eventId, controlId: ctrl.controlId });
-      setIConfirmed(true);
+      const fn = httpsCallable<{ eventId: string; controlId: string; confirmed?: boolean }, { alreadyConfirmed: boolean; publicConfirmCount: number }>(functions, 'confirmStage2Doc');
+      const result = await fn({ eventId, controlId: ctrl.controlId, confirmed: !iConfirmed });
+      setIConfirmed(!iConfirmed);
       setConfirmCount(result.data.publicConfirmCount);
-      if (result.data.alreadyConfirmed) {
+      if (iConfirmed) { showToast('success', 'Confirmation withdrawn.'); } else if (result.data.alreadyConfirmed) {
         showToast('success', 'You already confirmed this image.');
       } else {
         showToast('success', 'Thanks for confirming.');
@@ -294,6 +312,7 @@ function ControlCard({ ctrl, doc: stage2Doc, currentUid, eventId, onStartReport,
 
   return (
     <article className="rounded-lg border border-[#ded4c1] bg-[#fffdf7] p-4" data-testid={`public-stage2-card-${ctrl.authority}`}>
+      {actionReadError && <p role="alert" className="mb-3 text-sm text-red-700">{actionReadError}</p>}
       <header className="flex flex-wrap items-center gap-2">
         <span className="badge bg-blue-100 text-brand-700 text-xs">{ctrl.authority}</span>
         <h3 className="font-semibold text-[#20251d]">{ctrl.controlName}</h3>
@@ -321,27 +340,27 @@ function ControlCard({ ctrl, doc: stage2Doc, currentUid, eventId, onStartReport,
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {!currentUid ? (
-          <span className="text-xs text-[#6b6555]">Sign in to confirm or report this image.</span>
+          <span className="text-xs text-[#6b6555]">{signedInAsAnotherRole ? 'Confirmations and reports require a public viewer account.' : 'Sign in with a public viewer account to confirm or report this image.'}</span>
         ) : (
           <>
             <button
               type="button"
               onClick={handleConfirm}
-              disabled={confirming || iConfirmed}
+              disabled={confirming || iReported || !confirmReady || !reportReady}
               className="inline-flex min-h-9 items-center gap-1.5 rounded-md bg-status-approved px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
               data-testid={`public-stage2-confirm-${ctrl.authority}`}
             >
-              {iConfirmed ? <><CheckCircle2 size={14} /> You confirmed</> : <><ThumbsUp size={14} /> {confirming ? 'Confirming…' : 'I confirm'}</>}
+              {iConfirmed ? <><CheckCircle2 size={14} /> Undo confirmation</> : <><ThumbsUp size={14} /> {confirming ? 'Confirming…' : 'I confirm'}</>}
             </button>
             <button
               type="button"
-              onClick={onStartReport}
-              disabled={iReported}
+              onClick={() => { if (!iReported) { onStartReport(); return; } setConfirming(true); void httpsCallable(functions, 'withdrawStage2Report')({ eventId, controlId: ctrl.controlId }).then(() => { setIReported(false); showToast('success', 'Report withdrawn. Investigation history is retained.'); }).catch(error => showToast('error', errMessage(error))).finally(() => setConfirming(false)); }}
+              disabled={confirming || iConfirmed || !confirmReady || !reportReady}
               className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
               data-testid={`public-stage2-report-${ctrl.authority}`}
             >
               <Flag size={14} />
-              {iReported ? 'You reported' : 'Report'}
+              {iReported ? 'Withdraw report' : 'Report'}
             </button>
           </>
         )}
@@ -376,7 +395,7 @@ function ReportModal({ ctrl, eventId, onClose, onSubmitted, onError }: ReportMod
       if (result.data.alreadyReported) {
         onSubmitted('You already reported this image. The previous incident investigation is still open.');
       } else {
-        onSubmitted('Report submitted for incident investigation.');
+        onSubmitted(`Report submitted. Reference: ${result.data.ticketId}. The incident queue may take a moment to update.`);
       }
     } catch (err) {
       onError(errMessage(err));
@@ -467,10 +486,6 @@ function errMessage(err: unknown): string {
  * would render to a blank `<div id="root" />`. Native `Intl` gives us
  * the same look with zero dependencies.
  */
-function formatLongDate(ts: number): string {
-  return new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(ts));
-}
-
 function formatTime(ts: number): string {
   return new Intl.DateTimeFormat('en-GB', { hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(ts));
 }

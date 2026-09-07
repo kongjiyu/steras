@@ -46,6 +46,9 @@ interface ProposedChecklistResponse {
 export default function AdminAssignment() {
   const { eventId } = useParams<{ eventId: string }>();
   const [event, setEvent] = useState<EventRecord | null>(null);
+  const [loadingEvent, setLoadingEvent] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [retryKey, setRetryKey] = useState(0);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [checklist, setChecklist] = useState<ProposedChecklistItem[]>([]);
   const [venueState, setVenueState] = useState<string>('ALL');
@@ -64,22 +67,33 @@ export default function AdminAssignment() {
   // Live event doc.
   useEffect(() => {
     if (!isFirebaseConfigured || !eventId) return;
+    setLoadingEvent(true);
+    setLoadError('');
+    setEvent(null);
     return onSnapshot(doc(db, COLLECTIONS.EVENTS, eventId), (snapshot) => {
       setEvent(snapshot.exists() ? { eventId: snapshot.id, ...snapshot.data() } as EventRecord : null);
+      setLoadingEvent(false);
+    }, () => {
+      setLoadError('The application could not be loaded. Check your connection and access, then try again.');
+      setLoadingEvent(false);
     });
-  }, [eventId]);
+  }, [eventId, retryKey]);
 
   // Live assignments sub-collection.
   useEffect(() => {
     if (!isFirebaseConfigured || !eventId) return;
+    setAssignments([]);
     return onSnapshot(collection(db, COLLECTIONS.EVENTS, eventId, COLLECTIONS.ASSIGNMENTS), (snapshot) => {
       setAssignments(snapshot.docs.map((d) => ({ ...(d.data() as Assignment), assignmentId: d.id })));
+    }, () => {
+      setLoadError('Officer assignments could not be loaded. Try again before making a decision.');
     });
-  }, [eventId]);
+  }, [eventId, retryKey]);
 
   // Initial: fetch the proposed checklist (dryRun).
   useEffect(() => {
     if (!isFirebaseConfigured || !eventId || !event) return;
+    let active = true;
     setLoadingChecklist(true);
     const command = httpsCallable<{ eventId: string; dryRun: true }, ProposedChecklistResponse>(
       functions,
@@ -87,6 +101,7 @@ export default function AdminAssignment() {
     );
     command({ eventId, dryRun: true })
       .then((res) => {
+        if (!active) return;
         setChecklist(res.data.checklist);
         setVenueState(res.data.venueState);
         // Initialise the selected map with defaults.
@@ -95,10 +110,12 @@ export default function AdminAssignment() {
         setSelected(def);
       })
       .catch((err) => {
+        if (!active) return;
         console.error('[AdminAssignment] checklist load failed:', err);
-        toast.error(err instanceof Error ? err.message : 'Unable to load the officer checklist.');
+        setLoadError('Unable to load the officer checklist. Try again before assigning officers.');
       })
-      .finally(() => setLoadingChecklist(false));
+      .finally(() => { if (active) setLoadingChecklist(false); });
+    return () => { active = false; };
   }, [eventId, event]);
 
   // Derive review state before the early loading returns so this hook is
@@ -120,7 +137,9 @@ export default function AdminAssignment() {
     return <div className="p-8 text-ink-500">Firebase is not configured.</div>;
   }
   if (!eventId) return <div className="p-8"><EmptyState title="No event selected" /></div>;
-  if (!event) return <div className="p-8 text-ink-500">Loading application...</div>;
+  if (loadError) return <div className="p-8"><EmptyState title="Assignment workspace unavailable" description={loadError}><button type="button" className="btn-secondary" onClick={() => setRetryKey((value) => value + 1)}>Try again</button></EmptyState></div>;
+  if (loadingEvent) return <div className="p-8 text-ink-500" role="status">Loading application...</div>;
+  if (!event) return <div className="p-8"><EmptyState title="Application not found" description="This application may have been removed or the link is incorrect."><Link className="btn-secondary" to="/admin/applications">Back to applications</Link></EmptyState></div>;
 
   const details = event.eventDetails;
   const isAuthorityReview = event.reviewStage === 'authority';

@@ -5,7 +5,7 @@ describe('authErrorMessage', () => {
   it.each([
     ['auth/email-already-in-use', 'An account already exists for this email. Sign in or reset your password.'],
     ['auth/invalid-credential', 'The email or password is incorrect.'],
-    ['auth/weak-password', 'Use a stronger password with at least 6 characters.'],
+    ['auth/weak-password', 'Use a stronger password with at least 8 characters, including uppercase, lowercase, a number and a symbol.'],
     ['auth/network-request-failed', 'Network error. Check your connection and try again.'],
     ['auth/too-many-requests', 'Too many attempts. Wait a moment before trying again.'],
   ])('maps %s to actionable copy', (code, message) => {

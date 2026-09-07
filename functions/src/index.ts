@@ -75,3 +75,7 @@ export { reportStage2Doc } from './http/reportStage2Doc';
 // per-doc `published == true` check.
 export { publishStage2Doc } from './http/publishStage2Doc';
 export { unpublishStage2Doc } from './http/unpublishStage2Doc';
+
+export { updateOwnProfile } from './http/updateOwnProfile';
+
+export { withdrawStage2Report } from './http/withdrawStage2Report';

@@ -33,6 +33,7 @@ import { isActiveControlGeneration } from '../utils/controlLifecycle';
 import { counterMatchesStage2 } from '../utils/stage2Counter';
 
 interface ConfirmStage2DocRequest {
+  confirmed?: boolean;
   eventId?: string;
   controlId?: string;
 }
@@ -67,6 +68,7 @@ export async function confirmStage2DocForUser(
   if (!eventId) throw new HttpsError('invalid-argument', 'eventId is required.');
   if (!controlId) throw new HttpsError('invalid-argument', 'controlId is required.');
 
+  if (data.confirmed !== undefined && typeof data.confirmed !== 'boolean') throw new HttpsError('invalid-argument', 'confirmed must be a boolean.');
   const db = firestore();
   const eventRef = db.collection(COLLECTIONS.EVENTS).doc(eventId);
   const controlRef = eventRef.collection(COLLECTIONS.EVENT_CONTROLS).doc(controlId);
@@ -80,13 +82,14 @@ export async function confirmStage2DocForUser(
 
   return db.runTransaction(async (tx) => {
     // Reads first.
-    const [docSnap, counterSnap, eventSnap, publicSnap, userSnap, controlSnap] = await Promise.all([
+    const [docSnap, counterSnap, eventSnap, publicSnap, userSnap, controlSnap, reportSnap] = await Promise.all([
       tx.get(docRef),
       tx.get(counterRef),
       tx.get(eventRef),
       tx.get(publicRef),
       tx.get(db.collection(COLLECTIONS.USERS).doc(uid)),
       tx.get(controlRef),
+      tx.get(controlRef.collection(COLLECTIONS.STAGE2_REPORTS).doc(uid)),
     ]);
     const viewer = userSnap.data() as UserProfile | undefined;
     if (!viewer || viewer.uid !== uid || viewer.role !== 'public') {
@@ -109,6 +112,19 @@ export async function confirmStage2DocForUser(
       || projection.versionId !== versionId || projection.controlId !== controlId || projection.docId !== docId) {
       throw new HttpsError('failed-precondition', 'This published evidence is not bound to the current application generation.');
     }
+    if (data.confirmed === false) {
+      const active = counterSnap.exists && counterMatchesStage2(counterSnap.data(), stage2);
+      const count = Math.max(0, (stage2.publicConfirmCount ?? 0) - (active ? 1 : 0));
+      if (active) {
+        tx.delete(counterRef);
+        tx.update(docRef, { publicConfirmCount: count });
+        tx.update(publicRef, { publicConfirmCount: count });
+        const auditId = `${versionId}_${controlId}_confirmation_withdrawn_${uid}_${now}`;
+        tx.set(eventRef.collection(COLLECTIONS.AUDIT_LOGS).doc(auditId), { id: auditId, eventId, versionId, actorId: uid, actorRole: 'public', action: 'stage2_confirmation_withdrawn', timestamp: now, metadata: { controlId } });
+      }
+      return { alreadyConfirmed: false, publicConfirmCount: count };
+    }
+    if (reportSnap.exists && counterMatchesStage2(reportSnap.data(), stage2)) throw new HttpsError('failed-precondition', 'Withdraw your report before confirming this image.');
     if (counterSnap.exists && counterMatchesStage2(counterSnap.data(), stage2)) {
       // Idempotency never bypasses the current-generation authorization gate.
       return { alreadyConfirmed: true, publicConfirmCount: stage2.publicConfirmCount };
@@ -116,7 +132,7 @@ export async function confirmStage2DocForUser(
 
     // First confirm — write the counter, increment the count, write the audit log.
     const newCount = (stage2.publicConfirmCount ?? 0) + 1;
-    tx.set(counterRef, { uid, confirmedAt: now, stage2UploadedAt: stage2.uploadedAt });
+    tx.set(counterRef, { uid, confirmedAt: now, stage2UploadedAt: stage2.uploadedAt, stage2PublishedAt: stage2.publishedAt });
     tx.update(docRef, { publicConfirmCount: newCount });
     if (publicSnap.exists) tx.update(publicRef, { publicConfirmCount: newCount });
 

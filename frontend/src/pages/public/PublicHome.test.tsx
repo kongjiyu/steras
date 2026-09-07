@@ -8,12 +8,12 @@ describe('PublicHome', () => {
     render(<MemoryRouter><PublicHome /></MemoryRouter>);
 
     expect(screen.getByRole('heading', { name: 'Safer events start with clearer evidence.' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'From idea to public confidence' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Every role sees the detail it needs—and no more.' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'How an application becomes approval' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Built for organizers. Accountable to authorities.' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'AI can advise. Evidence and accountable people decide.' })).toBeInTheDocument();
     expect(screen.queryByText('One shared record')).not.toBeInTheDocument();
 
-    for (const phase of ['Application', 'Risk & resources', 'Approval', 'Incident response', 'Analytics']) {
+    for (const phase of ['Prepare application', 'Evidence & risk assessment', 'Multi-agency review', 'Approved public record']) {
       expect(screen.getByText(phase)).toBeInTheDocument();
     }
 

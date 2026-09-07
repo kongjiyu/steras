@@ -8,7 +8,7 @@ import { assessIncident, assertReportableEvent } from '../http/m4Incidents';
 
 /** Bridges the existing M3 public Stage-2 report into the real M4 queue. */
 export const onPublicReportCreated = onDocumentCreated(
-  { document: `${COLLECTIONS.PUBLIC_REPORTS}/{ticketId}`, region: FUNCTION_REGION, secrets: [MINIMAX_API_KEY] },
+  { document: `${COLLECTIONS.PUBLIC_REPORTS}/{ticketId}`, region: FUNCTION_REGION, retry: true, secrets: [MINIMAX_API_KEY] },
   async (event) => {
     const report = event.data?.data() as PublicReport | undefined;
     if (!report) return;
@@ -48,10 +48,11 @@ export const onPublicReportCreated = onDocumentCreated(
     };
     const incidentRef = db.collection(COLLECTIONS.INCIDENTS).doc(incidentId);
     await db.runTransaction(async (tx) => {
-      const [existingIncident, currentEventSnap, currentVersionSnap] = await Promise.all([
+      const [existingIncident, currentEventSnap, currentVersionSnap, currentReportSnap] = await Promise.all([
         tx.get(incidentRef),
         tx.get(db.collection(COLLECTIONS.EVENTS).doc(report.eventId)),
         tx.get(db.collection(COLLECTIONS.EVENTS).doc(report.eventId).collection(COLLECTIONS.VERSIONS).doc(report.versionId)),
+        tx.get(db.collection(COLLECTIONS.PUBLIC_REPORTS).doc(report.ticketId)),
       ]);
       if (existingIncident.exists) return;
       const currentEvent = currentEventSnap.data() as EventRecord | undefined;
@@ -63,7 +64,7 @@ export const onPublicReportCreated = onDocumentCreated(
         historyId: `${incidentId}_submitted`, incidentId, action: 'incident_submitted', actorUid: report.reporterUid,
         actorRole: reporter.role, timestamp: now, summary: 'Event Control discrepancy report submitted.', evidence: [],
       };
-      tx.create(incidentRef, record);
+      tx.create(incidentRef, { ...record, ...(currentReportSnap.data()?.withdrawnAt ? { reportWithdrawnAt: currentReportSnap.data()!.withdrawnAt } : {}) });
       tx.create(incidentRef.collection('history').doc(history.historyId), history);
     });
   },

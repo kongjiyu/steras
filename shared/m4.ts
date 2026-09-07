@@ -18,6 +18,7 @@ export type M4AIAssessment =
   | { status: 'unavailable' | 'invalid'; promptVersion: typeof M4_AI_PROMPT_VERSION; reason: string; assessedAt: number };
 
 export interface M4IncidentRecord {
+  reportWithdrawnAt?: number;
   schemaVersion: typeof M4_SCHEMA_VERSION;
   incidentId: string; eventId: string; eventVersionId: string; venueId: string; eventType: EventType;
   eventName: string; organizerId: string; reporterUid: string; reporterRole: UserRole;

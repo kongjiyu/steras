@@ -108,6 +108,9 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
       throw new HttpsError('failed-precondition', 'The selected venue changed during submission. Review the verified venue and retry.');
     }
 
+    const owner = userSnapshot.data()!;
+    if (!owner.name || !owner.email || !owner.phone) throw new HttpsError('failed-precondition', 'Complete your name, email and phone in Profile before submitting.');
+    event.eventDetails = { ...event.eventDetails, organizerName: owner.name, organizerEmail: owner.email, organizerPhone: owner.phone };
     const errors = validateEventDetails(event.eventDetails, now);
     if (errors.length > 0) throw new HttpsError('invalid-argument', errors.join(' '));
     const versionNumber = (event.currentVersionNumber ?? 0) + 1;
@@ -156,6 +159,7 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
       // Persist the document identity at the trusted submission boundary.
       // This also self-heals Drafts created by clients predating this field.
       eventId,
+      eventDetails: event.eventDetails,
       status: 'Pending',
       currentVersionId: versionId,
       currentVersionNumber: versionNumber,

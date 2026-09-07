@@ -6,11 +6,13 @@ const mocks = vi.hoisted(() => ({
   createUser: vi.fn(),
   deleteUser: vi.fn(),
   setDoc: vi.fn(),
+  getDoc: vi.fn(),
+  onAuth: vi.fn().mockReturnValue(vi.fn()),
 }));
 
 vi.mock('../config/firebase', () => ({ auth: {}, db: {}, isFirebaseConfigured: true }));
 vi.mock('firebase/auth', () => ({
-  onAuthStateChanged: vi.fn(() => vi.fn()),
+  onAuthStateChanged: mocks.onAuth,
   signInWithEmailAndPassword: vi.fn(),
   createUserWithEmailAndPassword: mocks.createUser,
   deleteUser: mocks.deleteUser,
@@ -18,7 +20,7 @@ vi.mock('firebase/auth', () => ({
 }));
 vi.mock('firebase/firestore', () => ({
   doc: vi.fn(),
-  getDoc: vi.fn(),
+  getDoc: mocks.getDoc,
   setDoc: mocks.setDoc,
   serverTimestamp: vi.fn(() => 'server-time'),
 }));
@@ -62,5 +64,51 @@ describe('AuthProvider sign-up consistency', () => {
       .rejects.toThrow('Firestore unavailable');
     expect(mocks.deleteUser).toHaveBeenCalledWith({ uid: 'new-user' });
     expect(screen.getByText('No profile')).toBeInTheDocument();
+  });
+});
+
+
+describe('AuthProvider profile recovery', () => {
+  it('distinguishes a failed profile read from a missing profile and supports retry', async () => {
+    let callback!: (user: unknown) => Promise<void>;
+    mocks.onAuth.mockImplementation((_: unknown, next: typeof callback) => { callback = next; return vi.fn(); });
+    mocks.getDoc.mockRejectedValueOnce(new Error('offline'));
+    render(<AuthProvider><Probe /></AuthProvider>);
+    await act(() => callback({ uid: 'existing-user' }));
+    expect(authApi.loading).toBe(false);
+    expect(authApi.profileError).toMatch(/could not be loaded/);
+    mocks.getDoc.mockResolvedValueOnce({ exists: () => true, data: () => ({ uid: 'existing-user', email: 'existing@example.com', role: 'organizer' }) });
+    await act(() => authApi.refreshProfile());
+    expect(authApi.profileError).toBe('');
+    expect(screen.getByText('existing@example.com')).toBeInTheDocument();
+  });
+
+  it('does not restore a stale profile after sign-out while a read was pending', async () => {
+    let callback!: (user: unknown) => Promise<void>;
+    let resolve!: (value: unknown) => void;
+    mocks.onAuth.mockImplementation((_: unknown, next: typeof callback) => { callback = next; return vi.fn(); });
+    mocks.getDoc.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+    render(<AuthProvider><Probe /></AuthProvider>);
+    let pending!: Promise<void>;
+    act(() => { pending = callback({ uid: 'old-user' }); });
+    await act(() => callback(null));
+    await act(async () => { resolve({ exists: () => true, data: () => ({ uid: 'old-user', email: 'stale@example.com' }) }); await pending; });
+    expect(authApi.user).toBeNull();
+    expect(authApi.profile).toBeNull();
+  });
+
+  it('ends the loading screen when the profile service never responds', async () => {
+    vi.useFakeTimers();
+    try {
+      let callback!: (user: unknown) => Promise<void>;
+      mocks.onAuth.mockImplementation((_: unknown, next: typeof callback) => { callback = next; return vi.fn(); });
+      mocks.getDoc.mockImplementationOnce(() => new Promise(() => {}));
+      render(<AuthProvider><Probe /></AuthProvider>);
+      let pending!: Promise<void>;
+      act(() => { pending = callback({ uid: 'slow-user' }); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(15000); await pending; });
+      expect(authApi.loading).toBe(false);
+      expect(authApi.profileError).toMatch(/could not be loaded/);
+    } finally { vi.useRealTimers(); }
   });
 });

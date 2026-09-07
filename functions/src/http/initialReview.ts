@@ -63,7 +63,7 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
   if (decision !== 'Approved' && decision !== 'Rejected') {
     throw new HttpsError('invalid-argument', 'decision must be Approved or Rejected.');
   }
-  if (reason.length < REASON_MIN || reason.length > REASON_MAX) {
+  if ((decision === 'Rejected' && reason.length < REASON_MIN) || reason.length > REASON_MAX || (reason.length > 0 && reason.length < REASON_MIN)) {
     throw new HttpsError('invalid-argument', `reason must be ${REASON_MIN}-${REASON_MAX} characters.`);
   }
   if (suggestion.length > SUGGESTION_MAX) {

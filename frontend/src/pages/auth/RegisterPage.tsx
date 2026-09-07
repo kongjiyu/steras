@@ -1,7 +1,7 @@
+import { normalizePhone, passwordRequirements, TERMS_VERSION, validPersonName } from '@shared/accountValidation';
 import { FormEvent, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import toast from 'react-hot-toast';
 import AuthShell from '../../components/layout/AuthShell';
 import { getRoleHome } from '../../routing';
 import { authErrorMessage } from '../../contexts/authErrors';
@@ -10,6 +10,9 @@ import { CalendarPlus, LogIn, LogOut } from 'lucide-react';
 export default function RegisterPage() {
   const { user, profile, signUp, signOut, configured } = useAuth();
   const navigate = useNavigate();
+  const [accepted, setAccepted] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -19,6 +22,7 @@ export default function RegisterPage() {
   const [signingOut, setSigningOut] = useState(false);
 
   const handleSignOut = async () => {
+    if (!window.confirm('Sign out of STERAS?')) return;
     setSigningOut(true);
     try {
       await signOut();
@@ -29,18 +33,26 @@ export default function RegisterPage() {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    const nextErrors: Record<string, string> = {};
+    if (!validPersonName(name)) nextErrors.name = 'Enter your full name using letters, spaces or name punctuation.';
+    if (!normalizePhone(phone)) nextErrors.phone = 'Enter a valid phone number, for example +60 12-345 6789.';
+    if (!passwordRequirements(password).every(rule => rule.met)) nextErrors.password = 'Complete all password requirements below.';
+    if (!accepted) nextErrors.terms = 'Read and accept the Terms & Conditions to create an account.';
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length) return;
     setSubmitting(true);
     try {
       await signUp({
         email,
         password,
         name,
-        ...(phone.trim() ? { phone: phone.trim() } : {}),
+        phone: normalizePhone(phone),
+        termsVersion: TERMS_VERSION,
       });
-      toast.success('Account created.');
+      sessionStorage.setItem('steras-signed-in', 'true');
       navigate('/organizer', { replace: true });
     } catch (err) {
-      toast.error(authErrorMessage(err));
+      setErrors({ submit: authErrorMessage(err) });
     } finally {
       setSubmitting(false);
     }
@@ -53,7 +65,7 @@ export default function RegisterPage() {
       ? profile.role.charAt(0).toUpperCase() + profile.role.slice(1)
       : 'Unknown';
     return (
-      <AuthShell>
+      <AuthShell variant="register">
         <div className="w-full border-t-4 border-brand-700 bg-[#fffdf8] px-5 py-7 shadow-[0_16px_40px_rgba(63,77,29,0.08)] sm:px-8 sm:py-8">
           <p className="page-eyebrow">Already signed in</p>
           <h1 className="font-display text-2xl font-bold tracking-[-0.025em] text-ink-900">
@@ -100,7 +112,7 @@ export default function RegisterPage() {
   }
 
   return (
-    <AuthShell>
+    <AuthShell variant="register">
       <div className="w-full border-t-4 border-brand-700 bg-[#fffdf8] px-5 py-7 shadow-[0_16px_40px_rgba(63,77,29,0.08)] sm:px-8 sm:py-8">
           <p className="page-eyebrow">Create account</p>
           <h1 className="font-display text-2xl font-bold tracking-[-0.025em] text-ink-900">Create your STERAS account</h1>
@@ -126,6 +138,8 @@ export default function RegisterPage() {
             <div>
               <label htmlFor="name" className="field-label">Full name</label>
               <input id="name" autoComplete="name" required value={name} onChange={(e) => setName(e.target.value)} className="input" />
+              {errors.name && <p role="alert" className="text-sm text-red-700">{errors.name}</p>}
+
             </div>
 
             <div>
@@ -135,17 +149,23 @@ export default function RegisterPage() {
 
             <div>
               <label htmlFor="password" className="field-label">Password</label>
-              <input id="password" type="password" autoComplete="new-password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} className="input" />
-              <p className="mt-1.5 text-xs text-ink-500">Use at least 6 characters.</p>
+              <input id="password" type={showPassword ? 'text' : 'password'} autoComplete="new-password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} className="input" />
+              <button type="button" className="mt-2 text-sm font-semibold text-brand-700" onClick={() => setShowPassword(value => !value)}>{showPassword ? 'Hide password' : 'Show password'}</button>
+              <ul className="mt-2 space-y-1 text-xs" aria-label="Password requirements">{passwordRequirements(password).map(rule => <li key={rule.label} className={rule.met ? 'text-brand-700' : 'text-ink-500'}>{rule.met ? '✓' : '○'} {rule.label}</li>)}</ul>
+              {errors.password && <p role="alert" className="mt-2 text-sm text-red-700">{errors.password}</p>}
             </div>
 
             <div>
-              <label htmlFor="phone" className="field-label">Phone <span className="font-normal text-ink-400">(optional)</span></label>
-              <input id="phone" type="tel" autoComplete="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className="input" placeholder="+60 12-345 6789" />
+              <label htmlFor="phone" className="field-label">Phone number *</label>
+              <input id="phone" type="tel" required autoComplete="tel" value={phone} onChange={(e) => setPhone(e.target.value)} className="input" placeholder="+60 12-345 6789" />
             </div>
 
+            {errors.phone && <p role="alert" className="text-sm text-red-700">{errors.phone}</p>}
+            <div className="rounded border border-brand-200 bg-brand-50 p-3 text-sm"><p className="mb-3 font-semibold">You are creating an organiser account to submit event applications.</p><label className="flex items-start gap-3"><input type="checkbox" checked={accepted} onChange={event => setAccepted(event.target.checked)} className="mt-1" /><span>I agree to the <Link className="underline" target="_blank" to="/terms">Terms &amp; Conditions</Link> and will provide accurate information.</span></label></div>
+            {errors.terms && <p role="alert" className="text-sm text-red-700">{errors.terms}</p>}
+            {errors.submit && <p role="alert" className="rounded bg-red-50 p-3 text-sm text-red-700">{errors.submit} <Link to="/reset-password" className="underline">Reset password</Link></p>}
             <button type="submit" disabled={submitting || !configured} className="btn-primary w-full">
-              {submitting ? 'Creating account…' : 'Create account'}
+              {submitting ? 'Creating account…' : 'Create organiser account'}
             </button>
           </form>
 

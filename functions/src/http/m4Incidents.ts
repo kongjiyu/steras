@@ -307,12 +307,13 @@ export function safeIncident(record: M4IncidentRecord, role: UserProfile['role']
     category, incidentType, description, location, occurredAt, evidence, aiAssessment, severity,
     immediateActionRequired, status, linkedControlId, linkedStage2DocId, publicReportTicketId,
     finalResolution, discrepancyOutcome, assessmentEligible, synthetic, date, createdAt, updatedAt, resolvedAt,
-    activityClosed, closureReason, closedAt,
+    activityClosed, closureReason, closedAt, reportWithdrawnAt,
   } = record;
   return {
     schemaVersion, incidentId, eventId, eventVersionId, eventType, eventName, reporterUid, reporterRole,
     category, incidentType, description, location, occurredAt, evidence, aiAssessment, status,
     assessmentEligible, synthetic, date, createdAt, updatedAt,
+    ...(reportWithdrawnAt ? { reportWithdrawnAt } : {}),
     ...(severity ? { severity } : {}),
     ...(immediateActionRequired !== undefined ? { immediateActionRequired } : {}),
     ...(linkedControlId ? { linkedControlId } : {}),

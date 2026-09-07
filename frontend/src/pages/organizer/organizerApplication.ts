@@ -87,6 +87,14 @@ export function applicationStatusLabel(status: string): string {
   return status.replace(/([a-z])([A-Z])/g, '$1 $2');
 }
 
+export function assessmentLabel(event: Pick<EventRecord, 'status' | 'currentAssessmentId'>): string {
+  if (isEditableApplicationStatus(String(event.status))) return 'Not submitted';
+  if (event.status === 'Manual Review Required') return 'Manual assessment required';
+  if (event.status === 'Pending') return event.currentAssessmentId ? 'Risk assessment underway' : 'Risk assessment queued';
+  if (event.currentAssessmentId) return 'Risk assessment available';
+  return 'Assessment unavailable';
+}
+
 export function organizerAdminDecisionLabel(event: Pick<EventRecord, 'status' | 'initialReview'>): string {
   const initialDecision = event.initialReview?.decision;
   if (event.status === 'Approved') return 'Final Admin review approved';
