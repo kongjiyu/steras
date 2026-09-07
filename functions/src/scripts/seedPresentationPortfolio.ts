@@ -36,6 +36,7 @@ const EXPECTED_PROJECT = 'linkos-496505';
 const DATASET_ID = 'steras-presentation-portfolio-2026-09-v1';
 const MANAGED_BY = 'seed:presentation-portfolio';
 const VERSION_ID = 'v1';
+const PARTICIPANT_DEMO_EMAIL = 'participant.showcase@steras.test';
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
 
@@ -151,7 +152,8 @@ async function loadIdentities(db: Firestore): Promise<SeedIdentity> {
   ]);
   const admin = admins.docs[0]?.data() as UserProfile | undefined;
   const organizer = organizers.docs[0]?.data() as UserProfile | undefined;
-  const participant = participants.docs[0]?.data() as UserProfile | undefined;
+  const participant = participants.docs.map((document) => document.data() as UserProfile)
+    .find((profile) => profile.email === PARTICIPANT_DEMO_EMAIL) ?? participants.docs[0]?.data() as UserProfile | undefined;
   if (!admin?.uid || !organizer?.uid || !participant?.uid) throw new Error('At least one Admin, Organizer and Public participant profile must already exist.');
   const authorityUids: Partial<Record<AuthorityType, string>> = {};
   authorities.docs.forEach((document) => {
