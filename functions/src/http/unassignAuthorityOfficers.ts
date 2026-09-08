@@ -27,7 +27,6 @@
  *   - Idempotent on re-call (revoking a revoked assignment is a no-op).
  */
 import { firestore } from 'firebase-admin';
-import { FieldValue } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import {
   Assignment,
@@ -165,7 +164,7 @@ export const unassignAuthorityOfficers = onCall<UnassignAuthorityOfficersRequest
       // Decrement officer workload (only if officer still exists).
       if (t.exists && t.data) {
         tx.update(t.ref, {
-          workloadCount: FieldValue.increment(-1),
+          workloadCount: Math.max(0, t.data.workloadCount - 1),
           updatedAt: now,
         });
       }

@@ -21,7 +21,6 @@
  * The default-check picks the lowest-workload one.
  */
 import { firestore } from 'firebase-admin';
-import { FieldValue } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import {
   Assignment,
@@ -279,7 +278,7 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
       };
       tx.set(assignmentRef, assignment);
       tx.update(officerRef, {
-        workloadCount: FieldValue.increment(1),
+        workloadCount: Math.max(0, officer?.workloadCount ?? 0) + 1,
         lastAssignedAt: now,
         updatedAt: now,
       });
@@ -303,7 +302,7 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
           officerState: officer?.state ?? null,
           officerScopeType: officer?.scopeType ?? null,
           previousWorkloadCount: officer?.workloadCount ?? 0,
-          newWorkloadCount: (officer?.workloadCount ?? 0) + 1,
+          newWorkloadCount: Math.max(0, officer?.workloadCount ?? 0) + 1,
           venueState,
         },
       });
