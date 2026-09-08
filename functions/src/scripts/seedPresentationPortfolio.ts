@@ -30,6 +30,7 @@ import { computeCategoryBasedAssessment } from '../engines/ruleBased';
 import { computeResources } from '../engines/resourceCalculator';
 import { validateResourceRecommendation } from '../engines/resourceContract';
 import { isAnalyticsAssessment, isAnalyticsEvent, selectValidAnalyticsIncidents } from '../http/getAnalyticsPortfolio';
+import { isReviewableProvisionalAssessment } from '../http/initialReview';
 import { resourceDocumentId } from '../triggers/onEventCreated';
 
 const EXPECTED_PROJECT = 'linkos-496505';
@@ -315,7 +316,8 @@ function buildArtifacts(scenarioValue: Scenario, event: EventRecord, identities:
     inputHash,
     createdAt: now,
   };
-  const reviews = requiredAuthorities.map((authority) => {
+  const pendingInitialReview = scenarioValue.status === 'Pending';
+  const reviews = pendingInitialReview ? [] : requiredAuthorities.map((authority) => {
     const reviewerId = identities.authorityUids[authority] ?? identities.adminUid;
     return {
       reviewId: `${assessmentId}-${authority.toLowerCase()}-review`,
@@ -337,12 +339,43 @@ function buildArtifacts(scenarioValue: Scenario, event: EventRecord, identities:
   });
   const provisionalAssessment = {
     ...common,
-    status: 'authority_review' as const,
+    status: pendingInitialReview ? 'provisional_ready' as const : 'authority_review' as const,
     aiProposal: proposal,
     warnings: provisional.warnings,
     authorityReviewRequired: true as const,
     provisionalResult: provisional.result,
   } as ProvisionalRiskAssessment;
+  if (pendingInitialReview) {
+    const calculation = computeResources({ eventId, versionId: VERSION_ID, assessmentId, eventDetails: event.eventDetails, assessmentResult: provisional.result });
+    if (!calculation.ok) throw new Error(`${eventId}: ${calculation.message}`);
+    const resource: ResourceRecommendation = {
+      resourceId: resourceDocumentId('provisional', VERSION_ID, calculation.resourceInputHash),
+      eventId,
+      versionId: VERSION_ID,
+      assessmentId,
+      schemaVersion: RESOURCE_SCHEMA_VERSION,
+      stage: 'provisional',
+      revision: 1,
+      supersedesResourceId: null,
+      assessmentReference: { stage: 'provisional', assessmentId, proposalId: proposal.proposalId },
+      resourceInputHash: calculation.resourceInputHash,
+      formulaVersion: calculation.formulaVersion,
+      configVersion: calculation.configVersion,
+      sourceRegistryVersion: calculation.sourceRegistryVersion,
+      items: calculation.items,
+      confidenceLevel: 'prototype',
+      authorityReviewRequired: true,
+      validationScope: 'provisional_risk_input',
+      notes: 'Indicative planning ratios; operational suitability requires authority review.',
+      computedAt: now,
+    };
+    return {
+      assessment: { ...provisionalAssessment, presentationData: marker(eventId) },
+      resource: { ...resource, presentationData: marker(eventId) },
+      reviews,
+      inputHash,
+    };
+  }
   const officialResult = buildOfficialAssessmentResult({
     assessment: provisionalAssessment,
     eventDetails: event.eventDetails,
@@ -605,7 +638,10 @@ async function clearDataset(db: Firestore) {
       if (snapshot.exists) await db.recursiveDelete(reference);
     }
     for (const incident of await db.collection(COLLECTIONS.INCIDENTS).where('eventId', '==', eventId).get().then((snapshot) => snapshot.docs)) {
-      if (incident.data()?.presentationData?.datasetId !== DATASET_ID) throw new Error(`Refusing to delete unowned incidents/${incident.id}.`);
+      if (incident.data()?.presentationData?.datasetId !== DATASET_ID) {
+        console.warn(`[presentation-portfolio] Preserving unowned incidents/${incident.id} linked to ${eventId}.`);
+        continue;
+      }
       await db.recursiveDelete(incident.ref);
     }
     if (ownedEvent) {
@@ -651,8 +687,11 @@ async function verifyDataset(db: Firestore) {
     if (event.status === 'Pending') {
       const pendingAssignments = await eventRef.collection(COLLECTIONS.ASSIGNMENTS).get();
       const pendingControls = await eventRef.collection(COLLECTIONS.EVENT_CONTROLS).get();
+      const pendingReviews = event.currentAssessmentId
+        ? await eventRef.collection(COLLECTIONS.ASSESSMENTS).doc(event.currentAssessmentId).collection(COLLECTIONS.SCORE_REVIEWS).get()
+        : null;
       if (event.initialReview || event.assignedOfficerUids?.length || Object.keys(event.assignedOfficerByAuthority ?? {}).length
-        || !pendingAssignments.empty || event.controlListGenerated || !pendingControls.empty) {
+        || !pendingAssignments.empty || event.controlListGenerated || !pendingControls.empty || (pendingReviews && !pendingReviews.empty)) {
         failures.push(`${eventId}: pending workflow data is not clean`);
       }
     }
@@ -664,13 +703,25 @@ async function verifyDataset(db: Firestore) {
       eventRef.collection(COLLECTIONS.RESOURCES).doc(event.currentResourceId ?? '').get(),
       db.collection(COLLECTIONS.INCIDENTS).where('eventId', '==', eventId).get(),
     ]);
-    if (!assessment.exists || !isAnalyticsAssessment(assessment.data())) failures.push(`${eventId}: invalid assessment`);
-    if (!resource.exists || !validateResourceRecommendation(resource.data()).ok) failures.push(`${eventId}: invalid resource`);
-    const incidentValues = incidents.docs.map((document) => ({ ...document.data(), incidentId: document.id }) as M4IncidentRecord);
-    if (selectValidAnalyticsIncidents(incidentValues).length !== incidents.size) failures.push(`${eventId}: invalid incident`);
+    const assessmentValue = assessment.data();
+    const resourceValue = resource.data();
+    if (!assessment.exists || !isAnalyticsAssessment(assessmentValue)) failures.push(`${eventId}: invalid assessment`);
+    if (!resource.exists || !validateResourceRecommendation(resourceValue).ok) failures.push(`${eventId}: invalid resource`);
+    if (event.status === 'Pending') {
+      if (!isReviewableProvisionalAssessment(assessmentValue, eventId, VERSION_ID, event.currentAssessmentId ?? '')) {
+        failures.push(`${eventId}: pending assessment is not ready for initial review`);
+      }
+      if (resourceValue?.stage !== 'provisional' || resourceValue.authorityReviewRequired !== true
+        || resourceValue.assessmentReference?.stage !== 'provisional') {
+        failures.push(`${eventId}: pending resource is not provisional`);
+      }
+    }
+    const ownedIncidents = incidents.docs.filter((document) => document.data()?.presentationData?.datasetId === DATASET_ID);
+    const incidentValues = ownedIncidents.map((document) => ({ ...document.data(), incidentId: document.id }) as M4IncidentRecord);
+    if (selectValidAnalyticsIncidents(incidentValues).length !== ownedIncidents.length) failures.push(`${eventId}: invalid incident`);
     incidentValues.forEach((incident) => incidentCategories.add(incident.category));
     if (event.status === 'Approved' && event.eventDetails.startDatetime <= now && event.eventDetails.endDatetime >= now - 7 * DAY) reportableEventCount += 1;
-    incidentCount += incidents.size;
+    incidentCount += ownedIncidents.length;
   }
   const expectedIncidents = SCENARIOS.reduce((sum, item) => sum + item.incidentSeverities.length, 0);
   if (incidentCount !== expectedIncidents) failures.push(`incident count ${incidentCount}, expected ${expectedIncidents}`);
