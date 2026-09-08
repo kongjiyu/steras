@@ -183,6 +183,7 @@ function buildEventDetails(scenarioValue: Scenario, venue: Venue, organizer: Use
     venueName: venue.name,
     venueAddress: venue.address,
     venueLocation: venue.location,
+    venueState: venue.state,
     venueCapacity: venue.capacity,
     expectedAttendance: Math.min(scenarioValue.attendance, venue.capacity),
     environment: scenarioValue.type === 'conference' || scenarioValue.type === 'exhibition' ? 'indoor' : 'outdoor',
@@ -663,8 +664,13 @@ async function applyDataset(db: Firestore) {
   const organizer = organizerSnapshot.data() as UserProfile;
   const venues = (await db.collection(COLLECTIONS.VENUES).where('active', '==', true).limit(20).get()).docs.map((document) => ({ ...document.data(), venueId: document.id } as Venue));
   if (venues.length === 0) throw new Error('At least one active venue is required.');
+  const initialReviewVenue = venues.find((venue) => venue.state === 'Kuala Lumpur' && venue.jurisdiction === 'DBKL');
+  if (!initialReviewVenue) throw new Error('An active Kuala Lumpur DBKL venue is required for the initial-review demonstration.');
   await clearDataset(db);
-  for (const [index, scenarioValue] of SCENARIOS.entries()) await writeScenario(db, scenarioValue, venues[index % venues.length], organizer, identities, index);
+  for (const [index, scenarioValue] of SCENARIOS.entries()) {
+    const venue = scenarioValue.status === 'Pending' ? initialReviewVenue : venues[index % venues.length];
+    await writeScenario(db, scenarioValue, venue, organizer, identities, index);
+  }
   await db.collection(COLLECTIONS.DATASET_MANIFESTS).doc(DATASET_ID).set({ datasetId: DATASET_ID, managedBy: MANAGED_BY, synthetic: true, intendedUse: 'STERAS classroom presentation, participant incident-flow testing and analytics demonstration only.', generatedAt: Date.now(), eventIds: SCENARIOS.map(eventIdFor), participantUid: identities.participantUid, counts: { events: SCENARIOS.length, reportableEvents: SCENARIOS.filter((item) => item.slug.startsWith('participant-')).length, incidents: SCENARIOS.reduce((sum, item) => sum + item.incidentSeverities.length, 0) } });
 }
 
@@ -694,6 +700,7 @@ async function verifyDataset(db: Firestore) {
         || !pendingAssignments.empty || event.controlListGenerated || !pendingControls.empty || (pendingReviews && !pendingReviews.empty)) {
         failures.push(`${eventId}: pending workflow data is not clean`);
       }
+      if (event.eventDetails.venueState !== 'Kuala Lumpur') failures.push(`${eventId}: pending venue is not assignment-ready`);
     }
     if (scenarioValue.slug === 'urban-parade' && (event.status !== 'UnderReview' || event.reviewStage !== 'second' || !event.authorityReviewCompletedAt)) {
       failures.push(`${eventId}: second-review demonstration state is invalid`);

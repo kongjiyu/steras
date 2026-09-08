@@ -155,6 +155,9 @@ export default function AdminAssignment() {
     || (currentAssignments.length === required.length && currentAssignments.every((a) => a.status === 'completed')));
   const missingAuthorities = required.filter((authority) => !assignmentsByAuthority.has(authority));
   const isReplacement = isAuthorityReview && missingAuthorities.length > 0;
+  const authoritiesToAssign = isReplacement ? missingAuthorities : required;
+  const missingSelections = authoritiesToAssign.filter((authority) => !selected[authority]);
+  const hasCompleteSelection = hasCompleteOfficerSelection(authoritiesToAssign, selected);
   const canInitialAssign = event.status === 'UnderReview' && event.initialReview?.decision === 'Approved'
     && !isAuthorityReview && !isSecondReview;
   const commit = async () => {
@@ -364,10 +367,14 @@ export default function AdminAssignment() {
             </div>
             {(canInitialAssign || isReplacement) && (
               <div className="card-body border-t border-ink-100">
-                <button type="button" className="btn-primary w-full" disabled={committing || (isReplacement ? missingAuthorities.some((authority) => !selected[authority]) : Object.keys(selected).length === 0)} onClick={commit}>
+                <button type="button" className="btn-primary w-full" disabled={committing || !hasCompleteSelection} onClick={commit}>
                   <UserCheck size={16} />{committing ? 'Assigning...' : isReplacement ? 'Assign replacement officers' : 'Assign officers'}
                 </button>
-                <p className="mt-2 text-center text-xs text-ink-500">Selection is only saved after you press this button.</p>
+                <p className={`mt-2 text-center text-xs ${missingSelections.length > 0 ? 'text-status-rejected' : 'text-ink-500'}`}>
+                  {missingSelections.length > 0
+                    ? `Assignment unavailable: select an eligible officer for ${missingSelections.join(', ')}.`
+                    : 'Selection is only saved after you press this button.'}
+                </p>
               </div>
             )}
             {canUnassign && currentAssignments.length > 1 && (
@@ -443,4 +450,11 @@ function computeAggregate(assignments: Assignment[], required: AuthorityType[]):
   }
   if (required.every((auth) => byAuthority.get(auth) === 'Approved')) return 'Approved';
   return null;
+}
+
+export function hasCompleteOfficerSelection(
+  required: AuthorityType[],
+  selected: Partial<Record<AuthorityType, string>>,
+): boolean {
+  return required.length > 0 && required.every((authority) => Boolean(selected[authority]?.trim()));
 }
