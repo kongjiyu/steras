@@ -194,6 +194,7 @@ export const editEventControlList = onCall<EditEventControlListRequest>({ region
       try {
         const recipientUid = await resolveAuthUid(event.organizerId);
         if (recipientUid) {
+          const sourceActionId = `control_list_published_${eventId}_${versionId}_${controlItemVersion}`;
           await createNotification({
             recipientUid,
             eventId,
@@ -201,7 +202,8 @@ export const editEventControlList = onCall<EditEventControlListRequest>({ region
             type: 'control_list_published',
             title: 'Event control list published',
             message: `The authority control list for "${event.eventDetails.name}" is ready. ${result.written} control${result.written === 1 ? '' : 's'} declared. You can now upload Stage 1 + Stage 2 evidence.`,
-            sourceActionId: `control_list_published_${versionId}_${controlItemVersion}`,
+            sourceActionId,
+            notificationId: `${sourceActionId}_${recipientUid}`,
           });
         }
       } catch (err) {
@@ -211,7 +213,7 @@ export const editEventControlList = onCall<EditEventControlListRequest>({ region
     const authorityRecipients = [...new Set(Object.values(event.assignedOfficerByAuthority ?? {}).filter((uid): uid is string => Boolean(uid)))];
     await Promise.all(authorityRecipients.map(async (recipientUid) => {
       try {
-        const sourceActionId = `control_list_published_${versionId}_${controlItemVersion}`;
+        const sourceActionId = `control_list_published_${eventId}_${versionId}_${controlItemVersion}`;
         await createNotification({
           recipientUid,
           eventId,
