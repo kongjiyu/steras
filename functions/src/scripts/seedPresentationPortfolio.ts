@@ -583,21 +583,35 @@ function incidentNarrative(category: M4IncidentCategory) {
 }
 
 async function clearDataset(db: Firestore) {
+  const manifestSnapshot = await db.collection(COLLECTIONS.DATASET_MANIFESTS).doc(DATASET_ID).get();
+  const manifest = manifestSnapshot.data();
+  const manifestEventIds = Array.isArray(manifest?.eventIds) ? manifest.eventIds : [];
+  const ownedManifest = manifestSnapshot.exists
+    && manifest?.datasetId === DATASET_ID
+    && manifest?.managedBy === MANAGED_BY;
   for (const scenarioValue of SCENARIOS) {
     const eventId = eventIdFor(scenarioValue);
     const eventRef = db.collection(COLLECTIONS.EVENTS).doc(eventId);
     const event = await eventRef.get();
     if (event.exists && event.data()?.presentationData?.datasetId !== DATASET_ID) throw new Error(`Refusing to delete unowned events/${eventId}.`);
+    const ownedEvent = (event.exists && event.data()?.presentationData?.datasetId === DATASET_ID)
+      || (!event.exists && ownedManifest && manifestEventIds.includes(eventId));
     if (event.exists) await db.recursiveDelete(eventRef);
     for (const collectionName of [COLLECTIONS.PUBLIC_EVENTS, COLLECTIONS.PUBLIC_EVENT_CONTROLS]) {
       const reference = db.collection(collectionName).doc(eventId);
       const snapshot = await reference.get();
-      if (snapshot.exists && snapshot.data()?.presentationData?.datasetId !== DATASET_ID) throw new Error(`Refusing to delete unowned ${collectionName}/${eventId}.`);
+      const derivedFromOwnedEvent = ownedEvent && snapshot.data()?.eventId === eventId;
+      if (snapshot.exists && snapshot.data()?.presentationData?.datasetId !== DATASET_ID && !derivedFromOwnedEvent) throw new Error(`Refusing to delete unowned ${collectionName}/${eventId}.`);
       if (snapshot.exists) await db.recursiveDelete(reference);
     }
     for (const incident of await db.collection(COLLECTIONS.INCIDENTS).where('eventId', '==', eventId).get().then((snapshot) => snapshot.docs)) {
       if (incident.data()?.presentationData?.datasetId !== DATASET_ID) throw new Error(`Refusing to delete unowned incidents/${incident.id}.`);
       await db.recursiveDelete(incident.ref);
+    }
+    if (ownedEvent) {
+      for (const notification of await db.collection(COLLECTIONS.NOTIFICATIONS).where('eventId', '==', eventId).get().then((snapshot) => snapshot.docs)) {
+        await notification.ref.delete();
+      }
     }
   }
   await getStorage().bucket().deleteFiles({ prefix: `event_documents/presentation-`, force: true });

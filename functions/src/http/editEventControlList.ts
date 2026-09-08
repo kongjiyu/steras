@@ -46,6 +46,23 @@ interface EditEventControlListResponse {
   controlListSnapshot: NonNullable<EventRecord['controlListSnapshot']>;
 }
 
+export function buildControlListSnapshot(
+  eventId: string,
+  items: ProposedControlItem[],
+  controlItemVersion: number,
+): NonNullable<EventRecord['controlListSnapshot']> {
+  return items.map((item) => ({
+    controlId: `${eventId}-ctrl-${item.authority.toLowerCase()}-v${controlItemVersion}`,
+    controlName: item.controlName,
+    authority: item.authority,
+    stageRequirement: item.stageRequirement,
+    stage1RequirementsCount: (item.stage1Requirements ?? []).length,
+    ...(item.stage2Requirement?.label ? { stage2Label: item.stage2Requirement.label } : {}),
+    controlItemVersion,
+    label: 'pending' as EventControl['label'],
+  }));
+}
+
 export const editEventControlList = onCall<EditEventControlListRequest>({ region: FUNCTION_REGION }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in before editing the control list.');
   const eventId = (request.data?.eventId ?? '').trim();
@@ -108,16 +125,7 @@ export const editEventControlList = onCall<EditEventControlListRequest>({ region
   }
 
   // Compute the new snapshot for the parent event doc.
-  const newSnapshot: NonNullable<EventRecord['controlListSnapshot']> = items.map((item) => ({
-    controlId: `${eventId}-ctrl-${item.authority.toLowerCase()}-v${controlItemVersion}`,
-    controlName: item.controlName,
-    authority: item.authority,
-    stageRequirement: item.stageRequirement,
-    stage1RequirementsCount: (item.stage1Requirements ?? []).length,
-    stage2Label: item.stage2Requirement?.label,
-    controlItemVersion,
-    label: 'pending' as EventControl['label'],
-  }));
+  const newSnapshot = buildControlListSnapshot(eventId, items, controlItemVersion);
 
   return db.runTransaction(async (tx) => {
     // Reads first.
