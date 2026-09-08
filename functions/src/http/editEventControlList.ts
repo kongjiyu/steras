@@ -208,6 +208,24 @@ export const editEventControlList = onCall<EditEventControlListRequest>({ region
         console.warn('[editEventControlList] organiser notification failed (non-fatal):', err);
       }
     }
+    const authorityRecipients = [...new Set(Object.values(event.assignedOfficerByAuthority ?? {}).filter((uid): uid is string => Boolean(uid)))];
+    await Promise.all(authorityRecipients.map(async (recipientUid) => {
+      try {
+        const sourceActionId = `control_list_published_${versionId}_${controlItemVersion}`;
+        await createNotification({
+          recipientUid,
+          eventId,
+          versionId,
+          type: 'control_list_published',
+          title: 'Event controls published',
+          message: `The final control list for "${event.eventDetails.name}" is published. Review the organiser's evidence when it is submitted.`,
+          sourceActionId,
+          notificationId: `${sourceActionId}_${recipientUid}`,
+        });
+      } catch (err) {
+        console.warn(`[editEventControlList] authority notification failed for ${recipientUid} (non-fatal):`, err);
+      }
+    }));
     return {
       eventId,
       versionId,

@@ -322,6 +322,8 @@ export default function AuthorityEventReview() {
     && (event.currentResourceId === undefined || event.currentResourceId === resources.resourceId),
   );
   const isNamedOfficer = Boolean(profile?.uid && event.assignedOfficerUids?.includes(profile.uid));
+  const ownProposalComplete = assignments.some((assignment) => assignment.versionId === event.currentVersionId
+    && assignment.officerUid === profile?.uid && assignment.status === 'completed');
   // FR-M3-16: approval requires an explicit materials-review confirmation.
   const canApprove = isNamedOfficer && reviewOpen && evidenceReady && (!rationale.trim() || rationale.trim().length >= 10)
     && confirmedReview && materialsReviewed && assessment?.complianceStatus !== 'blocked';
@@ -348,7 +350,7 @@ export default function AuthorityEventReview() {
         ...(decision === 'Rejected' ? { rejectionReasonCategory: rejectionReasonCategory as RejectionReasonCategory } : {}),
         ...(isApproval ? { confirmedReview: true } : {}),
       });
-      toast.success(decision === 'Approved' ? 'Approval proposal recorded.' : 'Rejection proposal recorded.');
+      toast.success(decision === 'Approved' ? 'Approval proposal sent for admin final review.' : 'Rejection proposal sent for admin final review.');
       setRationale('');
       setConfirmedReview(false);
       setSuggestion('');
@@ -489,6 +491,12 @@ export default function AuthorityEventReview() {
           <StatusBadge status={event.status} />
         </div>
       </div>
+
+      {ownProposalComplete && event.status === 'UnderReview' && (
+        <div className="mb-5 rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+          Your proposal is recorded. The application remains under review until the admin records the final decision.
+        </div>
+      )}
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
         <div className="min-w-0 space-y-5">

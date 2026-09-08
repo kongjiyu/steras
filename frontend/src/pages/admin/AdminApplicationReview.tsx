@@ -47,6 +47,7 @@ import { isAdminVisibleEvent } from './adminApplicationVisibility';
 import { isCurrentAssessmentJob, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
 import { adminOfficerDecisionRows } from './adminOfficerDecisionPresentation';
 import { userFacingSystemText } from '../../utils/userFacingText';
+import { adminWorkflowState } from './adminWorkflow';
 
 const STATUS_TONE: Record<EventStatus, string> = {
   Draft: 'admin-badge admin-badge--default',
@@ -119,9 +120,10 @@ interface SectionProps {
   icon: LucideIcon;
   children: React.ReactNode;
   defaultOpen?: boolean;
+  state?: 'Complete' | 'Review' | 'Waiting';
 }
 
-function Section({ title, icon: Icon, children, defaultOpen = true }: SectionProps) {
+function Section({ title, icon: Icon, children, defaultOpen = true, state }: SectionProps) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <section className="admin-section rounded-lg border border-[#ded5c5] bg-white shadow-card">
@@ -130,9 +132,7 @@ function Section({ title, icon: Icon, children, defaultOpen = true }: SectionPro
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center justify-between gap-3 border-b border-[#e8e0cf] px-4 py-3 text-left"
       >
-        <span className="flex items-center gap-2 text-sm font-bold uppercase tracking-[0.06em] text-ink-700">
-          <Icon size={15} className="text-brand-700" /> {title}
-        </span>
+        <span className="flex items-center gap-2 text-sm font-bold uppercase tracking-[0.06em] text-ink-700"><Icon size={15} className="text-brand-700" /> {title}{state && <span className={`rounded-full px-2 py-0.5 text-[10px] normal-case tracking-normal ${state === 'Complete' ? 'bg-green-50 text-green-700' : state === 'Review' ? 'bg-amber-50 text-amber-800' : 'bg-stone-100 text-ink-500'}`}>{state}</span>}</span>
         <ChevronDown size={16} className={`text-ink-500 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && <div className="p-4">{children}</div>}
@@ -268,6 +268,7 @@ export default function AdminApplicationReview() {
     && !['authority', 'second', 'closed'].includes(event?.reviewStage ?? ''));
   const attachableOfficerFeedback = assignments.filter((assignment) => Boolean(assignment.decision && assignment.reason && assignment.versionId === event?.currentVersionId));
   const minRationaleLen = decisionMode === 'approve' && !rationale.trim() ? 0 : 10;
+  const workflow = event ? adminWorkflowState(event) : null;
 
   const submitDecision = async () => {
     if (!eventId || !event || !decisionMode || !initialReviewOpen) return;
@@ -378,11 +379,16 @@ export default function AdminApplicationReview() {
               </div>
             </header>
 
+            {workflow && <section className="mb-5 grid gap-3 rounded-lg border border-[#cfd7b4] bg-[#f8faef] p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+              <div><p className="text-xs font-bold uppercase tracking-[0.08em] text-brand-700">Current workflow</p><h2 className="mt-1 font-display text-lg font-bold text-ink-900">{workflow.stage}</h2><p className="mt-1 text-sm text-ink-600">{workflow.needsAction ? `Admin action required: ${workflow.actionLabel}.` : workflow.stage === 'Authority review' ? 'Assigned officers are completing their review. No admin decision is due yet.' : workflow.stage === 'Awaiting organiser documentation' ? 'The application is approved. The organiser can now provide the published control evidence.' : 'Review the record and audit history below.'}</p></div>
+              <span className={`w-fit rounded-full border px-3 py-1 text-xs font-bold ${workflow.priority === 'High' ? 'border-red-200 bg-red-50 text-red-700' : workflow.priority === 'Medium' ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-stone-200 bg-white text-ink-500'}`}>{workflow.priority} priority</span>
+            </section>}
+
             <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
               {/* Main column */}
               <div className="space-y-4">
                 {/* Organiser + venue info */}
-                <Section title="Application" icon={ClipboardList}>
+                <Section title="Application" icon={ClipboardList} state="Complete">
                   <dl className="grid gap-3 text-sm sm:grid-cols-2">
                     <div>
                       <dt className="text-xs text-ink-500">Organiser</dt>
@@ -416,7 +422,7 @@ export default function AdminApplicationReview() {
                 </Section>
 
                 {version && (
-                  <Section title={`Submitted version ${version.versionNumber}`} icon={ClipboardList}>
+                  <Section title={`Submitted version ${version.versionNumber}`} icon={ClipboardList} state="Complete">
                     <div className="grid gap-4 text-sm sm:grid-cols-2">
                       <Detail label="Event type" value={version.eventDetails.type} />
                       <Detail label="Event date" value={`${formatDateTime(version.eventDetails.startDatetime)} – ${formatDateTime(version.eventDetails.endDatetime)}`} />
@@ -453,7 +459,7 @@ export default function AdminApplicationReview() {
                     ? `Assessment version ${display.schemaVersion} · Calculation ${display.formulaVersion}`
                     : '';
                   return (
-                    <Section title="Risk assessment" icon={ShieldCheck}>
+                    <Section title="Risk assessment" icon={ShieldCheck} state="Complete">
                       <div className="mb-3 flex flex-wrap items-center gap-2">
                         <span className={`${RISK_TONE[riskLevel]} text-sm`}>
                           {riskLevel}{score !== undefined ? ` · ${score}/100` : ''}
@@ -565,6 +571,16 @@ export default function AdminApplicationReview() {
                   )}
                 </Section>
 
+                <Section title="Review timeline" icon={History} state={workflow?.needsAction ? 'Review' : 'Waiting'}>
+                  <ol className="space-y-3 text-sm">
+                    <TimelineItem label="Application submitted" date={event.submittedAt} complete={Boolean(event.submittedAt)} />
+                    <TimelineItem label="Initial admin decision" date={event.initialReview?.reviewedAt} complete={Boolean(event.initialReview)} />
+                    <TimelineItem label="Authority review completed" date={event.authorityReviewCompletedAt} complete={Boolean(event.authorityReviewCompletedAt)} />
+                    <TimelineItem label="Final admin decision" date={event.secondReview?.decidedAt} complete={Boolean(event.secondReview)} />
+                    <TimelineItem label="Event controls published" date={event.controlListGenerated ? event.updatedAt : undefined} complete={Boolean(event.controlListGenerated)} />
+                  </ol>
+                </Section>
+
                 {/* Audit log */}
                 <Section title="Audit log" icon={History} defaultOpen={false}>
                   {audit.length === 0 ? (
@@ -590,7 +606,7 @@ export default function AdminApplicationReview() {
               </div>
 
               {/* Side column: actions */}
-              <aside className="space-y-4">
+              <aside className="space-y-4 xl:sticky xl:top-20 xl:self-start">
                 {/* Officer assignment */}
                 <Section title="Officer assignment" icon={Users}>
                   <p className="mb-3 text-sm text-ink-600">Required agencies: {event.requiredAuthorities.join(', ')}. Choose named officers and review their eligibility in the assignment checklist.</p>
@@ -747,6 +763,10 @@ export default function AdminApplicationReview() {
 
 function Detail({ label, value }: { label: string; value: string }) {
   return <div><p className="text-xs text-ink-500">{label}</p><p className="mt-1 text-ink-800">{value}</p></div>;
+}
+
+function TimelineItem({ label, date, complete }: { label: string; date?: number; complete: boolean }) {
+  return <li className="flex items-center gap-3"><span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border ${complete ? 'border-green-300 bg-green-50 text-green-700' : 'border-stone-300 bg-stone-50 text-ink-400'}`}>{complete ? <Check size={13}/> : <span className="h-1.5 w-1.5 rounded-full bg-current"/>}</span><span className={complete ? 'font-semibold text-ink-800' : 'text-ink-500'}>{label}</span><span className="ml-auto text-xs text-ink-500">{complete ? formatDateTime(date) : 'Pending'}</span></li>;
 }
 
 function submittedDocumentName(path: string): string {

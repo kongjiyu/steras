@@ -141,3 +141,6 @@ $RECYCLE.BIN/
 *.seed
 *.pid.lock
 .history/
+
+# Local admin portal review evidence
+/output/admin-portal-review/

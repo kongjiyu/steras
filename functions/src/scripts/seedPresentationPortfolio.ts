@@ -37,6 +37,7 @@ const DATASET_ID = 'steras-presentation-portfolio-2026-09-v1';
 const MANAGED_BY = 'seed:presentation-portfolio';
 const VERSION_ID = 'v1';
 const PARTICIPANT_DEMO_EMAIL = 'participant.showcase@steras.test';
+const ORGANIZER_DEMO_EMAIL = 'uat-organizer@steras.test';
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
 
@@ -146,15 +147,18 @@ export function parsePresentationArgs(argv: string[]) {
 async function loadIdentities(db: Firestore): Promise<SeedIdentity> {
   const [admins, organizers, participants, authorities] = await Promise.all([
     db.collection(COLLECTIONS.USERS).where('role', '==', 'admin').limit(10).get(),
-    db.collection(COLLECTIONS.USERS).where('role', '==', 'organizer').limit(10).get(),
+    db.collection(COLLECTIONS.USERS).where('email', '==', ORGANIZER_DEMO_EMAIL).limit(1).get(),
     db.collection(COLLECTIONS.USERS).where('role', '==', 'public').limit(10).get(),
     db.collection(COLLECTIONS.USERS).where('role', '==', 'authority').limit(50).get(),
   ]);
   const admin = admins.docs[0]?.data() as UserProfile | undefined;
-  const organizer = organizers.docs[0]?.data() as UserProfile | undefined;
+  const organizer = organizers.docs.map((document) => document.data() as UserProfile)
+    .find((profile) => profile.email === ORGANIZER_DEMO_EMAIL);
   const participant = participants.docs.map((document) => document.data() as UserProfile)
     .find((profile) => profile.email === PARTICIPANT_DEMO_EMAIL) ?? participants.docs[0]?.data() as UserProfile | undefined;
-  if (!admin?.uid || !organizer?.uid || !participant?.uid) throw new Error('At least one Admin, Organizer and Public participant profile must already exist.');
+  if (!admin?.uid || !organizer?.uid || organizer.role !== 'organizer' || !participant?.uid) {
+    throw new Error(`Admin, ${ORGANIZER_DEMO_EMAIL} and a Public participant profile must already exist.`);
+  }
   const authorityUids: Partial<Record<AuthorityType, string>> = {};
   authorities.docs.forEach((document) => {
     const profile = document.data() as UserProfile;
@@ -410,6 +414,8 @@ async function writeScenario(db: Firestore, scenarioValue: Scenario, venue: Venu
   const requiredAuthorities = authoritiesFor(scenarioValue.type);
   const terminal = scenarioValue.status === 'Approved' || scenarioValue.status === 'Rejected';
   const initialReviewed = scenarioValue.status !== 'Pending';
+  const secondReviewReady = scenarioValue.slug === 'urban-parade';
+  const authorityCompleted = terminal || secondReviewReady;
   const eventBase = {
     eventId,
     organizerId: organizer.uid,
@@ -420,15 +426,15 @@ async function writeScenario(db: Firestore, scenarioValue: Scenario, venue: Venu
     editableVersionId: null,
     draftDocumentPaths: [],
     requiredAuthorities,
-    assignedOfficerUids: requiredAuthorities.map((authority) => identities.authorityUids[authority] ?? identities.adminUid),
-    assignedOfficerByAuthority: Object.fromEntries(requiredAuthorities.map((authority) => [authority, identities.authorityUids[authority] ?? identities.adminUid])),
-    reviewStage: terminal ? null : scenarioValue.status === 'UnderReview' ? 'authority' : 'initial',
-    controlListGenerated: true,
+    assignedOfficerUids: initialReviewed ? requiredAuthorities.map((authority) => identities.authorityUids[authority] ?? identities.adminUid) : [],
+    assignedOfficerByAuthority: initialReviewed ? Object.fromEntries(requiredAuthorities.map((authority) => [authority, identities.authorityUids[authority] ?? identities.adminUid])) : {},
+    reviewStage: terminal ? null : secondReviewReady ? 'second' : scenarioValue.status === 'UnderReview' ? 'authority' : 'initial',
+    controlListGenerated: scenarioValue.status === 'Approved',
     createdAt: scenarioValue.createdAt,
     submittedAt,
-    updatedAt: terminal ? terminalAt : initialReviewed ? initialReviewAt : submittedAt,
+    updatedAt: terminal ? terminalAt : secondReviewReady ? authorityReviewAt : initialReviewed ? initialReviewAt : submittedAt,
     ...(initialReviewed ? { initialReview: { decision: 'Approved', reason: 'Application completeness and evidence package reviewed.', reviewerUid: identities.adminUid, reviewedAt: initialReviewAt } } : {}),
-    ...(terminal ? { authorityReviewCompletedAt: authorityReviewAt, authorityReviewCompletedVersionId: VERSION_ID } : {}),
+    ...(authorityCompleted ? { authorityReviewCompletedAt: authorityReviewAt, authorityReviewCompletedVersionId: VERSION_ID } : {}),
     ...(terminal ? { secondReview: { confirmedDecision: scenarioValue.status, reviewerUid: identities.adminUid, decidedAt: terminalAt, adminNote: scenarioValue.status === 'Approved' ? 'All required reviews completed.' : 'Application requires material revision before resubmission.' } } : {}),
     synthetic: true,
     presentationData: marker(eventId),
@@ -451,23 +457,25 @@ async function writeScenario(db: Firestore, scenarioValue: Scenario, venue: Venu
   batch.set(eventRef.collection(COLLECTIONS.ASSESSMENTS).doc(artifacts.assessment.assessmentId), artifacts.assessment);
   batch.set(eventRef.collection(COLLECTIONS.RESOURCES).doc(artifacts.resource.resourceId), artifacts.resource);
   for (const review of artifacts.reviews) batch.set(eventRef.collection(COLLECTIONS.ASSESSMENTS).doc(artifacts.assessment.assessmentId).collection(COLLECTIONS.SCORE_REVIEWS).doc(review.reviewId), { ...review, presentationData: marker(eventId) });
-  for (const authority of requiredAuthorities) {
+  for (const authority of initialReviewed ? requiredAuthorities : []) {
     const rejected = scenarioValue.status === 'Rejected' && authority === requiredAuthorities[0];
     const assignmentId = `${VERSION_ID}_${authority}`;
     batch.set(eventRef.collection(COLLECTIONS.ASSIGNMENTS).doc(assignmentId), {
       assignmentId, eventId, versionId: VERSION_ID, authorityType: authority,
       officerUid: identities.authorityUids[authority] ?? identities.adminUid,
       assignedBy: identities.adminUid, assignedAt: initialReviewAt,
-      status: terminal ? 'completed' : scenarioValue.status === 'UnderReview' ? 'in_progress' : 'pending',
-      ...(terminal ? { decision: rejected ? 'Rejected' : 'Approved', reason: rejected ? 'Risk controls require revision.' : 'Required materials and controls reviewed.', suggestion: rejected ? 'Revise crowd, traffic and evacuation controls.' : 'Proceed with the approved controls.', ...(rejected ? { rejectionReasonCategory: 'risk_controls_inadequate' } : {}), decidedAt: authorityReviewAt } : {}),
+      status: authorityCompleted ? 'completed' : scenarioValue.status === 'UnderReview' ? 'in_progress' : 'pending',
+      ...(authorityCompleted ? { decision: rejected ? 'Rejected' : 'Approved', reason: rejected ? 'Risk controls require revision.' : 'Required materials and controls reviewed.', suggestion: rejected ? 'Revise crowd, traffic and evacuation controls.' : 'Proceed with the approved controls.', ...(rejected ? { rejectionReasonCategory: 'risk_controls_inadequate' } : {}), decidedAt: authorityReviewAt } : {}),
       presentationData: marker(eventId),
     });
-    if (terminal) batch.set(eventRef.collection(COLLECTIONS.DECISION_HISTORY).doc(`${assignmentId}-decision`), { decisionId: `${assignmentId}-decision`, eventId, versionId: VERSION_ID, authorityType: authority, decision: rejected ? 'Rejected' : 'Approved', rationale: rejected ? 'Risk controls require revision.' : 'Required materials and controls reviewed.', suggestion: rejected ? 'Revise crowd, traffic and evacuation controls.' : 'Proceed with the approved controls.', reviewStage: 'authority', ...(rejected ? { rejectionReasonCategory: 'risk_controls_inadequate' } : {}), materialsReviewed: true, reviewerId: identities.authorityUids[authority] ?? identities.adminUid, decidedAt: authorityReviewAt, current: true, presentationData: marker(eventId) });
+    if (authorityCompleted) batch.set(eventRef.collection(COLLECTIONS.DECISION_HISTORY).doc(`${assignmentId}-decision`), { decisionId: `${assignmentId}-decision`, eventId, versionId: VERSION_ID, authorityType: authority, decision: rejected ? 'Rejected' : 'Approved', rationale: rejected ? 'Risk controls require revision.' : 'Required materials and controls reviewed.', suggestion: rejected ? 'Revise crowd, traffic and evacuation controls.' : 'Proceed with the approved controls.', reviewStage: 'authority', ...(rejected ? { rejectionReasonCategory: 'risk_controls_inadequate' } : {}), materialsReviewed: true, reviewerId: identities.authorityUids[authority] ?? identities.adminUid, decidedAt: authorityReviewAt, current: true, presentationData: marker(eventId) });
   }
   if (initialReviewed) batch.set(eventRef.collection(COLLECTIONS.AUDIT_LOGS).doc('presentation-initial-review'), { id: 'presentation-initial-review', eventId, versionId: VERSION_ID, action: 'decision_made', actorId: identities.adminUid, actorRole: 'admin', timestamp: initialReviewAt, metadata: { reviewStage: 'initial', decision: 'Approved' }, presentationData: marker(eventId) });
   if (terminal) batch.set(eventRef.collection(COLLECTIONS.AUDIT_LOGS).doc('presentation-second-review'), { id: 'presentation-second-review', eventId, versionId: VERSION_ID, action: 'decision_made', actorId: identities.adminUid, actorRole: 'admin', timestamp: terminalAt, metadata: { reviewStage: 'second', finalDecision: scenarioValue.status, ...(scenarioValue.status === 'Rejected' ? { rejectionReasonCategory: 'risk_controls_inadequate' } : {}) }, presentationData: marker(eventId) });
   await batch.commit();
-  await writeControl(db, scenarioValue, event, identities, organizer, index, terminalAt);
+  if (scenarioValue.status === 'Approved') {
+    await writeControl(db, scenarioValue, event, identities, organizer, index, terminalAt);
+  }
   if (scenarioValue.status === 'Approved') {
     await db.collection(COLLECTIONS.PUBLIC_EVENTS).doc(eventId).set({ eventId, versionId: VERSION_ID, eventName: details.name, venueName: details.venueName, eventType: details.type, startDatetime: details.startDatetime, endDatetime: details.endDatetime, approvedBy: requiredAuthorities, publicStatus: 'approved', presentationData: marker(eventId) });
   }
@@ -624,6 +632,18 @@ async function verifyDataset(db: Firestore) {
     if (!eventSnapshot.exists || !event || eventSnapshot.data()?.presentationData?.datasetId !== DATASET_ID || !isAnalyticsEvent(event)) {
       failures.push(`${eventId}: invalid event`);
       continue;
+    }
+    if (event.eventDetails.organizerEmail !== ORGANIZER_DEMO_EMAIL) failures.push(`${eventId}: unexpected organiser ${event.eventDetails.organizerEmail}`);
+    if (event.status === 'Pending') {
+      const pendingAssignments = await eventRef.collection(COLLECTIONS.ASSIGNMENTS).get();
+      const pendingControls = await eventRef.collection(COLLECTIONS.EVENT_CONTROLS).get();
+      if (event.initialReview || event.assignedOfficerUids?.length || Object.keys(event.assignedOfficerByAuthority ?? {}).length
+        || !pendingAssignments.empty || event.controlListGenerated || !pendingControls.empty) {
+        failures.push(`${eventId}: pending workflow data is not clean`);
+      }
+    }
+    if (scenarioValue.slug === 'urban-parade' && (event.status !== 'UnderReview' || event.reviewStage !== 'second' || !event.authorityReviewCompletedAt)) {
+      failures.push(`${eventId}: second-review demonstration state is invalid`);
     }
     const [assessment, resource, incidents] = await Promise.all([
       eventRef.collection(COLLECTIONS.ASSESSMENTS).doc(event.currentAssessmentId ?? '').get(),

@@ -31,6 +31,7 @@ import { db, functions, isFirebaseConfigured } from '../../config/firebase';
 import EmptyState from '../../components/ui/EmptyState';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { displayIdentityName, useDisplayIdentities } from '../../hooks/useDisplayIdentities';
+import ControlProposalDialog from './ControlProposalDialog';
 
 interface ProposedChecklistItem {
   authorityType: AuthorityType;
@@ -63,6 +64,7 @@ export default function AdminAssignment() {
   const [adminSuggestion, setAdminSuggestion] = useState('');
   const [rejectionReasonCategory, setRejectionReasonCategory] = useState<RejectionReasonCategory | ''>('');
   const [finalDecision, setFinalDecision] = useState<DecisionValue | ''>('');
+  const [controlProposalOpen, setControlProposalOpen] = useState(false);
 
   // Live event doc.
   useEffect(() => {
@@ -121,7 +123,12 @@ export default function AdminAssignment() {
   // Derive review state before the early loading returns so this hook is
   // called in the same order on every render.
   const required = event?.requiredAuthorities ?? [];
-  const currentAssignments = assignments.filter((assignment) => assignment.versionId === event?.currentVersionId);
+  const versionAssignments = assignments.filter((assignment) => assignment.versionId === event?.currentVersionId);
+  const currentAssignments = versionAssignments.filter((assignment) => assignment.status !== 'revoked');
+  const revokedAssignments = new Map<AuthorityType, Assignment>();
+  for (const assignment of versionAssignments.filter((value) => value.status === 'revoked')) {
+    revokedAssignments.set(assignment.authorityType, assignment);
+  }
   const assignmentsByAuthority = new Map<AuthorityType, Assignment>();
   for (const a of currentAssignments) assignmentsByAuthority.set(a.authorityType, a);
   const aggregateDecision = computeAggregate(Array.from(assignmentsByAuthority.values()), required);
@@ -145,17 +152,22 @@ export default function AdminAssignment() {
   const isAuthorityReview = event.reviewStage === 'authority';
   const isSecondReview = event.reviewStage === 'second';
   const allComplete = isSecondReview
-    || (currentAssignments.length > 0 && currentAssignments.every((a) => a.status === 'completed' || a.status === 'revoked'));
+    || (currentAssignments.length === required.length && currentAssignments.every((a) => a.status === 'completed'));
+  const missingAuthorities = required.filter((authority) => !assignmentsByAuthority.has(authority));
+  const isReplacement = isAuthorityReview && missingAuthorities.length > 0;
   const commit = async () => {
     if (!eventId) return;
     setCommitting(true);
     try {
-      const command = httpsCallable<{ eventId: string; assignmentMap: Record<string, string>; dryRun: false }, { assigned: number }>(
+      const assignmentMap = isReplacement
+        ? Object.fromEntries(missingAuthorities.map((authority) => [authority, selected[authority]]))
+        : selected;
+      const command = httpsCallable<{ eventId: string; assignmentMap: Record<string, string>; dryRun: false; mode: 'initial' | 'replacement' }, { assigned: number }>(
         functions,
         'assignAuthorityOfficers',
       );
-      await command({ eventId, assignmentMap: selected, dryRun: false });
-      toast.success(`Assigned ${Object.keys(selected).length} officer(s).`);
+      await command({ eventId, assignmentMap, dryRun: false, mode: isReplacement ? 'replacement' : 'initial' });
+      toast.success(isReplacement ? `Assigned ${missingAuthorities.length} replacement officer(s).` : `Assigned ${Object.keys(selected).length} officer(s).`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Unable to assign officers.');
     } finally {
@@ -186,6 +198,7 @@ export default function AdminAssignment() {
           : { adminNote: adminNote.trim() || undefined }),
       });
       toast.success(`Final decision recorded: ${finalDecision}.`);
+      if (finalDecision === 'Approved') setControlProposalOpen(true);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Unable to confirm second review.');
     } finally {
@@ -229,6 +242,14 @@ export default function AdminAssignment() {
 
   return (
     <div className="p-5 sm:p-8">
+      {controlProposalOpen && eventId && (
+        <ControlProposalDialog
+          eventId={eventId}
+          eventName={details.name}
+          onClose={() => setControlProposalOpen(false)}
+          onPublished={() => setControlProposalOpen(false)}
+        />
+      )}
       <Link to={`/admin/applications/${eventId}`} className="mb-4 inline-flex min-h-11 items-center gap-1 text-sm font-medium text-brand-700 hover:text-brand-800">
         <ChevronLeft size={16} /> Back to application
       </Link>
@@ -241,6 +262,7 @@ export default function AdminAssignment() {
         <div className="flex flex-col items-end gap-1">
           <StatusBadge status={event.status} />
           {event.reviewStage && <span className="text-xs font-semibold text-ink-500">Stage: {event.reviewStage}</span>}
+          {isSecondReview && <span className="text-xs font-semibold text-amber-700">Admin final decision required</span>}
         </div>
       </div>
 
@@ -259,6 +281,7 @@ export default function AdminAssignment() {
             <div className="card-body space-y-5">
               {checklist.map((item) => {
                 const current = assignmentsByAuthority.get(item.authorityType);
+                const revoked = revokedAssignments.get(item.authorityType);
                 return (
                   <div key={item.authorityType} className="rounded-md border border-ink-100 p-3">
                     <div className="flex items-center justify-between">
@@ -303,7 +326,13 @@ export default function AdminAssignment() {
                     ) : item.candidates.length === 0 ? (
                       <p className="mt-2 text-sm text-status-rejected">No eligible officers for {item.authorityType} + venue state {venueState}.</p>
                     ) : (
-                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      <div className="mt-3">
+                        {revoked && (
+                          <p className="mb-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                            Previous assignment revoked {revoked.revokedAt ? format(new Date(revoked.revokedAt), 'PPp') : ''}. Select an eligible replacement and confirm below.
+                          </p>
+                        )}
+                        <div className="grid gap-2 sm:grid-cols-2">
                         {item.candidates.map((c) => {
                           const checked = (selected[item.authorityType] ?? item.defaultOfficerUid) === c.officerUid;
                           return (
@@ -315,7 +344,7 @@ export default function AdminAssignment() {
                                 checked={checked}
                                 onChange={() => setSelected((cur) => ({ ...cur, [item.authorityType]: c.officerUid }))}
                                 className="mt-1"
-                                disabled={isAuthorityReview || isSecondReview}
+                                disabled={isSecondReview || (isAuthorityReview && !revoked)}
                               />
                               <span className="min-w-0">
                                 <span className="block font-semibold text-ink-800">{displayIdentityName(c.officerUid, identityNames, `${item.authorityType} officer`)}</span>
@@ -324,20 +353,22 @@ export default function AdminAssignment() {
                             </label>
                           );
                         })}
+                        </div>
                       </div>
                     )}
                   </div>
                 );
               })}
             </div>
-            {!isAuthorityReview && !isSecondReview && (
+            {(!isAuthorityReview || isReplacement) && !isSecondReview && (
               <div className="card-body border-t border-ink-100">
-                <button type="button" className="btn-primary w-full" disabled={committing || Object.keys(selected).length === 0} onClick={commit}>
-                  <UserCheck size={16} />{committing ? 'Assigning...' : 'Assign officers'}
+                <button type="button" className="btn-primary w-full" disabled={committing || (isReplacement ? missingAuthorities.some((authority) => !selected[authority]) : Object.keys(selected).length === 0)} onClick={commit}>
+                  <UserCheck size={16} />{committing ? 'Assigning...' : isReplacement ? 'Assign replacement officers' : 'Assign officers'}
                 </button>
+                <p className="mt-2 text-center text-xs text-ink-500">Selection is only saved after you press this button.</p>
               </div>
             )}
-            {canUnassign && assignments.length > 1 && (
+            {canUnassign && currentAssignments.length > 1 && (
               <div className="card-body border-t border-ink-100">
                 <button type="button" className="btn-secondary w-full" disabled={unassigning !== null || unassigningAll} onClick={() => unassign(null)}>
                   <RotateCcw size={14} />{unassigningAll ? 'Unassigning all...' : 'Unassign all officers'}
