@@ -37,7 +37,7 @@ const DATASET_ID = 'steras-presentation-portfolio-2026-09-v1';
 const MANAGED_BY = 'seed:presentation-portfolio';
 const VERSION_ID = 'v1';
 const PARTICIPANT_DEMO_EMAIL = 'participant.showcase@steras.test';
-const ORGANIZER_DEMO_EMAIL = 'uat-organizer@steras.test';
+const ORGANIZER_DEMO_EMAIL = 'organizer1@steras.test';
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
 
