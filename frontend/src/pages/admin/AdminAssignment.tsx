@@ -151,10 +151,12 @@ export default function AdminAssignment() {
   const details = event.eventDetails;
   const isAuthorityReview = event.reviewStage === 'authority';
   const isSecondReview = event.reviewStage === 'second';
-  const allComplete = isSecondReview
-    || (currentAssignments.length === required.length && currentAssignments.every((a) => a.status === 'completed'));
+  const allComplete = event.status === 'UnderReview' && (isSecondReview
+    || (currentAssignments.length === required.length && currentAssignments.every((a) => a.status === 'completed')));
   const missingAuthorities = required.filter((authority) => !assignmentsByAuthority.has(authority));
   const isReplacement = isAuthorityReview && missingAuthorities.length > 0;
+  const canInitialAssign = event.status === 'UnderReview' && event.initialReview?.decision === 'Approved'
+    && !isAuthorityReview && !isSecondReview;
   const commit = async () => {
     if (!eventId) return;
     setCommitting(true);
@@ -360,7 +362,7 @@ export default function AdminAssignment() {
                 );
               })}
             </div>
-            {(!isAuthorityReview || isReplacement) && !isSecondReview && (
+            {(canInitialAssign || isReplacement) && (
               <div className="card-body border-t border-ink-100">
                 <button type="button" className="btn-primary w-full" disabled={committing || (isReplacement ? missingAuthorities.some((authority) => !selected[authority]) : Object.keys(selected).length === 0)} onClick={commit}>
                   <UserCheck size={16} />{committing ? 'Assigning...' : isReplacement ? 'Assign replacement officers' : 'Assign officers'}
