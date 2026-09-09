@@ -28,10 +28,12 @@ import {
   ChevronLeft,
   Clock3,
   Flag,
+  Navigation,
   Image as ImageIcon,
   MapPin,
   ShieldCheck,
   ThumbsUp,
+  Users,
 } from 'lucide-react';
 import {
   COLLECTIONS,
@@ -178,8 +180,19 @@ function EventContent({ controlsError, retryControls, event, controls, stage2Doc
               <Detail icon={<CalendarDays size={18} />} label="Date" value={formatEventDateRange(event.startDatetime, event.endDatetime)} />
               <Detail icon={<Clock3 size={18} />} label="Time" value={`${formatTime(event.startDatetime)} – ${formatTime(event.endDatetime)}`} />
               <Detail icon={<MapPin size={18} />} label="Venue" value={event.venueName} />
+              {event.expectedAttendance ? <Detail icon={<Users size={18} />} label="Expected attendance" value={`${event.expectedAttendance.toLocaleString()} people`} /> : null}
+              <Detail icon={<ShieldCheck size={18} />} label="Organizer" value="Identity verified during authority review" />
             </dl>
-            <p className="mt-5 max-w-2xl text-sm leading-6 text-[#6b6555]">This public listing contains only non-sensitive information from the approved application version.</p>
+            {event.description && <div className="mt-8"><h2 className="font-display text-lg font-bold text-[#303528]">About this event</h2><p className="mt-3 max-w-2xl whitespace-pre-line text-sm leading-7 text-[#5f6254]">{event.description}</p></div>}
+
+            <div className="mt-8">
+              <h2 className="font-display text-lg font-bold text-[#303528]">Venue & directions</h2>
+              <p className="mt-2 text-sm text-[#6b6555]">{[event.venueAddress, event.venueState].filter(Boolean).join(', ') || event.venueName}</p>
+              {event.venueLocation && <iframe title={`Map of ${event.venueName}`} className="mt-4 h-56 w-full rounded-lg border border-[#ded4c1]" loading="lazy" referrerPolicy="no-referrer-when-downgrade" src={`https://www.google.com/maps?q=${event.venueLocation.lat},${event.venueLocation.lng}&z=15&output=embed`} />}
+              <a className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-md border border-[#a8b57e] bg-[#fffdf7] px-4 py-2 text-sm font-semibold text-[#52651c]" href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(event.venueLocation ? `${event.venueLocation.lat},${event.venueLocation.lng}` : [event.venueName, event.venueAddress, event.venueState].filter(Boolean).join(', '))}`} target="_blank" rel="noreferrer"><Navigation size={16} />Get directions</a>
+            </div>
+
+            <p className="mt-5 max-w-2xl text-xs leading-5 text-[#7a8063]">This listing contains approved, non-sensitive event information. Operational risk scores, private evidence and internal incident records are never published here.</p>
 
             {/* Verified controls (Workstream 4 — Stage 2 images + confirm/report). */}
             <div className="mt-10">
@@ -218,13 +231,19 @@ function EventContent({ controlsError, retryControls, event, controls, stage2Doc
             </div>
           </section>
 
-          <aside className="rounded-lg border border-[#ccd8aa] bg-[#edf2dc] p-5">
-            <ShieldCheck className="text-[#52651c]" size={24} />
-            <h2 className="mt-4 font-display text-base font-bold text-[#303b1a]">Approval confirmed</h2>
-            <p className="mt-2 text-sm leading-6 text-[#59643a]">Version {event.versionId.replace(/^v/, '')} completed review by every required authority.</p>
-            <ul className="mt-4 flex flex-wrap gap-2">
-              {event.approvedBy.map((authority) => <li key={authority} className="badge bg-[#fffdf7] text-[#52651c]">{authority}</li>)}
-            </ul>
+          <aside className="space-y-4 self-start lg:sticky lg:top-24">
+            <div className="rounded-lg border border-[#ccd8aa] bg-[#edf2dc] p-5">
+              <ShieldCheck className="text-[#52651c]" size={24} />
+              <h2 className="mt-4 font-display text-base font-bold text-[#303b1a]">Approval confirmed</h2>
+              <p className="mt-2 text-sm leading-6 text-[#59643a]">Version {event.versionId.replace(/^v/, '')} completed review by every required authority.</p>
+              <ul className="mt-4 flex flex-wrap gap-2">{event.approvedBy.map((authority) => <li key={authority} className="badge bg-[#fffdf7] text-[#52651c]">{authority}</li>)}</ul>
+              {event.lastUpdatedAt && <p className="mt-4 border-t border-[#ccd8aa] pt-3 text-xs text-[#6b704e]">Last updated {new Date(event.lastUpdatedAt).toLocaleString()}</p>}
+            </div>
+            <div className="rounded-lg border border-[#ded4c1] bg-[#fffdf7] p-5">
+              <h2 className="font-display text-base font-bold text-[#303528]">Before you attend</h2>
+              <ul className="mt-3 space-y-2 text-sm leading-6 text-[#5f6254]"><li>• Confirm the date, time and venue.</li><li>• Check organizer updates before travelling.</li><li>• Follow published venue and authority instructions.</li></ul>
+              <Link to="/incidents" className="mt-4 inline-flex min-h-11 w-full items-center justify-center rounded-md border border-red-300 bg-white px-3 py-2 text-sm font-semibold text-red-700"><Flag size={15} className="mr-2" />Report an incident</Link>
+            </div>
           </aside>
         </div>
 

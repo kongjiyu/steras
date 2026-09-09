@@ -290,11 +290,18 @@ export async function makeAuthorityDecisionForUser(
         versionId,
         eventName: details.name,
         venueName: details.venueName,
+        venueAddress: details.venueAddress,
+        ...(details.venueState ? { venueState: details.venueState } : {}),
+        ...(details.venueLocation ? { venueLocation: details.venueLocation } : {}),
         eventType: details.type,
+        ...(details.description ? { description: details.description } : {}),
+        expectedAttendance: details.expectedAttendance,
+        environment: details.environment,
         startDatetime: details.startDatetime,
         endDatetime: details.endDatetime,
         approvedBy: event.requiredAuthorities,
         publicStatus: 'approved',
+        lastUpdatedAt: now,
       };
       transaction.set(publicReference, publicEvent);
       const publishAudit = eventReference.collection(COLLECTIONS.AUDIT_LOGS).doc(`${versionId}_public_published`);

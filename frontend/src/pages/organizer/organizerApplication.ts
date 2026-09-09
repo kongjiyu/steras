@@ -17,6 +17,17 @@ export const ORGANIZER_STATUS_FILTERS: OrganizerStatusFilter[] = [
   'Manual Review Required',
 ];
 
+export const MALAYSIA_STATES = [
+  'Johor', 'Kedah', 'Kelantan', 'Melaka', 'Negeri Sembilan', 'Pahang',
+  'Perak', 'Perlis', 'Pulau Pinang', 'Sabah', 'Sarawak', 'Selangor',
+  'Terengganu', 'Kuala Lumpur', 'Labuan', 'Putrajaya',
+] as const;
+
+export function isMeaningfulNotApplicableReason(reason: string | undefined): boolean {
+  const normalized = reason?.trim().replace(/\s+/g, ' ') ?? '';
+  return normalized.length >= 20 && normalized.split(' ').filter(Boolean).length >= 3;
+}
+
 export function isEditableApplicationStatus(status: unknown): status is 'Draft' {
   return status === 'Draft';
 }
@@ -347,8 +358,8 @@ export function validateM1EvidenceChecklist(
       errors.push(`${definition.id} is required for the current event declarations.`);
     } else if (response.applicability === 'required' && (!response.documentPath || !supportingPaths.has(response.documentPath))) {
       errors.push(`Attach a supporting-evidence file to ${definition.id}.`);
-    } else if (response.applicability === 'not_applicable' && (response.notApplicableReason?.trim().length ?? 0) < 10) {
-      errors.push(`Explain why ${definition.id} is not applicable (at least 10 characters).`);
+    } else if (response.applicability === 'not_applicable' && !isMeaningfulNotApplicableReason(response.notApplicableReason)) {
+      errors.push(`${definition.id}: give a specific reason using at least 20 characters and 3 words.`);
     }
   }
   if ([...supportingPaths].some((path) => !referencedPaths.has(path))) errors.push('Every uploaded supporting-evidence file must be linked to a checklist item.');

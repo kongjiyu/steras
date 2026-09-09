@@ -50,7 +50,7 @@ describe('M1 supporting-evidence manifest', () => {
       .toContain('T06-DOC-03 is required for the current event declarations.');
     temporary.notApplicableReason = 'short';
     expect(validateM1EvidenceManifest(details, selection, [evidence(path)], manifest).errors)
-      .toContain('T06-DOC-03 needs a 10–500 character not-applicable reason.');
+      .toContain('T06-DOC-03 needs a specific 20–500 character not-applicable reason using at least 3 words.');
   });
 
   it('rejects forged applicability, template-role files, and contradictory not-applicable entries', () => {
@@ -75,9 +75,9 @@ describe('M1 supporting-evidence manifest', () => {
       .toContain('T06-DOC-03 cannot reference a file when marked not applicable.');
 
     const paddedReason = manifest.map((item, index) => index === conditionalIndex
-      ? { ...item, notApplicableReason: '  This activity is not included.  ' }
+      ? { ...item, notApplicableReason: '  This activity is not included in this event.  ' }
       : item);
     expect(validateM1EvidenceManifest(details, selection, [evidence(path)], paddedReason).errors)
-      .toContain('T06-DOC-03 needs a 10–500 character not-applicable reason.');
+      .toContain('T06-DOC-03 needs a specific 20–500 character not-applicable reason using at least 3 words.');
   });
 });

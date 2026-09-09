@@ -1463,11 +1463,18 @@ export interface PublicEvent {
   versionId: string;
   eventName: string;
   venueName: string;
+  venueAddress?: string;
+  venueState?: string;
+  venueLocation?: VenueLocation;
   eventType: EventType;
+  description?: string;
+  expectedAttendance?: number;
+  environment?: EventEnvironment;
   startDatetime: number;
   endDatetime: number;
   approvedBy: AuthorityType[];
   publicStatus: 'approved';
+  lastUpdatedAt?: number;
 }
 
 export const COLLECTIONS = {

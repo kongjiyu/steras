@@ -227,11 +227,18 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
         versionId,
         eventName: details.name,
         venueName: details.venueName,
+        venueAddress: details.venueAddress,
+        ...(details.venueState ? { venueState: details.venueState } : {}),
+        ...(details.venueLocation ? { venueLocation: details.venueLocation } : {}),
         eventType: details.type,
+        ...(details.description ? { description: details.description } : {}),
+        expectedAttendance: details.expectedAttendance,
+        environment: details.environment,
         startDatetime: details.startDatetime,
         endDatetime: details.endDatetime,
         approvedBy: currentRequired,
         publicStatus: 'approved',
+        lastUpdatedAt: now,
       };
       tx.set(publicRef, publicEvent);
       const publishAudit = eventRef.collection(COLLECTIONS.AUDIT_LOGS).doc(`${versionId}_public_published`);

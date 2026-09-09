@@ -14,11 +14,11 @@ import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import OrganizerStatusBadge from './OrganizerStatusBadge';
-import { applyM1ExtractedFields, bindCanonicalVenue, completeRiskProfile, createInitialEventDetails, createM1DraftRecord, extractionMatchesDraftDocuments, findUniqueRegistryVenueMatch, isEditableApplicationStatus, isSelectableRegistryVenue, nextVersionId, reconcileM1EvidenceManifest, validateEventApplication, validateTemplateCompatibility } from './organizerApplication';
+import { applyM1ExtractedFields, bindCanonicalVenue, completeRiskProfile, createInitialEventDetails, createM1DraftRecord, extractionMatchesDraftDocuments, findUniqueRegistryVenueMatch, isEditableApplicationStatus, isMeaningfulNotApplicableReason, isSelectableRegistryVenue, MALAYSIA_STATES, nextVersionId, reconcileM1EvidenceManifest, validateEventApplication, validateTemplateCompatibility } from './organizerApplication';
 import { mockVenues } from '../../mock_data/venues';
 import { findEventById } from '../../mock_data/events';
 import { isValidTemplateSelection, M1_CORE_TEMPLATE, scenarioTemplateFor } from '../../features/m1/templateRegistry';
-import { FileCheck2, FileText, RotateCcw, Sparkles } from 'lucide-react';
+import { AlertCircle, ChevronRight, FileCheck2, FileText, MapPinned, PanelRightClose, RotateCcw, Sparkles } from 'lucide-react';
 import { isM1EvidenceForcedRequired, m1EvidenceRequirementsFor } from '@shared/m1EvidenceContract';
 import { applicationFileNameError } from './applicationFileName';
 import ApplicationJourney from '../../features/m1/ApplicationJourney';
@@ -53,6 +53,7 @@ export default function NewEvent() {
   const [currentExtractionId, setCurrentExtractionId] = useState('');
   const [extracting, setExtracting] = useState(false);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [errorNavigatorOpen, setErrorNavigatorOpen] = useState(true);
   const [loading, setLoading] = useState(Boolean(eventId));
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -265,6 +266,7 @@ export default function NewEvent() {
     const errors = validateEventApplication(form, documentPaths, templateSelection, draftDocuments, currentExtractionId, evidenceManifest);
     if (errors.length > 0) {
       setValidationErrors(errors);
+      setErrorNavigatorOpen(true);
       setNotice(errors[0]);
       requestAnimationFrame(() => {
         validationRef.current?.focus({ preventScroll: true });
@@ -494,8 +496,14 @@ export default function NewEvent() {
   ].map((guidance) => [guidance.id, guidance]));
   const validNotApplicable = evidenceDefinitions.filter(definition => {
     const response = evidenceManifest.find(item => item.requirementId === definition.id);
-    return !isM1EvidenceForcedRequired(definition, form.riskProfile) && response?.applicability === 'not_applicable' && (response.notApplicableReason?.trim().length ?? 0) >= 10;
+    return !isM1EvidenceForcedRequired(definition, form.riskProfile) && response?.applicability === 'not_applicable' && isMeaningfulNotApplicableReason(response.notApplicableReason);
   });
+  const incompleteNotApplicableCount = evidenceDefinitions.filter(definition => {
+    const response = evidenceManifest.find(item => item.requirementId === definition.id);
+    return !isM1EvidenceForcedRequired(definition, form.riskProfile)
+      && response?.applicability === 'not_applicable'
+      && !isMeaningfulNotApplicableReason(response.notApplicableReason);
+  }).length;
   const requiredEvidenceCount = evidenceDefinitions.length - validNotApplicable.length;
   const completeEvidenceCount = evidenceDefinitions.filter(definition => {
     const response = evidenceManifest.find(item => item.requirementId === definition.id);
@@ -565,6 +573,14 @@ export default function NewEvent() {
       </section>
 
       <form onSubmit={handleSubmit} noValidate className="rounded-lg border border-[#ded5c5] bg-[#fffdf8] shadow-card">
+        {validationErrors.length > 0 && (
+          <aside className="fixed bottom-4 right-4 z-40 w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-lg border border-red-300 bg-white shadow-xl" aria-label="Application issues navigator">
+            <button type="button" className="flex min-h-12 w-full items-center gap-2 bg-red-700 px-4 py-3 text-left text-sm font-bold text-white" onClick={() => setErrorNavigatorOpen(value => !value)} aria-expanded={errorNavigatorOpen}>
+              <AlertCircle size={18} /><span className="flex-1">{validationErrors.length} issue{validationErrors.length === 1 ? '' : 's'} to fix</span><PanelRightClose size={17} />
+            </button>
+            {errorNavigatorOpen && <ol className="max-h-64 overflow-y-auto p-2">{validationErrors.map((error, index) => <li key={error}><button type="button" className="flex w-full gap-2 rounded px-2 py-2 text-left text-sm text-red-900 hover:bg-red-50" onClick={() => reviewError(error)}><span className="font-bold">{index + 1}.</span><span className="flex-1">{error}</span><ChevronRight size={15} className="mt-0.5 shrink-0" /></button></li>)}</ol>}
+          </aside>
+        )}
         <div className="border-b border-[#e3dacb] bg-brand-50 px-4 py-4 sm:px-6">
           <p className="text-xs font-bold uppercase tracking-[0.07em] text-brand-700">Application {editableVersionId}</p>
           <p className="mt-1 text-sm text-ink-500">
@@ -693,7 +709,10 @@ export default function NewEvent() {
 
             <div>
               <label htmlFor="venue-state" className="field-label">Venue state *</label>
-              <input id="venue-state" className="input mt-1" required disabled={Boolean(form.venueId)} value={form.venueState ?? ''} onChange={(e) => update('venueState', e.target.value)} />
+              <select id="venue-state" className="input mt-1" required disabled={Boolean(form.venueId)} value={form.venueState ?? ''} onChange={(e) => update('venueState', e.target.value)}>
+                <option value="">Select state or federal territory</option>
+                {MALAYSIA_STATES.map(state => <option key={state} value={state}>{state}</option>)}
+              </select>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
@@ -705,6 +724,12 @@ export default function NewEvent() {
                 <label htmlFor="venue-longitude" className="field-label">Longitude *</label>
                 <input id="venue-longitude" type="number" step="any" min={-180} max={180} className="input mt-1" required disabled={Boolean(form.venueId)} value={form.venueLocation?.lng ?? ''} onChange={(e) => update('venueLocation', { lat: form.venueLocation?.lat ?? 0, lng: Number(e.target.value) })} />
               </div>
+            </div>
+
+            <div className="rounded-md border border-brand-200 bg-brand-50 p-3 text-sm text-ink-600">
+              <p className="font-semibold text-ink-800">Coordinates place the venue accurately on public maps.</p>
+              <p className="mt-1">Selecting a verified venue fills them automatically. For a custom venue, find its map pin and copy the displayed latitude and longitude.</p>
+              {form.venueName && <a className="mt-2 inline-flex items-center gap-1 font-semibold text-brand-700 underline" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([form.venueName, form.venueAddress, form.venueState].filter(Boolean).join(', '))}`} target="_blank" rel="noreferrer"><MapPinned size={15} />Find this venue in Google Maps</a>}
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
@@ -797,7 +822,7 @@ export default function NewEvent() {
             <legend className="section-title mb-2 pr-4">Supporting evidence</legend>
             <p className="text-sm leading-6 text-ink-500">Complete every Core and scenario checklist item. A current PDF, DOCX, or image can support more than one requirement; conditional items need either evidence or a clear not-applicable reason.</p>
             <div className="sticky top-[148px] z-10 rounded-lg border border-brand-200 bg-brand-50 p-4 shadow-sm">
-              <div className="flex flex-wrap items-center justify-between gap-2"><p className="font-semibold text-ink-900">Evidence completeness</p><span className="badge bg-white text-brand-700">{completeEvidenceCount} / {requiredEvidenceCount} evidence items linked · {validNotApplicable.length} not applicable</span></div>
+              <div className="flex flex-wrap items-center justify-between gap-2"><p className="font-semibold text-ink-900">Evidence completeness</p><span className="badge bg-white text-brand-700">{completeEvidenceCount} / {requiredEvidenceCount} evidence items linked · {validNotApplicable.length} excluded with valid reason{incompleteNotApplicableCount ? ` · ${incompleteNotApplicableCount} incomplete` : ''}</span></div>
               <div className="mt-3 h-2 overflow-hidden rounded-full bg-white"><div className="h-full rounded-full bg-brand-600" style={{ width: `${requiredEvidenceCount ? Math.round((completeEvidenceCount / requiredEvidenceCount) * 100) : 100}%` }} /></div>
             </div>
             <div className="rounded-lg border border-cream-200 p-4"><p className="text-sm text-ink-600">Upload supporting files together, then select the matching file for each requirement below. Check the document contents; filenames alone do not prove that evidence is correct.</p><label className="btn-secondary mt-3 cursor-pointer">Upload supporting files<input type="file" multiple accept=".pdf,.docx,.jpg,.jpeg,.png,.webp" disabled={uploading} onChange={event => handleFiles(event, 'supporting_evidence')} className="sr-only" /></label>{activeUpload?.role === 'supporting_evidence' && !activeUpload.requirementId && <UploadProgress upload={activeUpload} onCancel={cancelUpload} />}<ul className="mt-3 space-y-2">{supportingUploads.map(file => <li key={file.path} className="flex flex-wrap items-center justify-between gap-2 text-sm"><span className="break-all">{file.originalName}</span><div><button type="button" className="btn-secondary" onClick={() => viewDocument(file.path)}>View</button><button type="button" className="btn-secondary ml-2" onClick={() => removeDocument(file.path)}>Remove</button></div></li>)}</ul></div>
@@ -819,7 +844,7 @@ export default function NewEvent() {
                       ? { requirementId: definition.id, applicability: 'required', ...(response.documentPath ? { documentPath: response.documentPath } : {}) }
                       : { requirementId: definition.id, applicability: 'not_applicable', notApplicableReason: '' })}><option value="required">Applies — evidence required</option><option value="not_applicable">Not applicable</option></select>}
                   </div>
-                  {response.applicability === 'not_applicable' && !forcedRequired ? <div className="mt-4"><label className="field-label" htmlFor={`reason-${definition.id}`}>Why this does not apply *</label><textarea id={`reason-${definition.id}`} className="input mt-1 min-h-20" maxLength={500} value={response.notApplicableReason ?? ''} onChange={(event) => updateEvidenceResponse(definition.id, { requirementId: definition.id, applicability: 'not_applicable', notApplicableReason: event.target.value })} /></div> : <div className="mt-4 space-y-3">
+                  {response.applicability === 'not_applicable' && !forcedRequired ? <div className="mt-4"><label className="field-label" htmlFor={`reason-${definition.id}`}>Why this does not apply *</label><textarea id={`reason-${definition.id}`} className="input mt-1 min-h-20" minLength={20} maxLength={500} aria-describedby={`reason-help-${definition.id}`} value={response.notApplicableReason ?? ''} onChange={(event) => updateEvidenceResponse(definition.id, { requirementId: definition.id, applicability: 'not_applicable', notApplicableReason: event.target.value })} /><p id={`reason-help-${definition.id}`} className={`mt-1 text-xs ${response.notApplicableReason && !isMeaningfulNotApplicableReason(response.notApplicableReason) ? 'font-semibold text-red-700' : 'text-ink-500'}`}>Give a specific operational reason using at least 20 characters and 3 words. This declaration is retained for reviewer audit.</p></div> : <div className="mt-4 space-y-3">
                     {assigned ? <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-brand-200 bg-white px-3 py-2 text-sm"><span className="min-w-0 truncate font-medium text-ink-800">{assigned.originalName}</span><div className="flex gap-1"><button type="button" className="min-h-11 px-3 font-semibold text-brand-700" onClick={() => viewDocument(assigned.path)}>View</button><button type="button" className="min-h-11 px-3 font-semibold text-red-700" onClick={() => updateEvidenceResponse(definition.id, { requirementId: definition.id, applicability: 'required' })}>Remove</button></div></div> : <p className="text-sm font-medium text-red-700">No evidence file linked.</p>}
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                       {supportingUploads.length > 0 && <select aria-label={`${definition.id} existing evidence`} className="input min-w-0 flex-1" value={response.documentPath ?? ''} onChange={(event) => updateEvidenceResponse(definition.id, { requirementId: definition.id, applicability: 'required', ...(event.target.value ? { documentPath: event.target.value } : {}) })}><option value="">Choose an uploaded file</option>{supportingUploads.map((document) => <option key={document.path} value={document.path}>{document.originalName}</option>)}</select>}

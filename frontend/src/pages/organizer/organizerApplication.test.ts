@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EventDetails, M1DocumentExtraction, M1_EXTRACTION_SCHEMA_VERSION, Venue } from '@shared/types';
-import { applyM1ExtractedFields, bindCanonicalVenue, createM1DraftRecord, extractionMatchesDraftDocuments, findUniqueRegistryVenueMatch, isEditableApplicationStatus, isSelectableRegistryVenue, organizerAdminDecisionLabel, organizerPublicationLabel, organizerPublicationStateFromProjection, reconcileM1EvidenceManifest, validateEventApplication, validateM1EvidenceChecklist, validateTemplateCompatibility } from './organizerApplication';
+import { applyM1ExtractedFields, bindCanonicalVenue, createM1DraftRecord, extractionMatchesDraftDocuments, findUniqueRegistryVenueMatch, isEditableApplicationStatus, isMeaningfulNotApplicableReason, isSelectableRegistryVenue, organizerAdminDecisionLabel, organizerPublicationLabel, organizerPublicationStateFromProjection, reconcileM1EvidenceManifest, validateEventApplication, validateM1EvidenceChecklist, validateTemplateCompatibility } from './organizerApplication';
 import { createTemplateSelection } from '../../features/m1/templateRegistry';
 
 const future = Date.now() + 7 * 24 * 60 * 60 * 1000;
@@ -264,5 +264,10 @@ describe('organizer application lifecycle helpers', () => {
     const manifest = reconcileM1EvidenceManifest(templateSelection, details, []);
     expect(manifest.find((item) => item.requirementId === 'T10-DOC-01')).toEqual({ requirementId: 'T10-DOC-01', applicability: 'required' });
     expect(validateM1EvidenceChecklist(details, templateSelection, [], manifest)).toContain('Attach a supporting-evidence file to DOC-A01.');
+  });
+
+  it('only accepts a specific not-applicable explanation', () => {
+    expect(isMeaningfulNotApplicableReason('not applicable')).toBe(false);
+    expect(isMeaningfulNotApplicableReason('No foreign performers are included in this local programme.')).toBe(true);
   });
 });
