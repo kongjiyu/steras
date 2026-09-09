@@ -4,6 +4,7 @@ import EvidencePreview from '../../components/ui/EvidencePreview';
 import PageHeader from '../../components/ui/PageHeader';
 import { EVENT_TYPES, EventType, EventDetails, EventRiskProfile, M1_DOCUMENT_SCHEMA_VERSION, M1_EVIDENCE_MANIFEST_SCHEMA_VERSION, M1ApplicationRevisionSource, M1DocumentExtraction, M1DocumentRole, M1DraftDocument, M1EvidenceRequirementResponse, M1TemplateSelection, Venue } from '@shared/types';
 import { useEffect, useState, useRef, FormEvent, ChangeEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { collection, doc, getDoc, getDocs, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { ref, uploadBytesResumable } from 'firebase/storage';
@@ -573,13 +574,13 @@ export default function NewEvent() {
       </section>
 
       <form onSubmit={handleSubmit} noValidate className="rounded-lg border border-[#ded5c5] bg-[#fffdf8] shadow-card">
-        {validationErrors.length > 0 && (
+        {validationErrors.length > 0 && createPortal(
           <aside className="fixed bottom-4 right-4 z-40 w-[calc(100vw-2rem)] max-w-sm overflow-hidden rounded-lg border border-red-300 bg-white shadow-xl" aria-label="Application issues navigator">
             <button type="button" className="flex min-h-12 w-full items-center gap-2 bg-red-700 px-4 py-3 text-left text-sm font-bold text-white" onClick={() => setErrorNavigatorOpen(value => !value)} aria-expanded={errorNavigatorOpen}>
               <AlertCircle size={18} /><span className="flex-1">{validationErrors.length} issue{validationErrors.length === 1 ? '' : 's'} to fix</span><PanelRightClose size={17} />
             </button>
             {errorNavigatorOpen && <ol className="max-h-64 overflow-y-auto p-2">{validationErrors.map((error, index) => <li key={error}><button type="button" className="flex w-full gap-2 rounded px-2 py-2 text-left text-sm text-red-900 hover:bg-red-50" onClick={() => reviewError(error)}><span className="font-bold">{index + 1}.</span><span className="flex-1">{error}</span><ChevronRight size={15} className="mt-0.5 shrink-0" /></button></li>)}</ol>}
-          </aside>
+          </aside>, document.body,
         )}
         <div className="border-b border-[#e3dacb] bg-brand-50 px-4 py-4 sm:px-6">
           <p className="text-xs font-bold uppercase tracking-[0.07em] text-brand-700">Application {editableVersionId}</p>
