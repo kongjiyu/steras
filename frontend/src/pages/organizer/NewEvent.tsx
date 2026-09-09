@@ -7,6 +7,7 @@ import { useEffect, useState, useRef, FormEvent, ChangeEvent } from 'react';
 import { collection, doc, getDoc, getDocs, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { ref, uploadBytesResumable } from 'firebase/storage';
+import type { UploadTask } from 'firebase/storage';
 import { db, functions, isFirebaseConfigured, storage } from '../../config/firebase';
 import { COLLECTIONS } from '@shared/types';
 import { useAuth } from '../../contexts/AuthContext';
@@ -19,10 +20,12 @@ import { findEventById } from '../../mock_data/events';
 import { isValidTemplateSelection, M1_CORE_TEMPLATE, scenarioTemplateFor } from '../../features/m1/templateRegistry';
 import { FileCheck2, FileText, RotateCcw, Sparkles } from 'lucide-react';
 import { isM1EvidenceForcedRequired, m1EvidenceRequirementsFor } from '@shared/m1EvidenceContract';
+import { applicationFileNameError } from './applicationFileName';
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const PDF_MIME = 'application/pdf';
 const APPLICATION_DOCUMENT_ACCEPT = '.pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+type ActiveUpload = { role: M1DocumentRole; requirementId?: string; fileName: string; progress: number };
 
 export default function NewEvent() {
   const { user, profile } = useAuth();
@@ -30,6 +33,7 @@ export default function NewEvent() {
   const location = useLocation();
   const { eventId } = useParams<{ eventId: string }>();
   const validationRef = useRef<HTMLDivElement>(null);
+  const activeUploadTaskRef = useRef<UploadTask | null>(null);
   const [onlyMissing, setOnlyMissing] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
   const [editing, setEditing] = useState(false);
@@ -52,7 +56,7 @@ export default function NewEvent() {
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
+  const [activeUpload, setActiveUpload] = useState<ActiveUpload | null>(null);
   const [venues, setVenues] = useState<Venue[]>([]);
   const routeState = location.state as { templateSelection?: unknown; initialDetails?: unknown } | null;
   const [templateSelection, setTemplateSelection] = useState<M1TemplateSelection | undefined>(
@@ -293,6 +297,11 @@ export default function NewEvent() {
     const detectedTypes: string[] = [];
     try {
       for (const file of files) {
+        const selectedScenarioDefinition = templateSelection
+          ? scenarioTemplateFor(templateSelection.eventCategory, templateSelection.venueSetting)
+          : undefined;
+        const nameError = applicationFileNameError(file.name, role, selectedScenarioDefinition);
+        if (nameError) return setNotice(nameError);
         if (!file.size || file.size > 10 * 1024 * 1024) return setNotice(`${file.name} must be a non-empty file no larger than 10 MB.`);
         const detected = documentMime(new Uint8Array(await file.slice(0, 16).arrayBuffer()));
         if (!detected || (file.type && file.type !== 'application/octet-stream' && file.type !== detected)) return setNotice(`${file.name}: the contents do not match a supported PDF, DOCX or image. Choose the original file.`);
@@ -307,30 +316,10 @@ export default function NewEvent() {
         ? !applicationRoles.has(document.role)
         : document.role !== role && document.role !== 'combined_application');
     if (retained.length + files.length > 20) return setNotice('Submit no more than 20 application documents.');
-    setUploading(true);
-    try {
-      const id = await ensureDraft();
-      const uploaded: M1DraftDocument[] = [];
-      for (let index = 0; index < files.length; index += 1) {
-        const file = files[index];
-        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-150) || 'document';
-        const path = `event_documents/${id}/${editableVersionId}/${crypto.randomUUID()}-${safeName}`;
-        const mimeType = detectedTypes[index];
-        const task = uploadBytesResumable(ref(storage, path), file, { contentType: mimeType });
-        await new Promise<void>((resolve, reject) => task.on('state_changed', (snapshot) => {
-          const fileProgress = snapshot.bytesTransferred / snapshot.totalBytes;
-          setUploadProgress(Math.round(((index + fileProgress) / files.length) * 100));
-        }, reject, resolve));
-        uploaded.push({
-          path,
-          role,
-          originalName: file.name.slice(0, 255),
-          mimeType,
-          sizeBytes: file.size,
-          uploadedAt: Date.now(),
-          schemaVersion: M1_DOCUMENT_SCHEMA_VERSION,
-        });
-      }
+    const uploaded: M1DraftDocument[] = [];
+    let uploadDraftId = '';
+    const persistCompletedUploads = async () => {
+      if (!uploadDraftId || uploaded.length === 0) return;
       let nextManifest = evidenceManifest;
       const nextDocuments = [...retained, ...uploaded];
       if (role === 'supporting_evidence' && requirementId) {
@@ -342,7 +331,7 @@ export default function NewEvent() {
       const structuredPaths = new Set(draftDocuments.map((document) => document.path));
       const unstructuredLegacyPaths = documentPaths.filter((path) => !structuredPaths.has(path));
       const nextPaths = [...unstructuredLegacyPaths, ...nextDocuments.map((document) => document.path)];
-      await updateDoc(doc(db, COLLECTIONS.EVENTS, id), {
+      await updateDoc(doc(db, COLLECTIONS.EVENTS, uploadDraftId), {
         draftDocumentPaths: nextPaths,
         draftDocuments: nextDocuments,
         draftEvidenceManifest: nextManifest,
@@ -352,6 +341,35 @@ export default function NewEvent() {
       setDraftDocuments(nextDocuments);
       setDocumentPaths(nextPaths);
       setEvidenceManifest(nextManifest);
+    };
+    setUploading(true);
+    try {
+      const id = await ensureDraft();
+      uploadDraftId = id;
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index];
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-150) || 'document';
+        const path = `event_documents/${id}/${editableVersionId}/${crypto.randomUUID()}-${safeName}`;
+        const mimeType = detectedTypes[index];
+        const task = uploadBytesResumable(ref(storage, path), file, { contentType: mimeType });
+        activeUploadTaskRef.current = task;
+        setActiveUpload({ role, requirementId, fileName: file.name, progress: Math.round((index / files.length) * 100) });
+        await new Promise<void>((resolve, reject) => task.on('state_changed', (snapshot) => {
+          const fileProgress = snapshot.bytesTransferred / snapshot.totalBytes;
+          const progress = Math.round(((index + fileProgress) / files.length) * 100);
+          setActiveUpload({ role, requirementId, fileName: file.name, progress });
+        }, reject, resolve));
+        uploaded.push({
+          path,
+          role,
+          originalName: file.name.slice(0, 255),
+          mimeType,
+          sizeBytes: file.size,
+          uploadedAt: Date.now(),
+          schemaVersion: M1_DOCUMENT_SCHEMA_VERSION,
+        });
+      }
+      await persistCompletedUploads();
       if (role !== 'supporting_evidence') {
         setExtraction(null);
         setCurrentExtractionId('');
@@ -359,12 +377,23 @@ export default function NewEvent() {
       setValidationErrors([]);
       setNotice(`${uploaded.length} document${uploaded.length === 1 ? '' : 's'} uploaded. Select the matching evidence item below.`);
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Document upload failed.');
+      const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
+      if (uploaded.length > 0) {
+        try { await persistCompletedUploads(); } catch { /* A retry remains safe because paths are immutable. */ }
+      }
+      setNotice(code === 'storage/canceled'
+        ? uploaded.length > 0 ? `Upload cancelled. ${uploaded.length} completed file${uploaded.length === 1 ? ' was' : 's were'} kept.` : 'Upload cancelled. No document was added.'
+        : error instanceof Error ? error.message : 'Document upload failed.');
     } finally {
+      activeUploadTaskRef.current = null;
+      setActiveUpload(null);
       setUploading(false);
-      setUploadProgress(0);
       event.target.value = '';
     }
+  };
+
+  const cancelUpload = () => {
+    if (activeUploadTaskRef.current?.cancel()) setNotice('Cancelling upload…');
   };
 
   const removeDocument = async (path: string) => {
@@ -564,13 +593,12 @@ export default function NewEvent() {
           <fieldset id="application-documents" tabIndex={-1} style={{ scrollMarginTop: 155 }} className="space-y-5 border-t border-[#e3dacb] pt-8">
             <legend className="section-title mb-2 pr-4">Completed application documents</legend>
             <p className="text-sm leading-6 text-ink-500">Upload one combined, text-searchable PDF/DOCX, or upload the completed Core and recommended scenario as PDF/DOCX files separately. STERAS detects both template IDs and Field IDs before auto-filling this form.</p>
-            <TemplateUploadCard label="Combined Core + scenario application" document={combinedUpload} uploading={uploading} onChange={(event) => handleFiles(event, 'combined_application')} onRemove={removeDocument} onView={viewDocument} />
+            <TemplateUploadCard label="Combined Core + scenario application" document={combinedUpload} uploading={uploading} activeUpload={activeUpload?.role === 'combined_application' ? activeUpload : null} onCancel={cancelUpload} onChange={(event) => handleFiles(event, 'combined_application')} onRemove={removeDocument} onView={viewDocument} />
             <div className="flex items-center gap-3 text-xs font-bold uppercase tracking-[0.08em] text-ink-400"><span className="h-px flex-1 bg-[#e3dacb]" /><span>or upload separately</span><span className="h-px flex-1 bg-[#e3dacb]" /></div>
             <div className="grid gap-4 md:grid-cols-2">
-              <TemplateUploadCard label="Core application PDF or DOCX" document={coreUpload} uploading={uploading} onChange={(event) => handleFiles(event, 'core_template')} onRemove={removeDocument} onView={viewDocument} />
-              <TemplateUploadCard label="Scenario-specific PDF or DOCX" document={scenarioUpload} uploading={uploading} onChange={(event) => handleFiles(event, 'scenario_template')} onRemove={removeDocument} onView={viewDocument} />
+              <TemplateUploadCard label="Core application PDF or DOCX" expectedName={M1_CORE_TEMPLATE.fileName} document={coreUpload} uploading={uploading} activeUpload={activeUpload?.role === 'core_template' ? activeUpload : null} onCancel={cancelUpload} onChange={(event) => handleFiles(event, 'core_template')} onRemove={removeDocument} onView={viewDocument} />
+              <TemplateUploadCard label="Scenario-specific PDF or DOCX" expectedName={selectedScenario?.fileName} document={scenarioUpload} uploading={uploading} activeUpload={activeUpload?.role === 'scenario_template' ? activeUpload : null} onCancel={cancelUpload} onChange={(event) => handleFiles(event, 'scenario_template')} onRemove={removeDocument} onView={viewDocument} />
             </div>
-            {uploading && <div className="h-1.5 overflow-hidden rounded bg-cream-200"><div className="h-full bg-brand-600 transition-transform" style={{ transform: `scaleX(${uploadProgress / 100})`, transformOrigin: 'left' }} /></div>}
             <button type="button" className="btn-primary" disabled={(!combinedUpload && (!coreUpload || !scenarioUpload)) || uploading || extracting} onClick={extractDocuments}>
               <Sparkles size={16} className={extracting ? 'animate-pulse motion-reduce:animate-none' : ''} />{extracting ? 'Extracting documents…' : 'Extract and auto-fill'}
             </button>
@@ -768,7 +796,7 @@ export default function NewEvent() {
               <div className="flex flex-wrap items-center justify-between gap-2"><p className="font-semibold text-ink-900">Evidence completeness</p><span className="badge bg-white text-brand-700">{completeEvidenceCount} / {requiredEvidenceCount} evidence items linked · {validNotApplicable.length} not applicable</span></div>
               <div className="mt-3 h-2 overflow-hidden rounded-full bg-white"><div className="h-full rounded-full bg-brand-600" style={{ width: `${requiredEvidenceCount ? Math.round((completeEvidenceCount / requiredEvidenceCount) * 100) : 100}%` }} /></div>
             </div>
-            <div className="rounded-lg border border-cream-200 p-4"><p className="text-sm text-ink-600">Upload supporting files together, then select the matching file for each requirement below. Check the document contents; filenames alone do not prove that evidence is correct.</p><label className="btn-secondary mt-3 cursor-pointer">Upload supporting files<input type="file" multiple accept=".pdf,.docx,.jpg,.jpeg,.png,.webp" disabled={uploading} onChange={event => handleFiles(event, 'supporting_evidence')} className="sr-only" /></label><ul className="mt-3 space-y-2">{supportingUploads.map(file => <li key={file.path} className="flex flex-wrap items-center justify-between gap-2 text-sm"><span className="break-all">{file.originalName}</span><div><button type="button" className="btn-secondary" onClick={() => viewDocument(file.path)}>View</button><button type="button" className="btn-secondary ml-2" onClick={() => removeDocument(file.path)}>Remove</button></div></li>)}</ul></div>
+            <div className="rounded-lg border border-cream-200 p-4"><p className="text-sm text-ink-600">Upload supporting files together, then select the matching file for each requirement below. Check the document contents; filenames alone do not prove that evidence is correct.</p><label className="btn-secondary mt-3 cursor-pointer">Upload supporting files<input type="file" multiple accept=".pdf,.docx,.jpg,.jpeg,.png,.webp" disabled={uploading} onChange={event => handleFiles(event, 'supporting_evidence')} className="sr-only" /></label>{activeUpload?.role === 'supporting_evidence' && !activeUpload.requirementId && <UploadProgress upload={activeUpload} onCancel={cancelUpload} />}<ul className="mt-3 space-y-2">{supportingUploads.map(file => <li key={file.path} className="flex flex-wrap items-center justify-between gap-2 text-sm"><span className="break-all">{file.originalName}</span><div><button type="button" className="btn-secondary" onClick={() => viewDocument(file.path)}>View</button><button type="button" className="btn-secondary ml-2" onClick={() => removeDocument(file.path)}>Remove</button></div></li>)}</ul></div>
             <label className="flex min-h-11 items-center gap-3 text-sm font-semibold"><input type="checkbox" checked={onlyMissing} onChange={event => setOnlyMissing(event.target.checked)} />Only show missing evidence</label>
             <div className="space-y-4">
               {onlyMissing && completeEvidenceCount + validNotApplicable.length === evidenceDefinitions.length && <p role="status" className="rounded-md bg-brand-50 p-4 text-sm">All evidence items are complete. Turn off the filter to review them.</p>}
@@ -793,11 +821,11 @@ export default function NewEvent() {
                       {supportingUploads.length > 0 && <select aria-label={`${definition.id} existing evidence`} className="input min-w-0 flex-1" value={response.documentPath ?? ''} onChange={(event) => updateEvidenceResponse(definition.id, { requirementId: definition.id, applicability: 'required', ...(event.target.value ? { documentPath: event.target.value } : {}) })}><option value="">Choose an uploaded file</option>{supportingUploads.map((document) => <option key={document.path} value={document.path}>{document.originalName}</option>)}</select>}
                       <label className="btn-secondary cursor-pointer justify-center"><span>{assigned ? 'Replace file' : 'Upload file'}</span><input type="file" accept="application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/jpeg,image/png,image/webp,.pdf,.docx" disabled={uploading} onChange={(event) => handleFiles(event, 'supporting_evidence', definition.id)} className="sr-only" /></label>
                     </div>
+                    {activeUpload?.role === 'supporting_evidence' && activeUpload.requirementId === definition.id && <UploadProgress upload={activeUpload} onCancel={cancelUpload} />}
                   </div>}
                 </article>;
               })}
             </div>
-            {uploading && <div className="h-1.5 overflow-hidden rounded bg-cream-200"><div className="h-full bg-brand-600 transition-transform" style={{ transform: `scaleX(${uploadProgress / 100})`, transformOrigin: 'left' }} /></div>}
             {legacySupportingPaths.length > 0 && <div className="rounded-md border border-gold-200 bg-gold-50 p-3"><p className="text-xs font-semibold text-gold-700">Previously uploaded supporting files</p><ul className="mt-2 divide-y divide-gold-200">{legacySupportingPaths.map((path) => <li key={path} className="flex items-center justify-between gap-3 py-2 text-sm"><span className="min-w-0 truncate">{legacyDocumentName(path)}</span><div className="flex"><button type="button" onClick={() => viewDocument(path)} className="min-h-11 px-2 font-semibold text-brand-700">View</button><button type="button" onClick={() => removeDocument(path)} className="min-h-11 px-2 font-semibold text-red-700">Remove</button></div></li>)}</ul></div>}
           </fieldset>
 
@@ -845,21 +873,32 @@ function legacyDocumentName(path: string): string {
   }
 }
 
-function TemplateUploadCard({ label, document, uploading, onChange, onRemove, onView }: {
+function TemplateUploadCard({ label, expectedName, document, uploading, activeUpload, onCancel, onChange, onRemove, onView }: {
   label: string;
+  expectedName?: string;
   document?: M1DraftDocument;
   uploading: boolean;
+  activeUpload: ActiveUpload | null;
+  onCancel: () => void;
   onChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onRemove: (path: string) => void;
   onView: (path: string) => void;
 }) {
   return <div className={`rounded-lg border p-4 ${document ? 'border-brand-200 bg-brand-50' : 'border-[#ded5c5] bg-cream-50'}`}>
-    <div className="flex items-start gap-3"><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${document ? 'bg-brand-700 text-white' : 'bg-cream-200 text-ink-500'}`}>{document ? <FileCheck2 size={17} /> : <FileText size={17} />}</span><div className="min-w-0"><p className="text-sm font-semibold text-ink-900">{label}</p><p className="mt-1 truncate text-xs text-ink-500">{document?.originalName ?? 'No completed file uploaded'}</p></div></div>
+    <div className="flex items-start gap-3"><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${document ? 'bg-brand-700 text-white' : 'bg-cream-200 text-ink-500'}`}>{document ? <FileCheck2 size={17} /> : <FileText size={17} />}</span><div className="min-w-0"><p className="text-sm font-semibold text-ink-900">{label}</p><p className="mt-1 truncate text-xs text-ink-500">{document?.originalName ?? 'No completed file uploaded'}</p>{expectedName && <p className="mt-1 text-xs text-ink-500">Expected: {expectedName}</p>}</div></div>
     <div className="mt-4 flex flex-wrap gap-2">
       <label className="btn-secondary cursor-pointer"><span>{document ? 'Replace PDF/DOCX' : 'Upload PDF/DOCX'}</span><input type="file" accept={APPLICATION_DOCUMENT_ACCEPT} disabled={uploading} onChange={onChange} className="sr-only" /></label>
       {document && <button type="button" className="btn-secondary" onClick={() => onView(document.path)}>View</button>}
       {document && <button type="button" className="min-h-11 px-3 text-sm font-semibold text-red-700" onClick={() => onRemove(document.path)}>Remove</button>}
     </div>
+    {activeUpload && <UploadProgress upload={activeUpload} onCancel={onCancel} />}
+  </div>;
+}
+
+function UploadProgress({ upload, onCancel }: { upload: ActiveUpload; onCancel: () => void }) {
+  return <div className="mt-3" role="status" aria-label={`Uploading ${upload.fileName}`}>
+    <div className="mb-1 flex items-center justify-between gap-3 text-xs"><span className="min-w-0 truncate font-medium text-ink-700">Uploading {upload.fileName}</span><button type="button" className="min-h-11 shrink-0 px-2 font-semibold text-red-700 underline" onClick={onCancel}>Cancel</button></div>
+    <div className="h-2 overflow-hidden rounded-full bg-cream-200" aria-label={`${upload.progress}% uploaded`}><div className="h-full rounded-full bg-brand-600 transition-[width]" style={{ width: `${upload.progress}%` }} /></div>
   </div>;
 }
 

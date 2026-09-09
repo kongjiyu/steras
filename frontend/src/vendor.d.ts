@@ -11,6 +11,7 @@ declare module 'firebase/storage' {
   export interface StorageReference { fullPath: string }
   export interface UploadTaskSnapshot { bytesTransferred: number; totalBytes: number }
   export interface UploadTask {
+    cancel(): boolean;
     on(
       event: 'state_changed',
       next?: (snapshot: UploadTaskSnapshot) => void,
