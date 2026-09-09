@@ -574,7 +574,7 @@ export default function NewEvent() {
 
       <form onSubmit={handleSubmit} noValidate className="rounded-lg border border-[#ded5c5] bg-[#fffdf8] shadow-card">
         {validationErrors.length > 0 && (
-          <aside className="fixed bottom-4 right-4 z-40 w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-lg border border-red-300 bg-white shadow-xl" aria-label="Application issues navigator">
+          <aside className="fixed bottom-4 right-4 z-40 w-[calc(100vw-2rem)] max-w-sm overflow-hidden rounded-lg border border-red-300 bg-white shadow-xl" aria-label="Application issues navigator">
             <button type="button" className="flex min-h-12 w-full items-center gap-2 bg-red-700 px-4 py-3 text-left text-sm font-bold text-white" onClick={() => setErrorNavigatorOpen(value => !value)} aria-expanded={errorNavigatorOpen}>
               <AlertCircle size={18} /><span className="flex-1">{validationErrors.length} issue{validationErrors.length === 1 ? '' : 's'} to fix</span><PanelRightClose size={17} />
             </button>
