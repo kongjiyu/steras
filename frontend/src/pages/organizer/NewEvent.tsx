@@ -611,7 +611,7 @@ export default function NewEvent() {
             </div>
           )}
 
-          <fieldset id="application-documents" tabIndex={-1} style={{ scrollMarginTop: 155 }} className="space-y-5 border-t border-[#e3dacb] pt-8">
+          <fieldset id="application-documents" tabIndex={-1} style={{ scrollMarginTop: 155 }} className="min-w-0 space-y-5 border-t border-[#e3dacb] pt-8">
             <legend className="section-title mb-2 pr-4">Completed application documents</legend>
             <p className="text-sm leading-6 text-ink-500">Upload one combined, text-searchable PDF/DOCX, or upload the completed Core and recommended scenario as PDF/DOCX files separately. STERAS detects both template IDs and Field IDs before auto-filling this form.</p>
             <TemplateUploadCard label="Combined Core + scenario application" document={combinedUpload} uploading={uploading} activeUpload={activeUpload?.role === 'combined_application' ? activeUpload : null} onCancel={cancelUpload} onChange={(event) => handleFiles(event, 'combined_application')} onRemove={removeDocument} onView={viewDocument} />
@@ -648,8 +648,8 @@ export default function NewEvent() {
             {!editing && <dl className="grid gap-4 rounded-lg bg-cream-50 p-5 sm:grid-cols-2">{[
               ['Event', form.name], ['Type', form.type], ['Venue', form.venueName], ['Address', form.venueAddress], ['State', form.venueState], ['Attendance / capacity', `${form.expectedAttendance || '—'} / ${form.venueCapacity || '—'}`], ['Starts', form.startDatetime ? new Date(form.startDatetime).toLocaleString() : '—'], ['Ends', form.endDatetime ? new Date(form.endDatetime).toLocaleString() : '—'], ['Environment', form.environment], ['Coverage / seating', `${form.coverage} / ${form.seating}`], ['Coordinates', `${form.venueLocation?.lat ?? '—'}, ${form.venueLocation?.lng ?? '—'}`], ['Description', form.description], ['Emergency plan', form.emergencyPlanSummary], ...Object.entries(form.riskProfile ?? {}).filter(([, value]) => typeof value === 'number').map(([key, value]) => [key.replace(/([A-Z])/g, ' $1'), String(value)]), ['Safety declarations', RISK_PROFILE_OPTIONS.filter(option => form.riskProfile?.[option.key]).map(option => option.label).join(', ') || 'No declarations extracted'],
             ].map(([label, value]) => <div key={label}><dt className="text-xs font-semibold text-ink-500">{label}</dt><dd className="mt-1 whitespace-pre-wrap text-sm text-ink-900">{value || 'Not provided'}</dd></div>)}</dl>}
-            <fieldset hidden={!editing} disabled={!editing || extracting || saving} className="space-y-8">
-          <fieldset className="space-y-5">
+            <fieldset hidden={!editing} disabled={!editing || extracting || saving} className="min-w-0 space-y-8">
+          <fieldset className="min-w-0 space-y-5">
             <legend className="section-title mb-5">Event and venue</legend>
 
             <div className="grid gap-4 sm:grid-cols-2">
@@ -783,7 +783,7 @@ export default function NewEvent() {
             </div>
           </fieldset>
 
-          <fieldset className="space-y-4 border-t border-[#e3dacb] pt-8">
+          <fieldset className="min-w-0 space-y-4 border-t border-[#e3dacb] pt-8">
             <legend className="section-title mb-2 pr-4">Event safety details</legend>
             <p className="text-sm leading-6 text-ink-500">
               These details describe the crowd, venue and planned activities. They are extracted from your templates and help reviewers assess event safety.
@@ -819,7 +819,7 @@ export default function NewEvent() {
             </fieldset>
           </section>
 
-          <fieldset id="supporting-evidence" tabIndex={-1} style={{ scrollMarginTop: 155 }} className="space-y-4 border-t border-[#e3dacb] pt-8">
+          <fieldset id="supporting-evidence" tabIndex={-1} style={{ scrollMarginTop: 155 }} className="min-w-0 space-y-4 border-t border-[#e3dacb] pt-8">
             <legend className="section-title mb-2 pr-4">Supporting evidence</legend>
             <p className="text-sm leading-6 text-ink-500">Complete every Core and scenario checklist item. A current PDF, DOCX, or image can support more than one requirement; conditional items need either evidence or a clear not-applicable reason.</p>
             <div className="sticky top-[148px] z-10 rounded-lg border border-brand-200 bg-brand-50 p-4 shadow-sm">
@@ -859,7 +859,7 @@ export default function NewEvent() {
             {legacySupportingPaths.length > 0 && <div className="rounded-md border border-gold-200 bg-gold-50 p-3"><p className="text-xs font-semibold text-gold-700">Previously uploaded supporting files</p><ul className="mt-2 divide-y divide-gold-200">{legacySupportingPaths.map((path) => <li key={path} className="flex items-center justify-between gap-3 py-2 text-sm"><span className="min-w-0 truncate">{legacyDocumentName(path)}</span><div className="flex"><button type="button" onClick={() => viewDocument(path)} className="min-h-11 px-2 font-semibold text-brand-700">View</button><button type="button" onClick={() => removeDocument(path)} className="min-h-11 px-2 font-semibold text-red-700">Remove</button></div></li>)}</ul></div>}
           </fieldset>
 
-          <fieldset id="organizer-contact" tabIndex={-1} style={{ scrollMarginTop: 155 }} className="space-y-4 border-t border-[#e3dacb] pt-8">
+          <fieldset id="organizer-contact" tabIndex={-1} style={{ scrollMarginTop: 155 }} className="min-w-0 space-y-4 border-t border-[#e3dacb] pt-8">
             <legend className="section-title mb-2 pr-4">Organizer contact</legend><p className="text-sm text-ink-500">These details are linked to your account. <Link className="font-semibold text-brand-700 underline" to="/organizer/profile" state={{ returnTo: `${location.pathname}${location.search}` }}>Edit profile</Link> to update them.</p>
             <div className="grid gap-4 sm:grid-cols-3">
               <div>
