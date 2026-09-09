@@ -147,7 +147,7 @@ export default function NotificationBell() {
 
       {open && (
         <div
-          className="absolute right-0 top-11 z-30 max-h-[480px] w-[min(360px,calc(100vw-2rem))] overflow-y-auto rounded-lg border border-[#ded5c5] bg-[#fffdf8] shadow-card"
+          className="fixed left-4 right-4 top-[68px] z-30 max-h-[min(480px,calc(100vh-5.5rem))] overflow-y-auto rounded-lg border border-[#ded5c5] bg-[#fffdf8] shadow-card sm:absolute sm:left-auto sm:right-0 sm:top-11 sm:w-[360px]"
           role="dialog"
           aria-label="Notifications"
         >
