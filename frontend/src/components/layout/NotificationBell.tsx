@@ -9,6 +9,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bell, Check, CheckCheck } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { httpsCallable } from 'firebase/functions';
 import toast from 'react-hot-toast';
 import {
@@ -146,7 +147,7 @@ export default function NotificationBell() {
 
       {open && (
         <div
-          className="absolute right-0 top-11 z-30 w-[360px] max-h-[480px] overflow-y-auto rounded-lg border border-[#ded5c5] bg-[#fffdf8] shadow-card"
+          className="absolute right-0 top-11 z-30 max-h-[480px] w-[min(360px,calc(100vw-2rem))] overflow-y-auto rounded-lg border border-[#ded5c5] bg-[#fffdf8] shadow-card"
           role="dialog"
           aria-label="Notifications"
         >
@@ -193,6 +194,7 @@ export default function NotificationBell() {
                         )}
                       </div>
                     )}
+                    {n.eventId && <Link to={`/organizer/events/${n.eventId}`} onClick={() => { void toggleRead(n); setOpen(false); }} className="mt-2 inline-flex min-h-9 items-center text-xs font-semibold text-brand-700 underline underline-offset-2">Open application</Link>}
                     <p className="mt-1 text-[11px] uppercase tracking-[0.06em] text-ink-400">{timeAgo(n.createdAt)}</p>
                   </div>
                   {!n.read && (

@@ -50,6 +50,16 @@ describe('TemplateRecommendationPage', () => {
     expect(start).toBeEnabled();
   });
 
+  it('separates core and scenario evidence into horizontal groups without the old file-count card', () => {
+    render(<MemoryRouter><TemplateRecommendationPage /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('radio', { name: /Sports & recreation/ }));
+    fireEvent.click(screen.getByRole('radio', { name: /Outdoor route-based/ }));
+    expect(screen.getByRole('region', { name: 'Core supporting documents' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Scenario supporting documents' })).toBeInTheDocument();
+    expect(screen.getByText(/evidence requirements rather than downloadable templates/i)).toBeInTheDocument();
+    expect(screen.queryByText('9 files')).not.toBeInTheDocument();
+  });
+
   it('ignores malformed draft and recommendation query parameters without crashing', () => {
     render(<MemoryRouter initialEntries={['/organizer/events/new?draft=a%2Fb&category=unknown&venue=indoor']}><TemplateRecommendationPage /></MemoryRouter>);
     expect(screen.getByText('Find the right application templates')).toBeInTheDocument();

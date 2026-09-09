@@ -12,9 +12,9 @@ const STEPS = [
   ['Submit for review', Send],
 ] as const;
 
-export default function ApplicationJourney({ activeStep = 2 }: { activeStep?: number }) {
+export default function ApplicationJourney({ activeStep = 2, sticky = false }: { activeStep?: number; sticky?: boolean }) {
   return (
-    <section aria-labelledby="application-journey-title" className="overflow-hidden border-y border-[#d6ccb9] bg-brand-900 text-cream-50">
+    <section aria-labelledby="application-journey-title" className={`${sticky ? 'sticky top-[72px] z-20 shadow-md' : ''} overflow-hidden border-y border-[#d6ccb9] bg-brand-900 text-cream-50`}>
       <div className="px-5 py-5 sm:px-7">
         <div className="flex items-end justify-between gap-4">
           <div>

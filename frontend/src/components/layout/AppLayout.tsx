@@ -2,6 +2,7 @@ import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import logoUrl from '../../assets/brand/steras-logo-horizontal.svg';
 import { CalendarPlus, ClipboardList, Home, LogOut, Siren } from 'lucide-react';
+import NotificationBell from './NotificationBell';
 
 export default function AppLayout() {
   const { profile, signOut } = useAuth();
@@ -56,14 +57,16 @@ export default function AppLayout() {
               </nav>
             </div>
 
-            <div className="flex items-center gap-3"><Link to="/organizer/profile" className="text-sm font-semibold text-brand-700 sm:hidden">Profile</Link>
+            <div className="flex items-center gap-3">
+              {isOrganizer && <NotificationBell />}
+              <Link to="/organizer/profile" state={{ returnTo: `${location.pathname}${location.search}` }} className="text-sm font-semibold text-brand-700 sm:hidden">Profile</Link>
               <div className="hidden items-center gap-2 text-sm text-ink-500 sm:flex">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
                   <circle cx="12" cy="7" r="4" />
                 </svg>
                 <div className="text-right">
-                  <div className="font-semibold text-ink-800"><Link to="/organizer/profile">{profile?.name ?? 'User'}</Link></div>
+                  <div className="font-semibold text-ink-800"><Link to="/organizer/profile" state={{ returnTo: `${location.pathname}${location.search}` }}>{profile?.name ?? 'User'}</Link></div>
                   <div className="text-xs capitalize text-ink-500">
                     {profile?.role === 'authority' ? profile?.authorityType : profile?.role}
                   </div>

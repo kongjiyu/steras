@@ -1,12 +1,19 @@
 import { FormEvent, useState } from 'react';
 import { httpsCallable } from 'firebase/functions';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { ArrowLeft } from 'lucide-react';
 import { functions } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { normalizePhone, validPersonName } from '@shared/accountValidation';
 
 export default function ProfilePage() {
   const { profile, refreshProfile } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const requestedReturnTo = (location.state as { returnTo?: unknown } | null)?.returnTo;
+  const returnTo = typeof requestedReturnTo === 'string' && requestedReturnTo.startsWith('/organizer') && !requestedReturnTo.startsWith('//')
+    ? requestedReturnTo
+    : '/organizer';
   const [name, setName] = useState(profile?.name ?? '');
   const [phone, setPhone] = useState(profile?.phone ?? '');
   const [busy, setBusy] = useState(false);
@@ -19,5 +26,5 @@ export default function ProfilePage() {
     catch { setMessage('Your profile could not be saved. Please retry.'); }
     finally { setBusy(false); }
   }
-  return <section className="card mx-auto max-w-2xl p-6"><p className="page-eyebrow">Your account</p><h1 className="font-display text-2xl font-bold">Profile</h1><form className="mt-6 space-y-5" onSubmit={save}><label className="block"><span className="field-label">Full name</span><input className="input" required value={name} onChange={event => setName(event.target.value)} /></label><label className="block"><span className="field-label">Email address</span><input className="input" readOnly value={profile?.email ?? ''} /></label><label className="block"><span className="field-label">Phone number</span><input className="input" type="tel" required value={phone} onChange={event => setPhone(event.target.value)} /></label>{message && <p role="status" className="rounded bg-brand-50 p-3 text-sm">{message}</p>}<button disabled={busy} className="btn-primary">{busy ? 'Saving…' : 'Save profile'}</button></form><Link to="/reset-password" className="mt-6 inline-block font-semibold text-brand-700">Reset password by email</Link></section>;
+  return <div><button type="button" className="btn-secondary mb-5" onClick={() => navigate(returnTo, { replace: true })}><ArrowLeft size={16} /> Back to previous page</button><section className="card mx-auto max-w-2xl p-6"><p className="page-eyebrow">Your account</p><h1 className="font-display text-2xl font-bold">Profile</h1><form className="mt-6 space-y-5" onSubmit={save}><label className="block"><span className="field-label">Full name</span><input className="input" required value={name} onChange={event => setName(event.target.value)} /></label><label className="block"><span className="field-label">Email address</span><input className="input" readOnly value={profile?.email ?? ''} /></label><label className="block"><span className="field-label">Phone number</span><input className="input" type="tel" required value={phone} onChange={event => setPhone(event.target.value)} /></label>{message && <p role="status" className="rounded bg-brand-50 p-3 text-sm">{message}</p>}<button disabled={busy} className="btn-primary">{busy ? 'Saving…' : 'Save profile'}</button></form><Link to="/reset-password" className="mt-6 inline-block font-semibold text-brand-700">Reset password by email</Link></section></div>;
 }

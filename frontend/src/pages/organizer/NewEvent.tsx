@@ -21,6 +21,7 @@ import { isValidTemplateSelection, M1_CORE_TEMPLATE, scenarioTemplateFor } from 
 import { FileCheck2, FileText, RotateCcw, Sparkles } from 'lucide-react';
 import { isM1EvidenceForcedRequired, m1EvidenceRequirementsFor } from '@shared/m1EvidenceContract';
 import { applicationFileNameError } from './applicationFileName';
+import ApplicationJourney from '../../features/m1/ApplicationJourney';
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const PDF_MIME = 'application/pdf';
@@ -523,6 +524,7 @@ export default function NewEvent() {
       jumpTo('application-details');
     }
   };
+  const journeyStep = submitting ? 9 : !documentPaths.length ? 5 : extracting || !extraction ? 6 : 8;
 
   return (
     <div>
@@ -531,7 +533,9 @@ export default function NewEvent() {
         description="Complete the operational details and supporting evidence used for the official category assessment and AI advisory explanation."
       />
 
-      <nav aria-label="Application progress" className="sticky top-[72px] z-20 mb-5 flex gap-4 overflow-x-auto border border-brand-200 bg-cream-50 p-3 text-sm font-semibold shadow-sm">{[['template-choice', '1. Templates'], ['application-documents', '2. Upload & extract'], ['supporting-evidence', '3. Review & evidence'], ['application-submit', '4. Submit']].map(([id, label]) => <button key={id} type="button" className="min-h-11 shrink-0 underline decoration-brand-300 underline-offset-4" onClick={() => jumpTo(id)}>{label}</button>)}</nav>
+      <ApplicationJourney activeStep={journeyStep} sticky />
+
+      <nav aria-label="Application section shortcuts" className="mb-5 mt-4 flex gap-4 overflow-x-auto border border-brand-200 bg-cream-50 p-3 text-sm font-semibold">{[['template-choice', 'Templates'], ['application-documents', 'Upload & extract'], ['supporting-evidence', 'Review & evidence'], ['application-submit', 'Submit']].map(([id, label]) => <button key={id} type="button" className="min-h-11 shrink-0 underline decoration-brand-300 underline-offset-4" onClick={() => jumpTo(id)}>{label}</button>)}</nav>
       {notice && <div role="status" className="mb-5 rounded-md border border-gold-300 bg-gold-50 p-4 text-sm">{notice}{savedDraft && notice === 'Draft saved.' && <Link className="ml-3 font-bold underline" to={`/organizer/events?status=Draft&highlight=${encodeURIComponent(savedDraft)}`}>View drafts</Link>}</div>}
       <section id="template-choice" tabIndex={-1} style={{ scrollMarginTop: 155 }} className={`mb-6 border ${templateSelection && !templateCompatibilityError ? 'border-brand-200 bg-brand-50' : 'border-gold-300 bg-gold-50'} p-4 sm:p-5`} aria-labelledby="template-choice-heading">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -830,7 +834,7 @@ export default function NewEvent() {
           </fieldset>
 
           <fieldset id="organizer-contact" tabIndex={-1} style={{ scrollMarginTop: 155 }} className="space-y-4 border-t border-[#e3dacb] pt-8">
-            <legend className="section-title mb-2 pr-4">Organizer contact</legend><p className="text-sm text-ink-500">These details are linked to your account. <Link className="font-semibold text-brand-700 underline" to="/organizer/profile">Edit profile</Link> to update them.</p>
+            <legend className="section-title mb-2 pr-4">Organizer contact</legend><p className="text-sm text-ink-500">These details are linked to your account. <Link className="font-semibold text-brand-700 underline" to="/organizer/profile" state={{ returnTo: `${location.pathname}${location.search}` }}>Edit profile</Link> to update them.</p>
             <div className="grid gap-4 sm:grid-cols-3">
               <div>
                 <label htmlFor="organizer-name" className="field-label">Organizer name *</label>

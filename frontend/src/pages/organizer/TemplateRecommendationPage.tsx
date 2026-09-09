@@ -105,7 +105,7 @@ export default function TemplateRecommendationPage() {
         <p className="mt-3 max-w-[65ch] text-base leading-7 text-ink-500">Tell us what you are organising and how the venue works. STERAS will pair the common Core form with the exact scenario form your event needs.</p>
       </header>
 
-      <ApplicationJourney activeStep={scenario ? 3 : 2} />
+      <ApplicationJourney activeStep={scenario ? 3 : 2} sticky />
 
       <div className="mt-8 grid gap-10">
         <section aria-labelledby="category-heading">
@@ -201,25 +201,16 @@ export default function TemplateRecommendationPage() {
               <TemplatePreview core={M1_CORE_TEMPLATE} scenario={scenario} />
             </Suspense>
 
-            <section aria-labelledby="documents-heading" className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
+            <section aria-labelledby="documents-heading">
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.1em] text-gold-600">Prepare before applying</p>
                 <h2 id="documents-heading" className="mt-1 text-xl font-bold">Core and scenario supporting documents</h2>
-                <p className="mt-2 max-w-[70ch] text-sm leading-6 text-ink-500">This checklist includes the Core documents and the selected scenario requirements. Conditional items only become required when the matching activity or risk applies to your event.</p>
-                <ul className="mt-5 divide-y divide-[#e3dacb] border-y border-[#d8cebd]">
-                  {[...M1_CORE_TEMPLATE.supportingDocuments, ...scenario.supportingDocuments].map((document) => (
-                    <li key={document.id} className="grid gap-2 py-4 sm:grid-cols-[8rem_1fr] sm:gap-4">
-                      <span className="text-xs font-bold tracking-wide text-brand-700">{document.id}</span>
-                      <span><span className="block font-semibold text-ink-800">{document.title}</span><span className="mt-1 block text-sm leading-5 text-ink-500">{document.condition}</span></span>
-                    </li>
-                  ))}
-                </ul>
+                <p className="mt-2 max-w-[78ch] text-sm leading-6 text-ink-500">These are evidence requirements rather than downloadable templates. Prepare your own current files, then upload and link them after you start the application. Conditional items only become required when the matching activity or risk applies.</p>
               </div>
-              <aside className="h-fit border border-[#d8cebd] bg-[#fffdf8] p-5">
-                <p className="text-sm font-bold text-ink-800">Core evidence</p>
-                <p className="mt-2 text-3xl font-bold tracking-tight text-brand-700">9 files</p>
-                <p className="mt-2 text-sm leading-5 text-ink-500">Venue, organisation, programme, supplier, safety and emergency documents required for every application.</p>
-              </aside>
+              <div className="mt-5 grid gap-5 lg:grid-cols-2">
+                <SupportingDocumentGroup title="Core supporting documents" description="Common evidence for every event" documents={M1_CORE_TEMPLATE.supportingDocuments} />
+                <SupportingDocumentGroup title="Scenario supporting documents" description={`Additional evidence for ${scenario.title}`} documents={scenario.supportingDocuments} />
+              </div>
             </section>
 
             <section className="flex flex-col gap-5 border-t border-[#d8cebd] pt-7 lg:flex-row lg:items-center lg:justify-between">
@@ -240,6 +231,25 @@ export default function TemplateRecommendationPage() {
       </div>
     </div>
   );
+}
+
+function SupportingDocumentGroup({ title, description, documents }: {
+  title: string;
+  description: string;
+  documents: ReadonlyArray<{ id: string; title: string; condition: string }>;
+}) {
+  return <section className="overflow-hidden border border-[#d8cebd] bg-[#fffdf8]" aria-label={title}>
+    <header className="border-b border-[#e3dacb] bg-cream-100 px-5 py-4">
+      <div className="flex items-start justify-between gap-3"><div><h3 className="font-bold text-ink-900">{title}</h3><p className="mt-1 text-sm text-ink-500">{description}</p></div><span className="badge shrink-0 bg-white text-brand-700">{documents.length} items</span></div>
+    </header>
+    <div className="flex snap-x gap-3 overflow-x-auto p-4" aria-label={`${title} checklist`}>
+      {documents.map((document) => <article key={document.id} className="min-w-[16rem] flex-1 snap-start rounded-md border border-[#e3dacb] bg-cream-50 p-4 lg:min-w-[18rem]">
+        <p className="text-xs font-bold tracking-wide text-brand-700">{document.id}</p>
+        <h4 className="mt-2 font-semibold text-ink-800">{document.title}</h4>
+        <p className="mt-2 text-sm leading-5 text-ink-500">{document.condition}</p>
+      </article>)}
+    </div>
+  </section>;
 }
 
 const DEFAULT_EVENT_TYPES: Record<M1EventCategory, EventType> = {
