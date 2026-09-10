@@ -3,16 +3,24 @@ import { useAuth } from '../../contexts/AuthContext';
 import logoUrl from '../../assets/brand/steras-logo-horizontal.svg';
 import { CalendarPlus, ClipboardList, Home, LogOut, Siren } from 'lucide-react';
 import NotificationBell from './NotificationBell';
+import { useAppDialog } from '../../contexts/AppDialogContext';
 
 export default function AppLayout() {
   const { profile, signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const dialog = useAppDialog();
 
   const isOrganizer = profile?.role === 'organizer';
 
   const handleSignOut = async () => {
-    if (!window.confirm('Sign out of STERAS? Unsaved changes will be lost.')) return;
+    if (!await dialog.confirm({
+      title: 'Sign out of STERAS?',
+      description: 'Any changes you have not saved on this page will be lost.',
+      confirmLabel: 'Sign out',
+      cancelLabel: 'Stay signed in',
+      tone: 'danger',
+    })) return;
     await signOut();
     navigate('/login', { replace: true });
   };

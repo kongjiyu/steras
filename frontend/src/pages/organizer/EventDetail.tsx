@@ -14,10 +14,12 @@ import OrganizerStatusBadge from './OrganizerStatusBadge';
 import { applicationStatusLabel, isEditableApplicationStatus, isWithdrawableApplicationStatus, nextVersionId, organizerAdminDecisionLabel, organizerAssessmentAvailability, organizerPublicationLabel, organizerPublicationStateFromProjection, OrganizerPublicationState } from './organizerApplication';
 import { findEventById } from '../../mock_data/events';
 import { findPublicEventById } from '../../mock_data/public_events';
+import { useAppDialog } from '../../contexts/AppDialogContext';
 
 export default function EventDetail() {
   const { eventId } = useParams<{ eventId: string }>();
   const navigate = useNavigate();
+  const dialog = useAppDialog();
   const [event, setEvent] = useState<EventRecord | null>(null);
   const [summary, setSummary] = useState<OrganizerAssessmentSummary | null>(null);
   const [versions, setVersions] = useState<EventVersion[]>([]);
@@ -129,9 +131,9 @@ export default function EventDetail() {
   const assessmentAvailability = organizerAssessmentAvailability(status, Boolean(event.currentVersionId), Boolean(event.currentAssessmentId), summary, legacySummary);
 
   const prepareEdit = async () => {
-    if (!isFirebaseConfigured || !window.confirm(status === 'Rejected'
-      ? 'Create a new Draft version from this rejected application? Previously submitted versions remain unchanged.'
-      : 'Return this Pending application to Draft? Uploaded documents must be supplied for the new immutable version.')) return;
+    if (!isFirebaseConfigured || !await dialog.confirm(status === 'Rejected'
+      ? { title: 'Revise this rejected application?', description: 'STERAS will create a new Draft. Previously submitted versions will remain unchanged.', confirmLabel: 'Create new draft', cancelLabel: 'Keep application' }
+      : { title: 'Return this application to Draft?', description: 'The Pending application will leave the review queue. Upload the required documents again for the new version.', confirmLabel: 'Return to draft', cancelLabel: 'Keep pending' })) return;
     setLifecycleAction('edit');
     try {
       const command = httpsCallable<{ eventId: string }>(functions, 'prepareApplicationRevision');
@@ -145,7 +147,7 @@ export default function EventDetail() {
   };
 
   const cancelPending = async () => {
-    if (!isFirebaseConfigured || !window.confirm('Cancel this Pending application before Admin review? This cannot be undone.')) return;
+    if (!isFirebaseConfigured || !await dialog.confirm({ title: 'Cancel this application?', description: 'This Pending application will be cancelled before Admin review. This action cannot be undone.', confirmLabel: 'Cancel application', cancelLabel: 'Keep application', tone: 'danger' })) return;
     setLifecycleAction('cancel');
     try {
       const command = httpsCallable<{ eventId: string }>(functions, 'cancelEvent');
@@ -159,7 +161,7 @@ export default function EventDetail() {
   };
 
   const withdraw = async () => {
-    const rationale = window.prompt('Why are you withdrawing this application? (10–500 characters)')?.trim();
+    const rationale = await dialog.prompt({ title: 'Withdraw this application?', description: 'The application will leave the active review workflow. Give reviewers a clear reason for the withdrawal.', inputLabel: 'Reason for withdrawal', placeholder: 'Explain why this application is being withdrawn', minLength: 10, maxLength: 500, confirmLabel: 'Withdraw application', cancelLabel: 'Keep application', tone: 'danger' });
     if (!rationale) return;
     if (!isFirebaseConfigured) {
       toast.error('Firebase is not configured. Withdrawal disabled.');

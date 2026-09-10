@@ -7,6 +7,7 @@ import AuthShell from '../../components/layout/AuthShell';
 import { getPostLoginPath, getRoleHome, ReturnLocation } from '../../routing';
 import { authErrorMessage } from '../../contexts/authErrors';
 import { LogIn, LogOut } from 'lucide-react';
+import { useAppDialog } from '../../contexts/AppDialogContext';
 
 export default function LoginPage() {
   const { user, profile, signIn, signOut, configured } = useAuth();
@@ -17,10 +18,11 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const dialog = useAppDialog();
   const existingSessionHome = user ? getRoleHome(profile?.role) : null;
 
   const handleSignOut = async () => {
-    if (!window.confirm('Sign out of STERAS?')) return;
+    if (!await dialog.confirm({ title: 'Sign out of STERAS?', description: 'You will need to sign in again to return to your workspace.', confirmLabel: 'Sign out', cancelLabel: 'Stay signed in', tone: 'danger' })) return;
     setSigningOut(true);
     try {
       await signOut();

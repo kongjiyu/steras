@@ -29,6 +29,7 @@ import {
 import { functions } from '../../config/firebase';
 import type { Stage1Doc } from '@shared/types';
 import { safeStage1DocumentHref } from './safeDocumentLink';
+import { useAppDialog } from '../../contexts/AppDialogContext';
 
 export interface Stage1Requirement {
   docId: string;
@@ -79,6 +80,7 @@ export default function Stage1RequirementRow(props: Stage1RequirementRowProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const dialog = useAppDialog();
 
   const status: Stage1Doc['status'] = doc?.status ?? 'pending_submission';
   const isReceipt = requirement.docType === 'receipt';
@@ -122,7 +124,7 @@ export default function Stage1RequirementRow(props: Stage1RequirementRowProps) {
 
   async function handleUsePrevious() {
     if (!isReceipt) return;
-    if (!window.confirm('Mark this receipt as "Use Previous"? The public verification step remains available—if the item is not actually at the venue, the public can report it through Incident reporting.')) {
+    if (!await dialog.confirm({ title: 'Use the previous receipt?', description: 'STERAS will reuse the earlier receipt for this requirement. Public verification remains available, and missing items can still be reported through Incident reporting.', confirmLabel: 'Use previous receipt', cancelLabel: 'Upload another receipt' })) {
       return;
     }
     setSubmitting(true);

@@ -12,6 +12,7 @@ import type { UploadTask } from 'firebase/storage';
 import { db, functions, isFirebaseConfigured, storage } from '../../config/firebase';
 import { COLLECTIONS } from '@shared/types';
 import { useAuth } from '../../contexts/AuthContext';
+import { useAppDialog } from '../../contexts/AppDialogContext';
 import toast from 'react-hot-toast';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import OrganizerStatusBadge from './OrganizerStatusBadge';
@@ -42,6 +43,7 @@ const APPLICATION_SECTION_SHORTCUTS = [
 type ApplicationSectionId = (typeof APPLICATION_SECTION_SHORTCUTS)[number]['id'];
 
 export default function NewEvent() {
+  const dialog = useAppDialog();
   const { user, profile } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -505,7 +507,7 @@ export default function NewEvent() {
 
   const extractDocuments = async () => {
     if (!draftId) return setNotice('Save the Draft before extracting documents.');
-    if (manuallyEdited && !window.confirm('Extract again and replace your edited details with the uploaded document?')) return;
+    if (manuallyEdited && !await dialog.confirm({ title: 'Replace your edited details?', description: 'Extracting again will replace the application details you edited with values from the uploaded documents.', confirmLabel: 'Extract and replace', cancelLabel: 'Keep my edits', tone: 'danger' })) return;
     setNotice('');
     setExtracting(true);
     try {

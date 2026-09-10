@@ -32,6 +32,7 @@ import EmptyState from '../../components/ui/EmptyState';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { displayIdentityName, useDisplayIdentities } from '../../hooks/useDisplayIdentities';
 import ControlProposalDialog from './ControlProposalDialog';
+import { useAppDialog } from '../../contexts/AppDialogContext';
 
 interface ProposedChecklistItem {
   authorityType: AuthorityType;
@@ -45,6 +46,7 @@ interface ProposedChecklistResponse {
 }
 
 export default function AdminAssignment() {
+  const dialog = useAppDialog();
   const { eventId } = useParams<{ eventId: string }>();
   const [event, setEvent] = useState<EventRecord | null>(null);
   const [loadingEvent, setLoadingEvent] = useState(true);
@@ -213,10 +215,9 @@ export default function AdminAssignment() {
 
   const unassign = async (authorityType: AuthorityType | null) => {
     if (!eventId) return;
-    const msg = authorityType
-      ? `Unassign the ${authorityType} officer? You can re-assign them after.`
-      : 'Unassign ALL officers for this event version? You can re-assign them after.';
-    if (!window.confirm(msg)) return;
+    if (!await dialog.confirm(authorityType
+      ? { title: `Unassign the ${authorityType} officer?`, description: 'This officer will lose the assignment. You can assign them again later.', confirmLabel: 'Unassign officer', cancelLabel: 'Keep assignment', tone: 'danger' }
+      : { title: 'Unassign all officers?', description: 'Every officer will lose this event version assignment. You can assign officers again later.', confirmLabel: 'Unassign all', cancelLabel: 'Keep assignments', tone: 'danger' })) return;
     if (authorityType) {
       setUnassigning(authorityType);
     } else {

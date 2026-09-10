@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
 import Sidebar, { ADMIN_NAV } from './Sidebar';
 import { useAuth } from '../../contexts/AuthContext';
+import { useAppDialog } from '../../contexts/AppDialogContext';
 
 interface AdminLayoutProps {
   children?: ReactNode;
@@ -15,6 +16,7 @@ interface AdminLayoutProps {
 export default function AdminLayout({ children }: AdminLayoutProps) {
   const { profile, signOut } = useAuth();
   const navigate = useNavigate();
+  const dialog = useAppDialog();
 
   const user = profile?.role === 'admin'
     ? {
@@ -32,7 +34,7 @@ export default function AdminLayout({ children }: AdminLayoutProps) {
         navSections={ADMIN_NAV}
         workspaceLabel="Admin workspace"
         userRoleSuffix="administrator"
-        onSignOut={async () => { if (!window.confirm('Sign out of STERAS? Unsaved changes will be lost.')) return;
+        onSignOut={async () => { if (!await dialog.confirm({ title: 'Sign out of STERAS?', description: 'Any changes you have not saved on this page will be lost.', confirmLabel: 'Sign out', cancelLabel: 'Stay signed in', tone: 'danger' })) return;
     await signOut(); navigate('/login', { replace: true }); }}
       />
       <div id="admin-content" tabIndex={-1} className="flex min-w-0 flex-1 flex-col">

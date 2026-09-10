@@ -7,6 +7,7 @@ import { COLLECTIONS, Venue } from '@shared/types';
 import { db, functions, isFirebaseConfigured } from '../../config/firebase';
 import { WorkspaceTopBar } from '../../components/layout/Sidebar';
 import { useAuth } from '../../contexts/AuthContext';
+import { useAppDialog } from '../../contexts/AppDialogContext';
 
 interface VenueForm {
   name: string; address: string; state: string; jurisdiction: string; capacity: string;
@@ -20,6 +21,7 @@ function dateInput(timestamp?: number) { return timestamp ? new Date(timestamp).
 
 export default function AdminVenues() {
   const { profile } = useAuth();
+  const dialog = useAppDialog();
   const [venues, setVenues] = useState<Venue[]>([]);
   const [loading, setLoading] = useState(true);
   const [showInactive, setShowInactive] = useState(false);
@@ -73,7 +75,7 @@ export default function AdminVenues() {
   };
 
   const command = async (venue: Venue, action: 'verifyVenue' | 'deactivateVenue') => {
-    if (action === 'deactivateVenue' && !window.confirm(`Deactivate ${venue.name}? Organisers will no longer be able to select it.`)) return;
+    if (action === 'deactivateVenue' && !await dialog.confirm({ title: `Deactivate ${venue.name}?`, description: 'Organisers will no longer be able to select this venue for new applications.', confirmLabel: 'Deactivate venue', cancelLabel: 'Keep venue active', tone: 'danger' })) return;
     setBusyVenueId(venue.venueId);
     const keyId = `${action}:${venue.venueId}:${venue.revision ?? 0}`;
     const idempotencyKey = commandKeys.current.get(keyId) ?? crypto.randomUUID();

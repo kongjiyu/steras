@@ -7,6 +7,7 @@ import { AuthProvider } from './contexts/AuthContext';
 import AppErrorBoundary from './components/ui/AppErrorBoundary';
 import ConnectionStatus from './components/ui/ConnectionStatus';
 import BackToTop from './components/ui/BackToTop';
+import { AppDialogProvider } from './contexts/AppDialogContext';
 import './index.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
@@ -14,6 +15,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <AppErrorBoundary>
     <BrowserRouter>
       <AuthProvider>
+        <AppDialogProvider>
         <App />
         <BackToTop />
         <Toaster
@@ -35,6 +37,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             error: { iconTheme: { primary: '#b42318', secondary: '#fffdf8' } },
           }}
         />
+        </AppDialogProvider>
       </AuthProvider>
     </BrowserRouter>
     </AppErrorBoundary>

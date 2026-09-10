@@ -3,6 +3,7 @@ import { Outlet } from 'react-router-dom';
 import { useNavigate } from 'react-router-dom';
 import Sidebar, { AUTHORITY_NAV } from './Sidebar';
 import { useAuth } from '../../contexts/AuthContext';
+import { useAppDialog } from '../../contexts/AppDialogContext';
 
 interface AuthorityLayoutProps {
   mockUser?: { name: string; role: string; initials: string };
@@ -17,6 +18,7 @@ interface AuthorityLayoutProps {
 export default function AuthorityLayout({ mockUser, children }: AuthorityLayoutProps) {
   const { profile, signOut } = useAuth();
   const navigate = useNavigate();
+  const dialog = useAppDialog();
   const user = mockUser ?? (profile?.role === 'authority'
     ? {
         name: profile.name ?? 'Authority Officer',
@@ -33,7 +35,7 @@ export default function AuthorityLayout({ mockUser, children }: AuthorityLayoutP
         navSections={AUTHORITY_NAV}
         workspaceLabel="Authority workspace"
         userRoleSuffix="authority"
-        onSignOut={async () => { if (!window.confirm('Sign out of STERAS? Unsaved changes will be lost.')) return;
+        onSignOut={async () => { if (!await dialog.confirm({ title: 'Sign out of STERAS?', description: 'Any changes you have not saved on this page will be lost.', confirmLabel: 'Sign out', cancelLabel: 'Stay signed in', tone: 'danger' })) return;
     await signOut(); navigate('/login', { replace: true }); }}
       />
       <div id="authority-content" tabIndex={-1} className="flex min-w-0 flex-1 flex-col">
