@@ -39,6 +39,7 @@ const APPLICATION_SECTION_SHORTCUTS = [
   { id: 'supporting-evidence', code: 'C', label: 'Review & evidence' },
   { id: 'application-submit', code: 'D', label: 'Submit' },
 ] as const;
+type ApplicationSectionId = (typeof APPLICATION_SECTION_SHORTCUTS)[number]['id'];
 
 export default function NewEvent() {
   const { user, profile } = useAuth();
@@ -68,6 +69,7 @@ export default function NewEvent() {
   const [lastValidatedErrors, setLastValidatedErrors] = useState<string[]>([]);
   const [errorNavigatorOpen, setErrorNavigatorOpen] = useState(true);
   const [mobileSectionsOpen, setMobileSectionsOpen] = useState(false);
+  const [activeApplicationSection, setActiveApplicationSection] = useState<ApplicationSectionId>('template-choice');
   const [loading, setLoading] = useState(Boolean(eventId));
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -88,6 +90,28 @@ export default function NewEvent() {
       ? { ...(initial as EventDetails), riskProfile: completeRiskProfile((initial as EventDetails).riskProfile) }
       : createInitialEventDetails(profile ?? undefined);
   });
+
+  useEffect(() => {
+    if (loading) return;
+    const updateActiveSection = () => {
+      const threshold = Math.min(320, window.innerHeight * 0.35);
+      let active: ApplicationSectionId = APPLICATION_SECTION_SHORTCUTS[0].id;
+      for (const section of APPLICATION_SECTION_SHORTCUTS) {
+        const target = document.getElementById(section.id);
+        if (target && target.getBoundingClientRect().top <= threshold) active = section.id;
+      }
+      if (window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 24) active = 'application-submit';
+      setActiveApplicationSection((current) => current === active ? current : active);
+    };
+    const frame = window.requestAnimationFrame(updateActiveSection);
+    window.addEventListener('scroll', updateActiveSection, { passive: true });
+    window.addEventListener('resize', updateActiveSection);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener('scroll', updateActiveSection);
+      window.removeEventListener('resize', updateActiveSection);
+    };
+  }, [loading]);
   const [evidenceManifest, setEvidenceManifest] = useState<M1EvidenceRequirementResponse[]>(() => templateSelection
     ? reconcileM1EvidenceManifest(templateSelection, form, [])
     : []);
@@ -582,6 +606,7 @@ export default function NewEvent() {
   };
   const jumpToApplicationSection = (id: string) => {
     setMobileSectionsOpen(false);
+    setActiveApplicationSection(id as ApplicationSectionId);
     jumpTo(id);
   };
   const reviewError = (error: string) => {
@@ -608,6 +633,8 @@ export default function NewEvent() {
         description="Complete the operational details and supporting evidence used for the official category assessment and AI advisory explanation."
       />
 
+      <div className="grid items-start gap-5 2xl:grid-cols-[minmax(0,1fr)_12rem]">
+      <div className="min-w-0">
       <div id="application-sticky-navigation" className="sticky top-[72px] z-20 mb-5 shadow-md">
         <ApplicationJourney activeStep={journeyStep} />
         <nav aria-label="Step 5 application sections" className="border-x border-b border-brand-200 bg-[#fffdf8] text-sm">
@@ -620,9 +647,9 @@ export default function NewEvent() {
               {APPLICATION_SECTION_SHORTCUTS.map(({ id, code, label }) => <button key={id} type="button" className="group relative flex min-h-12 items-center gap-2 rounded-md px-2 text-left font-semibold text-ink-700 hover:bg-brand-50 hover:text-brand-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" onClick={() => jumpToApplicationSection(id)}><span className="grid h-7 min-w-7 place-items-center rounded-full bg-brand-100 text-xs font-bold text-brand-800 group-hover:bg-brand-200">{code}</span><span>{label}{id === 'supporting-evidence' && <span className="ml-1 whitespace-nowrap text-xs font-bold text-brand-700">{resolvedEvidenceCount}/{evidenceDefinitions.length}</span>}</span>{id === 'supporting-evidence' && <span className="absolute inset-x-2 bottom-0 h-0.5 overflow-hidden rounded-full bg-brand-100"><span className="block h-full bg-brand-600" style={{ width: `${evidenceCompletionPercent}%` }} /></span>}</button>)}
             </div>}
           </div>
-          <div className="hidden items-center gap-3 overflow-x-auto px-5 py-3 md:flex">
+          <div className="hidden items-center gap-3 overflow-x-auto px-5 py-3 md:flex 2xl:hidden">
             <p className="shrink-0 border-r border-[#d8cebd] pr-4 text-xs font-bold uppercase tracking-[0.08em] text-brand-700">Step 5 sections</p>
-            {APPLICATION_SECTION_SHORTCUTS.map(({ id, code, label }) => <button key={id} type="button" className="group relative flex min-h-11 shrink-0 items-center gap-2 rounded-md px-2 font-semibold text-ink-700 hover:bg-brand-50 hover:text-brand-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" onClick={() => jumpToApplicationSection(id)}><span className="grid h-7 min-w-7 place-items-center rounded-full bg-brand-100 text-xs font-bold text-brand-800 group-hover:bg-brand-200">{code}</span><span>{label}{id === 'supporting-evidence' && <span className={`ml-2 rounded-full px-2 py-1 text-xs font-bold ${resolvedEvidenceCount === evidenceDefinitions.length && evidenceDefinitions.length ? 'bg-brand-700 text-white' : 'bg-brand-100 text-brand-800'}`}>{resolvedEvidenceCount}/{evidenceDefinitions.length}</span>}</span>{id === 'supporting-evidence' && <span className="absolute inset-x-2 bottom-0 h-0.5 overflow-hidden rounded-full bg-brand-100"><span className="block h-full bg-brand-600" style={{ width: `${evidenceCompletionPercent}%` }} /></span>}</button>)}
+            {APPLICATION_SECTION_SHORTCUTS.map(({ id, code, label }) => <button key={id} type="button" aria-current={activeApplicationSection === id ? 'location' : undefined} className={`group relative flex min-h-11 shrink-0 items-center gap-2 rounded-md px-2 font-semibold hover:bg-brand-50 hover:text-brand-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 ${activeApplicationSection === id ? 'bg-brand-50 text-brand-800' : 'text-ink-700'}`} onClick={() => jumpToApplicationSection(id)}><span className={`grid h-7 min-w-7 place-items-center rounded-full text-xs font-bold ${activeApplicationSection === id ? 'bg-brand-700 text-white' : 'bg-brand-100 text-brand-800 group-hover:bg-brand-200'}`}>{code}</span><span>{label}{id === 'supporting-evidence' && <span className={`ml-2 rounded-full px-2 py-1 text-xs font-bold ${resolvedEvidenceCount === evidenceDefinitions.length && evidenceDefinitions.length ? 'bg-brand-700 text-white' : 'bg-brand-100 text-brand-800'}`}>{resolvedEvidenceCount}/{evidenceDefinitions.length}</span>}</span>{id === 'supporting-evidence' && <span className="absolute inset-x-2 bottom-0 h-0.5 overflow-hidden rounded-full bg-brand-100"><span className="block h-full bg-brand-600" style={{ width: `${evidenceCompletionPercent}%` }} /></span>}</button>)}
           </div>
         </nav>
       </div>
@@ -985,6 +1012,29 @@ export default function NewEvent() {
           </div>
         </div>
       </form>
+      </div>
+      <aside className="sticky top-24 hidden rounded-lg border border-brand-200 bg-[#fffdf8] p-3 shadow-card 2xl:block" aria-label="On this application page">
+        <p className="px-2 pb-2 text-xs font-bold uppercase tracking-[0.08em] text-brand-700">On this page</p>
+        <nav className="space-y-1" aria-label="Application section shortcuts">
+          {APPLICATION_SECTION_SHORTCUTS.map(({ id, code, label }) => (
+            <button
+              key={id}
+              type="button"
+              aria-current={activeApplicationSection === id ? 'location' : undefined}
+              className={`flex min-h-11 w-full items-center gap-2 rounded-md px-2 text-left text-sm font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 ${activeApplicationSection === id ? 'bg-brand-700 text-white' : 'text-ink-700 hover:bg-brand-50 hover:text-brand-800'}`}
+              onClick={() => jumpToApplicationSection(id)}
+            >
+              <span className={`grid h-7 min-w-7 place-items-center rounded-full text-xs font-bold ${activeApplicationSection === id ? 'bg-white text-brand-800' : 'bg-brand-100 text-brand-800'}`}>{code}</span>
+              <span>{label}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="mt-3 border-t border-brand-100 px-2 pt-3">
+          <p className="text-xs font-semibold text-ink-600">Evidence {resolvedEvidenceCount}/{evidenceDefinitions.length}</p>
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-brand-100"><span className="block h-full rounded-full bg-brand-600" style={{ width: `${evidenceCompletionPercent}%` }} /></div>
+        </div>
+      </aside>
+      </div>
       {previewPath && <EvidencePreview path={previewPath} onClose={() => setPreviewPath('')} />}
       {documentUploadIssue && <DocumentUploadErrorModal issue={documentUploadIssue} onClose={() => setDocumentUploadIssue(undefined)} />}
       {pendingRemoval && <DocumentRemovalModal document={pendingRemoval} removing={removingDocument} onClose={() => setPendingRemoval(undefined)} onConfirm={() => { void removeDocument(pendingRemoval.path); }} />}
