@@ -32,6 +32,8 @@ describe('PublicCalendar', () => {
     render(<MemoryRouter><PublicCalendar /></MemoryRouter>);
     expect(await screen.findByRole('heading', { name: 'Tourism Forum' })).toBeInTheDocument();
     expect(screen.getByText('1 approved event')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Past events' })).toBeInTheDocument();
+    expect(screen.getAllByRole('navigation', { name: /Event time/ })).toHaveLength(2);
   });
 
   it('shows an error and recovers when the listener succeeds on retry', async () => {

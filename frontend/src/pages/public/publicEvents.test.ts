@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PublicEvent } from '@shared/types';
-import { filterPublicEvents, groupPublicEventsByMonth } from './publicEvents';
+import { filterPublicEvents, groupPublicEventsByMonth, groupPublicEventsByPeriod } from './publicEvents';
 
 const events: PublicEvent[] = [
   { eventId: 'b', versionId: 'v1', eventName: 'Penang Culture Week', venueName: 'George Town', eventType: 'cultural', startDatetime: new Date(2026, 7, 2).getTime(), endDatetime: new Date(2026, 7, 3).getTime(), approvedBy: ['PDRM'], publicStatus: 'approved' },
@@ -24,5 +24,15 @@ describe('publicEvents', () => {
     expect(filterPublicEvents([...events, malformed], { search: '', eventType: 'all', month: '' })
       .map((event) => event.eventId)).toEqual(['b', 'a']);
     expect(groupPublicEventsByMonth([malformed])).toEqual([]);
+  });
+
+  it('separates present, future, and past events in that display order', () => {
+    const now = new Date(2026, 6, 15, 12).getTime();
+    const present = { ...events[0], eventId: 'present', startDatetime: now - 1_000, endDatetime: now + 1_000 };
+    const future = { ...events[0], eventId: 'future', startDatetime: now + 2_000, endDatetime: now + 3_000 };
+    const past = { ...events[0], eventId: 'past', startDatetime: now - 3_000, endDatetime: now - 2_000 };
+    const periods = groupPublicEventsByPeriod([past, future, present], now);
+    expect(periods.map((period) => period.id)).toEqual(['present', 'future', 'past']);
+    expect(periods.map((period) => period.events.map((event) => event.eventId))).toEqual([['present'], ['future'], ['past']]);
   });
 });

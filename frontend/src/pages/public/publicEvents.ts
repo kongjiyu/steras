@@ -6,6 +6,16 @@ export interface PublicEventFilters {
   month: string;
 }
 
+export type PublicEventPeriod = 'present' | 'future' | 'past';
+
+export interface PublicEventPeriodGroup {
+  id: PublicEventPeriod;
+  label: string;
+  description: string;
+  events: PublicEvent[];
+  months: { month: string; events: PublicEvent[] }[];
+}
+
 export function filterPublicEvents(events: PublicEvent[], filters: PublicEventFilters): PublicEvent[] {
   const search = filters.search.trim().toLocaleLowerCase();
   return [...events]
@@ -23,6 +33,27 @@ export function groupPublicEventsByMonth(events: PublicEvent[]): { month: string
     groups.set(month, [...(groups.get(month) ?? []), event]);
   });
   return [...groups].map(([month, groupedEvents]) => ({ month, events: groupedEvents }));
+}
+
+export function groupPublicEventsByPeriod(events: PublicEvent[], now = Date.now()): PublicEventPeriodGroup[] {
+  const validEvents = events.filter(hasValidSchedule);
+  const definitions: Array<Omit<PublicEventPeriodGroup, 'events' | 'months'>> = [
+    { id: 'present', label: 'Present · Ongoing now', description: 'Approved events currently in progress.' },
+    { id: 'future', label: 'Future · Upcoming events', description: 'Approved events scheduled to begin later.' },
+    { id: 'past', label: 'Past events', description: 'Approved events that have already ended.' },
+  ];
+  return definitions.map((definition) => {
+    const periodEvents = validEvents.filter((event) => definition.id === 'present'
+      ? event.startDatetime <= now && event.endDatetime >= now
+      : definition.id === 'future'
+        ? event.startDatetime > now
+        : event.endDatetime < now);
+    return {
+      ...definition,
+      events: periodEvents,
+      months: groupPublicEventsByMonth(periodEvents),
+    };
+  });
 }
 
 function hasValidSchedule(event: PublicEvent): boolean {
