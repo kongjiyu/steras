@@ -115,7 +115,7 @@ def build_presentation():
         p("One record, five connected modules", "Section"),
         table([
             ["Module", "What happens", "What to show"],
-            ["M1", "Choose scenario, upload combined application, extract, verify, submit", "Template recommendation, 100% extraction, 18/18 evidence"],
+            ["M1", "Choose scenario, upload Core and scenario files, extract, verify, submit", "Template recommendation, 100% extraction, 18/18 evidence"],
             ["M2", "Acquire context, ask MiniMax, validate, apply hard rules, calculate resources", "Eight categories, weather evidence, official 28 / Medium, seven resources"],
             ["M3", "Admin review, officer assignment, score review, final approval, controls", "Four authorities, unanimous approval, 13 verified Stage 1 documents"],
             ["M4", "Report, assess, respond, resolve", "MiniMax incident assessment and append-only response history"],
@@ -128,7 +128,7 @@ def build_presentation():
 
     slide_specs = [
         ("M1", "Structured application and evidence", "m1-complete-draft.png", [
-            "Core + scenario documents are accepted as one combined PDF.",
+            "Core and scenario documents are uploaded separately.",
             "The organiser reviews extracted fields and corrects suspicious or missing values.",
             "Canonical venue binding and evidence ownership are checked before submission.",
         ]),
@@ -198,7 +198,7 @@ def build_evidence():
     path = OUTPUT / "STERAS_M1_M5_E2E_Evidence.pdf"
     doc = SimpleDocTemplate(str(path), pagesize=A4, rightMargin=18 * mm, leftMargin=18 * mm, topMargin=16 * mm, bottomMargin=18 * mm, title="STERAS M1–M5 Production E2E Evidence")
     checkpoints = [
-        ["M1", "Combined application extraction", "PASS · 12 fields · 100%"],
+        ["M1", "Core and scenario application extraction", "PASS · 12 fields · 100%"],
         ["M1", "Evidence and canonical venue", "PASS · 18/18 · KLCC active"],
         ["M2", "OpenWeather context", "PASS · available · fresh"],
         ["M2", "MiniMax proposal", "PASS · 8 unique categories"],

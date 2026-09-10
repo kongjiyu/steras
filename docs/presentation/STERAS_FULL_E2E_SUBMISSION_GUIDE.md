@@ -12,10 +12,9 @@
 
 | 用途 | 文件 |
 |---|---|
-| M1 combined Core + T01 application | [`output/pdf/m1-presentation-test-case/STERAS_DEMO_T01_Completed_Combined_Application.pdf`](../../output/pdf/m1-presentation-test-case/STERAS_DEMO_T01_Completed_Combined_Application.pdf) |
+| M1 completed Core application | [`output/m1-presentation-test-case/01_Filled_Core_Event_Application.docx`](../../output/m1-presentation-test-case/01_Filled_Core_Event_Application.docx) |
+| M1 completed T01 scenario application | [`output/m1-presentation-test-case/02_Filled_Entertainment_and_Performance_Event_Indoor.docx`](../../output/m1-presentation-test-case/02_Filled_Entertainment_and_Performance_Event_Indoor.docx) |
 | M1 supporting evidence，以及 M3 Stage 1 technical rehearsal | [`output/m1-presentation-test-case/03_Core_Supporting_Evidence_Pack.pdf`](../../output/m1-presentation-test-case/03_Core_Supporting_Evidence_Pack.pdf) |
-| 对照 Core form | [`output/m1-presentation-test-case/01_Filled_Core_Event_Application_T01.docx`](../../output/m1-presentation-test-case/01_Filled_Core_Event_Application_T01.docx) |
-| 对照 T01 form | [`output/m1-presentation-test-case/02_Filled_T01_Indoor_Performance_Template.docx`](../../output/m1-presentation-test-case/02_Filled_T01_Indoor_Performance_Template.docx) |
 | PDRM Stage 2 photo | [`assets/e2e-2026-09-30/stage2-pdrm-crowd-entry.jpg`](assets/e2e-2026-09-30/stage2-pdrm-crowd-entry.jpg) |
 | BOMBA Stage 2 photo | [`assets/e2e-2026-09-30/stage2-bomba-fire-egress.jpg`](assets/e2e-2026-09-30/stage2-bomba-fire-egress.jpg) |
 | KKM Stage 2 photo | [`assets/e2e-2026-09-30/stage2-kkm-medical-point.jpg`](assets/e2e-2026-09-30/stage2-kkm-medical-point.jpg) |
@@ -88,13 +87,18 @@ Final application status:
 
 预期结果：页面顶部显示已选择两个 templates，包含 Core 和 T01。
 
-### 1.2 上传 combined PDF 并 auto-fill
+### 1.2 分别上传 Core 和 scenario 文件并 auto-fill
 
-1. 选择 **Upload one combined file**。Core、scenario 和 combined application 三种 slot 都接受 PDF 或 DOCX；本次 rehearsal 使用 combined PDF。
-2. 上传：
+1. 在 **Core application PDF or DOCX** 上传：
 
 ```text
-output/pdf/m1-presentation-test-case/STERAS_DEMO_T01_Completed_Combined_Application.pdf
+output/m1-presentation-test-case/01_Filled_Core_Event_Application.docx
+```
+
+2. 在 **Scenario-specific PDF or DOCX** 上传：
+
+```text
+output/m1-presentation-test-case/02_Filled_Entertainment_and_Performance_Event_Indoor.docx
 ```
 
 3. 点击 **Extract and auto-fill**。
@@ -107,7 +111,7 @@ output/pdf/m1-presentation-test-case/STERAS_DEMO_T01_Completed_Combined_Applicat
 - `A06A / VENUE_NAME` 被识别为 `Kuala Lumpur Convention Centre`；
 - Event、Organizer、Venue、Emergency plan，以及 H01–H18 全部 all-hazards fields 被填入。
 
-如果 extraction 失败，不要手动提交空白 form；先确认上传的是新版 18-page combined PDF，而不是其中一个未合并的文件。旧版 combined PDF 没有完整 `A06A / VENUE_NAME` 和 H01–H18 fields，即使重新 extraction 也不能完整 auto-fill；请重新下载本指南链接的新版 PDF 再上传。
+如果 extraction 失败，不要手动提交空白 form；确认 Core 和 T01 文件分别上传到正确位置，且文件来自本指南列出的最新测试资料。然后移除错误文件、重新上传，再执行 extraction。
 
 ### 1.3 Review auto-filled fields
 
@@ -570,7 +574,7 @@ The secondary queue lane remained active until the arrival peak ended. Additiona
 
 全部勾选才算完成整套 E2E：
 
-- [ ] M1 combined PDF extraction 达到 100%。
+- [ ] M1 Core 和 scenario 文件 extraction 达到 100%。
 - [ ] `A06A / VENUE_NAME` 成功提取为 Kuala Lumpur Convention Centre。
 - [ ] M1 verified venue 是 Kuala Lumpur Convention Centre，不是 custom venue。
 - [ ] Registry binding 后的 canonical address、capacity 和 coordinates 已自动填入并锁定。
@@ -599,11 +603,11 @@ The secondary queue lane remained active until the arrival peak ended. Additiona
 - 不要继续提交 custom venue；
 - 请 Admin 到 **Venues** 确认 Kuala Lumpur Convention Centre 是 active 且 verified。
 
-### Venue name 没有从 combined PDF 提取
+### Venue name 没有从 Core 文件提取
 
-- 确认上传的是本指南链接的新版 18-page combined PDF；
-- 打开 PDF 并确认 Core form 内存在 `A06A / VENUE_NAME`；
-- 如果使用的是之前下载的旧 PDF，请删除该 upload、重新下载新版 PDF、重新上传，再点击 **Extract and auto-fill**；
+- 确认 Core 和 scenario 文件分别上传到正确位置；
+- 打开 Core DOCX 并确认 form 内存在 `A06A / VENUE_NAME`；
+- 如果使用的是旧测试文件，请删除 uploads、重新下载本指南列出的两个 DOCX、重新上传，再点击 **Extract and auto-fill**；
 - 如果网页仍显示旧 extraction 行为，先强制刷新 production 页面再重试；
 - extraction 成功后仍要另外选择 Verified venue registry，不能把提取值当成 registry verification。
 
@@ -612,7 +616,7 @@ The secondary queue lane remained active until the arrival peak ended. Additiona
 依次检查：
 
 - Start time 是否仍在未来；
-- combined extraction 是否完成；
+- Core 和 scenario extraction 是否完成；
 - venue 是否从 registry 选择；
 - all-hazards booleans 是否全部明确；
 - 三个 percentage/minute 数值是否合法；

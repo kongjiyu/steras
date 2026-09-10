@@ -284,3 +284,16 @@
 @media (prefers-reduced-motion: reduce) { .steras-loader span { animation: none; } }
 thead th { vertical-align: bottom; }
 tbody td { vertical-align: top; }
+
+.docx-preview { color: #27231d; font-family: Arial, sans-serif; font-size: 14px; line-height: 1.65; }
+.docx-preview h1, .docx-preview h2, .docx-preview h3 { margin: 1.4em 0 .6em; color: #20251a; font-weight: 700; line-height: 1.3; }
+.docx-preview h1 { font-size: 1.6rem; }
+.docx-preview h2 { font-size: 1.3rem; }
+.docx-preview h3 { font-size: 1.1rem; }
+.docx-preview p { margin: .65em 0; white-space: pre-wrap; }
+.docx-preview ul, .docx-preview ol { margin: .75em 0; padding-left: 1.5rem; }
+.docx-preview ul { list-style: disc; }
+.docx-preview ol { list-style: decimal; }
+.docx-preview table { width: 100%; margin: 1rem 0; border-collapse: collapse; }
+.docx-preview th, .docx-preview td { border: 1px solid #ded5c5; padding: .55rem .65rem; text-align: left; }
+.docx-preview img { max-width: 100%; height: auto; }

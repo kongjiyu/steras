@@ -52,6 +52,8 @@ const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
 const notifications_1 = require("../utils/notifications");
 const controlAggregate_1 = require("../utils/controlAggregate");
+const base64File_1 = require("../utils/base64File");
+const controlLifecycle_1 = require("../utils/controlLifecycle");
 const MAX_FILE_BYTES = 700 * 1024; // 700 KB binary (~940 KB base64; under the 1 MB Firestore doc limit)
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'application/pdf']);
 exports.submitStage1Doc = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
@@ -67,7 +69,7 @@ exports.submitStage1Doc = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGIO
         }
         const message = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
         console.error(`[submitStage1Doc] unexpected error: ${message}`);
-        throw new https_1.HttpsError('internal', message.slice(0, 500));
+        throw new https_1.HttpsError('internal', 'Unable to submit the Stage 1 document. Retry shortly.');
     }
 });
 async function submitStage1DocForUser(uid, data, now = Date.now()) {
@@ -93,6 +95,7 @@ async function submitStage1DocForUser(uid, data, now = Date.now()) {
         if (!data.fileBase64)
             throw new https_1.HttpsError('invalid-argument', 'fileBase64 is required for upload.');
     }
+    const uploadedFile = usePrevious ? undefined : (0, base64File_1.validateBase64File)(data.fileBase64, data.mimeType, MAX_FILE_BYTES);
     const db = (0, firebase_admin_1.firestore)();
     const eventRef = db.collection(types_1.COLLECTIONS.EVENTS).doc(eventId);
     const controlRef = eventRef.collection(types_1.COLLECTIONS.EVENT_CONTROLS).doc(controlId);
@@ -127,7 +130,7 @@ async function submitStage1DocForUser(uid, data, now = Date.now()) {
         }
         const control = controlSnap.data();
         const versionId = event.currentVersionId ?? 'v1';
-        if (control.versionId !== versionId) {
+        if (!(0, controlLifecycle_1.isActiveControlGeneration)(event, control, eventId)) {
             throw new https_1.HttpsError('failed-precondition', `Control ${controlId} is for a prior version (${control.versionId}). The admin must re-commit the list for the current version.`);
         }
         // The docSlot must be in the control's stage1Requirements template.
@@ -153,10 +156,6 @@ async function submitStage1DocForUser(uid, data, now = Date.now()) {
         };
         if (!usePrevious) {
             // File size validation (decode the base64 to byte count).
-            const approxBytes = approxBase64DecodedBytes(data.fileBase64);
-            if (approxBytes > MAX_FILE_BYTES) {
-                throw new https_1.HttpsError('invalid-argument', `File too large: ${approxBytes} bytes. Max ${MAX_FILE_BYTES} bytes (~700 KB). Compress and re-upload.`);
-            }
             newDoc.filePath = `data:${data.mimeType};base64,${data.fileBase64}`;
         }
         else {
@@ -187,7 +186,9 @@ async function submitStage1DocForUser(uid, data, now = Date.now()) {
         const merged = [...othersFiltered, newDoc];
         const newAggregateLabel = (0, controlAggregate_1.aggregateLabel)(merged);
         // Writes.
-        tx.set(docRef, newDoc, { merge: true });
+        // A resubmission replaces transient verification fields. Any rejection
+        // context intentionally retained above is copied into `newDoc` explicitly.
+        tx.set(docRef, newDoc);
         tx.update(controlRef, { label: newAggregateLabel, updatedAt: now });
         // Audit log.
         const auditId = `${versionId}_${controlId}_${docId}_submitted_${now}`;
@@ -204,7 +205,7 @@ async function submitStage1DocForUser(uid, data, now = Date.now()) {
         if (!usePrevious) {
             metadata.fileName = data.fileName;
             metadata.mimeType = data.mimeType;
-            metadata.fileSizeBytes = approxBase64DecodedBytes(data.fileBase64);
+            metadata.fileSizeBytes = uploadedFile.sizeBytes;
         }
         tx.create(auditRef, {
             id: auditId,
@@ -251,18 +252,6 @@ async function submitStage1DocForUser(uid, data, now = Date.now()) {
         status: result.usePrevious ? 'use_previous' : 'pending_verification',
         uploadedAt: result.uploadedAt,
     };
-}
-/** Estimate the decoded size of a base64 string (4 chars -> 3 bytes,
- *  with padding). Used for the file-size gate. */
-function approxBase64DecodedBytes(b64) {
-    const len = b64.length;
-    if (len === 0)
-        return 0;
-    // Strip any data URL prefix if present (defensive).
-    const comma = b64.indexOf(',');
-    const clean = comma >= 0 ? b64.slice(comma + 1) : b64;
-    const padding = clean.endsWith('==') ? 2 : clean.endsWith('=') ? 1 : 0;
-    return Math.floor((clean.length * 3) / 4) - padding;
 }
 async function fireSubmitNotifications(args) {
     const db = (0, firebase_admin_1.firestore)();

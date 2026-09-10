@@ -15,19 +15,29 @@ import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import OrganizerStatusBadge from './OrganizerStatusBadge';
-import { applyM1ExtractedFields, bindCanonicalVenue, completeRiskProfile, createInitialEventDetails, createM1DraftRecord, extractionMatchesDraftDocuments, findUniqueRegistryVenueMatch, isEditableApplicationStatus, isMeaningfulNotApplicableReason, isSelectableRegistryVenue, MALAYSIA_STATES, nextVersionId, reconcileM1EvidenceManifest, validateEventApplication, validateTemplateCompatibility } from './organizerApplication';
+import { applyM1ExtractedFields, bindCanonicalVenue, completeRiskProfile, createInitialEventDetails, createM1DraftRecord, extractionMatchesDraftDocuments, findUniqueRegistryVenueMatch, inferMalaysiaStateFromAddress, isEditableApplicationStatus, isMeaningfulNotApplicableReason, isSelectableRegistryVenue, MALAYSIA_STATES, nextVersionId, reconcileM1EvidenceManifest, validateEventApplication, validateTemplateCompatibility } from './organizerApplication';
 import { mockVenues } from '../../mock_data/venues';
 import { findEventById } from '../../mock_data/events';
 import { isValidTemplateSelection, M1_CORE_TEMPLATE, scenarioTemplateFor } from '../../features/m1/templateRegistry';
-import { AlertCircle, ChevronRight, FileCheck2, FileText, MapPinned, PanelRightClose, RotateCcw, Sparkles } from 'lucide-react';
+import { AlertCircle, ChevronDown, ChevronRight, FileCheck2, FileText, PanelRightClose, RotateCcw, Sparkles } from 'lucide-react';
 import { isM1EvidenceForcedRequired, m1EvidenceRequirementsFor } from '@shared/m1EvidenceContract';
 import { applicationFileNameError } from './applicationFileName';
+import { applicationDocumentIdentityError } from './applicationDocumentIdentity';
 import ApplicationJourney from '../../features/m1/ApplicationJourney';
+import VenueLocationPicker from './VenueLocationPicker';
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const PDF_MIME = 'application/pdf';
 const APPLICATION_DOCUMENT_ACCEPT = '.pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-type ActiveUpload = { role: M1DocumentRole; requirementId?: string; fileName: string; progress: number };
+const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY?.trim() ?? '';
+type ActiveUpload = { role: M1DocumentRole; requirementId?: string; fileName: string; progress: number; phase: 'checking' | 'uploading' };
+type DocumentUploadIssue = { fileName: string; message: string };
+const APPLICATION_SECTION_SHORTCUTS = [
+  { id: 'template-choice', code: 'A', label: 'Templates' },
+  { id: 'application-documents', code: 'B', label: 'Upload & extract' },
+  { id: 'supporting-evidence', code: 'C', label: 'Review & evidence' },
+  { id: 'application-submit', code: 'D', label: 'Submit' },
+] as const;
 
 export default function NewEvent() {
   const { user, profile } = useAuth();
@@ -55,11 +65,15 @@ export default function NewEvent() {
   const [extracting, setExtracting] = useState(false);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [errorNavigatorOpen, setErrorNavigatorOpen] = useState(true);
+  const [mobileSectionsOpen, setMobileSectionsOpen] = useState(false);
   const [loading, setLoading] = useState(Boolean(eventId));
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [activeUpload, setActiveUpload] = useState<ActiveUpload | null>(null);
+  const [documentUploadIssue, setDocumentUploadIssue] = useState<DocumentUploadIssue>();
+  const [pendingRemoval, setPendingRemoval] = useState<M1DraftDocument>();
+  const [removingDocument, setRemovingDocument] = useState(false);
   const [venues, setVenues] = useState<Venue[]>([]);
   const routeState = location.state as { templateSelection?: unknown; initialDetails?: unknown } | null;
   const [templateSelection, setTemplateSelection] = useState<M1TemplateSelection | undefined>(
@@ -298,27 +312,37 @@ export default function NewEvent() {
     const files = [...(event.target.files ?? [])];
     if (files.length === 0) return;
     if (role !== 'supporting_evidence' && files.length !== 1) return setNotice('Choose exactly one application file.');
+    const selectedScenarioDefinition = templateSelection
+      ? scenarioTemplateFor(templateSelection.eventCategory, templateSelection.venueSetting)
+      : undefined;
+    const rejectFile = (fileName: string, message: string) => {
+      event.target.value = '';
+      setActiveUpload(null);
+      setUploading(false);
+      if (role === 'supporting_evidence') setNotice(message);
+      else setDocumentUploadIssue({ fileName, message });
+    };
+    setUploading(true);
+    if (role !== 'supporting_evidence') {
+      setActiveUpload({ role, requirementId, fileName: files[0].name, progress: 5, phase: 'checking' });
+    }
     const detectedTypes: string[] = [];
     try {
       for (const file of files) {
-        const selectedScenarioDefinition = templateSelection
-          ? scenarioTemplateFor(templateSelection.eventCategory, templateSelection.venueSetting)
-          : undefined;
         const nameError = applicationFileNameError(file.name, role, selectedScenarioDefinition);
-        if (nameError) return setNotice(nameError);
-        if (!file.size || file.size > 10 * 1024 * 1024) return setNotice(`${file.name} must be a non-empty file no larger than 10 MB.`);
+        if (nameError) return rejectFile(file.name, nameError);
+        if (!file.size || file.size > 10 * 1024 * 1024) return rejectFile(file.name, `${file.name} must be a non-empty file no larger than 10 MB.`);
         const detected = documentMime(new Uint8Array(await file.slice(0, 16).arrayBuffer()));
-        if (!detected || (file.type && file.type !== 'application/octet-stream' && file.type !== detected)) return setNotice(`${file.name}: the contents do not match a supported PDF, DOCX or image. Choose the original file.`);
-        if (role !== 'supporting_evidence' && ![PDF_MIME, DOCX_MIME].includes(detected)) return setNotice('Application templates must be PDF or DOCX. Images can be added as supporting evidence.');
+        if (!detected || (file.type && file.type !== 'application/octet-stream' && file.type !== detected)) return rejectFile(file.name, 'The file contents do not match a supported PDF, DOCX or image. Choose the original file from your device.');
+        if (role !== 'supporting_evidence' && ![PDF_MIME, DOCX_MIME].includes(detected)) return rejectFile(file.name, 'Application templates must be text-searchable PDF or DOCX files. Images can be added only as supporting evidence.');
+        const identityError = await applicationDocumentIdentityError(file, detected, role, selectedScenarioDefinition);
+        if (identityError) return rejectFile(file.name, identityError);
         detectedTypes.push(detected);
       }
-    } catch { return setNotice('This file could not be read. Select it again from your device.'); }
-    const applicationRoles = new Set<M1DocumentRole>(['core_template', 'scenario_template', 'combined_application']);
+    } catch { return rejectFile(files[0].name, 'This file could not be read. Select the original file again from your device.'); }
     const retained = role === 'supporting_evidence'
       ? draftDocuments
-      : draftDocuments.filter((document) => role === 'combined_application'
-        ? !applicationRoles.has(document.role)
-        : document.role !== role && document.role !== 'combined_application');
+      : draftDocuments.filter((document) => document.role !== role && (document.role as string) !== 'combined_application');
     if (retained.length + files.length > 20) return setNotice('Submit no more than 20 application documents.');
     const uploaded: M1DraftDocument[] = [];
     let uploadDraftId = '';
@@ -346,7 +370,6 @@ export default function NewEvent() {
       setDocumentPaths(nextPaths);
       setEvidenceManifest(nextManifest);
     };
-    setUploading(true);
     try {
       const id = await ensureDraft();
       uploadDraftId = id;
@@ -357,11 +380,11 @@ export default function NewEvent() {
         const mimeType = detectedTypes[index];
         const task = uploadBytesResumable(ref(storage, path), file, { contentType: mimeType });
         activeUploadTaskRef.current = task;
-        setActiveUpload({ role, requirementId, fileName: file.name, progress: Math.round((index / files.length) * 100) });
+        setActiveUpload({ role, requirementId, fileName: file.name, progress: Math.round((index / files.length) * 100), phase: 'uploading' });
         await new Promise<void>((resolve, reject) => task.on('state_changed', (snapshot) => {
           const fileProgress = snapshot.bytesTransferred / snapshot.totalBytes;
           const progress = Math.round(((index + fileProgress) / files.length) * 100);
-          setActiveUpload({ role, requirementId, fileName: file.name, progress });
+          setActiveUpload({ role, requirementId, fileName: file.name, progress, phase: 'uploading' });
         }, reject, resolve));
         uploaded.push({
           path,
@@ -379,7 +402,9 @@ export default function NewEvent() {
         setCurrentExtractionId('');
       }
       setValidationErrors([]);
-      setNotice(`${uploaded.length} document${uploaded.length === 1 ? '' : 's'} uploaded. Select the matching evidence item below.`);
+      setNotice(role === 'supporting_evidence'
+        ? `${uploaded.length} supporting document${uploaded.length === 1 ? '' : 's'} uploaded. Select the matching evidence item below.`
+        : `${role === 'core_template' ? 'Core application' : 'Scenario-specific'} document verified and uploaded.`);
     } catch (error) {
       const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
       if (uploaded.length > 0) {
@@ -400,8 +425,21 @@ export default function NewEvent() {
     if (activeUploadTaskRef.current?.cancel()) setNotice('Cancelling upload…');
   };
 
+  const requestRemoveDocument = (path: string) => {
+    setPendingRemoval(draftDocuments.find((document) => document.path === path) ?? {
+      path,
+      role: 'supporting_evidence',
+      originalName: legacyDocumentName(path),
+      mimeType: 'application/octet-stream',
+      sizeBytes: 1,
+      uploadedAt: 1,
+      schemaVersion: M1_DOCUMENT_SCHEMA_VERSION,
+    });
+  };
+
   const removeDocument = async (path: string) => {
     if (!draftId || !path.startsWith(`event_documents/${draftId}/${editableVersionId}/`)) return;
+    setRemovingDocument(true);
     try {
       const nextDocuments = draftDocuments.filter((document) => document.path !== path);
       const nextPaths = documentPaths.filter((item) => item !== path);
@@ -423,8 +461,12 @@ export default function NewEvent() {
         setExtraction(null);
         setCurrentExtractionId('');
       }
+      setPendingRemoval(undefined);
+      setNotice('Document removed from this draft.');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Unable to remove document.');
+    } finally {
+      setRemovingDocument(false);
     }
   };
 
@@ -486,7 +528,6 @@ export default function NewEvent() {
     : '/organizer/events/new';
   const coreUpload = draftDocuments.find((document) => document.role === 'core_template');
   const scenarioUpload = draftDocuments.find((document) => document.role === 'scenario_template');
-  const combinedUpload = draftDocuments.find((document) => document.role === 'combined_application');
   const supportingUploads = draftDocuments.filter((document) => document.role === 'supporting_evidence');
   const structuredUploadPaths = new Set(draftDocuments.map((document) => document.path));
   const legacySupportingPaths = documentPaths.filter((path) => !structuredUploadPaths.has(path));
@@ -505,18 +546,28 @@ export default function NewEvent() {
       && response?.applicability === 'not_applicable'
       && !isMeaningfulNotApplicableReason(response.notApplicableReason);
   }).length;
-  const requiredEvidenceCount = evidenceDefinitions.length - validNotApplicable.length;
   const completeEvidenceCount = evidenceDefinitions.filter(definition => {
     const response = evidenceManifest.find(item => item.requirementId === definition.id);
     return response?.applicability === 'required' && supportingUploads.some(document => document.path === response.documentPath);
   }).length;
+  const resolvedEvidenceCount = completeEvidenceCount + validNotApplicable.length;
+  const evidenceCompletionPercent = evidenceDefinitions.length
+    ? Math.round((resolvedEvidenceCount / evidenceDefinitions.length) * 100)
+    : 0;
 
   const jumpTo = (id: string) => {
     requestAnimationFrame(() => {
       const target = document.getElementById(id);
-      target?.scrollIntoView({ block: 'start' });
-      target?.focus({ preventScroll: true });
+      if (!target) return;
+      const stickyNavigation = document.getElementById('application-sticky-navigation');
+      const stickyOffset = 72 + (stickyNavigation?.offsetHeight ?? 0) + 16;
+      window.scrollTo({ top: Math.max(0, window.scrollY + target.getBoundingClientRect().top - stickyOffset) });
+      target.focus({ preventScroll: true });
     });
+  };
+  const jumpToApplicationSection = (id: string) => {
+    setMobileSectionsOpen(false);
+    jumpTo(id);
   };
   const reviewError = (error: string) => {
     const item = evidenceDefinitions.find(definition => error.includes(definition.id));
@@ -542,9 +593,24 @@ export default function NewEvent() {
         description="Complete the operational details and supporting evidence used for the official category assessment and AI advisory explanation."
       />
 
-      <ApplicationJourney activeStep={journeyStep} sticky />
-
-      <nav aria-label="Application section shortcuts" className="mb-5 mt-4 flex gap-4 overflow-x-auto border border-brand-200 bg-cream-50 p-3 text-sm font-semibold">{[['template-choice', 'Templates'], ['application-documents', 'Upload & extract'], ['supporting-evidence', 'Review & evidence'], ['application-submit', 'Submit']].map(([id, label]) => <button key={id} type="button" className="min-h-11 shrink-0 underline decoration-brand-300 underline-offset-4" onClick={() => jumpTo(id)}>{label}</button>)}</nav>
+      <div id="application-sticky-navigation" className="sticky top-[72px] z-20 mb-5 shadow-md">
+        <ApplicationJourney activeStep={journeyStep} />
+        <nav aria-label="Step 5 application sections" className="border-x border-b border-brand-200 bg-[#fffdf8] text-sm">
+          <div className="md:hidden">
+            <button type="button" className="flex min-h-14 w-full items-center justify-between gap-3 px-4 text-left font-bold text-brand-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500" aria-expanded={mobileSectionsOpen} aria-controls="mobile-application-sections" onClick={() => setMobileSectionsOpen(value => !value)}>
+              <span className="uppercase tracking-[0.08em]">Step 5 sections</span>
+              <span className="flex items-center gap-3 text-xs text-ink-600"><span className={`rounded-full px-2 py-1 font-bold ${resolvedEvidenceCount === evidenceDefinitions.length && evidenceDefinitions.length ? 'bg-brand-700 text-white' : 'bg-brand-100 text-brand-800'}`}>Evidence {resolvedEvidenceCount}/{evidenceDefinitions.length}</span><span className="flex items-center gap-1">{mobileSectionsOpen ? 'Collapse' : 'Expand'}<ChevronDown size={18} className={`transition-transform ${mobileSectionsOpen ? 'rotate-180' : ''}`} aria-hidden="true" /></span></span>
+            </button>
+            {mobileSectionsOpen && <div id="mobile-application-sections" className="grid grid-cols-2 gap-2 border-t border-brand-100 p-3">
+              {APPLICATION_SECTION_SHORTCUTS.map(({ id, code, label }) => <button key={id} type="button" className="group relative flex min-h-12 items-center gap-2 rounded-md px-2 text-left font-semibold text-ink-700 hover:bg-brand-50 hover:text-brand-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" onClick={() => jumpToApplicationSection(id)}><span className="grid h-7 min-w-7 place-items-center rounded-full bg-brand-100 text-xs font-bold text-brand-800 group-hover:bg-brand-200">{code}</span><span>{label}{id === 'supporting-evidence' && <span className="ml-1 whitespace-nowrap text-xs font-bold text-brand-700">{resolvedEvidenceCount}/{evidenceDefinitions.length}</span>}</span>{id === 'supporting-evidence' && <span className="absolute inset-x-2 bottom-0 h-0.5 overflow-hidden rounded-full bg-brand-100"><span className="block h-full bg-brand-600" style={{ width: `${evidenceCompletionPercent}%` }} /></span>}</button>)}
+            </div>}
+          </div>
+          <div className="hidden items-center gap-3 overflow-x-auto px-5 py-3 md:flex">
+            <p className="shrink-0 border-r border-[#d8cebd] pr-4 text-xs font-bold uppercase tracking-[0.08em] text-brand-700">Step 5 sections</p>
+            {APPLICATION_SECTION_SHORTCUTS.map(({ id, code, label }) => <button key={id} type="button" className="group relative flex min-h-11 shrink-0 items-center gap-2 rounded-md px-2 font-semibold text-ink-700 hover:bg-brand-50 hover:text-brand-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" onClick={() => jumpToApplicationSection(id)}><span className="grid h-7 min-w-7 place-items-center rounded-full bg-brand-100 text-xs font-bold text-brand-800 group-hover:bg-brand-200">{code}</span><span>{label}{id === 'supporting-evidence' && <span className={`ml-2 rounded-full px-2 py-1 text-xs font-bold ${resolvedEvidenceCount === evidenceDefinitions.length && evidenceDefinitions.length ? 'bg-brand-700 text-white' : 'bg-brand-100 text-brand-800'}`}>{resolvedEvidenceCount}/{evidenceDefinitions.length}</span>}</span>{id === 'supporting-evidence' && <span className="absolute inset-x-2 bottom-0 h-0.5 overflow-hidden rounded-full bg-brand-100"><span className="block h-full bg-brand-600" style={{ width: `${evidenceCompletionPercent}%` }} /></span>}</button>)}
+          </div>
+        </nav>
+      </div>
       {notice && <div role="status" className="mb-5 rounded-md border border-gold-300 bg-gold-50 p-4 text-sm">{notice}{savedDraft && notice === 'Draft saved.' && <Link className="ml-3 font-bold underline" to={`/organizer/events?status=Draft&highlight=${encodeURIComponent(savedDraft)}`}>View drafts</Link>}</div>}
       <section id="template-choice" tabIndex={-1} style={{ scrollMarginTop: 155 }} className={`mb-6 border ${templateSelection && !templateCompatibilityError ? 'border-brand-200 bg-brand-50' : 'border-gold-300 bg-gold-50'} p-4 sm:p-5`} aria-labelledby="template-choice-heading">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -611,16 +677,14 @@ export default function NewEvent() {
             </div>
           )}
 
-          <fieldset id="application-documents" tabIndex={-1} style={{ scrollMarginTop: 155 }} className="min-w-0 space-y-5 border-t border-[#e3dacb] pt-8">
-            <legend className="section-title mb-2 pr-4">Completed application documents</legend>
-            <p className="text-sm leading-6 text-ink-500">Upload one combined, text-searchable PDF/DOCX, or upload the completed Core and recommended scenario as PDF/DOCX files separately. STERAS detects both template IDs and Field IDs before auto-filling this form.</p>
-            <TemplateUploadCard label="Combined Core + scenario application" document={combinedUpload} uploading={uploading} activeUpload={activeUpload?.role === 'combined_application' ? activeUpload : null} onCancel={cancelUpload} onChange={(event) => handleFiles(event, 'combined_application')} onRemove={removeDocument} onView={viewDocument} />
-            <div className="flex items-center gap-3 text-xs font-bold uppercase tracking-[0.08em] text-ink-400"><span className="h-px flex-1 bg-[#e3dacb]" /><span>or upload separately</span><span className="h-px flex-1 bg-[#e3dacb]" /></div>
+          <fieldset id="application-documents" tabIndex={-1} style={{ scrollMarginTop: 155 }} className="min-w-0 space-y-4 border-t border-[#e3dacb] pt-3">
+            <legend className="section-title pr-4">Completed application documents</legend>
+            <p className="text-sm leading-6 text-ink-500">Upload the completed Core application and recommended scenario as two separate PDF or DOCX files. STERAS checks both template IDs and Field IDs before auto-filling this form.</p>
             <div className="grid gap-4 md:grid-cols-2">
-              <TemplateUploadCard label="Core application PDF or DOCX" expectedName={M1_CORE_TEMPLATE.fileName} document={coreUpload} uploading={uploading} activeUpload={activeUpload?.role === 'core_template' ? activeUpload : null} onCancel={cancelUpload} onChange={(event) => handleFiles(event, 'core_template')} onRemove={removeDocument} onView={viewDocument} />
-              <TemplateUploadCard label="Scenario-specific PDF or DOCX" expectedName={selectedScenario?.fileName} document={scenarioUpload} uploading={uploading} activeUpload={activeUpload?.role === 'scenario_template' ? activeUpload : null} onCancel={cancelUpload} onChange={(event) => handleFiles(event, 'scenario_template')} onRemove={removeDocument} onView={viewDocument} />
+              <TemplateUploadCard label="Core application PDF or DOCX" expectedName={M1_CORE_TEMPLATE.fileName} document={coreUpload} uploading={uploading} activeUpload={activeUpload?.role === 'core_template' ? activeUpload : null} onCancel={cancelUpload} onChange={(event) => handleFiles(event, 'core_template')} onRemove={requestRemoveDocument} onView={viewDocument} />
+              <TemplateUploadCard label="Scenario-specific PDF or DOCX" expectedName={selectedScenario?.fileName} document={scenarioUpload} uploading={uploading} activeUpload={activeUpload?.role === 'scenario_template' ? activeUpload : null} onCancel={cancelUpload} onChange={(event) => handleFiles(event, 'scenario_template')} onRemove={requestRemoveDocument} onView={viewDocument} />
             </div>
-            <button type="button" className="btn-primary" disabled={(!combinedUpload && (!coreUpload || !scenarioUpload)) || uploading || extracting} onClick={extractDocuments}>
+            <button type="button" className="btn-primary" disabled={!coreUpload || !scenarioUpload || uploading || extracting} onClick={extractDocuments}>
               <Sparkles size={16} className={extracting ? 'animate-pulse motion-reduce:animate-none' : ''} />{extracting ? 'Extracting documents…' : 'Extract and auto-fill'}
             </button>
             {extraction && (
@@ -700,7 +764,11 @@ export default function NewEvent() {
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label htmlFor="venue-address" className="field-label">Venue address *</label>
-                <input id="venue-address" className="input mt-1" required disabled={Boolean(form.venueId)} value={form.venueAddress} onChange={(e) => update('venueAddress', e.target.value)} />
+                <input id="venue-address" className="input mt-1" required disabled={Boolean(form.venueId)} value={form.venueAddress} onChange={(e) => update('venueAddress', e.target.value)} onBlur={() => {
+                  if (form.venueState) return;
+                  const inferredState = inferMalaysiaStateFromAddress(form.venueAddress);
+                  if (inferredState) update('venueState', inferredState);
+                }} />
               </div>
               <div>
                 <label htmlFor="venue-capacity" className="field-label">Venue capacity *</label>
@@ -716,22 +784,28 @@ export default function NewEvent() {
               </select>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <label htmlFor="venue-latitude" className="field-label">Latitude *</label>
-                <input id="venue-latitude" type="number" step="any" min={-90} max={90} className="input mt-1" required disabled={Boolean(form.venueId)} value={form.venueLocation?.lat ?? ''} onChange={(e) => update('venueLocation', { lat: Number(e.target.value), lng: form.venueLocation?.lng ?? 0 })} />
+            {!form.venueId && GOOGLE_MAPS_API_KEY ? <VenueLocationPicker
+              apiKey={GOOGLE_MAPS_API_KEY}
+              location={form.venueLocation}
+              onSelect={(selection) => {
+                setValidationErrors([]);
+                setSaveMessage('Unsaved changes');
+                setForm((previous) => ({
+                  ...previous,
+                  venueId: undefined,
+                  venueName: selection.venueName ?? previous.venueName,
+                  venueAddress: selection.venueAddress || previous.venueAddress,
+                  venueState: selection.venueState || previous.venueState,
+                  venueLocation: selection.venueLocation,
+                }));
+              }}
+            /> : !form.venueId ? <div className="space-y-3 rounded-md border border-gold-200 bg-gold-50 p-4">
+              <p className="text-sm font-semibold text-gold-800">Google Maps is unavailable in this environment. Enter the coordinates manually.</p>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div><label htmlFor="venue-latitude" className="field-label">Latitude *</label><input id="venue-latitude" type="number" step="any" min={-90} max={90} className="input mt-1" required value={form.venueLocation?.lat ?? ''} onChange={(e) => update('venueLocation', { lat: Number(e.target.value), lng: form.venueLocation?.lng ?? 0 })} /></div>
+                <div><label htmlFor="venue-longitude" className="field-label">Longitude *</label><input id="venue-longitude" type="number" step="any" min={-180} max={180} className="input mt-1" required value={form.venueLocation?.lng ?? ''} onChange={(e) => update('venueLocation', { lat: form.venueLocation?.lat ?? 0, lng: Number(e.target.value) })} /></div>
               </div>
-              <div>
-                <label htmlFor="venue-longitude" className="field-label">Longitude *</label>
-                <input id="venue-longitude" type="number" step="any" min={-180} max={180} className="input mt-1" required disabled={Boolean(form.venueId)} value={form.venueLocation?.lng ?? ''} onChange={(e) => update('venueLocation', { lat: form.venueLocation?.lat ?? 0, lng: Number(e.target.value) })} />
-              </div>
-            </div>
-
-            <div className="rounded-md border border-brand-200 bg-brand-50 p-3 text-sm text-ink-600">
-              <p className="font-semibold text-ink-800">Coordinates place the venue accurately on public maps.</p>
-              <p className="mt-1">Selecting a verified venue fills them automatically. For a custom venue, find its map pin and copy the displayed latitude and longitude.</p>
-              {form.venueName && <a className="mt-2 inline-flex items-center gap-1 font-semibold text-brand-700 underline" href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([form.venueName, form.venueAddress, form.venueState].filter(Boolean).join(', '))}`} target="_blank" rel="noreferrer"><MapPinned size={15} />Find this venue in Google Maps</a>}
-            </div>
+            </div> : null}
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
@@ -822,12 +896,15 @@ export default function NewEvent() {
           <fieldset id="supporting-evidence" tabIndex={-1} style={{ scrollMarginTop: 155 }} className="min-w-0 space-y-4 border-t border-[#e3dacb] pt-8">
             <legend className="section-title mb-2 pr-4">Supporting evidence</legend>
             <p className="text-sm leading-6 text-ink-500">Complete every Core and scenario checklist item. A current PDF, DOCX, or image can support more than one requirement; conditional items need either evidence or a clear not-applicable reason.</p>
-            <div className="sticky top-[148px] z-10 rounded-lg border border-brand-200 bg-brand-50 p-4 shadow-sm">
-              <div className="flex flex-wrap items-center justify-between gap-2"><p className="font-semibold text-ink-900">Evidence completeness</p><span className="badge bg-white text-brand-700">{completeEvidenceCount} / {requiredEvidenceCount} evidence items linked · {validNotApplicable.length} excluded with valid reason{incompleteNotApplicableCount ? ` · ${incompleteNotApplicableCount} incomplete` : ''}</span></div>
-              <div className="mt-3 h-2 overflow-hidden rounded-full bg-white"><div className="h-full rounded-full bg-brand-600" style={{ width: `${requiredEvidenceCount ? Math.round((completeEvidenceCount / requiredEvidenceCount) * 100) : 100}%` }} /></div>
+            <div className="rounded-lg border border-brand-200 bg-brand-50 p-4 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="font-semibold text-ink-900">Evidence completeness</p>
+                <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-md border border-brand-200 bg-white px-3 text-sm font-semibold text-ink-700"><input type="checkbox" checked={onlyMissing} onChange={event => setOnlyMissing(event.target.checked)} />Only show missing evidence</label>
+              </div>
+              <span className="badge mt-3 bg-white text-brand-700">{resolvedEvidenceCount} / {evidenceDefinitions.length} checklist items complete · {completeEvidenceCount} evidence linked · {validNotApplicable.length} excluded with valid reason{incompleteNotApplicableCount ? ` · ${incompleteNotApplicableCount} reasons incomplete` : ''}</span>
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-white"><div className="h-full rounded-full bg-brand-600" style={{ width: `${evidenceCompletionPercent}%` }} /></div>
             </div>
-            <div className="rounded-lg border border-cream-200 p-4"><p className="text-sm text-ink-600">Upload supporting files together, then select the matching file for each requirement below. Check the document contents; filenames alone do not prove that evidence is correct.</p><label className="btn-secondary mt-3 cursor-pointer">Upload supporting files<input type="file" multiple accept=".pdf,.docx,.jpg,.jpeg,.png,.webp" disabled={uploading} onChange={event => handleFiles(event, 'supporting_evidence')} className="sr-only" /></label>{activeUpload?.role === 'supporting_evidence' && !activeUpload.requirementId && <UploadProgress upload={activeUpload} onCancel={cancelUpload} />}<ul className="mt-3 space-y-2">{supportingUploads.map(file => <li key={file.path} className="flex flex-wrap items-center justify-between gap-2 text-sm"><span className="break-all">{file.originalName}</span><div><button type="button" className="btn-secondary" onClick={() => viewDocument(file.path)}>View</button><button type="button" className="btn-secondary ml-2" onClick={() => removeDocument(file.path)}>Remove</button></div></li>)}</ul></div>
-            <label className="flex min-h-11 items-center gap-3 text-sm font-semibold"><input type="checkbox" checked={onlyMissing} onChange={event => setOnlyMissing(event.target.checked)} />Only show missing evidence</label>
+            <div className="rounded-lg border border-cream-200 p-4"><p className="text-sm text-ink-600">Upload supporting files together, then select the matching file for each requirement below. Check the document contents; filenames alone do not prove that evidence is correct.</p><label className="btn-secondary mt-3 cursor-pointer">Upload supporting files<input type="file" multiple accept=".pdf,.docx,.jpg,.jpeg,.png,.webp" disabled={uploading} onChange={event => handleFiles(event, 'supporting_evidence')} className="sr-only" /></label>{activeUpload?.role === 'supporting_evidence' && !activeUpload.requirementId && <UploadProgress upload={activeUpload} onCancel={cancelUpload} />}<ul className="mt-3 space-y-2">{supportingUploads.map(file => <li key={file.path} className="flex flex-wrap items-center justify-between gap-2 text-sm"><span className="break-all">{file.originalName}</span><div><button type="button" className="btn-secondary" onClick={() => viewDocument(file.path)}>View</button><button type="button" className="btn-secondary ml-2" onClick={() => requestRemoveDocument(file.path)}>Remove</button></div></li>)}</ul></div>
             <div className="space-y-4">
               {onlyMissing && completeEvidenceCount + validNotApplicable.length === evidenceDefinitions.length && <p role="status" className="rounded-md bg-brand-50 p-4 text-sm">All evidence items are complete. Turn off the filter to review them.</p>}
               {evidenceDefinitions.map((definition) => {
@@ -856,7 +933,7 @@ export default function NewEvent() {
                 </article>;
               })}
             </div>
-            {legacySupportingPaths.length > 0 && <div className="rounded-md border border-gold-200 bg-gold-50 p-3"><p className="text-xs font-semibold text-gold-700">Previously uploaded supporting files</p><ul className="mt-2 divide-y divide-gold-200">{legacySupportingPaths.map((path) => <li key={path} className="flex items-center justify-between gap-3 py-2 text-sm"><span className="min-w-0 truncate">{legacyDocumentName(path)}</span><div className="flex"><button type="button" onClick={() => viewDocument(path)} className="min-h-11 px-2 font-semibold text-brand-700">View</button><button type="button" onClick={() => removeDocument(path)} className="min-h-11 px-2 font-semibold text-red-700">Remove</button></div></li>)}</ul></div>}
+            {legacySupportingPaths.length > 0 && <div className="rounded-md border border-gold-200 bg-gold-50 p-3"><p className="text-xs font-semibold text-gold-700">Previously uploaded supporting files</p><ul className="mt-2 divide-y divide-gold-200">{legacySupportingPaths.map((path) => <li key={path} className="flex items-center justify-between gap-3 py-2 text-sm"><span className="min-w-0 truncate">{legacyDocumentName(path)}</span><div className="flex"><button type="button" onClick={() => viewDocument(path)} className="min-h-11 px-2 font-semibold text-brand-700">View</button><button type="button" onClick={() => requestRemoveDocument(path)} className="min-h-11 px-2 font-semibold text-red-700">Remove</button></div></li>)}</ul></div>}
           </fieldset>
 
           <fieldset id="organizer-contact" tabIndex={-1} style={{ scrollMarginTop: 155 }} className="min-w-0 space-y-4 border-t border-[#e3dacb] pt-8">
@@ -889,6 +966,8 @@ export default function NewEvent() {
         </div>
       </form>
       {previewPath && <EvidencePreview path={previewPath} onClose={() => setPreviewPath('')} />}
+      {documentUploadIssue && <DocumentUploadErrorModal issue={documentUploadIssue} onClose={() => setDocumentUploadIssue(undefined)} />}
+      {pendingRemoval && <DocumentRemovalModal document={pendingRemoval} removing={removingDocument} onClose={() => setPendingRemoval(undefined)} onConfirm={() => { void removeDocument(pendingRemoval.path); }} />}
 
     </div>
   );
@@ -914,8 +993,8 @@ function TemplateUploadCard({ label, expectedName, document, uploading, activeUp
   onRemove: (path: string) => void;
   onView: (path: string) => void;
 }) {
-  return <div className={`rounded-lg border p-4 ${document ? 'border-brand-200 bg-brand-50' : 'border-[#ded5c5] bg-cream-50'}`}>
-    <div className="flex items-start gap-3"><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${document ? 'bg-brand-700 text-white' : 'bg-cream-200 text-ink-500'}`}>{document ? <FileCheck2 size={17} /> : <FileText size={17} />}</span><div className="min-w-0"><p className="text-sm font-semibold text-ink-900">{label}</p><p className="mt-1 truncate text-xs text-ink-500">{document?.originalName ?? 'No completed file uploaded'}</p>{expectedName && <p className="mt-1 text-xs text-ink-500">Expected: {expectedName}</p>}</div></div>
+  return <div className={`min-w-0 rounded-lg border p-4 ${document ? 'border-brand-200 bg-brand-50' : 'border-[#ded5c5] bg-cream-50'}`}>
+    <div className="flex min-w-0 items-start gap-3"><span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${document ? 'bg-brand-700 text-white' : 'bg-cream-200 text-ink-500'}`}>{document ? <FileCheck2 size={17} /> : <FileText size={17} />}</span><div className="min-w-0"><p className="text-sm font-semibold text-ink-900">{label}</p><p className="mt-1 truncate text-xs text-ink-500">{document?.originalName ?? 'No completed file uploaded'}</p>{expectedName && <p className="mt-1 break-words text-xs text-ink-500 [overflow-wrap:anywhere]">Expected: {expectedName}</p>}</div></div>
     <div className="mt-4 flex flex-wrap gap-2">
       <label className="btn-secondary cursor-pointer"><span>{document ? 'Replace PDF/DOCX' : 'Upload PDF/DOCX'}</span><input type="file" accept={APPLICATION_DOCUMENT_ACCEPT} disabled={uploading} onChange={onChange} className="sr-only" /></label>
       {document && <button type="button" className="btn-secondary" onClick={() => onView(document.path)}>View</button>}
@@ -927,9 +1006,43 @@ function TemplateUploadCard({ label, expectedName, document, uploading, activeUp
 
 function UploadProgress({ upload, onCancel }: { upload: ActiveUpload; onCancel: () => void }) {
   return <div className="mt-3" role="status" aria-label={`Uploading ${upload.fileName}`}>
-    <div className="mb-1 flex items-center justify-between gap-3 text-xs"><span className="min-w-0 truncate font-medium text-ink-700">Uploading {upload.fileName}</span><button type="button" className="min-h-11 shrink-0 px-2 font-semibold text-red-700 underline" onClick={onCancel}>Cancel</button></div>
-    <div className="h-2 overflow-hidden rounded-full bg-cream-200" aria-label={`${upload.progress}% uploaded`}><div className="h-full rounded-full bg-brand-600 transition-[width]" style={{ width: `${upload.progress}%` }} /></div>
+    <div className="mb-1 flex items-center justify-between gap-3 text-xs"><span className="min-w-0 truncate font-medium text-ink-700">{upload.phase === 'checking' ? `Checking document identity: ${upload.fileName}` : `Uploading ${upload.fileName}`}</span>{upload.phase === 'uploading' && <button type="button" className="min-h-11 shrink-0 px-2 font-semibold text-red-700 underline" onClick={onCancel}>Cancel</button>}</div>
+    <div className="h-2 overflow-hidden rounded-full bg-cream-200" aria-label={upload.phase === 'checking' ? 'Checking document' : `${upload.progress}% uploaded`}><div className={`h-full rounded-full bg-brand-600 transition-[width] ${upload.phase === 'checking' ? 'animate-pulse motion-reduce:animate-none' : ''}`} style={{ width: `${upload.progress}%` }} /></div>
   </div>;
+}
+
+function DocumentUploadErrorModal({ issue, onClose }: { issue: DocumentUploadIssue; onClose: () => void }) {
+  return createPortal(<div className="fixed inset-0 z-[100] grid place-items-center bg-ink-900/55 p-4" role="dialog" aria-modal="true" aria-labelledby="document-upload-error-title" aria-describedby="document-upload-error-description">
+    <section className="w-full max-w-lg rounded-xl border border-red-200 bg-[#fffdf8] p-5 shadow-xl sm:p-6">
+      <div className="flex items-start gap-3">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-red-100 text-red-700"><AlertCircle size={20} aria-hidden="true" /></span>
+        <div className="min-w-0">
+          <h2 id="document-upload-error-title" className="text-lg font-bold text-ink-900">This is not the expected document</h2>
+          <p className="mt-1 break-all text-sm font-medium text-red-700">{issue.fileName}</p>
+        </div>
+      </div>
+      <p id="document-upload-error-description" className="mt-4 text-sm leading-6 text-ink-700">{issue.message}</p>
+      <p className="mt-3 rounded-md bg-brand-50 px-3 py-2 text-sm text-brand-800">No file was uploaded. Your existing document, if any, is unchanged.</p>
+      <div className="mt-5 flex justify-end"><button type="button" autoFocus className="btn-primary" onClick={onClose}>Choose another file</button></div>
+    </section>
+  </div>, document.body);
+}
+
+function DocumentRemovalModal({ document: file, removing, onClose, onConfirm }: { document: M1DraftDocument; removing: boolean; onClose: () => void; onConfirm: () => void }) {
+  const isApplicationDocument = file.role !== 'supporting_evidence';
+  return createPortal(<div className="fixed inset-0 z-[100] grid place-items-center bg-ink-900/55 p-4" role="dialog" aria-modal="true" aria-labelledby="document-removal-title" aria-describedby="document-removal-description">
+    <section className="w-full max-w-lg rounded-xl border border-cream-300 bg-[#fffdf8] p-5 shadow-xl sm:p-6">
+      <h2 id="document-removal-title" className="text-lg font-bold text-ink-900">Remove this document from your draft?</h2>
+      <p className="mt-2 break-all text-sm font-semibold text-ink-800">{file.originalName}</p>
+      <p id="document-removal-description" className="mt-3 text-sm leading-6 text-ink-600">{isApplicationDocument
+        ? 'The extracted application details will be cleared. You will need to upload and extract the required document again before submitting.'
+        : 'Any evidence checklist item linked to this file will become incomplete and will need another document.'}</p>
+      <div className="mt-5 flex flex-wrap justify-end gap-2">
+        <button type="button" autoFocus disabled={removing} className="btn-secondary" onClick={onClose}>Keep document</button>
+        <button type="button" disabled={removing} className="min-h-11 rounded-md bg-red-700 px-4 text-sm font-bold text-white hover:bg-red-800 disabled:opacity-60" onClick={onConfirm}>{removing ? 'Removing…' : 'Remove document'}</button>
+      </div>
+    </section>
+  </div>, document.body);
 }
 
 function groupExtractedFields(extraction: M1DocumentExtraction): Array<{ label: string; count: number }> {

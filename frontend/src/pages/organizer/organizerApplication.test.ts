@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EventDetails, M1DocumentExtraction, M1_EXTRACTION_SCHEMA_VERSION, Venue } from '@shared/types';
-import { alignEventDetailsWithTemplate, applyM1ExtractedFields, bindCanonicalVenue, createM1DraftRecord, extractionMatchesDraftDocuments, findUniqueRegistryVenueMatch, isEditableApplicationStatus, isMeaningfulNotApplicableReason, isSelectableRegistryVenue, organizerAdminDecisionLabel, organizerPublicationLabel, organizerPublicationStateFromProjection, reconcileM1EvidenceManifest, validateEventApplication, validateM1EvidenceChecklist, validateTemplateCompatibility } from './organizerApplication';
+import { alignEventDetailsWithTemplate, applyM1ExtractedFields, bindCanonicalVenue, createM1DraftRecord, extractionMatchesDraftDocuments, findUniqueRegistryVenueMatch, inferMalaysiaStateFromAddress, isEditableApplicationStatus, isMeaningfulNotApplicableReason, isSelectableRegistryVenue, normalizeMalaysiaState, organizerAdminDecisionLabel, organizerPublicationLabel, organizerPublicationStateFromProjection, reconcileM1EvidenceManifest, validateEventApplication, validateM1EvidenceChecklist, validateTemplateCompatibility } from './organizerApplication';
 import { createTemplateSelection } from '../../features/m1/templateRegistry';
 
 const future = Date.now() + 7 * 24 * 60 * 60 * 1000;
@@ -229,20 +229,28 @@ describe('organizer application lifecycle helpers', () => {
     expect(next.venueCapacity).toBe(14_000);
   });
 
-  it('requires a complete split or combined application upload and a current extraction', () => {
+  it('normalizes Google state names and infers a missing state from an extracted address', () => {
+    expect(normalizeMalaysiaState('Federal Territory of Kuala Lumpur')).toBe('Kuala Lumpur');
+    expect(normalizeMalaysiaState('Penang')).toBe('Pulau Pinang');
+    expect(normalizeMalaysiaState('Malacca')).toBe('Melaka');
+    expect(inferMalaysiaStateFromAddress('Jalan Genting Kelang, Setapak, 53300 Kuala Lumpur, Malaysia')).toBe('Kuala Lumpur');
+
+    const next = applyM1ExtractedFields(validDetails({ venueState: undefined, venueAddress: '' }), [
+      { target: 'venueAddress', value: 'Jalan Genting Kelang, Setapak, 53300 Kuala Lumpur, Malaysia', sourceFieldIds: ['EVENT_ADDRESS'], confidence: 'high' },
+    ]);
+    expect(next.venueState).toBe('Kuala Lumpur');
+  });
+
+  it('requires separate Core and scenario uploads and a current extraction', () => {
     const documents = [{
       path: 'event_documents/event-1/v1/core.docx', role: 'core_template' as const,
       originalName: 'core.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       sizeBytes: 100, uploadedAt: 1, schemaVersion: '2026-08-28-document-v1' as const,
     }];
     expect(validateEventApplication(validDetails(), documents.map((document) => document.path), templateSelection, documents, '')).toEqual(expect.arrayContaining([
-      'Upload either one combined PDF/DOCX or one completed Core PDF/DOCX and one completed scenario PDF/DOCX.',
+      'Upload one completed Core PDF/DOCX and one completed scenario PDF/DOCX.',
       'Extract and review the completed application documents before submission.',
     ]));
-
-    const combined = [{ ...documents[0], path: 'event_documents/event-1/v1/combined.pdf', role: 'combined_application' as const, originalName: 'combined.pdf', mimeType: 'application/pdf' }];
-    expect(validateEventApplication(validDetails(), combined.map((document) => document.path), templateSelection, combined, 'extract-1'))
-      .not.toContain('Upload either one combined PDF/DOCX or one completed Core PDF/DOCX and one completed scenario PDF/DOCX.');
   });
 
   it('does not restore a stale extraction after either completed template is replaced', () => {
@@ -260,22 +268,6 @@ describe('organizer application lifecycle helpers', () => {
     };
     expect(extractionMatchesDraftDocuments(extraction, documents)).toBe(true);
     expect(extractionMatchesDraftDocuments(extraction, [documents[0], { ...documents[1], path: 'event_documents/event-1/v1/replacement.docx' }])).toBe(false);
-  });
-
-  it('matches a current extraction produced from one combined PDF', () => {
-    const document = {
-      path: 'event_documents/event-1/v1/combined.pdf', role: 'combined_application' as const,
-      originalName: 'combined.pdf', mimeType: 'application/pdf', sizeBytes: 100, uploadedAt: 1,
-      schemaVersion: '2026-08-28-document-v1' as const,
-    };
-    const extraction: M1DocumentExtraction = {
-      extractionId: 'extract-combined', eventId: 'event-1', editableVersionId: 'v1', status: 'ready' as const,
-      schemaVersion: M1_EXTRACTION_SCHEMA_VERSION, templateRegistryVersion: templateSelection.templateRegistryVersion,
-      coreTemplateId: templateSelection.coreTemplateId, scenarioTemplateId: templateSelection.scenarioTemplateId,
-      sourceDocuments: [{ ...document, sha256: 'b'.repeat(64) }], extractedFields: [], rawFieldIds: [], warnings: [],
-      completionPercent: 0, createdAt: 1, createdBy: 'organizer-1',
-    };
-    expect(extractionMatchesDraftDocuments(extraction, [document])).toBe(true);
   });
 
   it('forces declared evidence conditions and blocks incomplete checklist items', () => {

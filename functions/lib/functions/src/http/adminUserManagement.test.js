@@ -29,4 +29,21 @@ const valid = {
         (0, vitest_1.expect)(() => (0, adminUserManagement_1.validatePrivilegedAccountInput)(payload)).toThrow(message);
     });
 });
+(0, vitest_1.describe)('admin password reset input', () => {
+    (0, vitest_1.it)('accepts only a target uid and idempotency key', () => {
+        (0, vitest_1.expect)((0, adminUserManagement_1.validateResetUserPasswordInput)({ uid: 'user_123', idempotencyKey: 'reset_123456' })).toEqual({
+            uid: 'user_123',
+            idempotencyKey: 'reset_123456',
+        });
+    });
+    vitest_1.it.each([
+        [null, 'user account is required'],
+        [{ uid: '', idempotencyKey: 'reset_123456' }, 'uid must be'],
+        [{ uid: 'user 123', idempotencyKey: 'reset_123456' }, 'uid cannot contain whitespace'],
+        [{ uid: 'user_123', idempotencyKey: 'short' }, 'idempotencyKey'],
+        [{ uid: 'user_123', idempotencyKey: 'reset_123456', password: 'attacker-controlled' }, 'Unsupported fields'],
+    ])('rejects an unsafe reset payload %#', (payload, message) => {
+        (0, vitest_1.expect)(() => (0, adminUserManagement_1.validateResetUserPasswordInput)(payload)).toThrow(message);
+    });
+});
 //# sourceMappingURL=adminUserManagement.test.js.map

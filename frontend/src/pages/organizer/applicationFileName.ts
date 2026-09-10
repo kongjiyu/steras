@@ -26,7 +26,7 @@ export function applicationFileNameError(
   role: M1DocumentRole,
   selectedScenario?: M1TemplateDefinition,
 ): string | undefined {
-  if (role === 'supporting_evidence' || role === 'combined_application') return undefined;
+  if (role === 'supporting_evidence') return undefined;
 
   const looksCore = matchesTemplate(fileName, M1_CORE_TEMPLATE) || /(^|\s)core(\s|$)/.test(searchableName(fileName));
   const namedScenario = M1_SCENARIO_TEMPLATES.find((template) => matchesTemplate(fileName, template));

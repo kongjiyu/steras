@@ -32,6 +32,7 @@ const https_1 = require("firebase-functions/v2/https");
 const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
 const notifications_1 = require("../utils/notifications");
+const controlLifecycle_1 = require("../utils/controlLifecycle");
 exports.publishStage2Doc = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
     if (!request.auth)
         throw new https_1.HttpsError('unauthenticated', 'Sign in before publishing.');
@@ -45,7 +46,7 @@ exports.publishStage2Doc = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGI
         }
         const message = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
         console.error(`[publishStage2Doc] unexpected error: ${message}`);
-        throw new https_1.HttpsError('internal', message.slice(0, 500));
+        throw new https_1.HttpsError('internal', 'Unable to publish the Stage 2 document. Retry shortly.');
     }
 });
 async function publishStage2DocForUser(uid, data, now = Date.now()) {
@@ -87,7 +88,7 @@ async function publishStage2DocForUser(uid, data, now = Date.now()) {
         if (!controlSnap.exists)
             throw new https_1.HttpsError('not-found', `Control ${controlId} not found.`);
         const control = controlSnap.data();
-        if (control.versionId !== versionId) {
+        if (!(0, controlLifecycle_1.isActiveControlGeneration)(event, control, eventId)) {
             throw new https_1.HttpsError('failed-precondition', `Control ${controlId} is for a prior version. The admin must re-commit the list.`);
         }
         if (!control.stage2Requirement) {
@@ -123,7 +124,7 @@ async function publishStage2DocForUser(uid, data, now = Date.now()) {
             };
         }
         if (stage2.m4TicketId) {
-            throw new https_1.HttpsError('failed-precondition', 'A public report is open for this Stage 2 image. Wait for M4 to resolve the ticket before publishing.');
+            throw new https_1.HttpsError('failed-precondition', 'A public report is open for this Stage 2 image. Wait for the incident investigation to resolve the ticket before publishing.');
         }
         // Publish: set the published flags, clear any prior rejection fields.
         tx.update(docRef, {

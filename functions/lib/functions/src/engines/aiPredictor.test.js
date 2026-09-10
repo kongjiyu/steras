@@ -132,16 +132,38 @@ const validResponse = JSON.stringify(validPayload);
         (0, vitest_1.expect)(requests).toBe(1);
     });
     (0, vitest_1.it)('returns failure attempts without fabricated categories', async () => {
+        let attempts = 0;
         const result = await (0, aiPredictor_1.analyseWithAI)('secret', event, context, baseline, async () => {
+            attempts += 1;
             throw new aiPredictor_1.AIProposalError('timeout', 'test timeout');
+        }, { retryDelayMs: 0 });
+        (0, vitest_1.expect)(attempts).toBe(aiPredictor_1.AI_MAX_RETRIES + 1);
+        (0, vitest_1.expect)(result).toMatchObject({
+            status: 'timeout', retryable: true, cacheStatus: 'not-applicable',
+            errorSummary: vitest_1.expect.stringContaining(`after ${aiPredictor_1.AI_MAX_RETRIES + 1} attempts`),
         });
-        (0, vitest_1.expect)(result).toMatchObject({ status: 'timeout', retryable: true, cacheStatus: 'not-applicable' });
         (0, vitest_1.expect)(result).not.toHaveProperty('categories');
+    });
+    (0, vitest_1.it)('returns a valid proposal when a retry recovers from malformed MiniMax output', async () => {
+        let attempts = 0;
+        const delays = [];
+        const result = await (0, aiPredictor_1.analyseWithAI)('secret', event, context, baseline, async () => {
+            attempts += 1;
+            if (attempts < 3)
+                throw new aiPredictor_1.AIProposalError('invalid', 'unsupported field: concernes');
+            return {
+                status: 'success', proposalId: 'proposal-recovered', model: 'test', promptVersion: 'test',
+                responseSchemaVersion: 'test', ...(0, aiPredictor_1.parseAIProposal)(validResponse, categoryIds), cacheStatus: 'miss', generatedAt: 1,
+            };
+        }, { retryDelayMs: 10, sleep: async (milliseconds) => { delays.push(milliseconds); } });
+        (0, vitest_1.expect)(attempts).toBe(3);
+        (0, vitest_1.expect)(delays).toEqual([10, 20]);
+        (0, vitest_1.expect)(result).toMatchObject({ status: 'success', proposalId: 'proposal-recovered' });
     });
     vitest_1.it.each(['unavailable', 'timeout', 'invalid'])('marks %s output as retryable without fabricated scores', async (status) => {
         const result = await (0, aiPredictor_1.analyseWithAI)('secret', event, context, baseline, async () => {
             throw new aiPredictor_1.AIProposalError(status, `test ${status}`);
-        });
+        }, { retryDelayMs: 0 });
         (0, vitest_1.expect)(result).toMatchObject({ status, retryable: true });
         (0, vitest_1.expect)(result).not.toHaveProperty('categories');
     });

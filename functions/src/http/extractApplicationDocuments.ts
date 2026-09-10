@@ -13,7 +13,7 @@ import {
 } from '@shared/types';
 import { isValidM1TemplateSelection } from '@shared/m1TemplateContract';
 import { FUNCTION_REGION } from '../config/runtime';
-import { mapM1Documents, parseM1Docx, parseM1Pdf, validateCombinedTemplateIdentity, validateTemplateIdentity } from '../engines/m1DocumentExtractor';
+import { mapM1Documents, parseM1Docx, parseM1Pdf, validateTemplateIdentity } from '../engines/m1DocumentExtractor';
 
 interface ExtractApplicationDocumentsRequest {
   eventId?: string;
@@ -23,7 +23,7 @@ const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingm
 const PDF_MIME = 'application/pdf';
 const APPLICATION_MIME_TYPES = new Set([DOCX_MIME, PDF_MIME]);
 const MAX_DOCX_BYTES = 10 * 1024 * 1024;
-const DOCUMENT_ROLES = new Set(['core_template', 'scenario_template', 'combined_application', 'supporting_evidence']);
+const DOCUMENT_ROLES = new Set(['core_template', 'scenario_template', 'supporting_evidence']);
 const EVIDENCE_MIME_TYPES = new Set([PDF_MIME, DOCX_MIME, 'image/jpeg', 'image/png', 'image/webp']);
 const DOCUMENT_KEYS = new Set(['path', 'role', 'originalName', 'mimeType', 'sizeBytes', 'uploadedAt', 'schemaVersion']);
 
@@ -57,13 +57,10 @@ export async function extractApplicationDocumentsForUser(uid: string, eventId: s
     throw new HttpsError('failed-precondition', 'Choose a current Core and scenario template first.');
   }
   const documents = validateDraftDocuments(eventId, event.editableVersionId, event.draftDocuments);
-  const combined = documents.find((document) => document.role === 'combined_application');
-  const applicationDocuments = combined
-    ? [combined]
-    : [
-      documents.find((document) => document.role === 'core_template')!,
-      documents.find((document) => document.role === 'scenario_template')!,
-    ];
+  const applicationDocuments = [
+    documents.find((document) => document.role === 'core_template')!,
+    documents.find((document) => document.role === 'scenario_template')!,
+  ];
   const inspected = await Promise.all(applicationDocuments.map(downloadApplicationDocument));
   let parsed: Awaited<ReturnType<typeof parseM1Docx>>[];
   try {
@@ -73,15 +70,13 @@ export async function extractApplicationDocumentsForUser(uid: string, eventId: s
   } catch (error) {
     throw new HttpsError('invalid-argument', error instanceof Error ? error.message : 'The application document could not be extracted.');
   }
-  const [parsedCore, parsedScenario] = combined ? [parsed[0], parsed[0]] : [parsed[0], parsed[1]];
-  const identityErrors = combined
-    ? validateCombinedTemplateIdentity(parsed[0], event.templateSelection.scenarioTemplateId)
-    : validateTemplateIdentity(parsedCore, parsedScenario, event.templateSelection.scenarioTemplateId);
+  const [parsedCore, parsedScenario] = [parsed[0], parsed[1]];
+  const identityErrors = validateTemplateIdentity(parsedCore, parsedScenario, event.templateSelection.scenarioTemplateId);
   if (identityErrors.length > 0) throw new HttpsError('invalid-argument', identityErrors.join(' '));
   const mapped = mapM1Documents(parsedCore, parsedScenario);
   const sourceDocuments = inspected.map((item) => ({
     path: item.document.path,
-    role: item.document.role as 'core_template' | 'scenario_template' | 'combined_application',
+    role: item.document.role as 'core_template' | 'scenario_template',
     originalName: item.document.originalName,
     mimeType: item.document.mimeType,
     sizeBytes: item.document.sizeBytes,
@@ -146,17 +141,17 @@ export async function extractApplicationDocumentsForUser(uid: string, eventId: s
 }
 
 export function validateDraftDocuments(eventId: string, versionId: string, value: unknown): M1DraftDocument[] {
-  if (!Array.isArray(value)) throw new HttpsError('failed-precondition', 'Upload a combined application PDF/DOCX or the completed Core and scenario PDF/DOCX files before extraction.');
+  if (!Array.isArray(value)) throw new HttpsError('failed-precondition', 'Upload the completed Core and scenario PDF/DOCX files before extraction.');
   const documents = value as M1DraftDocument[];
-  if (documents.length < 1) throw new HttpsError('failed-precondition', 'Upload a combined application PDF/DOCX or the two completed PDF/DOCX files.');
+  if (documents.length < 1) throw new HttpsError('failed-precondition', 'Upload the two completed Core and scenario PDF/DOCX files.');
   if (documents.length > 20) throw new HttpsError('failed-precondition', 'The Draft document list exceeds the 20-file limit.');
+  if (documents.some((document) => (document?.role as string) === 'combined_application')) {
+    throw new HttpsError('failed-precondition', 'Combined application files are no longer accepted. Upload the completed Core and scenario files separately.');
+  }
   const coreCount = documents.filter((document) => document?.role === 'core_template').length;
   const scenarioCount = documents.filter((document) => document?.role === 'scenario_template').length;
-  const combinedCount = documents.filter((document) => document?.role === 'combined_application').length;
-  const splitValid = combinedCount === 0 && coreCount === 1 && scenarioCount === 1;
-  const combinedValid = combinedCount === 1 && coreCount === 0 && scenarioCount === 0;
-  if (!splitValid && !combinedValid) {
-    throw new HttpsError('failed-precondition', 'Use either one combined application PDF/DOCX or exactly one completed Core PDF/DOCX and one completed scenario PDF/DOCX.');
+  if (coreCount !== 1 || scenarioCount !== 1) {
+    throw new HttpsError('failed-precondition', 'Upload exactly one completed Core PDF/DOCX and one completed scenario PDF/DOCX.');
   }
   const paths = new Set<string>();
   for (const document of documents) {

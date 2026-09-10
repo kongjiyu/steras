@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import JSZip from 'jszip';
 import { describe, expect, it } from 'vitest';
-import { mapM1Documents, parseM1Docx, parseM1Pdf, validateCombinedTemplateIdentity, validateTemplateIdentity } from './m1DocumentExtractor';
+import { mapM1Documents, parseM1Docx, parseM1Pdf, validateTemplateIdentity } from './m1DocumentExtractor';
 
 describe('M1 DOCX extraction', () => {
   it('extracts searchable Field IDs from the repository PDF preview', async () => {
@@ -11,17 +11,18 @@ describe('M1 DOCX extraction', () => {
     expect(core.fields.has('EVENT_NAME')).toBe(true);
     expect(scenario.fields.size).toBeGreaterThan(20);
     expect(mapM1Documents(core, scenario).extractedFields).toEqual([]);
-    expect(validateCombinedTemplateIdentity(core, 'STERAS-T01-ENT-IN-v2.0')).toContain(
-      'The combined document does not contain scenario template STERAS-T01-ENT-IN-v2.0.',
-    );
     await expect(parseM1Pdf(Buffer.from('not-a-pdf'))).rejects.toThrow('not a readable PDF');
   });
 
-  it('extracts the completed combined presentation PDF without leaking visual line wraps into fields', async () => {
-    const combined = await parseM1Pdf(readFileSync('../output/pdf/m1-presentation-test-case/STERAS_DEMO_T01_Completed_Combined_Application.pdf'));
-    const fields = Object.fromEntries(mapM1Documents(combined, combined).extractedFields.map((field) => [field.target, field.value]));
-    expect(validateCombinedTemplateIdentity(combined, 'STERAS-T01-ENT-IN-v2.0')).toEqual([]);
-    expect(combined.fields.size).toBe(90);
+  it('extracts the completed Core and scenario presentation files separately', async () => {
+    const core = await parseM1Docx(readFileSync('../output/m1-presentation-test-case/01_Filled_Core_Event_Application.docx'));
+    const scenario = await parseM1Docx(readFileSync('../output/m1-presentation-test-case/02_Filled_Entertainment_and_Performance_Event_Indoor.docx'));
+    const mapped = mapM1Documents(core, scenario);
+    const fields = Object.fromEntries(mapped.extractedFields.map((field) => [field.target, field.value]));
+    expect(validateTemplateIdentity(core, scenario, 'STERAS-T01-ENT-IN-v2.0')).toEqual([]);
+    expect(core.fields.size + scenario.fields.size).toBe(90);
+    expect(mapped.completionPercent).toBe(100);
+    expect(mapped.warnings).toEqual([]);
     expect(fields).toMatchObject({
       name: 'Malaysia Tourism Storytelling Showcase 2026',
       venueName: 'Kuala Lumpur Convention Centre',
@@ -51,16 +52,6 @@ describe('M1 DOCX extraction', () => {
     expect(fields.startDatetime).toBe(new Date('2026-09-30T09:00:00+08:00').getTime());
     expect(fields.endDatetime).toBe(new Date('2026-09-30T18:00:00+08:00').getTime());
     expect(fields.emergencyPlanSummary).toContain('two-metre stage buffer');
-  });
-
-  it('validates a combined Core and scenario identity without requiring forged document roles', () => {
-    const fields = new Map([
-      ['EVENT_NAME', 'Event'], ['EVENT_DATES', '2026-10-10'], ['EVENT_ADDRESS', 'KL'],
-      ['TOTAL_ATTENDANCE', '100'], ['RESPONSIBLE_PERSON', 'Organizer'], ['PERFORMANCE_TYPE', 'Concert'],
-    ]);
-    const combined = { text: 'STERAS-CORE STERAS-T01-ENT-IN-v2.0 T01-A01 / PERFORMANCE_TYPE', fields };
-    expect(validateCombinedTemplateIdentity(combined, 'STERAS-T01-ENT-IN-v2.0')).toEqual([]);
-    expect(validateCombinedTemplateIdentity(combined, 'STERAS-T02-ENT-OF-v1.0')).not.toEqual([]);
   });
 
   it('recognises the versioned repository Core and scenario templates', async () => {

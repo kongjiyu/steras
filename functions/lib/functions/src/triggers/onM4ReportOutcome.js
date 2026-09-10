@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.onM4ReportOutcome = void 0;
 exports.isM4TerminalOutcome = isM4TerminalOutcome;
 exports.applyM4ReportOutcome = applyM4ReportOutcome;
+exports.isCurrentM4ReportBinding = isCurrentM4ReportBinding;
 /**
  * M3/M4 boundary: apply a resolved public Stage 2 discrepancy.
  *
@@ -65,7 +66,15 @@ async function applyM4ReportOutcome(report, outcome, now = Date.now()) {
         const event = eventSnap.data();
         const control = controlSnap.data();
         const stage2 = stage2Snap.data();
-        const versionId = event.currentVersionId ?? control.versionId ?? 'v1';
+        if (!isCurrentM4ReportBinding(report, event, control, stage2)) {
+            logger_1.logger.warn('[onM4ReportOutcome] stale or mismatched report binding', {
+                ticketId: report.ticketId,
+                eventId: report.eventId,
+                controlId: report.controlId,
+            });
+            return null;
+        }
+        const versionId = report.versionId;
         const auditAction = outcome === 'confirmed_true' ? 'control_resubmit_required' : 'control_restored';
         if (outcome === 'confirmed_true') {
             // The organiser must submit a replacement image. Removing the ticket
@@ -75,7 +84,7 @@ async function applyM4ReportOutcome(report, outcome, now = Date.now()) {
                 published: false,
                 m4TicketId: firestore_1.FieldValue.delete(),
                 reportedAt: firestore_1.FieldValue.delete(),
-                rejectionReason: 'M4 confirmed the public discrepancy; submit a corrected Stage 2 image.',
+                rejectionReason: 'The incident investigation confirmed the public discrepancy; submit a corrected Stage 2 image.',
                 rejectionAt: now,
                 rejectedBy: 'm4',
             });
@@ -128,8 +137,8 @@ async function applyM4ReportOutcome(report, outcome, now = Date.now()) {
             actorRole: 'system',
             timestamp: now,
             notes: outcome === 'confirmed_true'
-                ? 'M4 confirmed the Stage 2 discrepancy; organiser resubmission required.'
-                : 'M4 dismissed the Stage 2 discrepancy; the published control was restored.',
+                ? 'The incident investigation confirmed the Stage 2 discrepancy; organiser resubmission required.'
+                : 'The incident investigation dismissed the Stage 2 discrepancy; the published control was restored.',
             metadata: { ticketId: report.ticketId, controlId: report.controlId, docId: report.docId, outcome },
         });
         return {
@@ -161,8 +170,8 @@ async function applyM4ReportOutcome(report, outcome, now = Date.now()) {
                 type: confirmed ? 'control_resubmit_required' : 'control_restored',
                 title: confirmed ? 'Stage 2 correction required' : 'Stage 2 control restored',
                 message: confirmed
-                    ? `${result.authorityType}: M4 confirmed a public discrepancy for "${result.controlName}". Upload a corrected Stage 2 image for admin review.`
-                    : `${result.authorityType}: M4 dismissed the public discrepancy for "${result.controlName}". The published Stage 2 image is visible again.`,
+                    ? `${result.authorityType}: The incident investigation confirmed a public discrepancy for "${result.controlName}". Upload a corrected Stage 2 image for admin review.`
+                    : `${result.authorityType}: The incident investigation dismissed the public discrepancy for "${result.controlName}". The published Stage 2 image is visible again.`,
                 sourceActionId: report.ticketId,
                 notificationId: `${report.ticketId}_${outcome}_${recipientUid}`,
             });
@@ -176,5 +185,11 @@ async function applyM4ReportOutcome(report, outcome, now = Date.now()) {
         }
     }));
     return { eventId: result.eventId, controlId: result.controlId, outcome };
+}
+function isCurrentM4ReportBinding(report, event, control, stage2) {
+    return event.status === 'Approved' && event.currentVersionId === report.versionId
+        && control.controlId === report.controlId && control.eventId === report.eventId
+        && control.versionId === report.versionId && stage2.docId === report.docId
+        && stage2.m4TicketId === report.ticketId && stage2.publishedAt === report.stage2PublishedAt;
 }
 //# sourceMappingURL=onM4ReportOutcome.js.map

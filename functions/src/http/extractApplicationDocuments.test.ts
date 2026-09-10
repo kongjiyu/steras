@@ -18,7 +18,7 @@ function document(role: M1DraftDocument['role'], name: string, mimeType = name.e
 }
 
 describe('M1 structured Draft document validation', () => {
-  it('accepts PDF or DOCX independently for every application role', () => {
+  it('accepts PDF or DOCX independently for the Core and scenario files', () => {
     for (const [coreName, scenarioName] of [
       ['core.docx', 'scenario.docx'],
       ['core.pdf', 'scenario.pdf'],
@@ -28,30 +28,27 @@ describe('M1 structured Draft document validation', () => {
       const documents = [document('core_template', coreName), document('scenario_template', scenarioName), document('supporting_evidence', 'plan.docx')];
       expect(validateDraftDocuments('event-1', 'v1', documents)).toEqual(documents);
     }
-    for (const combinedName of ['combined.pdf', 'combined.docx']) {
-      const documents = [document('combined_application', combinedName), document('supporting_evidence', 'plan.pdf')];
-      expect(validateDraftDocuments('event-1', 'v1', documents)).toEqual(documents);
-    }
   });
 
-  it('rejects mixed combined and split application files and mismatched extensions', () => {
-    const combined = document('combined_application', 'combined.pdf');
+  it('rejects mismatched application file extensions', () => {
     expect(() => validateDraftDocuments('event-1', 'v1', [
-      combined,
-      document('core_template', 'core.docx'),
+      document('core_template', 'core.docx', pdfMime),
       document('scenario_template', 'scenario.docx'),
-    ])).toThrow('either one combined application PDF/DOCX');
-    expect(() => validateDraftDocuments('event-1', 'v1', [{ ...combined, mimeType: docxMime }]))
-      .toThrow('must be PDF or DOCX files with matching file extensions');
-    expect(() => validateDraftDocuments('event-1', 'v1', [document('combined_application', 'combined.docx', pdfMime)]))
-      .toThrow('must be PDF or DOCX files with matching file extensions');
+    ])).toThrow('must be PDF or DOCX files with matching file extensions');
+  });
+
+  it('rejects legacy combined application uploads with migration guidance', () => {
+    const combined = document('core_template', 'combined.pdf');
+    expect(() => validateDraftDocuments('event-1', 'v1', [
+      { ...combined, role: 'combined_application' as never },
+    ])).toThrow('Upload the completed Core and scenario files separately');
   });
 
   it('rejects missing, duplicate, swapped-format, cross-version, and duplicate-path documents', () => {
     const core = document('core_template', 'core.docx');
     const scenario = document('scenario_template', 'scenario.docx');
-    expect(() => validateDraftDocuments('event-1', 'v1', [core])).toThrow('either one combined application PDF/DOCX');
-    expect(() => validateDraftDocuments('event-1', 'v1', [core, { ...core, originalName: 'copy.docx' }, scenario])).toThrow('either one combined application PDF/DOCX');
+    expect(() => validateDraftDocuments('event-1', 'v1', [core])).toThrow('exactly one completed Core PDF/DOCX');
+    expect(() => validateDraftDocuments('event-1', 'v1', [core, { ...core, originalName: 'copy.docx' }, scenario])).toThrow('exactly one completed Core PDF/DOCX');
     expect(() => validateDraftDocuments('event-1', 'v1', [core, { ...scenario, mimeType: pdfMime }]))
       .toThrow('must be PDF or DOCX files with matching file extensions');
     expect(() => validateDraftDocuments('event-1', 'v1', [core, { ...scenario, path: 'event_documents/event-1/v2/scenario.docx' }])).toThrow('metadata is invalid');
@@ -75,7 +72,7 @@ describe('M1 structured Draft document validation', () => {
     expect(() => validateDraftDocuments('event-1', 'v1', [
       { ...core, role: 'invented_role' as never },
       scenario,
-    ])).toThrow('either one combined application PDF/DOCX');
+    ])).toThrow('exactly one completed Core PDF/DOCX');
   });
 
   it('rejects a supporting document with an executable MIME type', () => {

@@ -30,7 +30,10 @@ const firebase_admin_1 = require("firebase-admin");
 const https_1 = require("firebase-functions/v2/https");
 const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
+const controlLifecycle_1 = require("../utils/controlLifecycle");
+const stage2Counter_1 = require("../utils/stage2Counter");
 const notifications_1 = require("../utils/notifications");
+const eventWindow_1 = require("../utils/eventWindow");
 const REPORT_CATEGORIES = ['item_not_at_venue', 'wrong_venue', 'low_quality_image', 'other'];
 const DESCRIPTION_MIN = 20;
 const DESCRIPTION_MAX = 500;
@@ -47,7 +50,7 @@ exports.reportStage2Doc = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGIO
         }
         const message = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
         console.error(`[reportStage2Doc] unexpected error: ${message}`);
-        throw new https_1.HttpsError('internal', message.slice(0, 500));
+        throw new https_1.HttpsError('internal', 'Unable to record the Stage 2 report. Retry shortly.');
     }
 });
 async function reportStage2DocForUser(uid, data, now = Date.now()) {
@@ -77,13 +80,19 @@ async function reportStage2DocForUser(uid, data, now = Date.now()) {
         .doc(`${controlId}-stage2`);
     const { ticketId, alreadyReported, reportedAt, controlName, authorityType, versionId, eventOrganizerUid } = await db.runTransaction(async (tx) => {
         // Reads first.
-        const [docSnap, counterSnap, controlSnap, eventSnap, publicSnap] = await Promise.all([
+        const [docSnap, counterSnap, controlSnap, eventSnap, publicSnap, userSnap, confirmSnap] = await Promise.all([
             tx.get(docRef),
             tx.get(counterRef),
             tx.get(controlRef),
             tx.get(eventRef),
             tx.get(publicRef),
+            tx.get(db.collection(types_1.COLLECTIONS.USERS).doc(uid)),
+            tx.get(controlRef.collection(types_1.COLLECTIONS.STAGE2_CONFIRMS).doc(uid)),
         ]);
+        const viewer = userSnap.data();
+        if (!viewer || viewer.uid !== uid || viewer.role !== 'public') {
+            throw new https_1.HttpsError('permission-denied', 'Only registered public viewer accounts can report published evidence.');
+        }
         if (!docSnap.exists) {
             throw new https_1.HttpsError('not-found', `Stage 2 image not found for control ${controlId}.`);
         }
@@ -98,8 +107,18 @@ async function reportStage2DocForUser(uid, data, now = Date.now()) {
         if (!eventSnap.exists)
             throw new https_1.HttpsError('not-found', 'Event not found.');
         const event = eventSnap.data();
-        const versionIdInner = event.currentVersionId ?? 'v1';
-        if (counterSnap.exists) {
+        (0, eventWindow_1.assertEventReportableAt)(event, now);
+        const versionIdInner = event.currentVersionId;
+        const projection = publicSnap.data();
+        if (!versionIdInner || !(0, controlLifecycle_1.isActiveControlGeneration)(event, control, eventId)
+            || !publicSnap.exists || projection?.eventId !== eventId
+            || projection.versionId !== versionIdInner || projection.controlId !== controlId || projection.docId !== docId
+            || typeof stage2.publishedAt !== 'number') {
+            throw new https_1.HttpsError('failed-precondition', 'This published evidence is not bound to the current application generation.');
+        }
+        if (confirmSnap.exists && (0, stage2Counter_1.counterMatchesStage2)(confirmSnap.data(), stage2))
+            throw new https_1.HttpsError('failed-precondition', 'Undo your confirmation before reporting this image.');
+        if (counterSnap.exists && (0, stage2Counter_1.counterMatchesStage2)(counterSnap.data(), stage2)) {
             // Already reported — return the existing ticket info.
             const existing = counterSnap.data();
             return {
@@ -121,6 +140,8 @@ async function reportStage2DocForUser(uid, data, now = Date.now()) {
             eventId,
             controlId,
             docId,
+            versionId: versionIdInner,
+            stage2PublishedAt: stage2.publishedAt,
             reporterUid: uid,
             category,
             description,
@@ -130,7 +151,7 @@ async function reportStage2DocForUser(uid, data, now = Date.now()) {
             updatedAt: now,
         };
         tx.set(ticketRef, reportDoc);
-        tx.set(counterRef, { uid, ticketId: newTicketId, reportedAt: now, category });
+        tx.set(counterRef, { uid, ticketId: newTicketId, reportedAt: now, category, stage2UploadedAt: stage2.uploadedAt, stage2PublishedAt: stage2.publishedAt });
         tx.update(docRef, { m4TicketId: newTicketId, reportedAt: now });
         if (publicSnap.exists)
             tx.update(publicRef, { reported: true });
@@ -180,7 +201,7 @@ async function reportStage2DocForUser(uid, data, now = Date.now()) {
 async function fireReportNotifications(args) {
     const db = (0, firebase_admin_1.firestore)();
     const title = 'Stage 2 image reported';
-    const baseMessage = `Public viewer reported a Stage 2 issue for ${args.authorityType} "${args.controlName}". Ticket ${args.ticketId}. Awaiting M4 investigation.`;
+    const baseMessage = `Public viewer reported a Stage 2 issue for ${args.authorityType} "${args.controlName}". Ticket ${args.ticketId}. Awaiting incident investigation.`;
     const sourceActionId = args.ticketId; // public_reports doc id is the natural idempotency key
     // Find the assigned officer for this authority + version.
     const assignmentId = `${args.versionId}_${args.authorityType}`;

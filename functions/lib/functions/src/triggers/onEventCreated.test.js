@@ -1,10 +1,11 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-const node_crypto_1 = require("node:crypto");
 const vitest_1 = require("vitest");
 const onEventCreated_1 = require("./onEventCreated");
 const manualFinalisation_1 = require("../engines/manualFinalisation");
 const types_1 = require("../../../shared/types");
+const eventVersionHash_1 = require("../utils/eventVersionHash");
+const m1EvidenceContract_1 = require("../../../shared/m1EvidenceContract");
 (0, vitest_1.describe)('M1-submitted assessment input integrity', () => {
     (0, vitest_1.it)('binds the exact template selection into the immutable version hash', () => {
         const templateSelection = {
@@ -12,12 +13,13 @@ const types_1 = require("../../../shared/types");
             venueSetting: 'outdoor_fixed_site',
             coreTemplateId: 'STERAS-CORE',
             scenarioTemplateId: 'STERAS-T08-CUL-OF-v1.0',
-            templateRegistryVersion: '2026-08-28-v1',
+            templateRegistryVersion: types_1.M1_TEMPLATE_REGISTRY_VERSION,
             selectedAt: 1,
         };
         const eventDetails = {
             name: 'KL Cultural Festival', type: 'cultural',
             venueName: 'Central Venue', venueAddress: 'Kuala Lumpur', venueLocation: { lat: 3.139, lng: 101.687 },
+            venueState: 'Kuala Lumpur',
             venueCapacity: 2_000, expectedAttendance: 1_500, environment: 'outdoor',
             coverage: 'partially_covered', seating: 'mixed',
             startDatetime: 2_000, endDatetime: 3_000,
@@ -31,14 +33,44 @@ const types_1 = require("../../../shared/types");
                 vulnerableAttendeesPercent: 10, standingAttendeesPercent: 20, nearestHospitalTravelMinutes: 15,
             },
         };
-        const documentPaths = ['event_documents/event-1/v1/evidence.pdf'];
-        const inputHash = (0, node_crypto_1.createHash)('sha256').update(JSON.stringify({ eventDetails, templateSelection, documentPaths })).digest('hex');
-        const version = {
+        const documentPaths = ['event_documents/event-1/v1/core.docx', 'event_documents/event-1/v1/scenario.docx', 'event_documents/event-1/v1/evidence.pdf'];
+        const evidenceManifest = (0, m1EvidenceContract_1.m1EvidenceRequirementsFor)(templateSelection.scenarioTemplateId).map((requirement) => ((0, m1EvidenceContract_1.isM1EvidenceForcedRequired)(requirement, eventDetails.riskProfile)
+            ? { requirementId: requirement.id, applicability: 'required', documentPath: documentPaths[2] }
+            : { requirementId: requirement.id, applicability: 'not_applicable', notApplicableReason: 'Not applicable to this test event scenario.' }));
+        const version = (0, eventVersionHash_1.buildSubmittedEventVersion)({
             eventId: 'event-1', versionId: 'v1', versionNumber: 1, eventDetails, templateSelection,
-            documentPaths, submittedBy: 'organizer-1', submittedAt: 1_000, inputHash,
-        };
+            documentPaths,
+            documentUploads: [{
+                    path: documentPaths[0], role: 'core_template', originalName: 'core.docx',
+                    mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', sizeBytes: 100, uploadedAt: 900,
+                    schemaVersion: '2026-08-28-document-v1',
+                }, {
+                    path: documentPaths[1], role: 'scenario_template', originalName: 'scenario.docx',
+                    mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', sizeBytes: 100, uploadedAt: 900,
+                    schemaVersion: '2026-08-28-document-v1',
+                }, {
+                    path: documentPaths[2], role: 'supporting_evidence', originalName: 'evidence.pdf',
+                    mimeType: 'application/pdf', sizeBytes: 100, uploadedAt: 900,
+                    schemaVersion: '2026-08-28-document-v1',
+                }],
+            extractionId: 'extract-1',
+            evidenceManifest,
+            evidenceManifestSchemaVersion: '2026-08-28-evidence-v1',
+            submittedBy: 'organizer-1', submittedAt: 1_000,
+        });
         (0, vitest_1.expect)((0, onEventCreated_1.isPipelineEventVersion)(version, 'event-1', 'v1')).toBe(true);
+        (0, vitest_1.expect)((0, onEventCreated_1.isPipelineEventVersion)({
+            ...version,
+            eventDetails: Object.fromEntries(Object.entries(eventDetails).reverse()),
+            templateSelection: Object.fromEntries(Object.entries(templateSelection).reverse()),
+        }, 'event-1', 'v1')).toBe(true);
         (0, vitest_1.expect)((0, onEventCreated_1.isPipelineEventVersion)({ ...version, templateSelection: undefined }, 'event-1', 'v1')).toBe(false);
+        const { inputHash, ...versionInput } = version;
+        (0, vitest_1.expect)(inputHash).toMatch(/^[a-f0-9]{64}$/);
+        (0, vitest_1.expect)((0, onEventCreated_1.isPipelineEventVersion)((0, eventVersionHash_1.buildSubmittedEventVersion)({
+            ...versionInput,
+            evidenceManifest: evidenceManifest.slice(1),
+        }), 'event-1', 'v1')).toBe(false);
         (0, vitest_1.expect)((0, onEventCreated_1.isPipelineEventVersion)({
             ...version,
             templateSelection: { ...templateSelection, scenarioTemplateId: 'STERAS-T01-ENT-IN-v2.0' },
@@ -50,6 +82,18 @@ const types_1 = require("../../../shared/types");
     });
 });
 (0, vitest_1.describe)('resource pipeline identity and revision helpers', () => {
+    (0, vitest_1.it)('accepts both initial and same-generation retry pointers while a fenced claim is active', () => {
+        (0, vitest_1.expect)((0, onEventCreated_1.__testOnlyCurrentAssessmentPointerMatches)(undefined, 'assessment-1', true)).toBe(true);
+        (0, vitest_1.expect)((0, onEventCreated_1.__testOnlyCurrentAssessmentPointerMatches)('assessment-1', 'assessment-1', true)).toBe(true);
+        (0, vitest_1.expect)((0, onEventCreated_1.__testOnlyCurrentAssessmentPointerMatches)('other-assessment', 'assessment-1', true)).toBe(false);
+        (0, vitest_1.expect)((0, onEventCreated_1.__testOnlyCurrentAssessmentPointerMatches)('previous-assessment', 'assessment-2', true, 'previous-assessment')).toBe(true);
+        (0, vitest_1.expect)((0, onEventCreated_1.__testOnlyCurrentAssessmentPointerMatches)('stale-assessment', 'assessment-2', true, 'previous-assessment')).toBe(false);
+    });
+    (0, vitest_1.it)('preserves the first audit record and assigns every retry claim an append-only audit ID', () => {
+        (0, vitest_1.expect)((0, onEventCreated_1.riskScoreAuditId)('assessment-1', 'claim-1', false)).toBe('assessment-1-risk-score-computed');
+        (0, vitest_1.expect)((0, onEventCreated_1.riskScoreAuditId)('assessment-1', 'claim-2', true)).toBe('assessment-1-risk-score-computed-retry-claim-2');
+        (0, vitest_1.expect)((0, onEventCreated_1.riskScoreAuditId)('assessment-1', 'claim-3', true)).not.toBe((0, onEventCreated_1.riskScoreAuditId)('assessment-1', 'claim-2', true));
+    });
     (0, vitest_1.it)('uses stage, version and the complete input hash in deterministic IDs', () => {
         const hash = 'a'.repeat(64);
         (0, vitest_1.expect)((0, onEventCreated_1.resourceDocumentId)('provisional', 'v1', hash)).toBe(`provisional-v1-${hash}`);

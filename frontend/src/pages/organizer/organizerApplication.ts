@@ -23,6 +23,38 @@ export const MALAYSIA_STATES = [
   'Terengganu', 'Kuala Lumpur', 'Labuan', 'Putrajaya',
 ] as const;
 
+const MALAYSIA_STATE_ALIASES: ReadonlyArray<readonly [string, (typeof MALAYSIA_STATES)[number]]> = [
+  ['federal territory of kuala lumpur', 'Kuala Lumpur'],
+  ['wilayah persekutuan kuala lumpur', 'Kuala Lumpur'],
+  ['kuala lumpur', 'Kuala Lumpur'],
+  ['federal territory of labuan', 'Labuan'],
+  ['wilayah persekutuan labuan', 'Labuan'],
+  ['labuan', 'Labuan'],
+  ['federal territory of putrajaya', 'Putrajaya'],
+  ['wilayah persekutuan putrajaya', 'Putrajaya'],
+  ['putrajaya', 'Putrajaya'],
+  ['pulau pinang', 'Pulau Pinang'],
+  ['penang', 'Pulau Pinang'],
+  ['malacca', 'Melaka'],
+  ['melaka', 'Melaka'],
+  ...MALAYSIA_STATES.filter((state) => !['Kuala Lumpur', 'Labuan', 'Putrajaya', 'Pulau Pinang', 'Melaka'].includes(state))
+    .map((state) => [state.toLocaleLowerCase('en-MY'), state] as const),
+];
+
+function normalizedAddressText(value: string): string {
+  return value.toLocaleLowerCase('en-MY').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+export function normalizeMalaysiaState(value: string): (typeof MALAYSIA_STATES)[number] | undefined {
+  const normalized = normalizedAddressText(value);
+  return MALAYSIA_STATE_ALIASES.find(([alias]) => normalized === alias)?.[1];
+}
+
+export function inferMalaysiaStateFromAddress(address: string): (typeof MALAYSIA_STATES)[number] | undefined {
+  const normalized = ` ${normalizedAddressText(address)} `;
+  return MALAYSIA_STATE_ALIASES.find(([alias]) => normalized.includes(` ${alias} `))?.[1];
+}
+
 export function isMeaningfulNotApplicableReason(reason: string | undefined): boolean {
   const normalized = reason?.trim().replace(/\s+/g, ' ') ?? '';
   return normalized.length >= 20 && normalized.split(' ').filter(Boolean).length >= 3;
@@ -250,10 +282,8 @@ export function validateEventApplication(
   if (draftDocuments !== undefined) {
     const coreCount = draftDocuments.filter((document) => document.role === 'core_template').length;
     const scenarioCount = draftDocuments.filter((document) => document.role === 'scenario_template').length;
-    const combinedCount = draftDocuments.filter((document) => document.role === 'combined_application').length;
-    if (!((combinedCount === 1 && coreCount === 0 && scenarioCount === 0)
-      || (combinedCount === 0 && coreCount === 1 && scenarioCount === 1))) {
-      errors.push('Upload either one combined PDF/DOCX or one completed Core PDF/DOCX and one completed scenario PDF/DOCX.');
+    if (coreCount !== 1 || scenarioCount !== 1) {
+      errors.push('Upload one completed Core PDF/DOCX and one completed scenario PDF/DOCX.');
     }
     if (!currentExtractionId) errors.push('Extract and review the completed application documents before submission.');
     if (templateSelection) errors.push(...validateM1EvidenceChecklist(details, templateSelection, draftDocuments, evidenceManifest));
@@ -419,12 +449,13 @@ export function applyM1ExtractedFields(details: EventDetails, fields: M1Extracte
         break;
     }
   }
+  if (!next.venueId && !next.venueState) next.venueState = inferMalaysiaStateFromAddress(next.venueAddress);
   return next;
 }
 
 export function extractionMatchesDraftDocuments(extraction: M1DocumentExtraction, documents: M1DraftDocument[]): boolean {
   const current = documents
-    .filter((document) => document.role === 'core_template' || document.role === 'scenario_template' || document.role === 'combined_application')
+    .filter((document) => document.role === 'core_template' || document.role === 'scenario_template')
     .map((document) => `${document.role}:${document.path}:${document.originalName}:${document.mimeType}:${document.sizeBytes}`)
     .sort();
   const extracted = Array.isArray(extraction.sourceDocuments)
@@ -432,10 +463,7 @@ export function extractionMatchesDraftDocuments(extraction: M1DocumentExtraction
       .map((document) => `${document.role}:${document.path}:${document.originalName}:${document.mimeType}:${document.sizeBytes}`)
       .sort()
     : [];
-  const validCount = current.length === 1
-    ? documents.some((document) => document.role === 'combined_application')
-    : current.length === 2;
-  return validCount && extracted.length === current.length && JSON.stringify(current) === JSON.stringify(extracted);
+  return current.length === 2 && extracted.length === current.length && JSON.stringify(current) === JSON.stringify(extracted);
 }
 
 export function completeRiskProfile(value: unknown = {}): EventRiskProfile {

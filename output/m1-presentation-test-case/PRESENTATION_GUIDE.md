@@ -14,16 +14,15 @@ All people, registration numbers, suppliers and approvals in this pack are synth
 
 ## Files to use
 
-1. `01_Filled_Core_Event_Application_T01.docx` - completed Core template.
-2. `02_Filled_T01_Indoor_Performance_Template.docx` - completed T01 template.
+1. `01_Filled_Core_Event_Application.docx` - completed Core template.
+2. `02_Filled_Entertainment_and_Performance_Event_Indoor.docx` - completed T01 template.
 3. `03_Core_Supporting_Evidence_Pack.pdf` - one consolidated demonstration file that can be linked to all nine always-required Core evidence items.
-4. `../pdf/m1-presentation-test-case/STERAS_DEMO_T01_Completed_Combined_Application.pdf` - completed Core and T01 forms merged into one searchable 18-page PDF for the combined-upload flow.
 
 ## Before the presentation
 
 - Confirm that **Kuala Lumpur Convention Centre** is visible in the Verified venue registry and that its canonical capacity is **8,000**.
 - If it is absent, create and verify that venue through the Admin venue flow before the presentation. Do not choose a custom venue if you intend to continue into the M2 automated-assessment flow, because a custom venue is treated as insufficient data.
-- Sign in with an Organizer account and keep the combined application PDF and supporting-evidence PDF ready in Finder.
+- Sign in with an Organizer account and keep both completed application DOCX files and the supporting-evidence PDF ready in Finder.
 
 ## Live flow
 
@@ -40,9 +39,10 @@ On **Create application**:
 
 ### 2. Upload and auto-fill
 
-Choose **Upload one combined file**, then upload the rehearsal PDF below. Core, scenario and combined application slots all accept either PDF or DOCX.
+Upload the two completed application files into their matching slots:
 
-- `../pdf/m1-presentation-test-case/STERAS_DEMO_T01_Completed_Combined_Application.pdf`
+- **Core application:** `01_Filled_Core_Event_Application.docx`
+- **Scenario application:** `02_Filled_Entertainment_and_Performance_Event_Indoor.docx`
 
 Click **Extract and auto-fill**.
 
@@ -124,7 +124,7 @@ Link the PDF to these Core requirements:
 - DOC-D01 - Safety and Operational Plan
 - DOC-D02 - Emergency and Evacuation Plan
 
-The combined PDF is acceptable for this presentation because the UI permits one uploaded object to support multiple requirements. A real applicant should normally upload authentic evidence separately.
+The supporting-evidence pack may be linked to multiple requirements for this synthetic rehearsal. A real applicant should upload authentic evidence that supports each selected requirement.
 
 ### 6. Mark T01 conditional evidence as not applicable
 
@@ -154,7 +154,7 @@ Choose **Not applicable** and enter the following reasons:
 
 - **Recommendation:** two answers choose one of 15 scenario templates while the Core template is always required.
 - **Preview:** organizers know exactly what they must complete before starting.
-- **Extraction:** one completed combined PDF or DOCX populates the structured application, including the full all-hazards profile, but the organizer still verifies every value.
-- **Validation:** STERAS rejects a combined file whose Core or recommended scenario identity is missing or mismatched.
+- **Extraction:** the completed Core and scenario files populate the structured application, including the full all-hazards profile, but the organizer still verifies every value.
+- **Validation:** STERAS requires both files and rejects a Core or scenario document whose template identity is missing or mismatched.
 - **Evidence mapping:** one uploaded file can support multiple requirement IDs, and every conditional item needs evidence or a clear reason.
 - **Integrity:** verified venue identity, exact capacity, Storage evidence and complete risk declarations are checked by the backend before submission.

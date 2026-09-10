@@ -41,20 +41,10 @@ const https_1 = require("firebase-functions/v2/https");
 const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
 const notifications_1 = require("../utils/notifications");
+const base64File_1 = require("../utils/base64File");
+const controlLifecycle_1 = require("../utils/controlLifecycle");
 const MAX_FILE_BYTES = 700 * 1024;
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png']);
-/** Estimate the decoded size of a base64 string (4 chars -> 3 bytes,
- *  with padding). Used for the file-size gate. */
-function approxBase64DecodedBytes(b64) {
-    const len = b64.length;
-    if (len === 0)
-        return 0;
-    // Strip any data URL prefix if present (defensive).
-    const comma = b64.indexOf(',');
-    const clean = comma >= 0 ? b64.slice(comma + 1) : b64;
-    const padding = clean.endsWith('==') ? 2 : clean.endsWith('=') ? 1 : 0;
-    return Math.floor((clean.length * 3) / 4) - padding;
-}
 exports.submitStage2Doc = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
     if (!request.auth)
         throw new https_1.HttpsError('unauthenticated', 'Sign in before submitting a Stage 2 image.');
@@ -68,7 +58,7 @@ exports.submitStage2Doc = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGIO
         }
         const message = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
         console.error(`[submitStage2Doc] unexpected error: ${message}`);
-        throw new https_1.HttpsError('internal', message.slice(0, 500));
+        throw new https_1.HttpsError('internal', 'Unable to submit the Stage 2 document. Retry shortly.');
     }
 });
 async function submitStage2DocForUser(uid, data, now = Date.now()) {
@@ -89,10 +79,7 @@ async function submitStage2DocForUser(uid, data, now = Date.now()) {
     }
     if (!fileBase64)
         throw new https_1.HttpsError('invalid-argument', 'fileBase64 is required.');
-    const approxBytes = approxBase64DecodedBytes(fileBase64);
-    if (approxBytes > MAX_FILE_BYTES) {
-        throw new https_1.HttpsError('invalid-argument', `File too large: ${approxBytes} bytes. Max ${MAX_FILE_BYTES} bytes (~700 KB). Compress and re-upload.`);
-    }
+    const { sizeBytes } = (0, base64File_1.validateBase64File)(fileBase64, mimeType, MAX_FILE_BYTES);
     const db = (0, firebase_admin_1.firestore)();
     const eventRef = db.collection(types_1.COLLECTIONS.EVENTS).doc(eventId);
     const controlRef = eventRef.collection(types_1.COLLECTIONS.EVENT_CONTROLS).doc(controlId);
@@ -131,7 +118,7 @@ async function submitStage2DocForUser(uid, data, now = Date.now()) {
         }
         const control = controlSnap.data();
         const versionId = event.currentVersionId ?? 'v1';
-        if (control.versionId !== versionId) {
+        if (!(0, controlLifecycle_1.isActiveControlGeneration)(event, control, eventId)) {
             throw new https_1.HttpsError('failed-precondition', `Control ${controlId} is for a prior version. The admin must re-commit the list.`);
         }
         if (!control.stage2Requirement) {
@@ -139,7 +126,7 @@ async function submitStage2DocForUser(uid, data, now = Date.now()) {
         }
         const existingDoc = docSnap.exists ? docSnap.data() : null;
         if (existingDoc && existingDoc.m4TicketId) {
-            throw new https_1.HttpsError('failed-precondition', 'A report is open for this Stage 2 image. Wait for M4 to resolve the ticket before replacing.');
+            throw new https_1.HttpsError('failed-precondition', 'A report is open for this Stage 2 image. Wait for the incident investigation to resolve the ticket before replacing it.');
         }
         // Build the new doc.
         // Workstream 5: the doc is written with `published: false`. An
@@ -156,13 +143,10 @@ async function submitStage2DocForUser(uid, data, now = Date.now()) {
             publicConfirmCount: 0, // fresh on every upload — the prior image's confirms don't carry over
             published: false,
         };
-        // Preserve m4TicketId if it existed (it can't per the Q4 check above, but be defensive).
-        if (existingDoc?.m4TicketId)
-            newDoc.m4TicketId = existingDoc.m4TicketId;
-        if (existingDoc?.reportedAt)
-            newDoc.reportedAt = existingDoc.reportedAt;
         // Writes.
-        tx.set(docRef, newDoc, { merge: true });
+        // Replacement semantics clear stale rejection/publication/report fields
+        // from the prior image; fields that must survive are copied explicitly.
+        tx.set(docRef, newDoc);
         // A replacement is private until the admin reviews it again. Remove the
         // previous sanitised copy atomically so the old image cannot linger in
         // public view while the new upload is pending.
@@ -185,7 +169,7 @@ async function submitStage2DocForUser(uid, data, now = Date.now()) {
                 authorityType: control.authority,
                 fileName,
                 mimeType,
-                fileSizeBytes: approxBytes,
+                fileSizeBytes: sizeBytes,
                 replaced: existingDoc !== null,
             },
         });
@@ -199,7 +183,7 @@ async function submitStage2DocForUser(uid, data, now = Date.now()) {
             controlName: control.controlName,
             fileName,
             mimeType,
-            fileSizeBytes: approxBytes,
+            fileSizeBytes: sizeBytes,
             uploadedAt: now,
         };
     });

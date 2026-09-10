@@ -7,6 +7,7 @@ const validDetails = {
     type: 'cultural',
     venueName: 'Central Venue',
     venueAddress: 'Kuala Lumpur',
+    venueState: 'Kuala Lumpur',
     venueLocation: { lat: 3.139, lng: 101.687 },
     venueCapacity: 2_000,
     expectedAttendance: 1_500,
@@ -46,6 +47,9 @@ function completeRiskProfile() {
 (0, vitest_1.describe)('validateEventDetails', () => {
     (0, vitest_1.it)('accepts a complete future event', () => {
         (0, vitest_1.expect)((0, submitEvent_1.validateEventDetails)(validDetails, 1_000)).toEqual([]);
+    });
+    (0, vitest_1.it)('requires the state for custom and registry-backed venue submissions', () => {
+        (0, vitest_1.expect)((0, submitEvent_1.validateEventDetails)({ ...validDetails, venueState: undefined }, 1_000).join(' ')).toMatch(/Venue state is required/);
     });
     (0, vitest_1.it)('rejects invalid coordinates, dates, and capacity', () => {
         const errors = (0, submitEvent_1.validateEventDetails)({ ...validDetails, venueCapacity: 0, venueLocation: { lat: 100, lng: 0 }, startDatetime: 1_500, endDatetime: 1_400 }, 1_600);
@@ -98,10 +102,11 @@ function completeRiskProfile() {
         (0, vitest_1.expect)((0, submitEvent_1.isValidEvidenceMetadata)({ contentType: 'image/png', size: '100' })).toBe(false);
     });
     (0, vitest_1.it)('requires exact identity binding to an active canonical venue', () => {
-        const venue = { active: true, verificationStatus: 'verified', name: validDetails.venueName, address: validDetails.venueAddress, capacity: 2_000, location: validDetails.venueLocation };
+        const venue = { active: true, verificationStatus: 'verified', name: validDetails.venueName, address: validDetails.venueAddress, state: validDetails.venueState, capacity: 2_000, location: validDetails.venueLocation };
         (0, vitest_1.expect)((0, submitEvent_1.validateCanonicalVenueRecord)(validDetails, venue)).toEqual([]);
         (0, vitest_1.expect)((0, submitEvent_1.validateCanonicalVenueRecord)(validDetails, { ...venue, active: false })).not.toEqual([]);
         (0, vitest_1.expect)((0, submitEvent_1.validateCanonicalVenueRecord)(validDetails, { ...venue, capacity: 2_001 })).not.toEqual([]);
+        (0, vitest_1.expect)((0, submitEvent_1.validateCanonicalVenueRecord)(validDetails, { ...venue, state: 'Selangor' })).not.toEqual([]);
         (0, vitest_1.expect)((0, submitEvent_1.validateCanonicalVenueRecord)(validDetails, { ...venue, location: { lat: 0, lng: 0 } })).not.toEqual([]);
     });
 });

@@ -477,9 +477,8 @@ async function writeScenario(db: Firestore, scenarioValue: Scenario, venue: Venu
     process.cwd(),
     '..',
     'output',
-    'pdf',
     'm1-presentation-test-case',
-    'STERAS_DEMO_T01_Completed_Combined_Application.pdf',
+    '03_Core_Supporting_Evidence_Pack.pdf',
   ));
   const evidence = await uploadFile(`event_documents/${eventId}/${VERSION_ID}/application-evidence.pdf`, evidenceBytes, 'application/pdf', eventId);
   if (!/^\d+$/.test(evidence.generation)) throw new Error(`${eventId}: Storage generation unavailable.`);

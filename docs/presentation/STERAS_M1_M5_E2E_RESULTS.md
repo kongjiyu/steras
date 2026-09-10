@@ -8,7 +8,7 @@
 
 | Module | Production checkpoint | Result |
 |---|---|---|
-| M1 | Combined application extracted and organiser-confirmed | PASS — 12 fields, 100% extraction completion |
+| M1 | Separate Core and scenario applications extracted and organiser-confirmed | PASS — 12 fields, 100% extraction completion |
 | M1 | Evidence and venue integrity | PASS — 18/18 evidence requirements; active canonical KLCC binding |
 | M2 | Context acquisition | PASS — OpenWeather available and fresh |
 | M2 | AI proposal | PASS — MiniMax-M3, eight unique categories, cache miss |

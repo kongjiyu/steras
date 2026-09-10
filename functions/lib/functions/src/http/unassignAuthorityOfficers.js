@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.unassignAuthorityOfficers = void 0;
+exports.validateUnassignmentSnapshot = validateUnassignmentSnapshot;
 /**
  * unassignAuthorityOfficers — admin-only callable (M3 Workstream 1 polish).
  *
@@ -30,7 +31,6 @@ exports.unassignAuthorityOfficers = void 0;
  *   - Idempotent on re-call (revoking a revoked assignment is a no-op).
  */
 const firebase_admin_1 = require("firebase-admin");
-const firestore_1 = require("firebase-admin/firestore");
 const https_1 = require("firebase-functions/v2/https");
 const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
@@ -84,20 +84,26 @@ exports.unassignAuthorityOfficers = (0, https_1.onCall)({ region: runtime_1.FUNC
     if (blocking.length > 0) {
         const blockingList = blocking.map((a) => a.authorityType).join(', ');
         throw new https_1.HttpsError('failed-precondition', `Cannot unassign — these officers have already recorded a proposal: ${blockingList}. ` +
-            'Wait for the second review to close out their work, or contact the M3 owner.');
+            'Wait for the second review to close out their work, or contact an administrator.');
     }
     const now = Date.now();
     return db.runTransaction(async (tx) => {
         // Reads first.
-        // Re-read the event to make sure reviewStage hasn't moved to
-        // 'second' (someone might have just recorded a final proposal).
-        const evSnap = await tx.get(eventRef);
+        // Re-read both event and assignments. An officer proposal can complete an
+        // assignment without moving reviewStage to `second` when other officers
+        // are still pending, so checking the event alone is not a sufficient
+        // concurrency fence.
+        const [evSnap, currentAssignmentsSnap] = await Promise.all([
+            tx.get(eventRef),
+            tx.get(eventRef.collection(types_1.COLLECTIONS.ASSIGNMENTS)),
+        ]);
         const ev = evSnap.data();
-        if (ev.reviewStage !== 'authority') {
-            throw new https_1.HttpsError('failed-precondition', 'reviewStage moved while you were unassigning. Try again.');
-        }
+        const currentAssignments = currentAssignmentsSnap.docs
+            .map((document) => ({ id: document.id, value: document.data() }))
+            .filter(({ value }) => value.versionId === versionId);
+        const currentTargeted = validateUnassignmentSnapshot(evSnap.exists ? ev : undefined, eventId, versionId, currentAssignments, filterAuth);
         // Read all officer refs in the read phase.
-        const targetsToRevoke = targeted.filter((a) => a.status === 'pending' || a.status === 'in_progress');
+        const targetsToRevoke = currentTargeted.filter((a) => a.status === 'pending' || a.status === 'in_progress');
         const officerRefs = [];
         for (const a of targetsToRevoke) {
             const ref = db.collection(types_1.COLLECTIONS.OFFICERS).doc(a.officerUid);
@@ -126,7 +132,7 @@ exports.unassignAuthorityOfficers = (0, https_1.onCall)({ region: runtime_1.FUNC
             // Decrement officer workload (only if officer still exists).
             if (t.exists && t.data) {
                 tx.update(t.ref, {
-                    workloadCount: firestore_1.FieldValue.increment(-1),
+                    workloadCount: Math.max(0, t.data.workloadCount - 1),
                     updatedAt: now,
                 });
             }
@@ -152,7 +158,7 @@ exports.unassignAuthorityOfficers = (0, https_1.onCall)({ region: runtime_1.FUNC
         }
         // If every assignment for this version is now revoked, reset
         // reviewStage to null so the admin can re-assign from scratch.
-        const allAssignmentsAfter = allAssignments.map((a) => {
+        const allAssignmentsAfter = currentAssignments.map(({ value: a }) => {
             const wasTargeted = targetsToRevoke.some((t) => t.assignmentId === a.assignmentId);
             return wasTargeted ? { ...a, status: 'revoked' } : a;
         });
@@ -184,4 +190,26 @@ exports.unassignAuthorityOfficers = (0, https_1.onCall)({ region: runtime_1.FUNC
         };
     });
 });
+function validateUnassignmentSnapshot(event, eventId, versionId, assignments, authorityType) {
+    if (!event || event.currentVersionId !== versionId || event.status !== 'UnderReview' || event.reviewStage !== 'authority') {
+        throw new https_1.HttpsError('aborted', 'The review state changed while officers were being unassigned. Reload and retry.');
+    }
+    if (assignments.some(({ id, value }) => id !== `${versionId}_${value.authorityType}`
+        || value.assignmentId !== id || value.eventId !== eventId || value.versionId !== versionId
+        || event.assignedOfficerByAuthority?.[value.authorityType] !== value.officerUid)) {
+        throw new https_1.HttpsError('failed-precondition', 'The current assignment records are invalid.');
+    }
+    const targeted = assignments
+        .map(({ value }) => value)
+        .filter((assignment) => !authorityType || assignment.authorityType === authorityType);
+    if (targeted.length === 0) {
+        throw new https_1.HttpsError('not-found', authorityType
+            ? `No assignment found for authority ${authorityType}.`
+            : 'No assignments found for the current version.');
+    }
+    if (targeted.some((assignment) => assignment.status === 'completed')) {
+        throw new https_1.HttpsError('failed-precondition', 'An officer completed a proposal while the unassignment was in progress. Reload and review the submitted decision.');
+    }
+    return targeted;
+}
 //# sourceMappingURL=unassignAuthorityOfficers.js.map

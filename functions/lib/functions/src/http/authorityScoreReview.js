@@ -5,6 +5,8 @@ exports.retryOfficialFinalisationForAdmin = retryOfficialFinalisationForAdmin;
 exports.submitScoreReviewForUser = submitScoreReviewForUser;
 exports.resolveScoreConflictForAdmin = resolveScoreConflictForAdmin;
 exports.finalizeStoredReviewState = finalizeStoredReviewState;
+exports.assertReviewableEvent = assertReviewableEvent;
+exports.assertActiveScoreReviewAssignment = assertActiveScoreReviewAssignment;
 const node_crypto_1 = require("node:crypto");
 const firebase_admin_1 = require("firebase-admin");
 const https_1 = require("firebase-functions/v2/https");
@@ -62,7 +64,10 @@ async function submitScoreReviewForUser(uid, data, now = Date.now()) {
         const event = eventSnap.data();
         if (!event)
             throw new https_1.HttpsError('not-found', 'The event was not found.');
-        const { versionId, assessmentId } = assertReviewableEvent(event, profile.authorityType);
+        const { versionId, assessmentId } = assertReviewableEvent(event, profile.authorityType, uid);
+        const assignmentId = `${versionId}_${profile.authorityType}`;
+        const assignmentSnap = await transaction.get(eventRef.collection(types_1.COLLECTIONS.ASSIGNMENTS).doc(assignmentId));
+        assertActiveScoreReviewAssignment(assignmentSnap.data(), assignmentId, eventId, versionId, profile.authorityType, uid);
         const assessmentRef = eventRef.collection(types_1.COLLECTIONS.ASSESSMENTS).doc(assessmentId);
         const summaryRef = eventRef.collection(types_1.COLLECTIONS.ASSESSMENT_SUMMARIES).doc(versionId);
         const versionRef = eventRef.collection(types_1.COLLECTIONS.VERSIONS).doc(versionId);
@@ -522,7 +527,7 @@ function organizerSummary(assessment, resource, computedAt) {
         revision: resource.revision,
         stage: resource.stage,
         items: Object.fromEntries(types_1.RESOURCE_KEYS.map((key) => [key, { baseline: resource.items[key].baseline, planningRange: { ...resource.items[key].planningRange } }])),
-        disclaimer: 'Planning ranges derived from an official risk assessment; resource ratios remain internal prototype inputs.',
+        disclaimer: 'Planning ranges derived from an official risk assessment; resource ratios remain indicative and are not statutory minimums.',
     };
     return {
         assessmentId: assessment.assessmentId, eventId: assessment.eventId, versionId: assessment.versionId,
@@ -589,17 +594,28 @@ function isIdempotentOfficialOutput(event, version, assessment, resource, review
         return false;
     }
 }
-function assertReviewableEvent(event, authority) {
+function assertReviewableEvent(event, authority, uid) {
     if (!event?.currentVersionId || !event.currentAssessmentId
         || !isSafeDocumentId(event.currentVersionId) || !isSafeDocumentId(event.currentAssessmentId)
         || (event.currentResourceId !== undefined && !isSafeDocumentId(event.currentResourceId))
-        || !['Pending', 'UnderReview'].includes(event.status))
-        throw new https_1.HttpsError('failed-precondition', 'The event is not open for authority review.');
+        || event.status !== 'UnderReview' || event.reviewStage !== 'authority')
+        throw new https_1.HttpsError('failed-precondition', 'The event is not open for assigned authority review.');
     if (!validRequiredAuthorities(event.requiredAuthorities))
         throw new https_1.HttpsError('failed-precondition', 'The assigned authority list is invalid.');
     if (!event.requiredAuthorities.includes(authority))
         throw new https_1.HttpsError('permission-denied', 'This authority is not assigned to the event.');
+    if (event.assignedOfficerByAuthority?.[authority] !== uid || !event.assignedOfficerUids?.includes(uid)) {
+        throw new https_1.HttpsError('permission-denied', 'You are not the named officer assigned to this authority review.');
+    }
     return { versionId: event.currentVersionId, assessmentId: event.currentAssessmentId };
+}
+function assertActiveScoreReviewAssignment(value, assignmentId, eventId, versionId, authorityType, uid) {
+    const assignment = value && typeof value === 'object' ? value : undefined;
+    if (!assignment || assignment.assignmentId !== assignmentId || assignment.eventId !== eventId
+        || assignment.versionId !== versionId || assignment.authorityType !== authorityType
+        || assignment.officerUid !== uid || (assignment.status !== 'pending' && assignment.status !== 'in_progress')) {
+        throw new https_1.HttpsError('permission-denied', 'The named officer assignment is missing, revoked, completed, or stale.');
+    }
 }
 function validRequiredAuthorities(value) {
     const allowed = new Set(['PDRM', 'BOMBA', 'KKM', 'DBKL', 'MOTAC']);

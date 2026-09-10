@@ -32,21 +32,25 @@ describe('M1-submitted assessment input integrity', () => {
         vulnerableAttendeesPercent: 10, standingAttendeesPercent: 20, nearestHospitalTravelMinutes: 15,
       },
     };
-    const documentPaths = ['event_documents/event-1/v1/combined.pdf', 'event_documents/event-1/v1/evidence.pdf'];
+    const documentPaths = ['event_documents/event-1/v1/core.docx', 'event_documents/event-1/v1/scenario.docx', 'event_documents/event-1/v1/evidence.pdf'];
     const evidenceManifest = m1EvidenceRequirementsFor(templateSelection.scenarioTemplateId).map((requirement) => (
       isM1EvidenceForcedRequired(requirement, eventDetails.riskProfile)
-        ? { requirementId: requirement.id, applicability: 'required' as const, documentPath: documentPaths[1] }
+        ? { requirementId: requirement.id, applicability: 'required' as const, documentPath: documentPaths[2] }
         : { requirementId: requirement.id, applicability: 'not_applicable' as const, notApplicableReason: 'Not applicable to this test event scenario.' }
     ));
     const version = buildSubmittedEventVersion({
       eventId: 'event-1', versionId: 'v1', versionNumber: 1, eventDetails, templateSelection,
       documentPaths,
       documentUploads: [{
-        path: documentPaths[0], role: 'combined_application' as const, originalName: 'combined.pdf',
-        mimeType: 'application/pdf', sizeBytes: 100, uploadedAt: 900,
+        path: documentPaths[0], role: 'core_template' as const, originalName: 'core.docx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', sizeBytes: 100, uploadedAt: 900,
         schemaVersion: '2026-08-28-document-v1' as const,
       }, {
-        path: documentPaths[1], role: 'supporting_evidence' as const, originalName: 'evidence.pdf',
+        path: documentPaths[1], role: 'scenario_template' as const, originalName: 'scenario.docx',
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', sizeBytes: 100, uploadedAt: 900,
+        schemaVersion: '2026-08-28-document-v1' as const,
+      }, {
+        path: documentPaths[2], role: 'supporting_evidence' as const, originalName: 'evidence.pdf',
         mimeType: 'application/pdf', sizeBytes: 100, uploadedAt: 900,
         schemaVersion: '2026-08-28-document-v1' as const,
       }],

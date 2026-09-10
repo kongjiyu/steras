@@ -153,9 +153,10 @@ async function createScenario(
     templateRegistryVersion: M1_TEMPLATE_REGISTRY_VERSION,
     selectedAt: now,
   } satisfies M1TemplateSelection;
-  const combined = await uploadUatDocument(eventId, 'v1', `${scenario}-combined-application.pdf`, 'combined_application', now);
+  const core = await uploadUatDocument(eventId, 'v1', `${scenario}-core-application.pdf`, 'core_template', now);
+  const scenarioDocument = await uploadUatDocument(eventId, 'v1', `${scenario}-scenario-application.pdf`, 'scenario_template', now);
   const evidence = await uploadUatDocument(eventId, 'v1', `${scenario}-safety-plan.pdf`, 'supporting_evidence', now);
-  const draftDocuments = [combined.document, evidence.document];
+  const draftDocuments = [core.document, scenarioDocument.document, evidence.document];
   const evidenceManifest = m1EvidenceRequirementsFor(scenarioTemplateId).map((requirement) => (
     isM1EvidenceForcedRequired(requirement, eventDetails.riskProfile)
       ? { requirementId: requirement.id, applicability: 'required' as const, documentPath: evidence.document.path }
@@ -197,7 +198,10 @@ async function createScenario(
     templateRegistryVersion: M1_TEMPLATE_REGISTRY_VERSION,
     coreTemplateId: templateSelection.coreTemplateId,
     scenarioTemplateId,
-    sourceDocuments: [{ ...combined.document, sha256: combined.sha256 }],
+    sourceDocuments: [
+      { ...core.document, role: 'core_template', sha256: core.sha256 },
+      { ...scenarioDocument.document, role: 'scenario_template', sha256: scenarioDocument.sha256 },
+    ],
     extractedFields: [],
     rawFieldIds: [],
     warnings: [],

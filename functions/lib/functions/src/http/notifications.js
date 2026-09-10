@@ -1,6 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.markNotificationRead = exports.listMyNotifications = void 0;
+exports.markAllNotificationsRead = exports.markNotificationRead = exports.listMyNotifications = void 0;
+exports.unreadNotificationDocuments = unreadNotificationDocuments;
+exports.validateNotificationListLimit = validateNotificationListLimit;
+exports.validateNotificationId = validateNotificationId;
 /**
  * Notification access Cloud Functions (read/mark).
  *
@@ -16,7 +19,7 @@ exports.listMyNotifications = (0, https_1.onCall)({ region: runtime_1.FUNCTION_R
     if (!request.auth)
         throw new https_1.HttpsError('unauthenticated', 'Sign in to view notifications.');
     const db = (0, firebase_admin_1.firestore)();
-    const limit = Math.min(Math.max(request.data?.limit ?? MAX_LIST, 1), MAX_LIST);
+    const limit = validateNotificationListLimit(request.data?.limit);
     const snap = await db.collection(types_1.COLLECTIONS.NOTIFICATIONS)
         .where('recipientUid', '==', request.auth.uid)
         .orderBy('createdAt', 'desc')
@@ -29,9 +32,10 @@ exports.listMyNotifications = (0, https_1.onCall)({ region: runtime_1.FUNCTION_R
 exports.markNotificationRead = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
     if (!request.auth)
         throw new https_1.HttpsError('unauthenticated', 'Sign in to update notifications.');
-    const id = (request.data?.notificationId ?? '').trim();
-    if (!id)
-        throw new https_1.HttpsError('invalid-argument', 'notificationId is required.');
+    const id = validateNotificationId(request.data?.notificationId);
+    if (request.data?.read !== undefined && typeof request.data.read !== 'boolean') {
+        throw new https_1.HttpsError('invalid-argument', 'read must be a boolean.');
+    }
     const read = request.data?.read !== false; // default true
     const db = (0, firebase_admin_1.firestore)();
     const ref = db.collection(types_1.COLLECTIONS.NOTIFICATIONS).doc(id);
@@ -45,4 +49,38 @@ exports.markNotificationRead = (0, https_1.onCall)({ region: runtime_1.FUNCTION_
     await ref.update({ read, readAt: read ? Date.now() : null });
     return { ok: true, idempotent: false };
 });
+exports.markAllNotificationsRead = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
+    if (!request.auth)
+        throw new https_1.HttpsError('unauthenticated', 'Sign in to update notifications.');
+    const db = (0, firebase_admin_1.firestore)();
+    const snapshot = await db.collection(types_1.COLLECTIONS.NOTIFICATIONS)
+        .where('recipientUid', '==', request.auth.uid)
+        .get();
+    const unread = unreadNotificationDocuments(snapshot.docs);
+    const readAt = Date.now();
+    for (let offset = 0; offset < unread.length; offset += 500) {
+        const batch = db.batch();
+        for (const document of unread.slice(offset, offset + 500))
+            batch.update(document.ref, { read: true, readAt });
+        await batch.commit();
+    }
+    return { ok: true, updated: unread.length };
+});
+function unreadNotificationDocuments(documents) {
+    return documents.filter((document) => document.data().read !== true);
+}
+function validateNotificationListLimit(value) {
+    if (value === undefined)
+        return MAX_LIST;
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1 || value > MAX_LIST) {
+        throw new https_1.HttpsError('invalid-argument', `limit must be an integer from 1 to ${MAX_LIST}.`);
+    }
+    return value;
+}
+function validateNotificationId(value) {
+    if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,200}$/.test(value.trim())) {
+        throw new https_1.HttpsError('invalid-argument', 'notificationId is invalid.');
+    }
+    return value.trim();
+}
 //# sourceMappingURL=notifications.js.map

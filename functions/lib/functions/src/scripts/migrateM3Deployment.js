@@ -383,7 +383,7 @@ async function buildEventPlan(db, eventDoc, manifest, now) {
                 actorId: 'system',
                 actorRole: 'system',
                 timestamp: now,
-                notes: 'M3 deployment compatibility migration applied.',
+                notes: 'Authority approval compatibility migration applied.',
                 metadata: {
                     migrationId: manifest?.migrationId ?? DEFAULT_MIGRATION_ID,
                     assignedOfficerCount: assignedOfficerUids.length,

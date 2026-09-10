@@ -8,6 +8,7 @@ const https_1 = require("firebase-functions/v2/https");
 const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
 const applicationLifecycle_1 = require("./applicationLifecycle");
+const onEventStatusChanged_1 = require("../triggers/onEventStatusChanged");
 exports.withdrawEvent = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
     if (!request.auth)
         throw new https_1.HttpsError('unauthenticated', 'Sign in before withdrawing an event.');
@@ -33,7 +34,7 @@ async function withdrawEventForUser(uid, eventId, rationale, now = Date.now()) {
     const eventReference = db.collection(types_1.COLLECTIONS.EVENTS).doc(eventId);
     const publicEventReference = db.collection(types_1.COLLECTIONS.PUBLIC_EVENTS).doc(eventId);
     const userReference = db.collection(types_1.COLLECTIONS.USERS).doc(uid);
-    return db.runTransaction(async (transaction) => {
+    const result = await db.runTransaction(async (transaction) => {
         const [snapshot, userSnapshot] = await Promise.all([transaction.get(eventReference), transaction.get(userReference)]);
         if (!snapshot.exists)
             throw new https_1.HttpsError('not-found', 'Event was not found.');
@@ -79,5 +80,9 @@ async function withdrawEventForUser(uid, eventId, rationale, now = Date.now()) {
         });
         return { eventId, status: 'Withdrawn' };
     });
+    // Synchronous reconciliation makes client retry a durable recovery path if
+    // the Firestore trigger was delayed or failed. The helper is idempotent.
+    await (0, onEventStatusChanged_1.cleanupWithdrawnEvent)(eventId, now);
+    return result;
 }
 //# sourceMappingURL=withdrawEvent.js.map

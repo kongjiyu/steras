@@ -14,7 +14,8 @@
  *   - overrideResources     — validates and audits resource adjustments
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.unpublishStage2Doc = exports.publishStage2Doc = exports.reportStage2Doc = exports.confirmStage2Doc = exports.submitStage2Doc = exports.submitStage1Doc = exports.editEventControlList = exports.generateEventControlList = exports.unassignAuthorityOfficers = exports.makeSecondReviewDecision = exports.recordOfficerProposal = exports.assignAuthorityOfficers = exports.proposeEventControlList = exports.listMyNotifications = exports.markNotificationRead = exports.verifyStage1Doc = exports.reviewAssessmentScores = exports.overrideResources = exports.makeInitialReviewDecision = exports.retryManualOfficialFinalisation = exports.submitAdminManualAssessment = exports.retryOfficialFinalisation = exports.resolveAuthorityScoreConflict = exports.submitAuthorityScoreReview = exports.makeAuthorityDecision = exports.deactivateVenue = exports.verifyVenue = exports.saveVenue = exports.createPrivilegedAccount = exports.cancelEvent = exports.prepareApplicationRevision = exports.withdrawEvent = exports.extractApplicationDocuments = exports.submitEvent = exports.manualRecompute = exports.onEventStatusChanged = exports.onM4ReportOutcome = exports.recomputeRiskAndResources = exports.refreshAssessmentContext = exports.onEventUpdated = exports.onEventCreated = void 0;
+exports.reportStage2Doc = exports.confirmStage2Doc = exports.submitStage2Doc = exports.submitStage1Doc = exports.editEventControlList = exports.generateEventControlList = exports.unassignAuthorityOfficers = exports.makeSecondReviewDecision = exports.recordOfficerProposal = exports.assignAuthorityOfficers = exports.proposeEventControlList = exports.getIncidentEvidenceDownloadUrl = exports.saveAuthorityDirectoryEntry = exports.listAuthorityDirectory = exports.manageIncident = exports.listIncidents = exports.submitIncident = exports.getAnalyticsPortfolio = exports.listMyNotifications = exports.markAllNotificationsRead = exports.markNotificationRead = exports.verifyStage1Doc = exports.reviewAssessmentScores = exports.overrideResources = exports.makeInitialReviewDecision = exports.retryManualOfficialFinalisation = exports.submitAdminManualAssessment = exports.retryOfficialFinalisation = exports.resolveAuthorityScoreConflict = exports.submitAuthorityScoreReview = exports.makeAuthorityDecision = exports.deactivateVenue = exports.verifyVenue = exports.saveVenue = exports.resolveDisplayIdentities = exports.resetUserPassword = exports.createPrivilegedAccount = exports.cancelEvent = exports.prepareApplicationRevision = exports.withdrawEvent = exports.extractApplicationDocuments = exports.submitEvent = exports.manualRecompute = exports.onEventStatusChanged = exports.onPublicReportCreated = exports.onM4ReportOutcome = exports.recomputeRiskAndResources = exports.refreshAssessmentContext = exports.onEventUpdated = exports.onEventCreated = void 0;
+exports.withdrawStage2Report = exports.updateOwnProfile = exports.unpublishStage2Doc = exports.publishStage2Doc = void 0;
 const app_1 = require("firebase-admin/app");
 // Initialize firebase-admin before any function code runs.
 (0, app_1.initializeApp)();
@@ -27,6 +28,8 @@ var computeRisk_1 = require("./triggers/computeRisk");
 Object.defineProperty(exports, "recomputeRiskAndResources", { enumerable: true, get: function () { return computeRisk_1.recomputeRiskAndResources; } });
 var onM4ReportOutcome_1 = require("./triggers/onM4ReportOutcome");
 Object.defineProperty(exports, "onM4ReportOutcome", { enumerable: true, get: function () { return onM4ReportOutcome_1.onM4ReportOutcome; } });
+var onPublicReportCreated_1 = require("./triggers/onPublicReportCreated");
+Object.defineProperty(exports, "onPublicReportCreated", { enumerable: true, get: function () { return onPublicReportCreated_1.onPublicReportCreated; } });
 var onEventStatusChanged_1 = require("./triggers/onEventStatusChanged");
 Object.defineProperty(exports, "onEventStatusChanged", { enumerable: true, get: function () { return onEventStatusChanged_1.onEventStatusChanged; } });
 // HTTP-callable functions (e.g. for manual authority re-trigger, seed runs)
@@ -43,6 +46,9 @@ Object.defineProperty(exports, "prepareApplicationRevision", { enumerable: true,
 Object.defineProperty(exports, "cancelEvent", { enumerable: true, get: function () { return applicationLifecycle_1.cancelEvent; } });
 var adminUserManagement_1 = require("./http/adminUserManagement");
 Object.defineProperty(exports, "createPrivilegedAccount", { enumerable: true, get: function () { return adminUserManagement_1.createPrivilegedAccount; } });
+Object.defineProperty(exports, "resetUserPassword", { enumerable: true, get: function () { return adminUserManagement_1.resetUserPassword; } });
+var resolveDisplayIdentities_1 = require("./http/resolveDisplayIdentities");
+Object.defineProperty(exports, "resolveDisplayIdentities", { enumerable: true, get: function () { return resolveDisplayIdentities_1.resolveDisplayIdentities; } });
 var adminVenueManagement_1 = require("./http/adminVenueManagement");
 Object.defineProperty(exports, "saveVenue", { enumerable: true, get: function () { return adminVenueManagement_1.saveVenue; } });
 Object.defineProperty(exports, "verifyVenue", { enumerable: true, get: function () { return adminVenueManagement_1.verifyVenue; } });
@@ -66,7 +72,18 @@ var verifyStage1Doc_1 = require("./http/verifyStage1Doc");
 Object.defineProperty(exports, "verifyStage1Doc", { enumerable: true, get: function () { return verifyStage1Doc_1.verifyStage1Doc; } });
 var notifications_1 = require("./http/notifications");
 Object.defineProperty(exports, "markNotificationRead", { enumerable: true, get: function () { return notifications_1.markNotificationRead; } });
+Object.defineProperty(exports, "markAllNotificationsRead", { enumerable: true, get: function () { return notifications_1.markAllNotificationsRead; } });
 Object.defineProperty(exports, "listMyNotifications", { enumerable: true, get: function () { return notifications_1.listMyNotifications; } });
+// M5 — bounded, admin-only, privacy-safe analytics read model.
+var getAnalyticsPortfolio_1 = require("./http/getAnalyticsPortfolio");
+Object.defineProperty(exports, "getAnalyticsPortfolio", { enumerable: true, get: function () { return getAnalyticsPortfolio_1.getAnalyticsPortfolio; } });
+var m4Incidents_1 = require("./http/m4Incidents");
+Object.defineProperty(exports, "submitIncident", { enumerable: true, get: function () { return m4Incidents_1.submitIncident; } });
+Object.defineProperty(exports, "listIncidents", { enumerable: true, get: function () { return m4Incidents_1.listIncidents; } });
+Object.defineProperty(exports, "manageIncident", { enumerable: true, get: function () { return m4Incidents_1.manageIncident; } });
+Object.defineProperty(exports, "listAuthorityDirectory", { enumerable: true, get: function () { return m4Incidents_1.listAuthorityDirectory; } });
+Object.defineProperty(exports, "saveAuthorityDirectoryEntry", { enumerable: true, get: function () { return m4Incidents_1.saveAuthorityDirectoryEntry; } });
+Object.defineProperty(exports, "getIncidentEvidenceDownloadUrl", { enumerable: true, get: function () { return m4Incidents_1.getIncidentEvidenceDownloadUrl; } });
 // M3 control-list proposal: MiniMax-backed with a deterministic fallback.
 var proposeEventControlList_1 = require("./http/proposeEventControlList");
 Object.defineProperty(exports, "proposeEventControlList", { enumerable: true, get: function () { return proposeEventControlList_1.proposeEventControlList; } });
@@ -110,4 +127,8 @@ var publishStage2Doc_1 = require("./http/publishStage2Doc");
 Object.defineProperty(exports, "publishStage2Doc", { enumerable: true, get: function () { return publishStage2Doc_1.publishStage2Doc; } });
 var unpublishStage2Doc_1 = require("./http/unpublishStage2Doc");
 Object.defineProperty(exports, "unpublishStage2Doc", { enumerable: true, get: function () { return unpublishStage2Doc_1.unpublishStage2Doc; } });
+var updateOwnProfile_1 = require("./http/updateOwnProfile");
+Object.defineProperty(exports, "updateOwnProfile", { enumerable: true, get: function () { return updateOwnProfile_1.updateOwnProfile; } });
+var withdrawStage2Report_1 = require("./http/withdrawStage2Report");
+Object.defineProperty(exports, "withdrawStage2Report", { enumerable: true, get: function () { return withdrawStage2Report_1.withdrawStage2Report; } });
 //# sourceMappingURL=index.js.map

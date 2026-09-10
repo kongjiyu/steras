@@ -117,7 +117,7 @@ export interface M1TemplateSelection {
   selectedAt: number;
 }
 
-export type M1DocumentRole = 'core_template' | 'scenario_template' | 'combined_application' | 'supporting_evidence';
+export type M1DocumentRole = 'core_template' | 'scenario_template' | 'supporting_evidence';
 
 /** Organizer upload metadata. Storage bytes remain immutable after upload. */
 export interface M1DraftDocument {
@@ -180,7 +180,7 @@ export interface M1DocumentExtraction {
   scenarioTemplateId: string;
   sourceDocuments: Array<{
     path: string;
-    role: 'core_template' | 'scenario_template' | 'combined_application';
+    role: 'core_template' | 'scenario_template';
     originalName: string;
     mimeType: string;
     sizeBytes: number;

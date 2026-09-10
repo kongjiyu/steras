@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.makeAuthorityDecision = void 0;
+exports.assertLegacyAuthorityDecisionEndpointAvailable = assertLegacyAuthorityDecisionEndpointAvailable;
 exports.makeAuthorityDecisionForUser = makeAuthorityDecisionForUser;
 exports.assertOfficialAssessmentReady = assertOfficialAssessmentReady;
 exports.validateDecisionRequest = validateDecisionRequest;
@@ -27,21 +28,18 @@ const STANDARD_MIN_RATIONALE = 10;
 exports.makeAuthorityDecision = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
     if (!request.auth)
         throw new https_1.HttpsError('unauthenticated', 'Sign in before reviewing an application.');
-    try {
-        return await makeAuthorityDecisionForUser(request.auth.uid, request.data);
-    }
-    catch (err) {
-        if (err instanceof https_1.HttpsError) {
-            console.warn(`[makeAuthorityDecision] HttpsError ${err.code}: ${err.message}`);
-            throw err;
-        }
-        const message = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
-        console.error(`[makeAuthorityDecision] unexpected error: ${message}`);
-        throw new https_1.HttpsError('internal', message.slice(0, 500));
-    }
+    assertLegacyAuthorityDecisionEndpointAvailable();
 });
+/**
+ * The legacy aggregate-and-publish endpoint is permanently retired. Keeping
+ * its pure verification helpers supports old-record integrity checks, while
+ * every live application must use named assignments and Admin second review.
+ */
+function assertLegacyAuthorityDecisionEndpointAvailable() {
+    throw new https_1.HttpsError('failed-precondition', 'This legacy decision endpoint is retired. Use the named officer proposal and Admin second-review workflow.');
+}
 async function makeAuthorityDecisionForUser(uid, request, now = Date.now()) {
-    const { eventId, decision, rationale, suggestion, materialsReviewed } = validateDecisionRequest(request);
+    const { eventId, decision, rationale, suggestion, materialsReviewed, rejectionReasonCategory } = validateDecisionRequest(request);
     const db = (0, firebase_admin_1.firestore)();
     const eventReference = db.collection(types_1.COLLECTIONS.EVENTS).doc(eventId);
     const userReference = db.collection(types_1.COLLECTIONS.USERS).doc(uid);
@@ -141,7 +139,7 @@ async function makeAuthorityDecisionForUser(uid, request, now = Date.now()) {
         // ---- M3 gates: compliance + readiness (FR-M3-14, FR-M3-03 handoff) ----
         const assessment = assessmentSnapshot.data();
         if (assessment?.complianceStatus === 'blocked' && decision === 'Approved') {
-            throw new https_1.HttpsError('failed-precondition', 'This application cannot be approved while M2 compliance status is "blocked". ' +
+            throw new https_1.HttpsError('failed-precondition', 'This application cannot be approved while the assessment compliance status is "blocked". ' +
                 'Resolve the blocking compliance checks first or choose Reject.');
         }
         const readiness = assessment?.assessmentReadiness;
@@ -174,6 +172,8 @@ async function makeAuthorityDecisionForUser(uid, request, now = Date.now()) {
             decision,
             rationale,
             ...(suggestion ? { suggestion } : {}),
+            reviewStage: 'authority',
+            ...(decision === 'Rejected' ? { rejectionReasonCategory } : {}),
             ...(decision === 'Approved' ? { materialsReviewed: true } : {}),
             reviewerId: uid,
             decidedAt: now,
@@ -218,11 +218,18 @@ async function makeAuthorityDecisionForUser(uid, request, now = Date.now()) {
                 versionId,
                 eventName: details.name,
                 venueName: details.venueName,
+                venueAddress: details.venueAddress,
+                ...(details.venueState ? { venueState: details.venueState } : {}),
+                ...(details.venueLocation ? { venueLocation: details.venueLocation } : {}),
                 eventType: details.type,
+                ...(details.description ? { description: details.description } : {}),
+                expectedAttendance: details.expectedAttendance,
+                environment: details.environment,
                 startDatetime: details.startDatetime,
                 endDatetime: details.endDatetime,
                 approvedBy: event.requiredAuthorities,
                 publicStatus: 'approved',
+                lastUpdatedAt: now,
             };
             transaction.set(publicReference, publicEvent);
             const publishAudit = eventReference.collection(types_1.COLLECTIONS.AUDIT_LOGS).doc(`${versionId}_public_published`);
@@ -483,7 +490,7 @@ function validateDecisionRequest(request) {
         throw new https_1.HttpsError('invalid-argument', 'eventId must be a valid document id.');
     if (!isDecision(decision))
         throw new https_1.HttpsError('invalid-argument', 'A valid decision is required.');
-    if (rationale.length < STANDARD_MIN_RATIONALE || rationale.length > 1_000) {
+    if ((decision !== 'Approved' && rationale.length < STANDARD_MIN_RATIONALE) || rationale.length > 1_000 || (rationale.length > 0 && rationale.length < STANDARD_MIN_RATIONALE)) {
         throw new https_1.HttpsError('invalid-argument', `Rationale must be between ${STANDARD_MIN_RATIONALE} and 1,000 characters.`);
     }
     if (decision === 'Approved' && value.materialsReviewed !== true && value.confirmedReview !== true) {
@@ -493,11 +500,15 @@ function validateDecisionRequest(request) {
     if (decision !== 'Approved' && (suggestion.length < 10 || suggestion.length > 1_000)) {
         throw new https_1.HttpsError('invalid-argument', 'A suggestion between 10 and 1,000 characters is required.');
     }
+    const rejectionReasonCategory = value.rejectionReasonCategory;
+    if (decision === 'Rejected' && !types_1.REJECTION_REASON_CATEGORIES.includes(rejectionReasonCategory)) {
+        throw new https_1.HttpsError('invalid-argument', 'A valid rejectionReasonCategory is required when rejecting.');
+    }
     return {
         eventId,
         decision,
         rationale,
-        ...(decision === 'Approved' ? { materialsReviewed: true } : { suggestion }),
+        ...(decision === 'Approved' ? { materialsReviewed: true } : { suggestion, rejectionReasonCategory: rejectionReasonCategory }),
     };
 }
 function aggregateDecisionStatus(requiredAuthorities, decisions) {

@@ -102,14 +102,14 @@ export async function parseM1Pdf(buffer: Buffer): Promise<ParsedM1Document> {
   } finally {
     await parser.destroy();
   }
-  if (!text) throw new Error('The combined PDF contains no searchable text. Upload a text-based PDF rather than a scanned image.');
-  if (text.length > MAX_PDF_TEXT_CHARACTERS) throw new Error('The combined PDF contains too much text to extract safely.');
+  if (!text) throw new Error('The PDF contains no searchable text. Upload a text-based PDF rather than a scanned image.');
+  if (text.length > MAX_PDF_TEXT_CHARACTERS) throw new Error('The PDF contains too much text to extract safely.');
 
   const fields = new Map<string, string>();
   for (const row of tableRows) {
     const match = row[0]?.match(/\b(?:[A-Z]\d{2}[A-Z]?|T\d{2}-[A-Z]\d{2})\s*\/\s*([A-Z][A-Z0-9_]+)\b/);
     if (!match) continue;
-    if (fields.has(match[1])) throw new Error(`The combined PDF contains duplicate field ID ${match[1]}.`);
+    if (fields.has(match[1])) throw new Error(`The PDF contains duplicate field ID ${match[1]}.`);
     fields.set(match[1], cleanPdfResponse(row.slice(1).join('\n').replace(/\[[\s\S]*?\]/g, '')));
   }
   if (fields.size === 0) {
@@ -117,13 +117,13 @@ export async function parseM1Pdf(buffer: Buffer): Promise<ParsedM1Document> {
     for (let index = 0; index < markers.length; index += 1) {
       const marker = markers[index];
       const fieldId = marker[1];
-      if (fields.has(fieldId)) throw new Error(`The combined PDF contains duplicate field ID ${fieldId}.`);
+      if (fields.has(fieldId)) throw new Error(`The PDF contains duplicate field ID ${fieldId}.`);
       const start = (marker.index ?? 0) + marker[0].length;
       const end = markers[index + 1]?.index ?? text.length;
       fields.set(fieldId, pdfResponse(text.slice(start, end)));
     }
   }
-  if (fields.size === 0) throw new Error('No STERAS Field IDs were found in the combined PDF.');
+  if (fields.size === 0) throw new Error('No STERAS Field IDs were found in the PDF.');
   return { text, fields };
 }
 
@@ -204,23 +204,6 @@ export function validateTemplateIdentity(
   return errors;
 }
 
-export function validateCombinedTemplateIdentity(document: ParsedM1Document, expectedScenarioTemplateId: string): string[] {
-  const errors: string[] = [];
-  if (!containsToken(document.text, 'STERAS-CORE')) errors.push('The combined document does not contain the STERAS Core template.');
-  if (!['EVENT_NAME', 'EVENT_DATES', 'EVENT_ADDRESS', 'TOTAL_ATTENDANCE', 'RESPONSIBLE_PERSON'].every((fieldId) => document.fields.has(fieldId))) {
-    errors.push('The combined document is missing required Core STERAS Field IDs.');
-  }
-  if (!containsToken(document.text, expectedScenarioTemplateId)) {
-    errors.push(`The combined document does not contain scenario template ${expectedScenarioTemplateId}.`);
-  }
-  const expectedPrefix = expectedScenarioTemplateId.match(/STERAS-(T\d{2})-/)?.[1];
-  const scenarioPrefixes = new Set([...document.text.matchAll(/\b(T\d{2})-[A-Z]\d{2}\s*\//g)].map((match) => match[1]));
-  if (!expectedPrefix || scenarioPrefixes.size !== 1 || !scenarioPrefixes.has(expectedPrefix)) {
-    errors.push(`The combined document scenario Field IDs do not match ${expectedScenarioTemplateId}.`);
-  }
-  return errors;
-}
-
 export function mapM1Documents(core: ParsedM1Document, scenario: ParsedM1Document): M1MappedExtraction {
   const extractedFields: M1ExtractedField[] = [];
   const warnings: string[] = [];
@@ -235,12 +218,14 @@ export function mapM1Documents(core: ParsedM1Document, scenario: ParsedM1Documen
   add('venueAddress', meaningful(core.fields.get('EVENT_ADDRESS')), ['EVENT_ADDRESS']);
   add('expectedAttendance', firstSafeInteger(core.fields.get('TOTAL_ATTENDANCE')), ['TOTAL_ATTENDANCE']);
   add('organizerName', meaningful(core.fields.get('RESPONSIBLE_PERSON')), ['RESPONSIBLE_PERSON']);
-  const contact = core.fields.get('RESPONSIBLE_CONTACT') ?? '';
+  const contact = `${core.fields.get('RESPONSIBLE_CONTACT') ?? ''}\n${fieldTextSection(core.text, 'RESPONSIBLE_CONTACT')}`;
   add('organizerEmail', firstEmail(contact), ['RESPONSIBLE_CONTACT']);
   add('organizerPhone', firstPhone(contact), ['RESPONSIBLE_CONTACT'], 'medium');
 
-  const dates = isoDates(core.fields.get('EVENT_DATES') ?? '');
-  const times = clockTimes(core.fields.get('OPERATING_HOURS') ?? '');
+  const sectionDates = isoDates(fieldTextSection(core.text, 'EVENT_DATES'));
+  const sectionTimes = clockTimes(fieldTextSection(core.text, 'OPERATING_HOURS'));
+  const dates = sectionDates.length >= 2 ? sectionDates : isoDates(core.fields.get('EVENT_DATES') ?? '');
+  const times = sectionTimes.length >= 2 ? sectionTimes : clockTimes(core.fields.get('OPERATING_HOURS') ?? '');
   if (dates[0]) add('startDatetime', malaysiaTimestamp(dates[0], times[0] ?? '00:00'), ['EVENT_DATES', 'OPERATING_HOURS']);
   if (dates[1]) add('endDatetime', malaysiaTimestamp(dates[1], times[1] ?? '23:59'), ['EVENT_DATES', 'OPERATING_HOURS']);
   if (dates.length === 1) warnings.push('Only one event date was extracted; confirm the end date manually.');
@@ -336,6 +321,14 @@ function meaningful(value: string | undefined): string | undefined {
 
 function containsToken(value: string, token: string): boolean {
   return value.toLocaleUpperCase().includes(token.toLocaleUpperCase());
+}
+
+function fieldTextSection(text: string, fieldId: string): string {
+  const marker = new RegExp(`\\b(?:[A-Z]\\d{2}[A-Z]?|T\\d{2}-[A-Z]\\d{2})\\s*\\/\\s*${fieldId}\\b`).exec(text);
+  if (!marker || marker.index === undefined) return '';
+  const start = marker.index + marker[0].length;
+  const next = /\b(?:[A-Z]\d{2}[A-Z]?|T\d{2}-[A-Z]\d{2})\s*\/\s*[A-Z][A-Z0-9_]+\b/.exec(text.slice(start));
+  return text.slice(start, next ? start + next.index : text.length);
 }
 
 function firstSafeInteger(value: string | undefined): number | undefined {

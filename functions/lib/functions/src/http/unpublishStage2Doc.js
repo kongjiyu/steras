@@ -53,7 +53,7 @@ exports.unpublishStage2Doc = (0, https_1.onCall)({ region: runtime_1.FUNCTION_RE
         }
         const message = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
         console.error(`[unpublishStage2Doc] unexpected error: ${message}`);
-        throw new https_1.HttpsError('internal', message.slice(0, 500));
+        throw new https_1.HttpsError('internal', 'Unable to update Stage 2 publication state. Retry shortly.');
     }
 });
 async function unpublishStage2DocForUser(uid, data, now = Date.now()) {
@@ -109,7 +109,7 @@ async function unpublishStage2DocForUser(uid, data, now = Date.now()) {
         }
         const stage2 = docSnap.data();
         if (stage2.m4TicketId) {
-            throw new https_1.HttpsError('failed-precondition', 'A public report is open for this Stage 2 image. Wait for M4 to resolve the ticket before changing publish state.');
+            throw new https_1.HttpsError('failed-precondition', 'A public report is open for this Stage 2 image. Wait for the incident investigation to resolve the ticket before changing publish state.');
         }
         if (stage2.published !== true && !isReject) {
             // Unpublish on an already-pending doc: idempotent no-op. We return

@@ -15,7 +15,7 @@ exports.overrideResources = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REG
     return overrideResourcesForUser(request.auth.uid, request.data);
 });
 async function overrideResourcesForUser(uid, request, now = Date.now()) {
-    const { eventId, quantities, rationale, idempotencyKey } = validateResourceOverrideRequest(request);
+    const { eventId, quantities, rationale, idempotencyKey, overrideReasonCategory } = validateResourceOverrideRequest(request);
     const db = (0, firebase_admin_1.firestore)();
     const eventReference = db.collection(types_1.COLLECTIONS.EVENTS).doc(eventId);
     const userReference = db.collection(types_1.COLLECTIONS.USERS).doc(uid);
@@ -75,7 +75,8 @@ async function overrideResourcesForUser(uid, request, now = Date.now()) {
             const existing = existingOverride.data();
             if (existing.eventId !== eventId || existing.versionId !== event.currentVersionId
                 || existing.baseResourceId !== event.currentResourceId || existing.reviewerId !== uid
-                || !sameQuantities(existing.quantities, quantities) || existing.rationale !== rationale) {
+                || !sameQuantities(existing.quantities, quantities) || existing.rationale !== rationale
+                || existing.overrideReasonCategory !== overrideReasonCategory) {
                 throw new https_1.HttpsError('already-exists', 'The idempotency key is already bound to different override content.');
             }
             return {
@@ -114,6 +115,7 @@ async function overrideResourcesForUser(uid, request, now = Date.now()) {
             authorityType: profile.authorityType,
             reviewerId: uid,
             rationale,
+            overrideReasonCategory,
             previousQuantities,
             quantities,
             idempotencyKey,
@@ -137,6 +139,7 @@ async function overrideResourcesForUser(uid, request, now = Date.now()) {
                 previousQuantities,
                 quantities,
                 overrideId,
+                overrideReasonCategory,
             },
         });
         return {
@@ -157,6 +160,7 @@ function validateResourceOverrideRequest(request) {
     const eventId = typeof value.eventId === 'string' ? value.eventId.trim() : '';
     const rationale = typeof value.rationale === 'string' ? value.rationale.trim() : '';
     const idempotencyKey = typeof value.idempotencyKey === 'string' ? value.idempotencyKey.trim() : '';
+    const overrideReasonCategory = value.overrideReasonCategory;
     if (!eventId)
         throw new https_1.HttpsError('invalid-argument', 'eventId is required.');
     if (!isResourceQuantities(value.quantities))
@@ -165,7 +169,10 @@ function validateResourceOverrideRequest(request) {
         throw new https_1.HttpsError('invalid-argument', 'Rationale must be between 10 and 1,000 characters.');
     if (!safeIdempotencyKey(idempotencyKey))
         throw new https_1.HttpsError('invalid-argument', 'idempotencyKey must be 8-128 characters.');
-    return { eventId, quantities: value.quantities, rationale, idempotencyKey };
+    if (!types_1.RESOURCE_OVERRIDE_REASON_CATEGORIES.includes(overrideReasonCategory)) {
+        throw new https_1.HttpsError('invalid-argument', 'A valid overrideReasonCategory is required.');
+    }
+    return { eventId, quantities: value.quantities, rationale, idempotencyKey, overrideReasonCategory: overrideReasonCategory };
 }
 function isResourceQuantities(value) {
     if (typeof value !== 'object' || value === null || Array.isArray(value))
