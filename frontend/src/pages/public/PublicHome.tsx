@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowRight,
@@ -281,14 +281,7 @@ function ProcessDocumentPreview({ step }: { step: number }) {
 }
 
 export default function PublicHome() {
-  const [showTop, setShowTop] = useState(false);
   const [selectedBenefit, setSelectedBenefit] = useState(0);
-  useEffect(() => {
-    const section = document.getElementById('how-it-works');
-    const update = () => setShowTop(Boolean(section && section.getBoundingClientRect().top <= 100));
-    update(); window.addEventListener('scroll', update, { passive: true });
-    return () => window.removeEventListener('scroll', update);
-  }, []);
   return (
     <div className="min-h-screen overflow-hidden bg-cream-50">
       <PublicHeader />
@@ -530,7 +523,6 @@ export default function PublicHome() {
         </section>
       </main>
 
-      {showTop && <button type="button" aria-label="Back to top" className="fixed bottom-6 right-6 z-40 rounded-full bg-brand-800 px-5 py-3 font-semibold text-white shadow-lg" onClick={() => window.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' })}>↑ Back to top</button>}
       <footer className="border-t border-white/15 bg-brand-950 text-cream-100">
         <div className="mx-auto grid max-w-[80rem] gap-10 px-5 py-12 sm:px-8 md:grid-cols-[1fr_auto] md:items-end">
           <div className="flex items-center gap-3">
