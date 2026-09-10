@@ -241,7 +241,11 @@ export function validateEventDetails(value: unknown, now = Date.now()): string[]
   requiredText(value.name, 'Event name', 200, errors);
   requiredText(value.venueName, 'Venue name', 200, errors);
   requiredText(value.venueAddress, 'Venue address', 500, errors);
-  requiredText(value.venueState, 'Venue state', 100, errors);
+  if (typeof value.venueState !== 'string' || !value.venueState.trim()) {
+    errors.push('Select the venue state or federal territory.');
+  } else if (value.venueState.length > 100) {
+    errors.push('The selected venue state is invalid. Choose it again.');
+  }
   requiredText(value.organizerName, 'Organizer name', 200, errors);
   requiredText(value.organizerEmail, 'Organizer email', 320, errors);
   if (typeof value.organizerEmail === 'string' && value.organizerEmail.trim() && !isEmail(value.organizerEmail)) {
@@ -423,11 +427,19 @@ const COVERAGE = new Set(['covered', 'partially_covered', 'uncovered']);
 const SEATING = new Set(['seated', 'standing', 'mixed']);
 
 function requiredText(value: unknown, label: string, max: number, errors: string[]) {
-  if (typeof value !== 'string' || value.trim().length === 0 || value.length > max) errors.push(`${label} is required and must be at most ${max} characters.`);
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    errors.push(`${label} is required.`);
+  } else if (value.length > max) {
+    errors.push(`${label} is too long. Use ${max} characters or fewer.`);
+  }
 }
 
 function optionalText(value: unknown, label: string, max: number, errors: string[]) {
-  if (value !== undefined && (typeof value !== 'string' || value.length > max)) errors.push(`${label} must be at most ${max} characters.`);
+  if (value !== undefined && typeof value !== 'string') {
+    errors.push(`${label} must be text.`);
+  } else if (typeof value === 'string' && value.length > max) {
+    errors.push(`${label} is too long. Use ${max} characters or fewer.`);
+  }
 }
 
 function positiveInteger(value: unknown, label: string, errors: string[]) {

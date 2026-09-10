@@ -25,6 +25,7 @@ import { applicationFileNameError } from './applicationFileName';
 import { applicationDocumentIdentityError } from './applicationDocumentIdentity';
 import ApplicationJourney from '../../features/m1/ApplicationJourney';
 import VenueLocationPicker from './VenueLocationPicker';
+import { applicationIssueStatus, mergeApplicationIssues } from './applicationValidationProgress';
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const PDF_MIME = 'application/pdf';
@@ -64,6 +65,7 @@ export default function NewEvent() {
   const [currentExtractionId, setCurrentExtractionId] = useState('');
   const [extracting, setExtracting] = useState(false);
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
+  const [lastValidatedErrors, setLastValidatedErrors] = useState<string[]>([]);
   const [errorNavigatorOpen, setErrorNavigatorOpen] = useState(true);
   const [mobileSectionsOpen, setMobileSectionsOpen] = useState(false);
   const [loading, setLoading] = useState(Boolean(eventId));
@@ -103,14 +105,14 @@ export default function NewEvent() {
   }, [editing, editSnapshot, form]);
 
   const update = <K extends keyof EventDetails>(key: K, value: EventDetails[K]) => {
-    setValidationErrors([]);
     setSaveMessage('Unsaved changes');
+    if (validationErrors.length > 0) setNotice('Changes made. Submit again to verify the highlighted issues.');
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
   const updateRiskProfile = <K extends keyof EventRiskProfile>(key: K, value: EventRiskProfile[K]) => {
-    setValidationErrors([]);
     setSaveMessage('Unsaved changes');
+    if (validationErrors.length > 0) setNotice('Changes made. Submit again to verify the highlighted issues.');
     setForm((previous) => ({
       ...previous,
       riskProfile: { ...previous.riskProfile, [key]: value },
@@ -280,7 +282,8 @@ export default function NewEvent() {
     if (!user) return;
     const errors = validateEventApplication(form, documentPaths, templateSelection, draftDocuments, currentExtractionId, evidenceManifest);
     if (errors.length > 0) {
-      setValidationErrors(errors);
+      setValidationErrors((previous) => mergeApplicationIssues(previous, errors));
+      setLastValidatedErrors(errors);
       setErrorNavigatorOpen(true);
       setNotice(errors[0]);
       requestAnimationFrame(() => {
@@ -401,7 +404,6 @@ export default function NewEvent() {
         setExtraction(null);
         setCurrentExtractionId('');
       }
-      setValidationErrors([]);
       setNotice(role === 'supporting_evidence'
         ? `${uploaded.length} supporting document${uploaded.length === 1 ? '' : 's'} uploaded. Select the matching evidence item below.`
         : `${role === 'core_template' ? 'Core application' : 'Scenario-specific'} document verified and uploaded.`);
@@ -453,7 +455,6 @@ export default function NewEvent() {
         evidenceManifestSchemaVersion: M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
         updatedAt: Date.now(),
       });
-      setValidationErrors([]);
       setDraftDocuments(nextDocuments);
       setDocumentPaths(nextPaths);
       setEvidenceManifest(nextManifest);
@@ -473,7 +474,7 @@ export default function NewEvent() {
   const updateEvidenceResponse = (requirementId: string, response: M1EvidenceRequirementResponse) => {
     const nextManifest = evidenceManifest.map((item) => item.requirementId === requirementId ? response : item);
     setEvidenceManifest(nextManifest);
-    setValidationErrors([]);
+    if (validationErrors.length > 0) setNotice('Changes made. Submit again to verify the highlighted issues.');
   };
 
   const viewDocument = (path: string) => setPreviewPath(path);
@@ -497,7 +498,6 @@ export default function NewEvent() {
           : findUniqueRegistryVenueMatch(extracted.venueName, venues);
         return selectedVenue ? bindCanonicalVenue(extracted, selectedVenue) : extracted;
       });
-      setValidationErrors([]);
       setNotice(`Auto-filled ${result.extractedFields.length} fields. Review all highlighted warnings before submission.`);
     } catch (error) {
       setNotice(extractionErrorMessage(error));
@@ -554,6 +554,21 @@ export default function NewEvent() {
   const evidenceCompletionPercent = evidenceDefinitions.length
     ? Math.round((resolvedEvidenceCount / evidenceDefinitions.length) * 100)
     : 0;
+  const currentValidationErrors = validationErrors.length > 0
+    ? validateEventApplication(form, documentPaths, templateSelection, draftDocuments, currentExtractionId, evidenceManifest)
+    : [];
+  const validationIssues = validationErrors.map((message) => ({
+    message,
+    status: applicationIssueStatus(message, currentValidationErrors, lastValidatedErrors),
+  }));
+  const unresolvedIssueCount = validationIssues.filter((issue) => issue.status === 'unresolved').length;
+  const changedIssueCount = validationIssues.filter((issue) => issue.status === 'changed').length;
+  const resolvedIssueCount = validationIssues.filter((issue) => issue.status === 'resolved').length;
+  const issueNavigatorTitle = unresolvedIssueCount > 0
+    ? `${unresolvedIssueCount} issue${unresolvedIssueCount === 1 ? '' : 's'} to fix${changedIssueCount ? ` · ${changedIssueCount} changed` : ''}`
+    : changedIssueCount > 0
+      ? `${changedIssueCount} change${changedIssueCount === 1 ? '' : 's'} to verify`
+      : `${resolvedIssueCount} issue${resolvedIssueCount === 1 ? '' : 's'} verified`;
 
   const jumpTo = (id: string) => {
     requestAnimationFrame(() => {
@@ -640,12 +655,12 @@ export default function NewEvent() {
       </section>
 
       <form onSubmit={handleSubmit} noValidate className="rounded-lg border border-[#ded5c5] bg-[#fffdf8] shadow-card">
-        {validationErrors.length > 0 && createPortal(
-          <aside className="fixed bottom-4 right-4 z-40 w-[calc(100vw-2rem)] max-w-sm overflow-hidden rounded-lg border border-red-300 bg-white shadow-xl" aria-label="Application issues navigator">
-            <button type="button" className="flex min-h-12 w-full items-center gap-2 bg-red-700 px-4 py-3 text-left text-sm font-bold text-white" onClick={() => setErrorNavigatorOpen(value => !value)} aria-expanded={errorNavigatorOpen}>
-              <AlertCircle size={18} /><span className="flex-1">{validationErrors.length} issue{validationErrors.length === 1 ? '' : 's'} to fix</span><PanelRightClose size={17} />
+        {validationIssues.length > 0 && createPortal(
+          <aside className={`fixed bottom-4 right-4 z-40 w-[calc(100vw-2rem)] max-w-sm overflow-hidden rounded-lg border bg-white shadow-xl ${unresolvedIssueCount ? 'border-red-300' : changedIssueCount ? 'border-blue-300' : 'border-green-300'}`} aria-label="Application issues navigator">
+            <button type="button" className={`flex min-h-12 w-full items-center gap-2 px-4 py-3 text-left text-sm font-bold text-white ${unresolvedIssueCount ? 'bg-red-700' : changedIssueCount ? 'bg-blue-700' : 'bg-green-700'}`} onClick={() => setErrorNavigatorOpen(value => !value)} aria-expanded={errorNavigatorOpen}>
+              <AlertCircle size={18} /><span className="flex-1">{issueNavigatorTitle}</span><PanelRightClose size={17} />
             </button>
-            {errorNavigatorOpen && <ol className="max-h-64 overflow-y-auto p-2">{validationErrors.map((error, index) => <li key={error}><button type="button" className="flex w-full gap-2 rounded px-2 py-2 text-left text-sm text-red-900 hover:bg-red-50" onClick={() => reviewError(error)}><span className="font-bold">{index + 1}.</span><span className="flex-1">{error}</span><ChevronRight size={15} className="mt-0.5 shrink-0" /></button></li>)}</ol>}
+            {errorNavigatorOpen && <ol className="max-h-64 overflow-y-auto p-2">{validationIssues.map((issue, index) => <li key={issue.message}><button type="button" className={`flex w-full items-start gap-2 rounded px-2 py-2 text-left text-sm ${issue.status === 'unresolved' ? 'text-red-900 hover:bg-red-50' : issue.status === 'changed' ? 'text-blue-900 hover:bg-blue-50' : 'text-green-900 hover:bg-green-50'}`} onClick={() => reviewError(issue.message)}><span className="font-bold">{index + 1}.</span><span className="flex-1">{issue.message}<span className="mt-1 block text-xs font-bold">{issue.status === 'unresolved' ? 'Needs correction' : issue.status === 'changed' ? 'Changed — submit again to verify' : 'Verified'}</span></span><ChevronRight size={15} className="mt-0.5 shrink-0" /></button></li>)}</ol>}
           </aside>, document.body,
         )}
         <div className="border-b border-[#e3dacb] bg-brand-50 px-4 py-4 sm:px-6">
@@ -656,12 +671,17 @@ export default function NewEvent() {
           </p>
         </div>
         <div className="space-y-8 p-4 sm:p-6 lg:p-8">
-          {validationErrors.length > 0 && (
-            <div ref={validationRef} tabIndex={-1} style={{ scrollMarginTop: 155 }} className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800" role="alert">
-              <p className="font-semibold">Required information is missing or needs correction</p>
-              <ul className="mt-2 list-disc space-y-1 pl-5">
-                {validationErrors.map((error) => <li key={error}><button type="button" className="text-left underline underline-offset-2" onClick={() => reviewError(error)}>{error}</button></li>)}
-              </ul>
+          {validationIssues.length > 0 && (
+            <div ref={validationRef} tabIndex={-1} style={{ scrollMarginTop: 155 }} className="rounded-md border border-ink-200 bg-cream-50 p-4 text-sm text-ink-800" role={unresolvedIssueCount ? 'alert' : 'status'}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div><p className="font-semibold">Application needs review</p><p className="mt-1 text-xs leading-5 text-ink-600">{issueNavigatorTitle}. Use the issue panel to move directly to each field.</p></div>
+                <button type="button" className="btn-secondary shrink-0" onClick={() => setErrorNavigatorOpen(true)}>Open issue list</button>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold">
+                {unresolvedIssueCount > 0 && <span className="rounded-full bg-red-100 px-2.5 py-1 text-red-800">{unresolvedIssueCount} need correction</span>}
+                {changedIssueCount > 0 && <span className="rounded-full bg-blue-100 px-2.5 py-1 text-blue-800">{changedIssueCount} changed</span>}
+                {resolvedIssueCount > 0 && <span className="rounded-full bg-green-100 px-2.5 py-1 text-green-800">{resolvedIssueCount} verified</span>}
+              </div>
             </div>
           )}
 
@@ -739,7 +759,8 @@ export default function NewEvent() {
                   className="input mt-1"
                   value={form.venueId ?? ''}
                   onChange={(e) => {
-                    setValidationErrors([]);
+                    setSaveMessage('Unsaved changes');
+                    if (validationErrors.length > 0) setNotice('Changes made. Submit again to verify the highlighted issues.');
                     const venue = venues.find((item) => item.venueId === e.target.value);
                     if (!venue) {
                       setForm((previous) => ({ ...previous, venueId: undefined }));
@@ -757,7 +778,7 @@ export default function NewEvent() {
               </div>
               <div>
                 <label htmlFor="venue-name" className="field-label">Venue name *</label>
-                <input id="venue-name" className="input mt-1" required disabled={Boolean(form.venueId)} value={form.venueName} onChange={(e) => { setValidationErrors([]); setForm((previous) => ({ ...previous, venueId: undefined, venueName: e.target.value })); }} />
+                <input id="venue-name" className="input mt-1" required disabled={Boolean(form.venueId)} value={form.venueName} onChange={(e) => { setSaveMessage('Unsaved changes'); if (validationErrors.length > 0) setNotice('Changes made. Submit again to verify the highlighted issues.'); setForm((previous) => ({ ...previous, venueId: undefined, venueName: e.target.value })); }} />
               </div>
             </div>
 
@@ -788,8 +809,8 @@ export default function NewEvent() {
               apiKey={GOOGLE_MAPS_API_KEY}
               location={form.venueLocation}
               onSelect={(selection) => {
-                setValidationErrors([]);
                 setSaveMessage('Unsaved changes');
+                if (validationErrors.length > 0) setNotice('Changes made. Submit again to verify the highlighted issues.');
                 setForm((previous) => ({
                   ...previous,
                   venueId: undefined,
@@ -955,7 +976,7 @@ export default function NewEvent() {
           </fieldset>
 
           <div id="application-submit" tabIndex={-1} style={{ scrollMarginTop: 155 }} className="-mx-4 flex flex-wrap justify-end gap-2 border-t border-[#d8cebd] bg-[#fffdf8] px-4 pb-1 pt-4 sm:mx-0 sm:px-0">
-            {validationErrors.length > 0 && <button type="button" className="w-full text-left text-sm font-semibold text-red-700 underline" onClick={() => { validationRef.current?.focus(); validationRef.current?.scrollIntoView({ block: 'start' }); }}>Review {validationErrors.length} items before submitting.</button>}
+            {validationIssues.length > 0 && <button type="button" className="w-full text-left text-sm font-semibold text-brand-800 underline" onClick={() => { validationRef.current?.focus(); validationRef.current?.scrollIntoView({ block: 'start' }); }}>{issueNavigatorTitle}. Review the highlighted items before submitting.</button>}
             {saveMessage && <p role="status" className="w-full text-sm">{saveMessage}</p>}
             <button type="button" className="btn-secondary" onClick={() => navigate(-1)}>Cancel</button>
             <button type="button" disabled={saving || submitting || uploading} className="btn-secondary" onClick={() => { void handleSaveDraft(); }}>{saving ? 'Saving...' : 'Save draft'}</button>

@@ -52,7 +52,12 @@ describe('validateEventDetails', () => {
   });
 
   it('requires the state for custom and registry-backed venue submissions', () => {
-    expect(validateEventDetails({ ...validDetails, venueState: undefined }, 1_000).join(' ')).toMatch(/Venue state is required/);
+    expect(validateEventDetails({ ...validDetails, venueState: undefined }, 1_000)).toContain('Select the venue state or federal territory.');
+  });
+
+  it('explains missing and overlong text with different messages', () => {
+    expect(validateEventDetails({ ...validDetails, venueName: '' }, 1_000)).toContain('Venue name is required.');
+    expect(validateEventDetails({ ...validDetails, venueName: 'x'.repeat(201) }, 1_000)).toContain('Venue name is too long. Use 200 characters or fewer.');
   });
 
   it('rejects invalid coordinates, dates, and capacity', () => {

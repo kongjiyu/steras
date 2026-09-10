@@ -49,7 +49,11 @@ function completeRiskProfile() {
         (0, vitest_1.expect)((0, submitEvent_1.validateEventDetails)(validDetails, 1_000)).toEqual([]);
     });
     (0, vitest_1.it)('requires the state for custom and registry-backed venue submissions', () => {
-        (0, vitest_1.expect)((0, submitEvent_1.validateEventDetails)({ ...validDetails, venueState: undefined }, 1_000).join(' ')).toMatch(/Venue state is required/);
+        (0, vitest_1.expect)((0, submitEvent_1.validateEventDetails)({ ...validDetails, venueState: undefined }, 1_000)).toContain('Select the venue state or federal territory.');
+    });
+    (0, vitest_1.it)('explains missing and overlong text with different messages', () => {
+        (0, vitest_1.expect)((0, submitEvent_1.validateEventDetails)({ ...validDetails, venueName: '' }, 1_000)).toContain('Venue name is required.');
+        (0, vitest_1.expect)((0, submitEvent_1.validateEventDetails)({ ...validDetails, venueName: 'x'.repeat(201) }, 1_000)).toContain('Venue name is too long. Use 200 characters or fewer.');
     });
     (0, vitest_1.it)('rejects invalid coordinates, dates, and capacity', () => {
         const errors = (0, submitEvent_1.validateEventDetails)({ ...validDetails, venueCapacity: 0, venueLocation: { lat: 100, lng: 0 }, startDatetime: 1_500, endDatetime: 1_400 }, 1_600);

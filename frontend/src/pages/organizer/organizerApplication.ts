@@ -241,7 +241,9 @@ export function validateEventApplication(
   requiredText(details.name, 'Event name', 200, errors);
   requiredText(details.venueName, 'Venue name', 200, errors);
   requiredText(details.venueAddress, 'Venue address', 500, errors);
-  requiredText(details.venueState ?? '', 'Venue state', 100, errors);
+  if (!MALAYSIA_STATES.includes(details.venueState as (typeof MALAYSIA_STATES)[number])) {
+    errors.push('Select the venue state or federal territory.');
+  }
   requiredText(details.organizerName, 'Organizer name', 200, errors);
   requiredText(details.organizerEmail, 'Organizer email', 320, errors);
   if (details.organizerEmail.trim() && !isEmail(details.organizerEmail)) errors.push('Organizer email is invalid.');
@@ -543,14 +545,18 @@ function validateRiskProfile(value: EventDetails['riskProfile'], errors: string[
 }
 
 function requiredText(value: string, label: string, max: number, errors: string[]): void {
-  if (typeof value !== 'string' || value.trim().length === 0 || value.length > max) {
-    errors.push(`${label} is required and must be at most ${max} characters.`);
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    errors.push(`${label} is required.`);
+  } else if (value.length > max) {
+    errors.push(`${label} is too long. Use ${max} characters or fewer.`);
   }
 }
 
 function optionalText(value: string | undefined, label: string, max: number, errors: string[]): void {
-  if (value !== undefined && (typeof value !== 'string' || value.length > max)) {
-    errors.push(`${label} must be at most ${max} characters.`);
+  if (value !== undefined && typeof value !== 'string') {
+    errors.push(`${label} must be text.`);
+  } else if (value !== undefined && value.length > max) {
+    errors.push(`${label} is too long. Use ${max} characters or fewer.`);
   }
 }
 

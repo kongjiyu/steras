@@ -93,6 +93,11 @@ describe('organizer application lifecycle helpers', () => {
     expect(validateEventApplication(validDetails(), ['event_documents/event-1/v1/plan.pdf'], templateSelection)).toEqual([]);
   });
 
+  it('explains missing and overlong text with different messages', () => {
+    expect(validateEventApplication(validDetails({ venueName: '' }), [], templateSelection)).toContain('Venue name is required.');
+    expect(validateEventApplication(validDetails({ venueName: 'x'.repeat(201) }), [], templateSelection)).toContain('Venue name is too long. Use 200 characters or fewer.');
+  });
+
   it('creates new Drafts with the structured document contract required by Firestore rules', () => {
     expect(createM1DraftRecord('event-1', 'organizer-1', validDetails(), templateSelection, 123)).toMatchObject({
       eventId: 'event-1', organizerId: 'organizer-1', status: 'Draft', editableVersionId: 'v1', currentVersionNumber: 0,
