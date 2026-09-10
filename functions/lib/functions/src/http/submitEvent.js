@@ -12,6 +12,7 @@ const firestore_1 = require("firebase-admin/firestore");
 const https_1 = require("firebase-functions/v2/https");
 const types_1 = require("../../../shared/types");
 const m1TemplateContract_1 = require("../../../shared/m1TemplateContract");
+const malaysiaStates_1 = require("../../../shared/malaysiaStates");
 const runtime_1 = require("../config/runtime");
 const resourceCutoverLock_1 = require("../config/resourceCutoverLock");
 const storageEvidence_1 = require("../utils/storageEvidence");
@@ -228,8 +229,14 @@ function validateEventDetails(value, now = Date.now()) {
     if (typeof value.venueState !== 'string' || !value.venueState.trim()) {
         errors.push('Select the venue state or federal territory.');
     }
-    else if (value.venueState.length > 100) {
+    else if (!malaysiaStates_1.MALAYSIA_STATES.includes(value.venueState)) {
         errors.push('The selected venue state is invalid. Choose it again.');
+    }
+    else if (typeof value.venueAddress === 'string') {
+        const addressState = (0, malaysiaStates_1.inferMalaysiaStateFromAddress)(value.venueAddress);
+        if (addressState && value.venueState !== addressState) {
+            errors.push(`Venue state does not match the address. Select ${addressState}.`);
+        }
     }
     requiredText(value.organizerName, 'Organizer name', 200, errors);
     requiredText(value.organizerEmail, 'Organizer email', 320, errors);

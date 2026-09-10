@@ -16,6 +16,7 @@ import {
   Notification,
 } from '@shared/types';
 import { isValidM1TemplateSelection, m1CategoryForEventType, m1VenueSettingMatchesEnvironment } from '@shared/m1TemplateContract';
+import { inferMalaysiaStateFromAddress, MALAYSIA_STATES } from '@shared/malaysiaStates';
 import { FUNCTION_REGION } from '../config/runtime';
 import { RESOURCE_CUTOVER_LOCK_PATH } from '../config/resourceCutoverLock';
 import { inspectStorageEvidence } from '../utils/storageEvidence';
@@ -243,8 +244,13 @@ export function validateEventDetails(value: unknown, now = Date.now()): string[]
   requiredText(value.venueAddress, 'Venue address', 500, errors);
   if (typeof value.venueState !== 'string' || !value.venueState.trim()) {
     errors.push('Select the venue state or federal territory.');
-  } else if (value.venueState.length > 100) {
+  } else if (!MALAYSIA_STATES.includes(value.venueState as (typeof MALAYSIA_STATES)[number])) {
     errors.push('The selected venue state is invalid. Choose it again.');
+  } else if (typeof value.venueAddress === 'string') {
+    const addressState = inferMalaysiaStateFromAddress(value.venueAddress);
+    if (addressState && value.venueState !== addressState) {
+      errors.push(`Venue state does not match the address. Select ${addressState}.`);
+    }
   }
   requiredText(value.organizerName, 'Organizer name', 200, errors);
   requiredText(value.organizerEmail, 'Organizer email', 320, errors);

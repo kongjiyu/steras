@@ -55,6 +55,12 @@ describe('validateEventDetails', () => {
     expect(validateEventDetails({ ...validDetails, venueState: undefined }, 1_000)).toContain('Select the venue state or federal territory.');
   });
 
+  it('rejects a venue state that conflicts with the address', () => {
+    expect(validateEventDetails({ ...validDetails, venueState: 'Sarawak' }, 1_000)).toContain(
+      'Venue state does not match the address. Select Kuala Lumpur.',
+    );
+  });
+
   it('explains missing and overlong text with different messages', () => {
     expect(validateEventDetails({ ...validDetails, venueName: '' }, 1_000)).toContain('Venue name is required.');
     expect(validateEventDetails({ ...validDetails, venueName: 'x'.repeat(201) }, 1_000)).toContain('Venue name is too long. Use 200 characters or fewer.');

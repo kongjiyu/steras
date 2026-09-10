@@ -51,6 +51,9 @@ function completeRiskProfile() {
     (0, vitest_1.it)('requires the state for custom and registry-backed venue submissions', () => {
         (0, vitest_1.expect)((0, submitEvent_1.validateEventDetails)({ ...validDetails, venueState: undefined }, 1_000)).toContain('Select the venue state or federal territory.');
     });
+    (0, vitest_1.it)('rejects a venue state that conflicts with the address', () => {
+        (0, vitest_1.expect)((0, submitEvent_1.validateEventDetails)({ ...validDetails, venueState: 'Sarawak' }, 1_000)).toContain('Venue state does not match the address. Select Kuala Lumpur.');
+    });
     (0, vitest_1.it)('explains missing and overlong text with different messages', () => {
         (0, vitest_1.expect)((0, submitEvent_1.validateEventDetails)({ ...validDetails, venueName: '' }, 1_000)).toContain('Venue name is required.');
         (0, vitest_1.expect)((0, submitEvent_1.validateEventDetails)({ ...validDetails, venueName: 'x'.repeat(201) }, 1_000)).toContain('Venue name is too long. Use 200 characters or fewer.');

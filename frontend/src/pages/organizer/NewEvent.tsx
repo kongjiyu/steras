@@ -786,9 +786,8 @@ export default function NewEvent() {
               <div>
                 <label htmlFor="venue-address" className="field-label">Venue address *</label>
                 <input id="venue-address" className="input mt-1" required disabled={Boolean(form.venueId)} value={form.venueAddress} onChange={(e) => update('venueAddress', e.target.value)} onBlur={() => {
-                  if (form.venueState) return;
                   const inferredState = inferMalaysiaStateFromAddress(form.venueAddress);
-                  if (inferredState) update('venueState', inferredState);
+                  if (inferredState && inferredState !== form.venueState) update('venueState', inferredState);
                 }} />
               </div>
               <div>

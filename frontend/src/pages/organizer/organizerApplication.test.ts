@@ -246,6 +246,17 @@ describe('organizer application lifecycle helpers', () => {
     expect(next.venueState).toBe('Kuala Lumpur');
   });
 
+  it('replaces a stale state and rejects an address-state mismatch', () => {
+    const address = 'Jalan Genting Kelang, Setapak, 53300 Kuala Lumpur, Malaysia';
+    const next = applyM1ExtractedFields(validDetails({ venueAddress: '', venueState: 'Sarawak' }), [
+      { target: 'venueAddress', value: address, sourceFieldIds: ['EVENT_ADDRESS'], confidence: 'high' },
+    ]);
+    expect(next.venueState).toBe('Kuala Lumpur');
+    expect(validateEventApplication(validDetails({ venueAddress: address, venueState: 'Sarawak' }), [], templateSelection)).toContain(
+      'Venue state does not match the address. Select Kuala Lumpur.',
+    );
+  });
+
   it('requires separate Core and scenario uploads and a current extraction', () => {
     const documents = [{
       path: 'event_documents/event-1/v1/core.docx', role: 'core_template' as const,
