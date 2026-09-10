@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EventDetails, M1DocumentExtraction, M1_EXTRACTION_SCHEMA_VERSION, Venue } from '@shared/types';
-import { applyM1ExtractedFields, bindCanonicalVenue, createM1DraftRecord, extractionMatchesDraftDocuments, findUniqueRegistryVenueMatch, isEditableApplicationStatus, isMeaningfulNotApplicableReason, isSelectableRegistryVenue, organizerAdminDecisionLabel, organizerPublicationLabel, organizerPublicationStateFromProjection, reconcileM1EvidenceManifest, validateEventApplication, validateM1EvidenceChecklist, validateTemplateCompatibility } from './organizerApplication';
+import { alignEventDetailsWithTemplate, applyM1ExtractedFields, bindCanonicalVenue, createM1DraftRecord, extractionMatchesDraftDocuments, findUniqueRegistryVenueMatch, isEditableApplicationStatus, isMeaningfulNotApplicableReason, isSelectableRegistryVenue, organizerAdminDecisionLabel, organizerPublicationLabel, organizerPublicationStateFromProjection, reconcileM1EvidenceManifest, validateEventApplication, validateM1EvidenceChecklist, validateTemplateCompatibility } from './organizerApplication';
 import { createTemplateSelection } from '../../features/m1/templateRegistry';
 
 const future = Date.now() + 7 * 24 * 60 * 60 * 1000;
@@ -101,6 +101,25 @@ describe('organizer application lifecycle helpers', () => {
       requiredAuthorities: [], createdAt: 123, updatedAt: 123,
     });
     expect(createM1DraftRecord('event-1', 'organizer-1', validDetails(), templateSelection, 123).draftEvidenceManifest).toHaveLength(16);
+  });
+
+  it('aligns existing Draft details with a changed template recommendation without erasing unrelated fields', () => {
+    const changedSelection = createTemplateSelection('cultural_heritage_festival', 'outdoor_fixed_site', 2);
+    const current = validDetails({ description: 'Keep this description' });
+    const aligned = alignEventDetailsWithTemplate(current, changedSelection);
+    expect(aligned).toMatchObject({
+      type: 'cultural',
+      environment: 'outdoor',
+      coverage: 'uncovered',
+      description: 'Keep this description',
+      name: current.name,
+    });
+    expect(validateTemplateCompatibility(aligned, changedSelection)).toEqual([]);
+
+    const unchangedCategory = alignEventDetailsWithTemplate(current, templateSelection);
+    expect(unchangedCategory.type).toBe('conference');
+    expect(unchangedCategory.environment).toBe('indoor');
+    expect(unchangedCategory.coverage).toBe('covered');
   });
 
   it('blocks attendance above capacity and missing evidence before submit', () => {

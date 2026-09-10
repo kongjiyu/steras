@@ -1,7 +1,7 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import TemplateRecommendationPage from './TemplateRecommendationPage';
+import TemplateRecommendationPage, { TemplateRecommendationErrorModal, templateRecommendationErrorMessage } from './TemplateRecommendationPage';
 
 vi.mock('../../contexts/AuthContext', () => ({
   useAuth: () => ({
@@ -50,19 +50,49 @@ describe('TemplateRecommendationPage', () => {
     expect(start).toBeEnabled();
   });
 
-  it('separates core and scenario evidence into horizontal groups without the old file-count card', () => {
+  it('lists core and scenario evidence vertically in two separate groups', () => {
     render(<MemoryRouter><TemplateRecommendationPage /></MemoryRouter>);
     fireEvent.click(screen.getByRole('radio', { name: /Sports & recreation/ }));
     fireEvent.click(screen.getByRole('radio', { name: /Outdoor route-based/ }));
-    expect(screen.getByRole('region', { name: 'Core supporting documents' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Scenario supporting documents' })).toBeInTheDocument();
+    const core = screen.getByRole('region', { name: 'Core supporting documents' });
+    const scenario = screen.getByRole('region', { name: 'Scenario supporting documents' });
+    expect(within(core).getAllByRole('listitem')).toHaveLength(9);
+    expect(within(core).getByText('Total 9')).toBeInTheDocument();
+    expect(within(scenario).getAllByRole('listitem').length).toBeGreaterThan(0);
+    expect(within(scenario).getByText(/^Total \d+$/)).toBeInTheDocument();
     expect(screen.getByText(/evidence requirements rather than downloadable templates/i)).toBeInTheDocument();
-    expect(screen.queryByText('9 files')).not.toBeInTheDocument();
   });
 
   it('ignores malformed draft and recommendation query parameters without crashing', () => {
     render(<MemoryRouter initialEntries={['/organizer/events/new?draft=a%2Fb&category=unknown&venue=indoor']}><TemplateRecommendationPage /></MemoryRouter>);
     expect(screen.getByText('Find the right application templates')).toBeInTheDocument();
     expect(screen.getByText('Your recommendation will appear here')).toBeInTheDocument();
+  });
+
+  it('turns Firebase update failures into an error type and a recovery action', () => {
+    expect(templateRecommendationErrorMessage({ code: 'permission-denied' }, 'update')).toBe(
+      'Permission check failed — Open My Events and confirm this Draft belongs to the signed-in organizer and is still editable, then try again.',
+    );
+    expect(templateRecommendationErrorMessage({ code: 'unavailable' }, 'update')).toBe(
+      'Connection problem — Check your internet connection, keep this page open, and try again.',
+    );
+    expect(templateRecommendationErrorMessage({ code: 'aborted' }, 'update')).toBe(
+      'Draft changed elsewhere — Reload this Draft from My Events before changing the templates again.',
+    );
+  });
+
+  it('shows blocking template errors in a modal with recovery actions', () => {
+    const close = vi.fn();
+    const openMyEvents = vi.fn();
+    render(<TemplateRecommendationErrorModal
+      message="Permission check failed — Open My Events and confirm this Draft is editable."
+      onClose={close}
+      onOpenMyEvents={openMyEvents}
+    />);
+    expect(screen.getByRole('dialog', { name: 'We could not save this recommendation' })).toBeInTheDocument();
+    expect(screen.getByText('Permission check failed')).toBeInTheDocument();
+    expect(screen.getByText('Open My Events and confirm this Draft is editable.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open My Events' }));
+    expect(openMyEvents).toHaveBeenCalledOnce();
   });
 });

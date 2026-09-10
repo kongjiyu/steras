@@ -1,4 +1,4 @@
-import { EventDetails, EventRecord, EventRiskProfile, EventStatus, EventType, M1_DOCUMENT_SCHEMA_VERSION, M1_EVIDENCE_MANIFEST_SCHEMA_VERSION, M1DocumentExtraction, M1DraftDocument, M1EvidenceRequirementResponse, M1ExtractedField, M1TemplateSelection, OrganizerAssessmentSummary, Venue } from '@shared/types';
+import { EventDetails, EventRecord, EventRiskProfile, EventStatus, EventType, M1_DOCUMENT_SCHEMA_VERSION, M1_EVIDENCE_MANIFEST_SCHEMA_VERSION, M1DocumentExtraction, M1DraftDocument, M1EventCategory, M1EvidenceRequirementResponse, M1ExtractedField, M1TemplateSelection, OrganizerAssessmentSummary, Venue } from '@shared/types';
 import { isValidM1TemplateSelection, m1CategoryForEventType, m1VenueSettingMatchesEnvironment } from '@shared/m1TemplateContract';
 import { isM1EvidenceForcedRequired, m1EvidenceRequirementsFor } from '@shared/m1EvidenceContract';
 
@@ -298,6 +298,28 @@ export function createInitialEventDetails(profile?: { name?: string; email?: str
     organizerEmail: profile?.email ?? '',
     organizerPhone: profile?.phone ?? '',
   };
+}
+
+const DEFAULT_EVENT_TYPE_BY_CATEGORY: Record<M1EventCategory, EventType> = {
+  entertainment_performance: 'concert',
+  sports_recreational: 'sports',
+  cultural_heritage_festival: 'cultural',
+  exhibition_convention_promotional: 'exhibition',
+  carnival_public_celebration: 'fair',
+};
+
+/** Keep an editable Draft internally consistent when its template recommendation changes. */
+export function alignEventDetailsWithTemplate(
+  details: EventDetails,
+  selection: M1TemplateSelection,
+): EventDetails {
+  const type = m1CategoryForEventType(details.type) === selection.eventCategory
+    ? details.type
+    : DEFAULT_EVENT_TYPE_BY_CATEGORY[selection.eventCategory];
+  const venueStillMatches = m1VenueSettingMatchesEnvironment(selection.venueSetting, details.environment);
+  const environment = venueStillMatches ? details.environment : selection.venueSetting === 'indoor' ? 'indoor' : 'outdoor';
+  const coverage = venueStillMatches ? details.coverage : selection.venueSetting === 'indoor' ? 'covered' : 'uncovered';
+  return { ...details, type, environment, coverage };
 }
 
 export function createM1DraftRecord(eventId: string, organizerId: string, eventDetails: EventDetails, templateSelection: M1TemplateSelection, now: number) {

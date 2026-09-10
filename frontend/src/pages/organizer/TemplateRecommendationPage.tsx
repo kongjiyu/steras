@@ -1,9 +1,10 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { collection, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
-import { ArrowRight, CircleHelp, Download, FileText, MapPin, ShieldCheck } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { collection, doc, getDoc, runTransaction, serverTimestamp, setDoc } from 'firebase/firestore';
+import { ArrowRight, CircleAlert, CircleHelp, Download, FileText, MapPin, ShieldCheck, X } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import type { EventType, M1EventCategory, M1VenueSetting } from '@shared/types';
+import type { EventRecord, EventType, M1EventCategory, M1VenueSetting } from '@shared/types';
 import { COLLECTIONS } from '@shared/types';
 import { db, isFirebaseConfigured } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -16,7 +17,7 @@ import {
   scenarioTemplateFor,
   templateDownloadUrl,
 } from '../../features/m1/templateRegistry';
-import { createInitialEventDetails, createM1DraftRecord } from './organizerApplication';
+import { alignEventDetailsWithTemplate, createInitialEventDetails, createM1DraftRecord, reconcileM1EvidenceManifest } from './organizerApplication';
 
 const TemplatePreview = lazy(() => import('../../features/m1/TemplatePreview'));
 
@@ -34,6 +35,7 @@ export default function TemplateRecommendationPage() {
   const [confirmed, setConfirmed] = useState(false);
   const [starting, setStarting] = useState(false);
   const [selectionLocked, setSelectionLocked] = useState(false);
+  const [updateError, setUpdateError] = useState('');
   const [checkingSelectionLock, setCheckingSelectionLock] = useState(Boolean(editingDraftId && isFirebaseConfigured));
   const startLockRef = useRef(false);
   const scenario = useMemo(() => category && venue ? scenarioTemplateFor(category, venue) : undefined, [category, venue]);
@@ -42,20 +44,41 @@ export default function TemplateRecommendationPage() {
     if (!editingDraftId || !isFirebaseConfigured) return;
     getDoc(doc(db, COLLECTIONS.EVENTS, editingDraftId))
       .then((snapshot) => {
-        const paths = snapshot.data()?.draftDocumentPaths;
-        setSelectionLocked(Array.isArray(paths) && paths.length > 0);
+        if (!snapshot.exists()) {
+          setSelectionLocked(true);
+          setUpdateError('Draft not found — Return to My Events and open an available Draft.');
+          return;
+        }
+        const draft = snapshot.data() as EventRecord;
+        const hasDocuments = (draft.draftDocumentPaths?.length ?? 0) > 0 || (draft.draftDocuments?.length ?? 0) > 0;
+        const isEditable = draft.status === 'Draft' && draft.organizerId === user?.uid && !hasDocuments;
+        setSelectionLocked(!isEditable);
+        if (draft.organizerId !== user?.uid) {
+          setUpdateError('Wrong organizer account — Sign in with the account that created this Draft, then reopen it from My Events.');
+        } else if (draft.status !== 'Draft') {
+          setUpdateError(`Template change unavailable — This application is already ${draft.status}. Return to My Events to view its current status.`);
+        } else if (hasDocuments) {
+          setUpdateError('Templates locked — Completed documents have already been uploaded. Continue with the current templates or create a new Draft.');
+        } else {
+          setUpdateError('');
+        }
       })
-      .catch(() => setSelectionLocked(true))
+      .catch((error) => {
+        setSelectionLocked(true);
+        setUpdateError(templateRecommendationErrorMessage(error, 'update'));
+      })
       .finally(() => setCheckingSelectionLock(false));
-  }, [editingDraftId]);
+  }, [editingDraftId, user?.uid]);
 
   const selectCategory = (value: M1EventCategory) => {
     setCategory(value);
     setConfirmed(false);
+    if (!selectionLocked) setUpdateError('');
   };
   const selectVenue = (value: M1VenueSetting) => {
     setVenue(value);
     setConfirmed(false);
+    if (!selectionLocked) setUpdateError('');
   };
 
   const startApplication = async () => {
@@ -74,10 +97,28 @@ export default function TemplateRecommendationPage() {
     }
 
     setStarting(true);
+    setUpdateError('');
     try {
       const now = Date.now();
       if (editingDraftId) {
-        await updateDoc(doc(db, COLLECTIONS.EVENTS, editingDraftId), { templateSelection: selection, updatedAt: now });
+        const eventReference = doc(db, COLLECTIONS.EVENTS, editingDraftId);
+        await runTransaction(db, async (transaction) => {
+          const snapshot = await transaction.get(eventReference);
+          if (!snapshot.exists()) throw new Error('Draft not found — Return to My Events and open an available Draft.');
+          const draft = snapshot.data() as EventRecord;
+          if (draft.organizerId !== user.uid) throw new Error('Wrong organizer account — Sign in with the account that created this Draft, then reopen it from My Events.');
+          if (draft.status !== 'Draft') throw new Error(`Template change unavailable — This application is already ${draft.status}. Return to My Events to view its current status.`);
+          if ((draft.draftDocumentPaths?.length ?? 0) > 0 || (draft.draftDocuments?.length ?? 0) > 0) {
+            throw new Error('Templates locked — Completed documents have already been uploaded. Continue with the current templates or create a new Draft.');
+          }
+          const nextDetails = alignEventDetailsWithTemplate(draft.eventDetails, selection);
+          transaction.update(eventReference, {
+            templateSelection: selection,
+            eventDetails: nextDetails,
+            draftEvidenceManifest: reconcileM1EvidenceManifest(selection, nextDetails, draft.draftEvidenceManifest ?? []),
+            updatedAt: now,
+          });
+        });
         toast.success('Template recommendation updated.');
         navigate(`/organizer/events/${editingDraftId}/edit`);
         return;
@@ -90,7 +131,8 @@ export default function TemplateRecommendationPage() {
       toast.success('Template choice saved. Your Draft is ready.');
       navigate(`/organizer/events/${reference.id}/edit`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Unable to start the application.');
+      const message = templateRecommendationErrorMessage(error, editingDraftId ? 'update' : 'create');
+      setUpdateError(message);
     } finally {
       startLockRef.current = false;
       setStarting(false);
@@ -219,7 +261,7 @@ export default function TemplateRecommendationPage() {
                 <span><span className="font-semibold text-ink-800">I have reviewed both templates and the supporting-document guidance.</span><br />You can change this selection while the Draft is editable and before a completed template is uploaded.</span>
               </label>
               <button type="button" disabled={!confirmed || starting || selectionLocked || checkingSelectionLock} onClick={startApplication} className="btn-primary shrink-0 px-5">
-                {checkingSelectionLock ? 'Checking Draft…' : selectionLocked ? 'Templates locked after upload' : starting ? 'Creating Draft…' : editingDraftId ? 'Update recommendation' : 'Start application'} <ArrowRight size={17} />
+                {checkingSelectionLock ? 'Checking Draft…' : selectionLocked ? 'Template change unavailable' : starting ? 'Creating Draft…' : editingDraftId ? 'Update recommendation' : 'Start application'} <ArrowRight size={17} />
               </button>
             </section>
           </>
@@ -229,7 +271,65 @@ export default function TemplateRecommendationPage() {
           </div>
         )}
       </div>
+      {updateError && (
+        <TemplateRecommendationErrorModal
+          message={updateError}
+          onClose={() => setUpdateError('')}
+          onOpenMyEvents={() => {
+            setUpdateError('');
+            navigate('/organizer/events');
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+export function TemplateRecommendationErrorModal({ message, onClose, onOpenMyEvents }: {
+  message: string;
+  onClose: () => void;
+  onOpenMyEvents: () => void;
+}) {
+  const closeButton = useRef<HTMLButtonElement>(null);
+  const [whatHappened, howToResolve = 'Close this message and try again.'] = message.split(' — ', 2);
+
+  useEffect(() => {
+    closeButton.current?.focus();
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [onClose]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[100] grid place-items-center bg-black/45 p-4" role="dialog" aria-modal="true" aria-labelledby="template-error-title" aria-describedby="template-error-description">
+      <div className="w-full max-w-lg overflow-hidden rounded-xl border border-[#d98b85] bg-[#fffdf8] shadow-2xl">
+        <div className="flex items-start gap-4 border-b border-[#ead6d1] px-5 py-5 sm:px-6">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#fee2e2] text-[#991b1b]" aria-hidden="true"><CircleAlert size={22} /></span>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-bold uppercase tracking-[0.08em] text-[#b42318]">Template update error</p>
+            <h2 id="template-error-title" className="mt-1 text-xl font-bold text-ink-900">We could not save this recommendation</h2>
+          </div>
+          <button ref={closeButton} type="button" onClick={onClose} className="grid h-10 w-10 shrink-0 place-items-center rounded-md text-ink-500 hover:bg-cream-100 hover:text-ink-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#b42318]" aria-label="Close error message"><X size={19} /></button>
+        </div>
+        <div id="template-error-description" className="space-y-5 px-5 py-5 sm:px-6">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.08em] text-ink-500">What happened</p>
+            <p className="mt-1 text-base font-semibold text-[#7f1d1d]">{whatHappened}</p>
+          </div>
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.08em] text-ink-500">How to resolve</p>
+            <p className="mt-1 text-sm leading-6 text-ink-700">{howToResolve}</p>
+          </div>
+        </div>
+        <div className="flex flex-col-reverse gap-3 border-t border-[#eadfd4] bg-cream-50 px-5 py-4 sm:flex-row sm:justify-end sm:px-6">
+          <button type="button" onClick={onClose} className="btn-secondary">Stay on this page</button>
+          <button type="button" onClick={onOpenMyEvents} className="btn-primary">Open My Events</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -240,15 +340,22 @@ function SupportingDocumentGroup({ title, description, documents }: {
 }) {
   return <section className="overflow-hidden border border-[#d8cebd] bg-[#fffdf8]" aria-label={title}>
     <header className="border-b border-[#e3dacb] bg-cream-100 px-5 py-4">
-      <div className="flex items-start justify-between gap-3"><div><h3 className="font-bold text-ink-900">{title}</h3><p className="mt-1 text-sm text-ink-500">{description}</p></div><span className="badge shrink-0 bg-white text-brand-700">{documents.length} items</span></div>
+      <h3 className="font-bold text-ink-900">{title}</h3>
+      <p className="mt-1 text-sm text-ink-500">{description}</p>
     </header>
-    <div className="flex snap-x gap-3 overflow-x-auto p-4" aria-label={`${title} checklist`}>
-      {documents.map((document) => <article key={document.id} className="min-w-[16rem] flex-1 snap-start rounded-md border border-[#e3dacb] bg-cream-50 p-4 lg:min-w-[18rem]">
-        <p className="text-xs font-bold tracking-wide text-brand-700">{document.id}</p>
-        <h4 className="mt-2 font-semibold text-ink-800">{document.title}</h4>
-        <p className="mt-2 text-sm leading-5 text-ink-500">{document.condition}</p>
-      </article>)}
-    </div>
+    <ol className="divide-y divide-[#e3dacb]" aria-label={`${title} checklist`}>
+      {documents.map((document, index) => <li key={document.id} className="grid grid-cols-[2rem_minmax(0,1fr)] gap-3 px-4 py-4 sm:px-5">
+        <span aria-hidden="true" className="grid h-7 w-7 place-items-center rounded-full bg-brand-50 text-xs font-bold text-brand-700">{String(index + 1).padStart(2, '0')}</span>
+        <div className="min-w-0">
+          <p className="text-xs font-bold tracking-wide text-brand-700">{document.id}</p>
+          <h4 className="mt-1 font-semibold leading-6 text-ink-800">{document.title}</h4>
+          <p className="mt-1 text-sm leading-5 text-ink-500">{document.condition}</p>
+        </div>
+      </li>)}
+    </ol>
+    <footer className="border-t border-[#d8cebd] bg-cream-100 px-5 py-3 text-sm font-bold text-ink-800">
+      Total {documents.length}
+    </footer>
   </section>;
 }
 
@@ -262,4 +369,22 @@ const DEFAULT_EVENT_TYPES: Record<M1EventCategory, EventType> = {
 
 function isSafeDraftId(value: string): boolean {
   return value.length <= 256 && !value.includes('/') && value !== '.' && value !== '..' && !/^__.*__$/.test(value);
+}
+
+export function templateRecommendationErrorMessage(error: unknown, action: 'create' | 'update'): string {
+  const code = typeof error === 'object' && error && 'code' in error ? String(error.code) : '';
+  const message = error instanceof Error ? error.message.trim() : '';
+  if (message.includes(' — ')) return message;
+  if (code.includes('permission-denied')) {
+    return 'Permission check failed — Open My Events and confirm this Draft belongs to the signed-in organizer and is still editable, then try again.';
+  }
+  if (code.includes('unavailable') || code.includes('network-request-failed')) {
+    return 'Connection problem — Check your internet connection, keep this page open, and try again.';
+  }
+  if (code.includes('aborted') || code.includes('failed-precondition')) {
+    return 'Draft changed elsewhere — Reload this Draft from My Events before changing the templates again.';
+  }
+  return action === 'update'
+    ? 'Template update failed — Return to My Events, reopen this Draft, and try again. If it continues, contact an administrator with the Draft ID.'
+    : 'Draft creation failed — Check your connection and try again. If it continues, contact an administrator.';
 }
