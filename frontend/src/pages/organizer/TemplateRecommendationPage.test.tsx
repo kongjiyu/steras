@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import TemplateRecommendationPage, { TemplateRecommendationErrorModal, templateRecommendationErrorMessage } from './TemplateRecommendationPage';
+import TemplateRecommendationPage, { TemplatePreviewErrorBoundary, TemplateRecommendationErrorModal, templateRecommendationErrorMessage } from './TemplateRecommendationPage';
+import { M1_CORE_TEMPLATE, scenarioTemplateFor } from '../../features/m1/templateRegistry';
 
 vi.mock('../../contexts/AuthContext', () => ({
   useAuth: () => ({
@@ -94,5 +95,24 @@ describe('TemplateRecommendationPage', () => {
     expect(screen.getByText('Open My Events and confirm this Draft is editable.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Open My Events' }));
     expect(openMyEvents).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the recommendation usable when the document preview fails', () => {
+    const scenario = scenarioTemplateFor('entertainment_performance', 'indoor');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const BrokenPreview = () => {
+      throw new Error('Preview module failed');
+    };
+
+    render(
+      <TemplatePreviewErrorBoundary core={M1_CORE_TEMPLATE} scenario={scenario}>
+        <BrokenPreview />
+      </TemplatePreviewErrorBoundary>,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Preview could not be displayed' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Download Core Word' })).toHaveAttribute('href', expect.stringContaining('.docx'));
+    expect(screen.getByRole('link', { name: 'Download Scenario Word' })).toHaveAttribute('href', expect.stringContaining('.docx'));
+    consoleError.mockRestore();
   });
 });

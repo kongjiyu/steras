@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { collection, doc, getDoc, runTransaction, serverTimestamp, setDoc } from 'firebase/firestore';
 import { ArrowRight, CircleAlert, CircleHelp, Download, FileText, MapPin, ShieldCheck, X } from 'lucide-react';
@@ -16,6 +16,7 @@ import {
   M1_VENUE_SETTINGS,
   scenarioTemplateFor,
   templateDownloadUrl,
+  type M1TemplateDefinition,
 } from '../../features/m1/templateRegistry';
 import { alignEventDetailsWithTemplate, createInitialEventDetails, createM1DraftRecord, reconcileM1EvidenceManifest } from './organizerApplication';
 
@@ -239,9 +240,11 @@ export default function TemplateRecommendationPage() {
               </div>
             </section>
 
-            <Suspense fallback={<div className="grid min-h-64 place-items-center border border-[#d8cebd] bg-cream-50 text-sm text-ink-500">Preparing document preview…</div>}>
-              <TemplatePreview core={M1_CORE_TEMPLATE} scenario={scenario} />
-            </Suspense>
+            <TemplatePreviewErrorBoundary key={scenario.templateId} core={M1_CORE_TEMPLATE} scenario={scenario}>
+              <Suspense fallback={<div className="grid min-h-64 place-items-center border border-[#d8cebd] bg-cream-50 text-sm text-ink-500">Preparing document preview…</div>}>
+                <TemplatePreview core={M1_CORE_TEMPLATE} scenario={scenario} />
+              </Suspense>
+            </TemplatePreviewErrorBoundary>
 
             <section aria-labelledby="documents-heading">
               <div>
@@ -283,6 +286,48 @@ export default function TemplateRecommendationPage() {
       )}
     </div>
   );
+}
+
+interface TemplatePreviewErrorBoundaryProps {
+  core: M1TemplateDefinition;
+  scenario: M1TemplateDefinition;
+  children: ReactNode;
+}
+
+interface TemplatePreviewErrorBoundaryState {
+  failed: boolean;
+}
+
+export class TemplatePreviewErrorBoundary extends Component<TemplatePreviewErrorBoundaryProps, TemplatePreviewErrorBoundaryState> {
+  state: TemplatePreviewErrorBoundaryState = { failed: false };
+
+  static getDerivedStateFromError(): TemplatePreviewErrorBoundaryState {
+    return { failed: true };
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+
+    return (
+      <section className="border border-[#d8cebd] bg-[#fffdf8] p-5 sm:p-6" aria-labelledby="template-preview-unavailable-heading">
+        <div className="flex items-start gap-4">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-gold-100 text-gold-700" aria-hidden="true"><CircleAlert size={21} /></span>
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.1em] text-gold-600">Document preview</p>
+            <h2 id="template-preview-unavailable-heading" className="mt-1 text-lg font-bold text-ink-900">Preview could not be displayed</h2>
+            <p className="mt-2 max-w-[70ch] text-sm leading-6 text-ink-600">Your template recommendation is still available. Download both Word documents below and continue preparing the application.</p>
+          </div>
+        </div>
+        <div className="mt-5 flex flex-wrap gap-3">
+          {[this.props.core, this.props.scenario].map((template) => (
+            <a key={template.templateId} className="btn-secondary" href={templateDownloadUrl(template)} download>
+              <Download size={16} /> Download {template.kind === 'core' ? 'Core' : 'Scenario'} Word
+            </a>
+          ))}
+        </div>
+      </section>
+    );
+  }
 }
 
 export function TemplateRecommendationErrorModal({ message, onClose, onOpenMyEvents }: {
