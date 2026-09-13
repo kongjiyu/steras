@@ -80,20 +80,14 @@ export default function Incidents() {
 }
 
 function Submission({ events, uid, busy, setBusy, onDone, setError }: { events: ReportableEvent[]; uid: string; busy: boolean; setBusy: (v: boolean) => void; onDone: () => Promise<void>; setError: (v: string) => void }) {
-  const [eventId, setEventId] = useState(''); const [category, setCategory] = useState('crowd'); const [occurredAt, setOccurredAt] = useState(''); const [location, setLocation] = useState(''); const [description, setDescription] = useState(''); const [files, setFiles] = useState<File[]>([]);
-  useEffect(() => { if (!eventId && events[0]) setEventId(events[0].eventId); }, [eventId, events]);
+  const [eventId, setEventId] = useState(''); const [category, setCategory] = useState(''); const [occurredAt, setOccurredAt] = useState(() => datetimeLocalValue(Date.now())); const [location, setLocation] = useState(''); const [description, setDescription] = useState(''); const [files, setFiles] = useState<File[]>([]);
   const retryKey = useRef<{ signature: string; key: string }>();
   const inFlight = useRef(false);
   const selectedEvent = events.find((event) => event.eventId === eventId);
-  useEffect(() => {
-    if (!selectedEvent) return;
-    const suggested = Math.min(Date.now(), selectedEvent.endDatetime);
-    if (suggested >= selectedEvent.startDatetime) setOccurredAt(datetimeLocalValue(suggested));
-  }, [selectedEvent]);
   const occurrence = new Date(occurredAt).getTime();
   const dateValid = Boolean(selectedEvent && Number.isFinite(occurrence)
     && occurrence >= selectedEvent.startDatetime && occurrence <= selectedEvent.endDatetime && occurrence <= Date.now());
-  const valid = Boolean(selectedEvent && dateValid && location.trim().length >= 3 && description.trim().length >= 20);
+  const valid = Boolean(selectedEvent && category && dateValid && location.trim().length >= 3 && description.trim());
   const submit = async () => {
     if (inFlight.current || !valid) return;
     inFlight.current = true;
@@ -106,7 +100,7 @@ function Submission({ events, uid, busy, setBusy, onDone, setError }: { events: 
       const fn = httpsCallable(functions, 'submitIncident');
       await fn({ eventId, category, occurredAt: occurrence, location, description, evidencePaths: paths, idempotencyKey: stamp });
       retryKey.current = undefined;
-      setDescription(''); setFiles([]);
+      setEventId(''); setCategory(''); setOccurredAt(datetimeLocalValue(Date.now())); setLocation(''); setDescription(''); setFiles([]);
       await onDone();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Submission failed. Retry the unchanged report to safely reuse the same request.');
@@ -115,7 +109,7 @@ function Submission({ events, uid, busy, setBusy, onDone, setError }: { events: 
       setBusy(false);
     }
   };
-  return <section className="card mt-7"><div className="card-header"><div><h2 className="section-title">Submit Incident Report</h2><p className="text-xs text-ink-500">Participant submission is limited to ongoing events and events completed within the past seven days.</p></div><FileWarning size={18} /></div><div className="card-body grid gap-3 sm:grid-cols-2"><label><span className="field-label">Eligible event *</span><select className="input" value={eventId} onChange={(e) => setEventId(e.target.value)}><option value="">Select an ongoing or recent event</option>{events.map((event) => <option value={event.eventId} key={event.eventId}>{event.name}</option>)}</select></label><label><span className="field-label">Incident category *</span><select className="input" value={category} onChange={(e) => setCategory(e.target.value)}>{INCIDENT_CATEGORIES.map((item) => <option key={item} value={item}>{INCIDENT_CATEGORY_LABELS[item]}</option>)}</select></label><label><span className="field-label">Occurrence date and time *</span><input className="input" type="datetime-local" value={occurredAt} onChange={(e) => setOccurredAt(e.target.value)} /></label><label><span className="field-label">Location *</span><input className="input" value={location} onChange={(e) => setLocation(e.target.value)} /></label><label className="sm:col-span-2"><span className="field-label">Description *</span><textarea className="input min-h-24" value={description} onChange={(e) => setDescription(e.target.value)} /></label><label className="sm:col-span-2"><span className="field-label">Supporting evidence</span><input type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf" onChange={(e) => setFiles(Array.from(e.target.files ?? []))} className="input" /></label><p role="status" className="sm:col-span-2 text-sm text-ink-600">{!events.length ? 'No ongoing or recently completed events are currently eligible.' : occurredAt && !dateValid ? 'Choose a time during the selected event, no later than now.' : `${events.length} eligible event${events.length === 1 ? '' : 's'} available. Add a location of at least 3 characters and a description of at least 20 characters.`}</p><div className="sm:col-span-2 flex justify-end"><button className="btn-primary" disabled={!valid || busy} onClick={() => void submit()}><Upload size={15} /> Submit Incident Report</button></div></div></section>;
+  return <section className="card mt-7"><div className="card-header"><div><h2 className="section-title">Submit Incident Report</h2><p className="text-xs text-ink-500">Participant submission is limited to ongoing events and events completed within the past seven days.</p></div><FileWarning size={18} /></div><div className="card-body grid gap-3 sm:grid-cols-2"><label><span className="field-label">Eligible event *</span><select className="input" value={eventId} onChange={(e) => setEventId(e.target.value)}><option value="">Select an ongoing or recent event</option>{events.map((event) => <option value={event.eventId} key={event.eventId}>{event.name}</option>)}</select></label><label><span className="field-label">Incident category *</span><select className="input" value={category} onChange={(e) => setCategory(e.target.value)}><option value="">Select category</option>{INCIDENT_CATEGORIES.map((item) => <option key={item} value={item}>{INCIDENT_CATEGORY_LABELS[item]}</option>)}</select></label><label><span className="field-label">Occurrence date and time *</span><input className="input" type="datetime-local" value={occurredAt} onChange={(e) => setOccurredAt(e.target.value)} /></label><label><span className="field-label">Location *</span><input className="input" value={location} onChange={(e) => setLocation(e.target.value)} /></label><label className="sm:col-span-2"><span className="field-label">Description *</span><textarea className="input min-h-24" value={description} onChange={(e) => setDescription(e.target.value)} /></label><label className="sm:col-span-2"><span className="field-label">Supporting evidence</span><input type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf" onChange={(e) => setFiles(Array.from(e.target.files ?? []))} className="input" /></label>{!events.length ? <p role="status" className="sm:col-span-2 text-sm text-ink-600">No ongoing or recently completed events are currently eligible.</p> : selectedEvent && occurredAt && !dateValid ? <p role="status" className="sm:col-span-2 text-sm text-ink-600">Choose a time during the selected event, no later than now.</p> : null}<div className="sm:col-span-2 flex justify-end"><button className="btn-primary" disabled={!valid || busy} onClick={() => void submit()}><Upload size={15} /> Submit Incident Report</button></div></div></section>;
 }
 
 function IncidentDetail({ record, profile, directory, busy, setBusy, onDone, setError }: { record: IncidentView; profile: NonNullable<ReturnType<typeof useAuth>['profile']>; directory: M4AuthorityDirectoryEntry[]; busy: boolean; setBusy: (v: boolean) => void; onDone: () => Promise<void>; setError: (v: string) => void }) {

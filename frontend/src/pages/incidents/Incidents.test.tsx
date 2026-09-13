@@ -13,6 +13,8 @@ vi.mock('./IncidentEvidenceGallery', () => ({ IncidentEvidenceGallery: () => nul
 const event = { eventId: 'event-1', name: 'QA Event', startDatetime: new Date('2020-01-01').getTime(), endDatetime: Date.now() + 86400000 };
 const result = { data: { incidents: [], reportableEvents: [event] } };
 function fillReport() {
+  fireEvent.change(screen.getByLabelText('Eligible event *'), { target: { value: 'event-1' } });
+  fireEvent.change(screen.getByLabelText('Incident category *'), { target: { value: 'crowd' } });
   fireEvent.change(screen.getByLabelText('Occurrence date and time *'), { target: { value: '2026-01-01T12:00' } });
   fireEvent.change(screen.getByLabelText('Location *'), { target: { value: 'Main entrance' } });
   fireEvent.change(screen.getByLabelText('Description *'), { target: { value: 'A temporary barrier is blocking the main entrance.' } });
@@ -27,6 +29,30 @@ beforeEach(() => {
 });
 
 describe('live incident workspace resilience', () => {
+  it('starts with empty selections, the current time, and no instruction line', async () => {
+    const beforeRender = Date.now();
+    render(<Incidents />);
+    await screen.findByRole('option', { name: 'QA Event' });
+
+    expect(screen.getByLabelText('Eligible event *')).toHaveValue('');
+    expect((screen.getByRole('option', { name: 'Select an ongoing or recent event' }) as HTMLOptionElement).selected).toBe(true);
+    expect(screen.getByLabelText('Incident category *')).toHaveValue('');
+    expect((screen.getByRole('option', { name: 'Select category' }) as HTMLOptionElement).selected).toBe(true);
+    const occurrence = screen.getByLabelText('Occurrence date and time *') as HTMLInputElement;
+    expect(new Date(occurrence.value).getTime()).toBeGreaterThanOrEqual(beforeRender - 60_000);
+    expect(new Date(occurrence.value).getTime()).toBeLessThanOrEqual(Date.now() + 60_000);
+    expect(screen.queryByText(/eligible events available/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/description of at least 20 characters/i)).not.toBeInTheDocument();
+  });
+
+  it('accepts a required description without imposing a 20-character minimum', async () => {
+    render(<Incidents />);
+    await screen.findByRole('option', { name: 'QA Event' });
+    fillReport();
+    fireEvent.change(screen.getByLabelText('Description *'), { target: { value: 'X' } });
+    expect(screen.getByRole('button', { name: 'Submit Incident Report' })).toBeEnabled();
+  });
+
   it('shows loading rather than a false zero and recovers from a failed read', async () => {
     let fail!: (reason: Error) => void;
     mocks.list.mockImplementationOnce(() => new Promise((_, reject) => { fail = reject; }));

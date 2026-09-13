@@ -32,13 +32,14 @@ describe('M4 incident input boundary', () => {
     expect(() => assertReportableEvent(event(now - 1, now + 1, 'Cancelled'), now)).toThrow();
   });
 
-  it('requires canonical category, occurrence, location, description and idempotency key', () => {
+  it('requires canonical category, occurrence, non-empty description and idempotency key', () => {
     vi.useFakeTimers();
     vi.setSystemTime(now);
     const valid = { eventId: 'event-1234', category: 'medical_safety', occurredAt: now - 1, location: 'North entrance', description: 'A participant required prompt medical assistance.', idempotencyKey: 'request-1234', evidencePaths: [] };
     expect(validateSubmission(valid)).toMatchObject({ category: 'medical_safety', location: 'North entrance' });
+    expect(validateSubmission({ ...valid, description: 'X' })).toMatchObject({ description: 'X' });
     expect(() => validateSubmission({ ...valid, category: 'made_up' })).toThrow();
-    expect(() => validateSubmission({ ...valid, description: 'too short' })).toThrow();
+    expect(() => validateSubmission({ ...valid, description: '   ' })).toThrow();
     expect(() => validateSubmission({ ...valid, occurredAt: Number.NaN })).toThrow();
     expect(() => validateSubmission({ ...valid, occurredAt: now + 300_001 })).toThrow();
     vi.useRealTimers();
