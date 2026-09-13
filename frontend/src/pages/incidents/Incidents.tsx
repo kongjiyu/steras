@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { httpsCallable } from 'firebase/functions';
 import { getMetadata, ref, uploadBytesResumable } from 'firebase/storage';
 import { Activity, CheckCircle2, FileWarning, ShieldCheck, Siren, Upload } from 'lucide-react';
@@ -15,6 +15,7 @@ import PublicHeader from '../../components/layout/PublicHeader';
 type ReportableEvent = { eventId: string; name: string; startDatetime: number; endDatetime: number };
 type IncidentView = M4IncidentRecord & { history?: M4IncidentHistoryEntry[] };
 const EVIDENCE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
+const ORGANIZER_ASSIGNMENT_STATUSES = new Set<M4IncidentRecord['status']>(['submitted', 'manual_review_required', 'organizer_review']);
 function datetimeLocalValue(timestamp: number) {
   const date = new Date(timestamp - new Date(timestamp).getTimezoneOffset() * 60_000);
   return date.toISOString().slice(0, 16);
@@ -31,7 +32,7 @@ export default function Incidents() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
 
-  const reload = async () => {
+  const reload = useCallback(async () => {
     setLoading(true);
     setLoadError('');
     try {
@@ -41,14 +42,21 @@ export default function Incidents() {
       setIncidents(result.data.incidents);
       setEvents(result.data.reportableEvents ?? []);
       setDirectory(authorityResult.data.authorities);
-      setSelected((current) => result.data.incidents.some((item) => item.incidentId === current) ? current : result.data.incidents[0]?.incidentId ?? '');
+      setSelected((current) => {
+        if (result.data.incidents.some((item) => item.incidentId === current)) return current;
+        if (profile?.role === 'organizer') {
+          return result.data.incidents.find((item) => ORGANIZER_ASSIGNMENT_STATUSES.has(item.status) && !item.activityClosed)?.incidentId
+            ?? result.data.incidents[0]?.incidentId ?? '';
+        }
+        return result.data.incidents[0]?.incidentId ?? '';
+      });
     } catch {
       setLoadError('Incident records could not be refreshed. Check your connection and try again.');
     } finally {
       setLoading(false);
     }
-  };
-  useEffect(() => { void reload(); }, []);
+  }, [profile?.role]);
+  useEffect(() => { void reload(); }, [reload]);
   const active = useMemo(() => incidents.find((item) => item.incidentId === selected), [incidents, selected]);
   const civicWorkspace = profile?.role === 'authority' || profile?.role === 'admin';
   const standalonePublic = profile?.role === 'public';
@@ -117,14 +125,50 @@ function IncidentDetail({ record, profile, directory, busy, setBusy, onDone, set
   const retryKey = useRef<{ signature: string; key: string } | undefined>(undefined);
   const matching = useMemo(() => directory.filter((item) => item.serviceCategories.includes(record.category))
     .sort((a, b) => authorityRank(record, a.authorityId) - authorityRank(record, b.authorityId)), [directory, record]);
+  const canAssignOrRefer = ORGANIZER_ASSIGNMENT_STATUSES.has(record.status);
+  const canRecordResponse = !record.referredAuthorityId && ['submitted', 'manual_review_required', 'organizer_review', 'responding'].includes(record.status);
+  const canResolve = record.status === 'awaiting_resolution';
+  const noteValid = note.trim().length >= 10;
   useEffect(() => { if (!authorityId && matching[0]) setAuthorityId(matching[0].authorityId); }, [authorityId, matching]);
   const act = async (action: string, extra: Record<string, unknown> = {}) => { setBusy(true); setError(''); const signature = JSON.stringify({ incidentId: record.incidentId, action, note, extra, files: actionFiles.map((file) => [file.name, file.type, file.size, file.lastModified]) }); const idempotencyKey = retryKey.current?.signature === signature ? retryKey.current.key : crypto.randomUUID(); retryKey.current = { signature, key: idempotencyKey }; try { const paths = await uploadEvidence(profile.uid, actionFiles, idempotencyKey); const fn = httpsCallable(functions, 'manageIncident'); await fn({ incidentId: record.incidentId, action, note, evidencePaths: paths, idempotencyKey, ...extra }); retryKey.current = undefined; setNote(''); setActionFiles([]); await onDone(); } catch (e) { setError(e instanceof Error ? e.message : 'Action failed. Retry the unchanged action to safely reuse the same request.'); } finally { setBusy(false); } };
   return <section className="space-y-4"><article className="card"><div className="card-header"><div><h2 className="section-title">{record.eventName}</h2><p className="text-xs text-ink-500">Incident reference · {incidentReference(record.incidentId)}</p></div><Status value={record.status} /></div><div className="card-body space-y-4 text-sm">{record.reportWithdrawnAt && <p className="rounded bg-gold-50 p-3">The reporter withdrew this report. Investigation history is retained.</p>}{record.activityClosed && <div className="rounded-md bg-warning-50 p-3 text-warning-900"><strong>Activity closed</strong><p className="mt-1">This incident is retained for history, but further action is disabled because the event was withdrawn.</p></div>}<p>{record.description}</p><dl className="grid gap-3 sm:grid-cols-2"><div><dt className="field-label">Location</dt><dd>{record.location}</dd></div><div><dt className="field-label">Severity</dt><dd>{record.severity ?? 'Manual review required'}</dd></div><div><dt className="field-label">AI assessment</dt><dd>{record.aiAssessment.status === 'success' ? `${record.aiAssessment.rationale} · ${record.aiAssessment.immediateActionRequired ? 'Immediate action required' : 'No immediate action indicated'}` : `Unavailable: ${record.aiAssessment.reason}`}</dd></div><div><dt className="field-label">Evidence</dt><dd>{record.evidence.length ? `${record.evidence.length} verified upload(s)` : 'None supplied'}</dd></div></dl><IncidentEvidenceGallery incidentId={record.incidentId} evidence={record.evidence} setError={setError} />{record.finalResolution && <div className="rounded-md bg-brand-50 p-3"><strong>Final resolution</strong><p className="mt-1">{record.finalResolution}</p></div>}</div></article>
     {profile.role === 'public' && <article className="card p-5 text-sm"><strong>Progress</strong><p className="mt-2 text-ink-600">Current status: {record.status.replaceAll('_', ' ')}. Organizer and assigned-authority actions remain private; the final resolution appears here when complete.</p></article>}
-    {profile.role === 'organizer' && record.status !== 'resolved' && !record.activityClosed && <article className="card"><div className="card-header"><h3 className="section-title">Organizer response</h3></div><div className="card-body space-y-3"><textarea aria-label="Response rationale" className="input min-h-24" placeholder="Action, finding or final rationale (minimum 10 characters)" value={note} onChange={(e) => setNote(e.target.value)} /><ActionEvidence files={actionFiles} setFiles={setActionFiles} /><div className="grid gap-3 sm:grid-cols-2"><input aria-label="Internal team" className="input" value={team} onChange={(e) => setTeam(e.target.value)} /><button className="btn-secondary" disabled={busy || note.trim().length < 10} onClick={() => void act('assign_internal', { team })}>Assign internal team</button><select aria-label="External authority" className="input" value={authorityId} onChange={(e) => setAuthorityId(e.target.value)}><option value="">Recommended authority</option>{matching.map((item) => <option key={item.authorityId} value={item.authorityId}>{item.name} · {item.coverageAreas.join(', ')} · {item.contactPhone}</option>)}</select><button className="btn-secondary" disabled={busy || !authorityId || note.trim().length < 10} onClick={() => void act('refer_authority', { authorityId })}>Request external assistance</button></div><button className="btn-secondary" disabled={busy || note.trim().length < 10} onClick={() => void act('record_response')}>Record completed response</button><div className="border-t pt-3"><div className="grid gap-3 sm:grid-cols-2">{!record.severity && <select aria-label="Manual severity" className="input" value={severity} onChange={(e) => setSeverity(e.target.value as M4IncidentSeverity)}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select>}{record.linkedControlId && <select aria-label="Discrepancy outcome" className="input" value={outcome} onChange={(e) => setOutcome(e.target.value)}><option value="">Discrepancy outcome</option><option value="confirmed_true">Confirmed true</option><option value="dismissed_fake">Dismissed as false</option></select>}</div><button className="btn-primary mt-3" disabled={busy || record.status !== 'awaiting_resolution' || note.trim().length < 10 || Boolean(record.linkedControlId && !outcome)} onClick={() => void act('resolve', { resolution: note, manualSeverity: severity, discrepancyOutcome: outcome })}><CheckCircle2 size={15} /> Final resolution and close</button>{record.status !== 'awaiting_resolution' && <p className="mt-2 text-xs text-ink-500">Record a completed response or wait for the referred authority finding before closing.</p>}</div></div></article>}
+    {profile.role === 'organizer' && record.status !== 'resolved' && !record.activityClosed && <OrganizerActions record={record} matching={matching} note={note} setNote={setNote} team={team} setTeam={setTeam} authorityId={authorityId} setAuthorityId={setAuthorityId} severity={severity} setSeverity={setSeverity} outcome={outcome} setOutcome={setOutcome} actionFiles={actionFiles} setActionFiles={setActionFiles} busy={busy} noteValid={noteValid} canAssignOrRefer={canAssignOrRefer} canRecordResponse={canRecordResponse} canResolve={canResolve} act={act} />}
     {profile.role === 'authority' && record.status !== 'resolved' && !record.activityClosed && <article className="card"><div className="card-header"><h3 className="section-title">Authority investigation</h3></div><div className="card-body"><textarea aria-label="Investigation findings" className="input min-h-28" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Investigation actions, evidence reviewed, findings and outcome" /><ActionEvidence files={actionFiles} setFiles={setActionFiles} /><button className="btn-primary mt-3" disabled={busy || note.trim().length < 10} onClick={() => void act('record_investigation')}>Submit finding to organizer</button></div></article>}
     {profile.role !== 'public' && <article className="card"><div className="card-header"><h3 className="section-title">Append-only history</h3></div><div className="divide-y divide-[#eee8dc]">{(record.history ?? []).map((entry) => <div key={entry.historyId} className="p-4 text-sm"><div className="flex flex-wrap justify-between gap-2"><strong>{entry.action.replaceAll('_', ' ')}</strong><time className="text-xs text-ink-500">{new Date(entry.timestamp).toLocaleString()}</time></div><p className="mt-1 text-ink-600">{entry.summary}</p><IncidentEvidenceGallery incidentId={record.incidentId} evidence={entry.evidence} setError={setError} /></div>)}{!record.history?.length && <p className="p-4 text-sm text-ink-500">No history entries available.</p>}</div></article>}
   </section>;
+}
+
+function OrganizerActions({ record, matching, note, setNote, team, setTeam, authorityId, setAuthorityId, severity, setSeverity, outcome, setOutcome, actionFiles, setActionFiles, busy, noteValid, canAssignOrRefer, canRecordResponse, canResolve, act }: {
+  record: IncidentView; matching: M4AuthorityDirectoryEntry[]; note: string; setNote: (value: string) => void;
+  team: string; setTeam: (value: string) => void; authorityId: string; setAuthorityId: (value: string) => void;
+  severity: M4IncidentSeverity; setSeverity: (value: M4IncidentSeverity) => void; outcome: string; setOutcome: (value: string) => void;
+  actionFiles: File[]; setActionFiles: (files: File[]) => void; busy: boolean; noteValid: boolean;
+  canAssignOrRefer: boolean; canRecordResponse: boolean; canResolve: boolean;
+  act: (action: string, extra?: Record<string, unknown>) => Promise<void>;
+}) {
+  const hasAction = canAssignOrRefer || canRecordResponse || canResolve;
+  return <article className="card"><div className="card-header"><div><h3 className="section-title">Organizer response</h3><p className="mt-1 text-xs text-ink-500">{organizerStageGuidance(record.status)}</p></div></div><div className="card-body space-y-4">
+    {hasAction ? <>
+      <label><span className="field-label">Response note *</span><textarea aria-label="Response note" aria-describedby="response-note-help" className="input mt-1 min-h-24" placeholder="Describe the assignment, requested assistance, response, or resolution" value={note} onChange={(e) => setNote(e.target.value)} /></label>
+      <p id="response-note-help" className={`text-xs ${note.length > 0 && !noteValid ? 'text-risk-high-text' : 'text-ink-500'}`}>{noteValid ? 'Response note ready.' : 'Enter at least 10 characters before choosing an action.'}</p>
+      <ActionEvidence files={actionFiles} setFiles={setActionFiles} />
+    </> : <p role="status" className="rounded-md border border-brand-200 bg-brand-50 p-3 text-sm text-ink-700">The external authority is investigating this incident. Organizer actions will become available after the authority submits its finding.</p>}
+    {canAssignOrRefer && <div className="grid gap-4 border-t border-[#eee8dc] pt-4 lg:grid-cols-2">
+      <section className="rounded-md border border-[#e4ddcf] bg-cream-50 p-4"><h4 className="font-semibold text-ink-800">Assign internally</h4><p className="mt-1 text-xs text-ink-500">Send this incident to an organizer team for action.</p><label className="mt-3 block"><span className="field-label">Internal team *</span><input aria-label="Internal team" className="input mt-1" value={team} onChange={(e) => setTeam(e.target.value)} /></label><button className="btn-secondary mt-3 w-full justify-center" disabled={busy || !noteValid || team.trim().length < 2} onClick={() => void act('assign_internal', { team })}>Assign internal team</button></section>
+      <section className="rounded-md border border-[#e4ddcf] bg-cream-50 p-4"><h4 className="font-semibold text-ink-800">Request external authority</h4><p className="mt-1 text-xs text-ink-500">Refer this incident to an active authority for its category.</p><label className="mt-3 block"><span className="field-label">External authority *</span><select aria-label="External authority" className="input mt-1" value={authorityId} onChange={(e) => setAuthorityId(e.target.value)}><option value="">Select an authority</option>{matching.map((item) => <option key={item.authorityId} value={item.authorityId}>{item.name} · {item.coverageAreas.join(', ')} · {item.contactPhone}</option>)}</select></label><button className="btn-secondary mt-3 w-full justify-center" disabled={busy || !authorityId || !noteValid} onClick={() => void act('refer_authority', { authorityId })}>Request external authority</button>{matching.length === 0 && <p role="status" className="mt-2 text-xs text-risk-high-text">No active authority supports this incident category. Ask an administrator to update the authority directory.</p>}</section>
+    </div>}
+    {canRecordResponse && <div className={canAssignOrRefer ? 'border-t border-[#eee8dc] pt-4' : ''}><button className="btn-secondary" disabled={busy || !noteValid} onClick={() => void act('record_response')}>Record completed response</button><p className="mt-2 text-xs text-ink-500">Use this after the internal response has been completed.</p></div>}
+    {canResolve && <div className="border-t border-[#eee8dc] pt-4"><div className="grid gap-3 sm:grid-cols-2">{!record.severity && <select aria-label="Manual severity" className="input" value={severity} onChange={(e) => setSeverity(e.target.value as M4IncidentSeverity)}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select>}{record.linkedControlId && <select aria-label="Discrepancy outcome" className="input" value={outcome} onChange={(e) => setOutcome(e.target.value)}><option value="">Discrepancy outcome</option><option value="confirmed_true">Confirmed true</option><option value="dismissed_fake">Dismissed as false</option></select>}</div><button className="btn-primary mt-3" disabled={busy || !noteValid || Boolean(record.linkedControlId && !outcome)} onClick={() => void act('resolve', { resolution: note, manualSeverity: severity, discrepancyOutcome: outcome })}><CheckCircle2 size={15} /> Final resolution and close</button></div>}
+  </div></article>;
+}
+
+function organizerStageGuidance(status: M4IncidentRecord['status']) {
+  if (ORGANIZER_ASSIGNMENT_STATUSES.has(status)) return 'Choose an internal team or request the recommended external authority.';
+  if (status === 'responding') return 'The internal team is responding. Record the completed response when it is ready.';
+  if (status === 'authority_investigation') return 'The referred authority is investigating this incident.';
+  if (status === 'awaiting_resolution') return 'The response is complete. Review it and record the final resolution.';
+  return 'Review the incident history and current status.';
 }
 
 function Status({ value }: { value: string }) { return <span className="badge bg-cream-100 text-ink-700">{value.replaceAll('_', ' ')}</span>; }

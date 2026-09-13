@@ -2,10 +2,10 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Incidents from './Incidents';
 
-const mocks = vi.hoisted(() => ({ list: vi.fn(), directory: vi.fn(), submit: vi.fn(), role: 'public' }));
+const mocks = vi.hoisted(() => ({ list: vi.fn(), directory: vi.fn(), submit: vi.fn(), manage: vi.fn(), role: 'public' }));
 vi.mock('../../config/firebase', () => ({ functions: {}, storage: {} }));
 vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => ({ user: { uid: 'owner' }, profile: { uid: 'owner', name: 'Owner', role: mocks.role } }) }));
-vi.mock('firebase/functions', () => ({ httpsCallable: (_: unknown, name: string) => name === 'listIncidents' ? mocks.list : name === 'listAuthorityDirectory' ? mocks.directory : mocks.submit }));
+vi.mock('firebase/functions', () => ({ httpsCallable: (_: unknown, name: string) => name === 'listIncidents' ? mocks.list : name === 'listAuthorityDirectory' ? mocks.directory : name === 'manageIncident' ? mocks.manage : mocks.submit }));
 vi.mock('../../components/layout/Sidebar', () => ({ WorkspaceTopBar: () => null }));
 vi.mock('../../components/layout/PublicHeader', () => ({ default: () => null }));
 vi.mock('./IncidentEvidenceGallery', () => ({ IncidentEvidenceGallery: () => null }));
@@ -26,6 +26,7 @@ beforeEach(() => {
   mocks.list.mockResolvedValue(result);
   mocks.directory.mockResolvedValue({ data: { authorities: [] } });
   mocks.submit.mockResolvedValue({ data: {} });
+  mocks.manage.mockResolvedValue({ data: {} });
 });
 
 describe('live incident workspace resilience', () => {
@@ -135,4 +136,47 @@ describe('live incident workspace resilience', () => {
       'Published Event Control Discrepancy', 'Other Incident',
     ]));
   });
+
+  it('prioritizes a new incident and enables both organizer assignment paths after a response note', async () => {
+    mocks.role = 'organizer';
+    mocks.list.mockResolvedValue({ data: { incidents: [
+      incident('awaiting_resolution', 'Awaiting incident'),
+      incident('submitted', 'New incident'),
+    ], reportableEvents: [] } });
+    mocks.directory.mockResolvedValue({ data: { authorities: [{
+      authorityId: 'pdrm-kuala-lumpur-demo', name: 'PDRM Kuala Lumpur', authorityType: 'PDRM',
+      serviceCategories: ['crowd'], coverageAreas: ['Kuala Lumpur'], contactName: 'Duty officer',
+      contactPhone: '999', active: true, createdAt: 1, updatedAt: 1,
+    }] } });
+    render(<Incidents />);
+    expect(await screen.findByRole('heading', { name: 'New incident' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Assign internal team' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Request external authority' })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Response note'), { target: { value: 'Venue team notified.' } });
+    expect(screen.getByRole('button', { name: 'Assign internal team' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Request external authority' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Assign internal team' }));
+    await waitFor(() => expect(mocks.manage).toHaveBeenCalledWith(expect.objectContaining({ action: 'assign_internal', team: 'Venue operations' })));
+  });
+
+  it('shows only actions that are valid for the current organizer workflow stage', async () => {
+    mocks.role = 'organizer';
+    mocks.list.mockResolvedValue({ data: { incidents: [incident('awaiting_resolution', 'Awaiting incident')], reportableEvents: [] } });
+    render(<Incidents />);
+    await screen.findByRole('heading', { name: 'Awaiting incident' });
+    expect(screen.queryByRole('button', { name: 'Assign internal team' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Request external authority' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Final resolution and close' })).toBeInTheDocument();
+    expect(screen.getByText(/response is complete/i)).toBeInTheDocument();
+  });
 });
+
+function incident(status: 'submitted' | 'awaiting_resolution', eventName: string) {
+  return {
+    schemaVersion: '2026-09-03-m4-v1', incidentId: `${status}-incident`, eventId: 'event-1', eventVersionId: 'v1',
+    venueId: 'venue-1', eventType: 'festival', eventName, organizerId: 'owner', reporterUid: 'participant', reporterRole: 'public',
+    category: 'crowd', incidentType: 'crowd', description: 'Crowd reported near the entrance.', location: 'Main entrance',
+    occurredAt: Date.now() - 1000, evidence: [], aiAssessment: { status: 'success', model: 'test', promptVersion: '2026-09-03-incident-triage-v1', severity: 'medium', immediateActionRequired: false, rationale: 'Review required.', assessedAt: Date.now() },
+    severity: 'medium', immediateActionRequired: false, status, assessmentEligible: false, synthetic: true, date: Date.now(), createdAt: Date.now(), updatedAt: Date.now(), history: [],
+  };
+}
