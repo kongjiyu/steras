@@ -305,26 +305,11 @@ function appendHistory(tx: FirebaseFirestore.Transaction, ref: FirebaseFirestore
 export function safeIncident(record: M4IncidentRecord, role: UserProfile['role'], uid: string) {
   if (role !== 'public' && !(role === 'organizer' && record.organizerId !== uid)) return record;
   const {
-    schemaVersion, incidentId, eventId, eventVersionId, eventType, eventName, reporterUid, reporterRole,
-    category, incidentType, description, location, occurredAt, evidence, aiAssessment, severity,
-    immediateActionRequired, status, linkedControlId, linkedStage2DocId, publicReportTicketId,
-    finalResolution, discrepancyOutcome, assessmentEligible, synthetic, date, createdAt, updatedAt, resolvedAt,
-    activityClosed, closureReason, closedAt, reportWithdrawnAt,
+    incidentId, eventId, eventName, category, description, location, occurredAt, evidence, status, linkedControlId,
   } = record;
   return {
-    schemaVersion, incidentId, eventId, eventVersionId, eventType, eventName, reporterUid, reporterRole,
-    category, incidentType, description, location, occurredAt, evidence, aiAssessment, status,
-    assessmentEligible, synthetic, date, createdAt, updatedAt,
-    ...(reportWithdrawnAt ? { reportWithdrawnAt } : {}),
-    ...(severity ? { severity } : {}),
-    ...(immediateActionRequired !== undefined ? { immediateActionRequired } : {}),
-    ...(linkedControlId ? { linkedControlId } : {}),
-    ...(linkedStage2DocId ? { linkedStage2DocId } : {}),
-    ...(publicReportTicketId ? { publicReportTicketId } : {}),
-    ...(finalResolution ? { finalResolution } : {}),
-    ...(discrepancyOutcome ? { discrepancyOutcome } : {}),
-    ...(resolvedAt ? { resolvedAt } : {}),
-    ...(activityClosed ? { activityClosed, closureReason, closedAt } : {}),
+    incidentId, eventId, eventName, status, category, location, occurredAt, description, evidence,
+    ...(category === 'event_control_discrepancy' && linkedControlId ? { linkedControlId } : {}),
   };
 }
 function identifier(value: unknown, field: string) { const result = String(value ?? '').trim(); if (!/^[A-Za-z0-9_-]{8,128}$/.test(result)) throw new HttpsError('invalid-argument', `${field} is invalid.`); return result; }

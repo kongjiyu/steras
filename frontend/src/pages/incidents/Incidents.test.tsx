@@ -137,6 +137,27 @@ describe('live incident workspace resilience', () => {
     ]));
   });
 
+  it('shows only the approved participant incident detail fields and no AI result', async () => {
+    mocks.list.mockResolvedValue({ data: { incidents: [incident('submitted', 'Participant Event')], reportableEvents: [event] } });
+    render(<Incidents />);
+    await screen.findByRole('heading', { name: 'Incident details' });
+    for (const label of ['Event name', 'Incident ID', 'Status', 'Category', 'Location', 'Occurrence time', 'Description', 'Evidence']) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
+    expect(screen.queryByText('AI assessment')).not.toBeInTheDocument();
+    expect(screen.queryByText('Severity')).not.toBeInTheDocument();
+    expect(screen.queryByText('Progress')).not.toBeInTheDocument();
+    expect(screen.queryByText('Event discrepancy control')).not.toBeInTheDocument();
+  });
+
+  it('shows the Event discrepancy control only for that category', async () => {
+    mocks.list.mockResolvedValue({ data: { incidents: [incident('submitted', 'Discrepancy Event', 'event_control_discrepancy', 'control-123')], reportableEvents: [event] } });
+    render(<Incidents />);
+    await screen.findByRole('heading', { name: 'Incident details' });
+    expect(screen.getByText('Event discrepancy control')).toBeInTheDocument();
+    expect(screen.getByText('control-123')).toBeInTheDocument();
+  });
+
   it('prioritizes a new incident and enables both organizer assignment paths after a response note', async () => {
     mocks.role = 'organizer';
     mocks.list.mockResolvedValue({ data: { incidents: [
@@ -171,12 +192,12 @@ describe('live incident workspace resilience', () => {
   });
 });
 
-function incident(status: 'submitted' | 'awaiting_resolution', eventName: string) {
+function incident(status: 'submitted' | 'awaiting_resolution', eventName: string, category: 'crowd' | 'event_control_discrepancy' = 'crowd', linkedControlId?: string) {
   return {
     schemaVersion: '2026-09-03-m4-v1', incidentId: `${status}-incident`, eventId: 'event-1', eventVersionId: 'v1',
     venueId: 'venue-1', eventType: 'festival', eventName, organizerId: 'owner', reporterUid: 'participant', reporterRole: 'public',
-    category: 'crowd', incidentType: 'crowd', description: 'Crowd reported near the entrance.', location: 'Main entrance',
+    category, incidentType: category, description: 'Crowd reported near the entrance.', location: 'Main entrance',
     occurredAt: Date.now() - 1000, evidence: [], aiAssessment: { status: 'success', model: 'test', promptVersion: '2026-09-03-incident-triage-v1', severity: 'medium', immediateActionRequired: false, rationale: 'Review required.', assessedAt: Date.now() },
-    severity: 'medium', immediateActionRequired: false, status, assessmentEligible: false, synthetic: true, date: Date.now(), createdAt: Date.now(), updatedAt: Date.now(), history: [],
+    severity: 'medium', immediateActionRequired: false, status, assessmentEligible: false, synthetic: true, date: Date.now(), createdAt: Date.now(), updatedAt: Date.now(), history: [], linkedControlId,
   };
 }

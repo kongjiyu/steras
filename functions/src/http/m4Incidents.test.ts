@@ -51,18 +51,32 @@ describe('M4 incident input boundary', () => {
     expect(() => validateSubmission({ ...valid, linkedControlId: '../control' })).toThrow();
   });
 
-  it('removes internal assignment and authority identity from reporter-safe records', () => {
+  it('returns only participant-visible incident details without AI or internal response data', () => {
     const record = {
       organizerId: 'organizer-1', reporterUid: 'reporter-1', assignedInternalTeam: 'Venue operations',
       referredAuthorityId: 'pdrm-kl', referredAuthorityType: 'PDRM', assignedAuthorityOfficerUid: 'officer-1',
-      recommendedAuthorityIds: ['pdrm-kl'],
+      recommendedAuthorityIds: ['pdrm-kl'], incidentId: 'incident-1', eventId: 'event-1', eventName: 'Public Event',
+      status: 'submitted', category: 'crowd', location: 'Gate A', occurredAt: now, description: 'Crowd reported.', evidence: [],
+      aiAssessment: { status: 'success', severity: 'high', immediateActionRequired: true, rationale: 'Internal AI result.' },
+      severity: 'high', immediateActionRequired: true, finalResolution: 'Internal resolution.', assessmentEligible: true,
+      linkedControlId: 'control-1', linkedStage2DocId: 'stage2-1', publicReportTicketId: 'ticket-1',
     } as unknown as Parameters<typeof safeIncident>[0];
     const result = safeIncident(record, 'public', 'reporter-1');
-    expect(result).not.toHaveProperty('organizerId');
-    expect(result).not.toHaveProperty('assignedInternalTeam');
-    expect(result).not.toHaveProperty('referredAuthorityId');
-    expect(result).not.toHaveProperty('assignedAuthorityOfficerUid');
-    expect(result.reporterUid).toBe('reporter-1');
+    expect(result).toEqual({
+      incidentId: 'incident-1', eventId: 'event-1', eventName: 'Public Event', status: 'submitted', category: 'crowd',
+      location: 'Gate A', occurredAt: now, description: 'Crowd reported.', evidence: [],
+    });
+    expect(result).not.toHaveProperty('aiAssessment');
+    expect(result).not.toHaveProperty('severity');
+  });
+
+  it('includes a linked control only for an Event Control discrepancy', () => {
+    const record = {
+      incidentId: 'incident-1', eventId: 'event-1', eventName: 'Public Event', status: 'submitted',
+      category: 'event_control_discrepancy', location: 'Gate A', occurredAt: now, description: 'Control differs.',
+      evidence: [], linkedControlId: 'control-1', linkedStage2DocId: 'stage2-1', aiAssessment: { status: 'unavailable' },
+    } as unknown as Parameters<typeof safeIncident>[0];
+    expect(safeIncident(record, 'public', 'reporter-1')).toHaveProperty('linkedControlId', 'control-1');
   });
 
   it('enforces uploader-scoped flat evidence paths', () => {
