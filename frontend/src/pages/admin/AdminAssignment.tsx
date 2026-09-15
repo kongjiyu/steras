@@ -27,6 +27,8 @@ import {
 import { db, functions, isFirebaseConfigured } from '../../config/firebase';
 import EmptyState from '../../components/ui/EmptyState';
 import StatusBadge from '../../components/ui/StatusBadge';
+import { displayIdentityName, useDisplayIdentities } from '../../hooks/useDisplayIdentities';
+import { useAppDialog } from '../../contexts/AppDialogContext';
 
 interface ProposedChecklistItem {
   authorityType: AuthorityType;
@@ -38,8 +40,12 @@ interface ProposedChecklistResponse {
   venueState: string;
 }
 export default function AdminAssignment() {
+  const dialog = useAppDialog();
   const { eventId } = useParams<{ eventId: string }>();
   const [event, setEvent] = useState<EventRecord | null>(null);
+  const [loadingEvent, setLoadingEvent] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [retryKey, setRetryKey] = useState(0);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [checklist, setChecklist] = useState<ProposedChecklistItem[]>([]);
   const [venueState, setVenueState] = useState<string>('ALL');
@@ -52,22 +58,33 @@ export default function AdminAssignment() {
   // Live event doc.
   useEffect(() => {
     if (!isFirebaseConfigured || !eventId) return;
+    setLoadingEvent(true);
+    setLoadError('');
+    setEvent(null);
     return onSnapshot(doc(db, COLLECTIONS.EVENTS, eventId), (snapshot) => {
       setEvent(snapshot.exists() ? { eventId: snapshot.id, ...snapshot.data() } as EventRecord : null);
+      setLoadingEvent(false);
+    }, () => {
+      setLoadError('The application could not be loaded. Check your connection and access, then try again.');
+      setLoadingEvent(false);
     });
-  }, [eventId]);
+  }, [eventId, retryKey]);
 
   // Live assignments sub-collection.
   useEffect(() => {
     if (!isFirebaseConfigured || !eventId) return;
+    setAssignments([]);
     return onSnapshot(collection(db, COLLECTIONS.EVENTS, eventId, COLLECTIONS.ASSIGNMENTS), (snapshot) => {
       setAssignments(snapshot.docs.map((d) => ({ ...(d.data() as Assignment), assignmentId: d.id })));
+    }, () => {
+      setLoadError('Officer assignments could not be loaded. Try again before making a decision.');
     });
-  }, [eventId]);
+  }, [eventId, retryKey]);
 
   // Initial: fetch the proposed checklist (dryRun).
   useEffect(() => {
     if (!isFirebaseConfigured || !eventId || !event) return;
+    let active = true;
     setLoadingChecklist(true);
     const command = httpsCallable<{ eventId: string; dryRun: true }, ProposedChecklistResponse>(
       functions,
@@ -75,6 +92,7 @@ export default function AdminAssignment() {
     );
     command({ eventId, dryRun: true })
       .then((res) => {
+        if (!active) return;
         setChecklist(res.data.checklist);
         setVenueState(res.data.venueState);
         // Initialise the selected map with defaults.
@@ -83,40 +101,63 @@ export default function AdminAssignment() {
         setSelected(def);
       })
       .catch((err) => {
+        if (!active) return;
         console.error('[AdminAssignment] checklist load failed:', err);
-        toast.error(err instanceof Error ? err.message : 'Unable to load the officer checklist.');
+        setLoadError('Unable to load the officer checklist. Try again before assigning officers.');
       })
-      .finally(() => setLoadingChecklist(false));
+      .finally(() => { if (active) setLoadingChecklist(false); });
+    return () => { active = false; };
   }, [eventId, event]);
 
   // Derive review state before the early loading returns so this hook is
   // called in the same order on every render.
   const required = event?.requiredAuthorities ?? [];
-  const currentAssignments = assignments.filter((assignment) => assignment.versionId === event?.currentVersionId);
+  const versionAssignments = assignments.filter((assignment) => assignment.versionId === event?.currentVersionId);
+  const currentAssignments = versionAssignments.filter((assignment) => assignment.status !== 'revoked');
+  const revokedAssignments = new Map<AuthorityType, Assignment>();
+  for (const assignment of versionAssignments.filter((value) => value.status === 'revoked')) {
+    revokedAssignments.set(assignment.authorityType, assignment);
+  }
   const assignmentsByAuthority = new Map<AuthorityType, Assignment>();
   for (const a of currentAssignments) assignmentsByAuthority.set(a.authorityType, a);
+  const identityNames = useDisplayIdentities([
+    ...assignments.flatMap((assignment) => [assignment.officerUid, assignment.assignedBy, assignment.revokedBy]),
+    ...checklist.flatMap((item) => item.candidates.map((candidate) => candidate.officerUid)),
+  ]);
 
   if (!isFirebaseConfigured) {
     return <div className="p-8 text-ink-500">Firebase is not configured.</div>;
   }
   if (!eventId) return <div className="p-8"><EmptyState title="No event selected" /></div>;
-  if (!event) return <div className="p-8 text-ink-500">Loading application...</div>;
+  if (loadError) return <div className="p-8"><EmptyState title="Assignment workspace unavailable" description={loadError}><button type="button" className="btn-secondary" onClick={() => setRetryKey((value) => value + 1)}>Try again</button></EmptyState></div>;
+  if (loadingEvent) return <div className="p-8 text-ink-500" role="status">Loading application...</div>;
+  if (!event) return <div className="p-8"><EmptyState title="Application not found" description="This application may have been removed or the link is incorrect."><Link className="btn-secondary" to="/admin/applications">Back to applications</Link></EmptyState></div>;
 
   const details = event.eventDetails;
   const isAuthorityReview = event.reviewStage === 'authority';
   const isSecondReview = event.reviewStage === 'second';
-  const allComplete = isSecondReview
-    || (currentAssignments.length > 0 && currentAssignments.every((a) => a.status === 'completed' || a.status === 'revoked'));
+  const allComplete = event.status === 'UnderReview' && (isSecondReview
+    || (currentAssignments.length === required.length && currentAssignments.every((a) => a.status === 'completed')));
+  const missingAuthorities = required.filter((authority) => !assignmentsByAuthority.has(authority));
+  const isReplacement = isAuthorityReview && missingAuthorities.length > 0;
+  const authoritiesToAssign = isReplacement ? missingAuthorities : required;
+  const missingSelections = authoritiesToAssign.filter((authority) => !selected[authority]);
+  const hasCompleteSelection = hasCompleteOfficerSelection(authoritiesToAssign, selected);
+  const canInitialAssign = event.status === 'UnderReview' && event.initialReview?.decision === 'Approved'
+    && !isAuthorityReview && !isSecondReview;
   const commit = async () => {
     if (!eventId) return;
     setCommitting(true);
     try {
-      const command = httpsCallable<{ eventId: string; assignmentMap: Record<string, string>; dryRun: false }, { assigned: number }>(
+      const assignmentMap = isReplacement
+        ? Object.fromEntries(missingAuthorities.map((authority) => [authority, selected[authority]]))
+        : selected;
+      const command = httpsCallable<{ eventId: string; assignmentMap: Record<string, string>; dryRun: false; mode: 'initial' | 'replacement' }, { assigned: number }>(
         functions,
         'assignAuthorityOfficers',
       );
-      await command({ eventId, assignmentMap: selected, dryRun: false });
-      toast.success(`Assigned ${Object.keys(selected).length} officer(s).`);
+      await command({ eventId, assignmentMap, dryRun: false, mode: isReplacement ? 'replacement' : 'initial' });
+      toast.success(isReplacement ? `Assigned ${missingAuthorities.length} replacement officer(s).` : `Assigned ${Object.keys(selected).length} officer(s).`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Unable to assign officers.');
     } finally {
@@ -124,13 +165,11 @@ export default function AdminAssignment() {
     }
   };
 
-
   const unassign = async (authorityType: AuthorityType | null) => {
     if (!eventId) return;
-    const msg = authorityType
-      ? `Unassign the ${authorityType} officer? You can re-assign them after.`
-      : 'Unassign ALL officers for this event version? You can re-assign them after.';
-    if (!window.confirm(msg)) return;
+    if (!await dialog.confirm(authorityType
+      ? { title: `Unassign the ${authorityType} officer?`, description: 'This officer will lose the assignment. You can assign them again later.', confirmLabel: 'Unassign officer', cancelLabel: 'Keep assignment', tone: 'danger' }
+      : { title: 'Unassign all officers?', description: 'Every officer will lose this event version assignment. You can assign officers again later.', confirmLabel: 'Unassign all', cancelLabel: 'Keep assignments', tone: 'danger' })) return;
     if (authorityType) {
       setUnassigning(authorityType);
     } else {
@@ -173,6 +212,7 @@ export default function AdminAssignment() {
         <div className="flex flex-col items-end gap-1">
           <StatusBadge status={event.status} />
           {event.reviewStage && <span className="text-xs font-semibold text-ink-500">Stage: {event.reviewStage}</span>}
+          {isSecondReview && <span className="text-xs font-semibold text-amber-700">Admin final decision required</span>}
         </div>
       </div>
 
@@ -191,6 +231,7 @@ export default function AdminAssignment() {
             <div className="card-body space-y-5">
               {checklist.map((item) => {
                 const current = assignmentsByAuthority.get(item.authorityType);
+                const revoked = revokedAssignments.get(item.authorityType);
                 return (
                   <div key={item.authorityType} className="rounded-md border border-ink-100 p-3">
                     <div className="flex items-center justify-between">
@@ -217,11 +258,11 @@ export default function AdminAssignment() {
                     </div>
                     {current ? (
                       <div className="mt-2 rounded-md bg-cream-50 p-3 text-xs text-ink-600">
-                        <p><span className="font-semibold">Officer:</span> {current.officerUid}</p>
-                        <p><span className="font-semibold">Assigned by:</span> {current.assignedBy} · {format(new Date(current.assignedAt), 'PPp')}</p>
+                        <p><span className="font-semibold">Officer:</span> {displayIdentityName(current.officerUid, identityNames, `${current.authorityType} officer`)}</p>
+                        <p><span className="font-semibold">Assigned by:</span> {displayIdentityName(current.assignedBy, identityNames, 'STERAS administrator')} · {format(new Date(current.assignedAt), 'PPp')}</p>
                         {current.status === 'revoked' && current.revokedAt && (
                           <p className="mt-1 text-status-rejected">
-                            <span className="font-semibold">Revoked</span> by {current.revokedBy ?? 'admin'} · {format(new Date(current.revokedAt), 'PPp')}
+                            <span className="font-semibold">Revoked</span> by {displayIdentityName(current.revokedBy, identityNames, 'STERAS administrator')} · {format(new Date(current.revokedAt), 'PPp')}
                           </p>
                         )}
                         {current.decision && (
@@ -235,7 +276,13 @@ export default function AdminAssignment() {
                     ) : item.candidates.length === 0 ? (
                       <p className="mt-2 text-sm text-status-rejected">No eligible officers for {item.authorityType} + venue state {venueState}.</p>
                     ) : (
-                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      <div className="mt-3">
+                        {revoked && (
+                          <p className="mb-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                            Previous assignment revoked {revoked.revokedAt ? format(new Date(revoked.revokedAt), 'PPp') : ''}. Select an eligible replacement and confirm below.
+                          </p>
+                        )}
+                        <div className="grid gap-2 sm:grid-cols-2">
                         {item.candidates.map((c) => {
                           const checked = (selected[item.authorityType] ?? item.defaultOfficerUid) === c.officerUid;
                           return (
@@ -247,29 +294,35 @@ export default function AdminAssignment() {
                                 checked={checked}
                                 onChange={() => setSelected((cur) => ({ ...cur, [item.authorityType]: c.officerUid }))}
                                 className="mt-1"
-                                disabled={isAuthorityReview || isSecondReview}
+                                disabled={isSecondReview || (isAuthorityReview && !revoked)}
                               />
-                              <span>
-                                <span className="font-mono text-ink-700">{c.officerUid}</span>
-                                <span className="ml-2 text-ink-500">[{c.scopeType}:{c.state}] · workload {c.workloadCount}</span>
+                              <span className="min-w-0">
+                                <span className="block font-semibold text-ink-800">{displayIdentityName(c.officerUid, identityNames, `${item.authorityType} officer`)}</span>
+                                <span className="block text-ink-500">{c.scopeType === 'federal' ? 'Federal scope' : `${c.state} scope`} · {c.workloadCount} active assignment{c.workloadCount === 1 ? '' : 's'}</span>
                               </span>
                             </label>
                           );
                         })}
+                        </div>
                       </div>
                     )}
                   </div>
                 );
               })}
             </div>
-            {!isAuthorityReview && !isSecondReview && (
+            {(canInitialAssign || isReplacement) && (
               <div className="card-body border-t border-ink-100">
-                <button type="button" className="btn-primary w-full" disabled={committing || Object.keys(selected).length === 0} onClick={commit}>
-                  <UserCheck size={16} />{committing ? 'Assigning...' : 'Assign officers'}
+                <button type="button" className="btn-primary w-full" disabled={committing || !hasCompleteSelection} onClick={commit}>
+                  <UserCheck size={16} />{committing ? 'Assigning...' : isReplacement ? 'Assign replacement officers' : 'Assign officers'}
                 </button>
+                <p className={`mt-2 text-center text-xs ${missingSelections.length > 0 ? 'text-status-rejected' : 'text-ink-500'}`}>
+                  {missingSelections.length > 0
+                    ? `Assignment unavailable: select an eligible officer for ${missingSelections.join(', ')}.`
+                    : 'Selection is only saved after you press this button.'}
+                </p>
               </div>
             )}
-            {canUnassign && assignments.length > 1 && (
+            {canUnassign && currentAssignments.length > 1 && (
               <div className="card-body border-t border-ink-100">
                 <button type="button" className="btn-secondary w-full" disabled={unassigning !== null || unassigningAll} onClick={() => unassign(null)}>
                   <RotateCcw size={14} />{unassigningAll ? 'Unassigning all...' : 'Unassign all officers'}
@@ -296,4 +349,11 @@ export default function AdminAssignment() {
       )}
     </div>
   );
+}
+
+export function hasCompleteOfficerSelection(
+  required: AuthorityType[],
+  selected: Partial<Record<AuthorityType, string>>,
+): boolean {
+  return required.length > 0 && required.every((authority) => Boolean(selected[authority]?.trim()));
 }

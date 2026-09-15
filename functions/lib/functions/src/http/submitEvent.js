@@ -12,12 +12,14 @@ const firestore_1 = require("firebase-admin/firestore");
 const https_1 = require("firebase-functions/v2/https");
 const types_1 = require("../../../shared/types");
 const m1TemplateContract_1 = require("../../../shared/m1TemplateContract");
+const malaysiaStates_1 = require("../../../shared/malaysiaStates");
 const runtime_1 = require("../config/runtime");
 const resourceCutoverLock_1 = require("../config/resourceCutoverLock");
 const storageEvidence_1 = require("../utils/storageEvidence");
 const extractApplicationDocuments_1 = require("./extractApplicationDocuments");
 const m1EvidenceManifest_1 = require("../engines/m1EvidenceManifest");
 const applicationLifecycle_1 = require("./applicationLifecycle");
+const eventVersionHash_1 = require("../utils/eventVersionHash");
 var storageEvidence_2 = require("../utils/storageEvidence");
 Object.defineProperty(exports, "isValidEvidenceMetadata", { enumerable: true, get: function () { return storageEvidence_2.isValidEvidenceMetadata; } });
 exports.submitEvent = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
@@ -54,15 +56,12 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
         throw new https_1.HttpsError('failed-precondition', 'The template recommendation no longer matches the event type or venue setting.');
     }
     const preflightVersionId = `v${(preflight.currentVersionNumber ?? 0) + 1}`;
-    const preflightDocuments = preflight.documentSchemaVersion === types_1.M1_DOCUMENT_SCHEMA_VERSION
-        ? (0, extractApplicationDocuments_1.validateDraftDocuments)(eventId, preflightVersionId, preflight.draftDocuments)
-        : undefined;
-    const preflightExtraction = preflightDocuments
-        ? await loadCurrentExtraction(preflight, eventReference)
-        : undefined;
-    const preflightEvidenceManifest = preflightDocuments
-        ? validateCurrentEvidenceManifest(preflight, preflightDocuments)
-        : undefined;
+    if (preflight.documentSchemaVersion !== types_1.M1_DOCUMENT_SCHEMA_VERSION) {
+        throw new https_1.HttpsError('failed-precondition', 'Upload and extract the current versioned application documents before submission.');
+    }
+    const preflightDocuments = (0, extractApplicationDocuments_1.validateDraftDocuments)(eventId, preflightVersionId, preflight.draftDocuments);
+    const preflightExtraction = await loadCurrentExtraction(preflight, eventReference);
+    const preflightEvidenceManifest = validateCurrentEvidenceManifest(preflight, preflightDocuments);
     await validateSubmissionAssets(eventId, preflightVersionId, preflight.draftDocumentPaths ?? []);
     await validateCanonicalVenue(preflight.eventDetails);
     const preflightFingerprint = submissionFingerprint(preflight);
@@ -103,6 +102,10 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
             || validateCanonicalVenueRecord(event.eventDetails, venueSnapshot.data()).length > 0)) {
             throw new https_1.HttpsError('failed-precondition', 'The selected venue changed during submission. Review the verified venue and retry.');
         }
+        const owner = userSnapshot.data();
+        if (!owner.name || !owner.email || !owner.phone)
+            throw new https_1.HttpsError('failed-precondition', 'Complete your name, email and phone in Profile before submitting.');
+        event.eventDetails = { ...event.eventDetails, organizerName: owner.name, organizerEmail: owner.email, organizerPhone: owner.phone };
         const errors = validateEventDetails(event.eventDetails, now);
         if (errors.length > 0)
             throw new https_1.HttpsError('invalid-argument', errors.join(' '));
@@ -116,34 +119,22 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
         if (documentPaths.some((path) => !path.startsWith(allowedPrefix))) {
             throw new https_1.HttpsError('invalid-argument', 'One or more uploaded document paths do not belong to this application version.');
         }
-        const inputHash = (0, node_crypto_1.createHash)('sha256').update(JSON.stringify({
-            eventDetails: event.eventDetails,
-            templateSelection: event.templateSelection,
-            documentPaths,
-            documentUploads: preflightDocuments,
-            extractionId: preflightExtraction?.extractionId,
-            evidenceManifest: preflightEvidenceManifest,
-            evidenceManifestSchemaVersion: preflight.evidenceManifestSchemaVersion,
-            revisionSource: preflight.activeRevision,
-        })).digest('hex');
-        const version = {
+        const version = (0, eventVersionHash_1.buildSubmittedEventVersion)({
             versionId,
             eventId,
             versionNumber,
             eventDetails: event.eventDetails,
             templateSelection: event.templateSelection,
             documentPaths,
-            ...(preflightDocuments ? { documentUploads: preflightDocuments } : {}),
-            ...(preflightExtraction ? { extractionId: preflightExtraction.extractionId } : {}),
-            ...(preflightEvidenceManifest ? {
-                evidenceManifest: preflightEvidenceManifest,
-                evidenceManifestSchemaVersion: types_1.M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
-            } : {}),
+            documentUploads: preflightDocuments,
+            extractionId: preflightExtraction.extractionId,
+            evidenceManifest: preflightEvidenceManifest,
+            evidenceManifestSchemaVersion: types_1.M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
             ...(preflight.activeRevision ? { revisionSource: preflight.activeRevision } : {}),
             submittedBy: uid,
             submittedAt: now,
-            inputHash,
-        };
+        });
+        const { inputHash } = version;
         const versionReference = eventReference.collection(types_1.COLLECTIONS.VERSIONS).doc(versionId);
         const versionSnapshot = await transaction.get(versionReference);
         if (versionSnapshot.exists)
@@ -160,6 +151,10 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
         const requiredAuthorities = requiredAuthoritiesFor(event.eventDetails);
         transaction.create(versionReference, version);
         transaction.update(eventReference, {
+            // Persist the document identity at the trusted submission boundary.
+            // This also self-heals Drafts created by clients predating this field.
+            eventId,
+            eventDetails: event.eventDetails,
             status: 'Pending',
             currentVersionId: versionId,
             currentVersionNumber: versionNumber,
@@ -173,6 +168,7 @@ async function submitEventForUser(uid, eventId, now = Date.now()) {
             assignedOfficerByAuthority: {},
             reviewStage: 'initial',
             initialReview: firestore_1.FieldValue.delete(),
+            secondReview: firestore_1.FieldValue.delete(),
             activeRevision: firestore_1.FieldValue.delete(),
             manualAssessment: firestore_1.FieldValue.delete(),
             verifiedControlIds: [],
@@ -230,6 +226,18 @@ function validateEventDetails(value, now = Date.now()) {
     requiredText(value.name, 'Event name', 200, errors);
     requiredText(value.venueName, 'Venue name', 200, errors);
     requiredText(value.venueAddress, 'Venue address', 500, errors);
+    if (typeof value.venueState !== 'string' || !value.venueState.trim()) {
+        errors.push('Select the venue state or federal territory.');
+    }
+    else if (!malaysiaStates_1.MALAYSIA_STATES.includes(value.venueState)) {
+        errors.push('The selected venue state is invalid. Choose it again.');
+    }
+    else if (typeof value.venueAddress === 'string') {
+        const addressState = (0, malaysiaStates_1.inferMalaysiaStateFromAddress)(value.venueAddress);
+        if (addressState && value.venueState !== addressState) {
+            errors.push(`Venue state does not match the address. Select ${addressState}.`);
+        }
+    }
     requiredText(value.organizerName, 'Organizer name', 200, errors);
     requiredText(value.organizerEmail, 'Organizer email', 320, errors);
     if (typeof value.organizerEmail === 'string' && value.organizerEmail.trim() && !isEmail(value.organizerEmail)) {
@@ -330,6 +338,7 @@ function validateCanonicalVenueRecord(details, value) {
     const canonicalCapacity = value.verifiedSafeCapacity ?? value.capacity;
     return normalizeText(details.venueName) !== normalizeText(value.name)
         || normalizeText(details.venueAddress) !== normalizeText(value.address)
+        || normalizeText(details.venueState) !== normalizeText(value.state)
         || details.venueCapacity !== canonicalCapacity
         || !sameCoordinate(details.venueLocation?.lat, location.lat)
         || !sameCoordinate(details.venueLocation?.lng, location.lng)
@@ -363,14 +372,14 @@ function validateCurrentEvidenceManifest(event, documents) {
 }
 async function loadCurrentExtraction(event, eventReference) {
     if (!event.currentExtractionId || !/^[A-Za-z0-9_-]{1,128}$/.test(event.currentExtractionId)) {
-        throw new https_1.HttpsError('failed-precondition', 'Extract and review the combined PDF or completed Core and scenario DOCX files before submission.');
+        throw new https_1.HttpsError('failed-precondition', 'Extract and review the completed Core and scenario PDF/DOCX files before submission.');
     }
     const snapshot = await eventReference.collection(types_1.COLLECTIONS.DOCUMENT_EXTRACTIONS).doc(event.currentExtractionId).get();
     if (!snapshot.exists)
         throw new https_1.HttpsError('failed-precondition', 'The current document extraction could not be found. Extract the files again.');
     const extraction = snapshot.data();
     const expectedPaths = (event.draftDocuments ?? [])
-        .filter((document) => document.role === 'core_template' || document.role === 'scenario_template' || document.role === 'combined_application')
+        .filter((document) => document.role === 'core_template' || document.role === 'scenario_template')
         .map((document) => `${document.role}:${document.path}:${document.originalName}:${document.mimeType}:${document.sizeBytes}`)
         .sort();
     const actualPaths = Array.isArray(extraction.sourceDocuments)
@@ -412,12 +421,20 @@ const ENVIRONMENTS = new Set(['indoor', 'outdoor', 'mixed']);
 const COVERAGE = new Set(['covered', 'partially_covered', 'uncovered']);
 const SEATING = new Set(['seated', 'standing', 'mixed']);
 function requiredText(value, label, max, errors) {
-    if (typeof value !== 'string' || value.trim().length === 0 || value.length > max)
-        errors.push(`${label} is required and must be at most ${max} characters.`);
+    if (typeof value !== 'string' || value.trim().length === 0) {
+        errors.push(`${label} is required.`);
+    }
+    else if (value.length > max) {
+        errors.push(`${label} is too long. Use ${max} characters or fewer.`);
+    }
 }
 function optionalText(value, label, max, errors) {
-    if (value !== undefined && (typeof value !== 'string' || value.length > max))
-        errors.push(`${label} must be at most ${max} characters.`);
+    if (value !== undefined && typeof value !== 'string') {
+        errors.push(`${label} must be text.`);
+    }
+    else if (typeof value === 'string' && value.length > max) {
+        errors.push(`${label} is too long. Use ${max} characters or fewer.`);
+    }
 }
 function positiveInteger(value, label, errors) {
     if (!Number.isInteger(value) || value <= 0)

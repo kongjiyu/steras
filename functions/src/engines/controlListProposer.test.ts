@@ -46,6 +46,29 @@ describe('control-list MiniMax contract', () => {
     expect(input).toContain('PDRM');
   });
 
+  it('serializes only bound M2 V3 official results and canonical resource items', () => {
+    const input = JSON.parse(buildAllowedControlListInput({
+      event,
+      requiredAuthorities: ['PDRM'],
+      assessment: {
+        status: 'official_ready', assessmentReadiness: 'complete', complianceStatus: 'pass',
+        officialResult: { overallScore: 72, overallRiskLevel: 'High', categories: [{ categoryId: 'crowd', validatedLikelihood: 4, validatedSeverity: 5, riskLevel: 'High', matrixScore: 20 }] },
+        aiProposal: { hazards: [{ hazardId: 'h1', hazardName: 'Crowding', categoryId: 'crowd', rationale: 'private reasoning' }] },
+      },
+      resource: { stage: 'official', confidenceLevel: 'medium', validationScope: 'official_risk_input_only', items: { police: { baseline: 12, planningRange: { minimum: 10, maximum: 14 }, assumptions: ['private'] } } },
+    }));
+    expect(input.assessment).toMatchObject({ overallScore: 72, overallRiskLevel: 'High', categories: [{ categoryId: 'crowd', likelihood: 4, severity: 5 }] });
+    expect(input.resources.items.police).toEqual({ baseline: 12, planningRange: { minimum: 10, maximum: 14 } });
+    expect(JSON.stringify(input)).not.toContain('private reasoning');
+    expect(JSON.stringify(input)).not.toContain('private');
+  });
+
+  it('does not reinterpret legacy flat scores or quantities as official M2 input', () => {
+    const input = JSON.parse(buildAllowedControlListInput({ event, requiredAuthorities: ['PDRM'], assessment: { status: 'ready', officialScore: 99 }, resource: { police: 99 } }));
+    expect(input.assessment).toBeNull();
+    expect(input.resources).toBeNull();
+  });
+
   it('validates a complete one-control-per-authority response', () => {
     const items = parseControlListProposal(JSON.stringify({ controls: [{
       controlName: 'PDRM compliance',

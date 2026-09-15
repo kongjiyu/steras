@@ -8,6 +8,10 @@ import { isM1EvidenceForcedRequired, m1EvidenceRequirementsFor } from '@shared/m
 
 const RESPONSE_KEYS = new Set(['requirementId', 'applicability', 'documentPath', 'notApplicableReason']);
 
+function meaningfulReason(reason: string): boolean {
+  return reason.length >= 20 && reason.split(/\s+/).filter(Boolean).length >= 3;
+}
+
 export interface M1EvidenceManifestValidation {
   manifest: M1EvidenceRequirementResponse[];
   errors: string[];
@@ -72,8 +76,8 @@ export function validateM1EvidenceManifest(
       continue;
     }
     const reason = typeof response.notApplicableReason === 'string' ? response.notApplicableReason.trim() : '';
-    if (reason.length < 10 || reason.length > 500 || response.notApplicableReason !== reason) {
-      errors.push(`${definition.id} needs a 10–500 character not-applicable reason.`);
+    if (!meaningfulReason(reason) || reason.length > 500 || response.notApplicableReason !== reason) {
+      errors.push(`${definition.id} needs a specific 20–500 character not-applicable reason using at least 3 words.`);
       continue;
     }
     if (response.documentPath !== undefined) errors.push(`${definition.id} cannot reference a file when marked not applicable.`);

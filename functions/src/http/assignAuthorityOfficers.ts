@@ -21,7 +21,6 @@
  * The default-check picks the lowest-workload one.
  */
 import { firestore } from 'firebase-admin';
-import { FieldValue } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import {
   Assignment,
@@ -42,6 +41,9 @@ interface AssignAuthorityOfficersRequest {
   assignmentMap?: Partial<Record<AuthorityType, string>>;
   /** Default false. When true, just return the proposed checklist. */
   dryRun?: boolean;
+  /** `replacement` restores only revoked authority assignments while keeping
+   * all other active assignments unchanged. */
+  mode?: 'initial' | 'replacement';
 }
 
 interface ProposedChecklistItem {
@@ -83,8 +85,10 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
   // state used for officer eligibility after submission.
   const versionRef = eventRef.collection(COLLECTIONS.VERSIONS).doc(versionId);
   const versionSnap = await versionRef.get();
-  if (!versionSnap.exists) throw new HttpsError('failed-precondition', 'The immutable application version is missing.');
-  const version = versionSnap.data() as EventVersion;
+  const version = versionSnap.data() as EventVersion | undefined;
+  if (!versionSnap.exists || version?.eventId !== eventId || version.versionId !== versionId) {
+    throw new HttpsError('failed-precondition', 'The immutable current application version is missing.');
+  }
   const submittedVenueId = version.eventDetails?.venueId?.trim() || '';
   if (submittedVenueId !== (event.eventDetails?.venueId?.trim() || '')) {
     throw new HttpsError('failed-precondition', 'The submitted registry venue state is stale or invalid.');
@@ -96,8 +100,15 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
   // Load all active officers grouped by authorityType. In a real
   // production system this would be indexed / sharded; for the
   // prototype the officer pool is small.
-  const allOfficers = (await db.collection(COLLECTIONS.OFFICERS).where('active', '==', true).get())
-    .docs.map((d) => d.data() as OfficerProfile);
+  const officerDocs = (await db.collection(COLLECTIONS.OFFICERS).where('active', '==', true).get()).docs;
+  const officerUsers = officerDocs.length > 0
+    ? await db.getAll(...officerDocs.map((document) => db.collection(COLLECTIONS.USERS).doc(document.id)))
+    : [];
+  const allOfficers = officerDocs
+    .map((document, index) => ({ officer: document.data() as OfficerProfile, user: officerUsers[index]?.data() as UserProfile | undefined }))
+    .filter(({ officer, user }, index) => officer.uid === officerDocs[index].id
+      && user?.uid === officer.uid && user.role === 'authority' && user.authorityType === officer.authorityType)
+    .map(({ officer }) => officer);
 
   // Filter by state scope (A4).
   const isEligible = (o: OfficerProfile) => {
@@ -156,11 +167,19 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
   if (!assignmentMap || typeof assignmentMap !== 'object') {
     throw new HttpsError('invalid-argument', 'assignmentMap is required when dryRun=false.');
   }
-  for (const item of checklist) {
-    if (!assignmentMap[item.authorityType]) {
+  const mode = request.data?.mode ?? 'initial';
+  const submittedAuthorities = Object.keys(assignmentMap) as AuthorityType[];
+  if (submittedAuthorities.length === 0 || submittedAuthorities.some((authority) => !required.includes(authority))) {
+    throw new HttpsError('invalid-argument', 'assignmentMap must contain valid event requiredAuthorities.');
+  }
+  if (mode === 'initial' && submittedAuthorities.length !== required.length) {
+    throw new HttpsError('invalid-argument', 'Initial assignment must contain exactly the event requiredAuthorities.');
+  }
+  for (const authority of submittedAuthorities) {
+    if (!assignmentMap[authority]) {
       throw new HttpsError(
         'invalid-argument',
-        `assignmentMap is missing an entry for required authority ${item.authorityType}.`,
+        `assignmentMap is missing an entry for required authority ${authority}.`,
       );
     }
   }
@@ -170,14 +189,19 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
     // Re-read the event + ALL officers inside the transaction to avoid races.
     // Firestore requires all reads to complete before any writes.
     const evSnap = await tx.get(eventRef);
+    const currentVersionSnap = await tx.get(versionRef);
     const ev = evSnap.data() as EventRecord;
-    const txVersionSnap = await tx.get(versionRef);
     const txVenueSnap = venueRef ? await tx.get(venueRef) : undefined;
-    if (!evSnap.exists || !ev || !txVersionSnap.exists || ev.currentVersionId !== versionId
+    if (!evSnap.exists || !ev || !currentVersionSnap.exists || ev.currentVersionId !== versionId
       || ev.eventDetails?.venueId?.trim() !== submittedVenueId) {
       throw new HttpsError('aborted', 'The submitted application version changed before assignment.');
     }
-    const txVenueState = validateSubmittedVenue(txVenueSnap, (txVersionSnap.data() as EventVersion).eventDetails, submittedVenueId);
+    const currentVersion = currentVersionSnap.data() as EventVersion | undefined;
+    if (currentVersion?.eventId !== eventId || currentVersion.versionId !== versionId
+      || currentVersion.eventDetails.venueId?.trim() !== submittedVenueId) {
+      throw new HttpsError('aborted', 'The immutable application venue binding changed. Reload and retry.');
+    }
+    const txVenueState = validateSubmittedVenue(txVenueSnap, currentVersion.eventDetails, submittedVenueId);
     if (txVenueState !== venueState) {
       throw new HttpsError('aborted', 'The submitted registry venue state changed before assignment.');
     }
@@ -187,25 +211,43 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
     if (ev.status !== 'UnderReview') {
       throw new HttpsError('failed-precondition', 'Only applications released for authority review can be assigned.');
     }
-    if (ev.reviewStage === 'authority') {
+    if (mode === 'initial' && ev.reviewStage === 'authority') {
       throw new HttpsError('failed-precondition', 'Officers are already assigned for this event version. Unassign first to re-assign.');
     }
 
+    const assignmentSnapshots = new Map<AuthorityType, FirebaseFirestore.DocumentSnapshot>();
+    for (const authority of submittedAuthorities) {
+      const assignmentId = `${versionId}_${authority}`;
+      assignmentSnapshots.set(authority, await tx.get(eventRef.collection(COLLECTIONS.ASSIGNMENTS).doc(assignmentId)));
+    }
+    if (mode === 'replacement') {
+      validateReplacementAssignments(versionId, submittedAuthorities, new Map(
+        [...assignmentSnapshots].map(([authority, snapshot]) => [authority, snapshot.data() as Assignment | undefined]),
+      ));
+    }
+
     // Pre-fetch all officer refs in the read phase.
-    const officerEntries: Array<[string, string, FirebaseFirestore.DocumentReference, OfficerProfile | null]> = [];
+    const officerEntries: Array<[string, string, FirebaseFirestore.DocumentReference, OfficerProfile | null, UserProfile | null]> = [];
     for (const [auth, officerUid] of Object.entries(assignmentMap) as Array<[AuthorityType, string]>) {
       if (!officerUid) {
         throw new HttpsError('invalid-argument', `Empty officerUid for ${auth}.`);
       }
       const officerRef = db.collection(COLLECTIONS.OFFICERS).doc(officerUid);
+      const officerUserRef = db.collection(COLLECTIONS.USERS).doc(officerUid);
       const officerSnap = await tx.get(officerRef);
-      officerEntries.push([auth, officerUid, officerRef, officerSnap.exists ? officerSnap.data() as OfficerProfile : null]);
+      const officerUserSnap = await tx.get(officerUserRef);
+      officerEntries.push([auth, officerUid, officerRef, officerSnap.exists ? officerSnap.data() as OfficerProfile : null,
+        officerUserSnap.exists ? officerUserSnap.data() as UserProfile : null]);
     }
 
     // Validate all entries (no writes yet).
-    for (const [auth, officerUid, , officer] of officerEntries) {
+    for (const [auth, officerUid, , officer, officerUser] of officerEntries) {
       if (!officer) {
         throw new HttpsError('not-found', `Officer ${officerUid} not found.`);
+      }
+      if (officer.uid !== officerUid || !officerUser || officerUser.uid !== officerUid
+        || officerUser.role !== 'authority' || officerUser.authorityType !== auth) {
+        throw new HttpsError('failed-precondition', `Officer ${officerUid} is not bound to an active authority user profile for ${auth}.`);
       }
       if (officer.authorityType !== auth) {
         throw new HttpsError(
@@ -253,7 +295,7 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
       };
       tx.set(assignmentRef, assignment);
       tx.update(officerRef, {
-        workloadCount: FieldValue.increment(1),
+        workloadCount: Math.max(0, officer?.workloadCount ?? 0) + 1,
         lastAssignedAt: now,
         updatedAt: now,
       });
@@ -277,25 +319,26 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
           officerState: officer?.state ?? null,
           officerScopeType: officer?.scopeType ?? null,
           previousWorkloadCount: officer?.workloadCount ?? 0,
-          newWorkloadCount: (officer?.workloadCount ?? 0) + 1,
+          newWorkloadCount: Math.max(0, officer?.workloadCount ?? 0) + 1,
           venueState,
         },
       });
       officerWrites++;
     }
 
+    const activeByAuthority = mode === 'replacement'
+      ? { ...(ev.assignedOfficerByAuthority ?? {}), ...assignmentMap }
+      : Object.fromEntries(officerEntries.map(([auth, officerUid]) => [auth, officerUid]));
     tx.update(eventRef, {
       reviewStage: 'authority',
-      assignedOfficerUids: officerEntries.map(([, officerUid]) => officerUid),
-      assignedOfficerByAuthority: Object.fromEntries(
-        officerEntries.map(([auth, officerUid]) => [auth, officerUid]),
-      ),
+      assignedOfficerUids: [...new Set(Object.values(activeByAuthority).filter(Boolean))],
+      assignedOfficerByAuthority: activeByAuthority,
       updatedAt: now,
     });
 
-    return { checklist, assigned: officerWrites };
+    return { checklist, assigned: officerWrites, mode, authorities: submittedAuthorities };
   }).then((result) => {
-    return { checklist: result.checklist, assigned: result.assigned, venueState };
+    return { checklist: result.checklist, assigned: result.assigned, mode: result.mode, authorities: result.authorities, venueState };
   });
 });
 
@@ -321,4 +364,17 @@ export function validateSubmittedVenue(
     throw new HttpsError('failed-precondition', 'The submitted registry venue state is stale or invalid.');
   }
   return venue.state.trim();
+}
+
+export function validateReplacementAssignments(
+  versionId: string,
+  authorities: AuthorityType[],
+  previousByAuthority: Map<AuthorityType, Assignment | undefined>,
+): void {
+  for (const authority of authorities) {
+    const previous = previousByAuthority.get(authority);
+    if (!previous || previous.versionId !== versionId || previous.authorityType !== authority || previous.status !== 'revoked') {
+      throw new HttpsError('failed-precondition', `${authority} does not have a revoked assignment to replace.`);
+    }
+  }
 }

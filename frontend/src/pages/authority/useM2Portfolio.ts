@@ -76,13 +76,13 @@ export function useM2Portfolio(previewRecords?: M2PortfolioRecord[]) {
         }
       } catch {
         if (active && currentRequest === requestId) {
-          setError('M2 assessment and resource data could not be loaded.');
+          setError('Assessment and resource data could not be loaded.');
           setLoading(false);
         }
       }
     }, () => {
       if (active) {
-        setError('M2 assessment and resource data could not be loaded.');
+        setError('Assessment and resource data could not be loaded.');
         setLoading(false);
       }
     });

@@ -3,6 +3,7 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { COLLECTIONS, EventRecord, UserProfile } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
 import { hasCanonicalCurrentVersion, isMatchingSubmittedVersion } from './applicationLifecycle';
+import { cleanupWithdrawnEvent } from '../triggers/onEventStatusChanged';
 
 interface WithdrawEventRequest {
   eventId?: string;
@@ -31,7 +32,7 @@ export async function withdrawEventForUser(uid: string, eventId: string, rationa
   const eventReference = db.collection(COLLECTIONS.EVENTS).doc(eventId);
   const publicEventReference = db.collection(COLLECTIONS.PUBLIC_EVENTS).doc(eventId);
   const userReference = db.collection(COLLECTIONS.USERS).doc(uid);
-  return db.runTransaction(async (transaction) => {
+  const result = await db.runTransaction(async (transaction) => {
     const [snapshot, userSnapshot] = await Promise.all([transaction.get(eventReference), transaction.get(userReference)]);
     if (!snapshot.exists) throw new HttpsError('not-found', 'Event was not found.');
     const event = { eventId, ...snapshot.data() } as EventRecord;
@@ -73,4 +74,8 @@ export async function withdrawEventForUser(uid: string, eventId: string, rationa
     });
     return { eventId, status: 'Withdrawn' as const };
   });
+  // Synchronous reconciliation makes client retry a durable recovery path if
+  // the Firestore trigger was delayed or failed. The helper is idempotent.
+  await cleanupWithdrawnEvent(eventId, now);
+  return result;
 }

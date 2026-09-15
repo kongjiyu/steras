@@ -1,9 +1,27 @@
 "use strict";
 /** Shared runtime-free contracts used by the React app and Cloud Functions. */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CATEGORY_SCHEMA_STATUS = exports.PROVISIONAL_FORMULA_VERSION = exports.HARD_RULE_VERSION = exports.SCORING_LOGIC_VERSION = exports.CATEGORY_SCHEMA_VERSION = exports.COLLECTIONS = exports.RESOURCE_KEYS = exports.RESOURCE_SOURCE_REGISTRY_VERSION = exports.RESOURCE_CONFIG_VERSION = exports.RESOURCE_FORMULA_VERSION = exports.RESOURCE_SCHEMA_VERSION = exports.MANUAL_OFFICIAL_FORMULA_VERSION = exports.MANUAL_ASSESSMENT_SCHEMA_VERSION = exports.OFFICIAL_FORMULA_VERSION = exports.SCORE_RESOLUTION_SCHEMA_VERSION = exports.SCORE_REVIEW_SCHEMA_VERSION = exports.WEATHER_POLICY_VERSION = exports.VENUE_BINDING_VERSION = exports.EVIDENCE_SUFFICIENCY_VERSION = exports.CONTEXT_EVIDENCE_SCHEMA_VERSION = exports.ASSESSMENT_SCHEMA_VERSION = exports.M1_EVIDENCE_MANIFEST_SCHEMA_VERSION = exports.M1_EXTRACTION_SCHEMA_VERSION = exports.M1_DOCUMENT_SCHEMA_VERSION = exports.M1_TEMPLATE_REGISTRY_VERSION = exports.EVENT_STATUSES = exports.EVENT_TYPES = void 0;
+exports.CATEGORY_SCHEMA_STATUS = exports.PROVISIONAL_FORMULA_VERSION = exports.HARD_RULE_VERSION = exports.SCORING_LOGIC_VERSION = exports.CATEGORY_SCHEMA_VERSION = exports.COLLECTIONS = exports.RESOURCE_KEYS = exports.RESOURCE_SOURCE_REGISTRY_VERSION = exports.RESOURCE_CONFIG_VERSION = exports.RESOURCE_FORMULA_VERSION = exports.RESOURCE_SCHEMA_VERSION = exports.MANUAL_OFFICIAL_FORMULA_VERSION = exports.MANUAL_ASSESSMENT_SCHEMA_VERSION = exports.OFFICIAL_FORMULA_VERSION = exports.SCORE_RESOLUTION_SCHEMA_VERSION = exports.SCORE_REVIEW_SCHEMA_VERSION = exports.WEATHER_POLICY_VERSION = exports.VENUE_BINDING_VERSION = exports.EVIDENCE_SUFFICIENCY_VERSION = exports.CONTEXT_EVIDENCE_SCHEMA_VERSION = exports.ASSESSMENT_SCHEMA_VERSION = exports.M1_EVIDENCE_MANIFEST_SCHEMA_VERSION = exports.M1_EXTRACTION_SCHEMA_VERSION = exports.M1_DOCUMENT_SCHEMA_VERSION = exports.M1_TEMPLATE_REGISTRY_VERSION = exports.EVENT_STATUSES = exports.EVENT_TYPES = exports.RESOURCE_OVERRIDE_REASON_CATEGORIES = exports.REJECTION_REASON_CATEGORIES = void 0;
 exports.riskLevelFor = riskLevelFor;
 exports.hirarcRiskLevelFor = hirarcRiskLevelFor;
+/** Privacy-safe taxonomy for M3 decision analytics. Free-text rationale stays private. */
+exports.REJECTION_REASON_CATEGORIES = [
+    'incomplete_application',
+    'insufficient_evidence',
+    'risk_controls_inadequate',
+    'regulatory_non_compliance',
+    'resource_plan_inadequate',
+    'venue_or_capacity_issue',
+    'other',
+];
+exports.RESOURCE_OVERRIDE_REASON_CATEGORIES = [
+    'attendance_change',
+    'venue_constraint',
+    'risk_score_change',
+    'authority_operational_requirement',
+    'resource_availability',
+    'other',
+];
 exports.EVENT_TYPES = [
     { value: 'concert', label: 'Concert / Music' },
     { value: 'festival', label: 'Festival' },
@@ -25,9 +43,9 @@ exports.EVENT_STATUSES = [
     { value: 'Withdrawn', label: 'Withdrawn', color: 'gray' },
     { value: 'Manual Review Required', label: 'Manual Review Required', color: 'purple' },
 ];
-exports.M1_TEMPLATE_REGISTRY_VERSION = '2026-08-28-v1';
+exports.M1_TEMPLATE_REGISTRY_VERSION = '2026-09-04-v2';
 exports.M1_DOCUMENT_SCHEMA_VERSION = '2026-08-28-document-v1';
-exports.M1_EXTRACTION_SCHEMA_VERSION = '2026-08-29-document-fields-v2';
+exports.M1_EXTRACTION_SCHEMA_VERSION = '2026-09-04-document-fields-v3';
 exports.M1_EVIDENCE_MANIFEST_SCHEMA_VERSION = '2026-08-28-evidence-v1';
 exports.ASSESSMENT_SCHEMA_VERSION = '2026-08-21-prd-v5-hardening-v1';
 exports.CONTEXT_EVIDENCE_SCHEMA_VERSION = '2026-08-21-context-evidence-v1';

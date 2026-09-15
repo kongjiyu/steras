@@ -20,7 +20,7 @@ const computeRisk_1 = require("../triggers/computeRisk");
 const secrets_1 = require("../config/secrets");
 const runtime_1 = require("../config/runtime");
 const resourceCutoverLock_1 = require("../config/resourceCutoverLock");
-exports.manualRecompute = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION, secrets: secrets_1.ASSESSMENT_SECRETS }, async (request) => {
+exports.manualRecompute = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION, secrets: secrets_1.ASSESSMENT_SECRETS, timeoutSeconds: 240 }, async (request) => {
     if (!request.auth) {
         throw new https_1.HttpsError('unauthenticated', 'Sign in first.');
     }
@@ -37,17 +37,17 @@ const defaultDependencies = {
 };
 async function manualRecomputeForUser(uid, rawEventId, dependencies = defaultDependencies) {
     const profile = await dependencies.loadProfile(uid);
-    const authorityType = validateRecomputeProfile(profile);
+    const actor = validateRecomputeProfile(profile);
     const eventId = validateRecomputeEventId(rawEventId);
     const event = await dependencies.loadEvent(eventId);
-    const assessmentId = validateAuthorityAssignment(event, authorityType);
+    const assessmentId = validateAuthorityAssignment(event, actor);
     const versionId = validateCurrentVersion(event);
     const assessment = await dependencies.loadAssessment(eventId, assessmentId);
     validateRetryableAssessment(assessment, { eventId, versionId, assessmentId });
     if (await dependencies.loadCutoverLock?.())
         throw new https_1.HttpsError('unavailable', 'Resource migration is in progress. Retry shortly.');
     try {
-        const result = await dependencies.recompute(eventId, { uid, authorityType });
+        const result = await dependencies.recompute(eventId, { uid, ...actor });
         return { success: result.status === 'processed', ...result };
     }
     catch (err) {
@@ -67,14 +67,17 @@ function validateRecomputeEventId(value) {
 }
 function validateRecomputeProfile(value) {
     const profile = typeof value === 'object' && value !== null ? value : {};
-    if (profile.role !== 'authority' || !isAuthorityType(profile.authorityType)) {
-        throw new https_1.HttpsError('permission-denied', 'Only provisioned authority accounts can retry assessments.');
+    if (profile.role === 'admin')
+        return { role: 'admin' };
+    if (profile.role === 'authority' && isAuthorityType(profile.authorityType)) {
+        return { role: 'authority', authorityType: profile.authorityType };
     }
-    return profile.authorityType;
+    throw new https_1.HttpsError('permission-denied', 'Only provisioned Admin or authority accounts can retry assessments.');
 }
-function validateAuthorityAssignment(value, authorityType) {
+function validateAuthorityAssignment(value, actor) {
     const event = typeof value === 'object' && value !== null ? value : {};
-    if (!Array.isArray(event.requiredAuthorities) || !event.requiredAuthorities.includes(authorityType)) {
+    if (actor.role === 'authority'
+        && (!Array.isArray(event.requiredAuthorities) || !event.requiredAuthorities.includes(actor.authorityType))) {
         throw new https_1.HttpsError('permission-denied', 'Your authority is not assigned to this application.');
     }
     const assessmentId = event.currentAssessmentId;

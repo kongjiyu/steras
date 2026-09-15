@@ -8,7 +8,10 @@
  * Functions (server-side scoped by recipientUid).
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Bell, Check } from 'lucide-react';
+import { Bell, Check, CheckCheck } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { httpsCallable } from 'firebase/functions';
+import toast from 'react-hot-toast';
 import {
   collection,
   limit as fsLimit,
@@ -17,9 +20,10 @@ import {
   query,
   where,
 } from 'firebase/firestore';
-import { db, isFirebaseConfigured } from '../../config/firebase';
+import { db, functions, isFirebaseConfigured } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { COLLECTIONS, Notification } from '@shared/types';
+import { userFacingSystemText } from '../../utils/userFacingText';
 
 const MAX_VISIBLE = 20;
 
@@ -96,14 +100,26 @@ export default function NotificationBell() {
     // Optimistic
     setItems((curr) => curr.map((n) => (n.notificationId === notif.notificationId ? { ...n, read: true } : n)));
     try {
-      const { httpsCallable, getFunctions } = await import('firebase/functions');
-      const fns = getFunctions();
-      const mark = httpsCallable(fns, 'markNotificationRead');
+      const mark = httpsCallable(functions, 'markNotificationRead');
       await mark({ notificationId: notif.notificationId, read: true });
     } catch (err) {
       // Revert on failure
       setItems((curr) => curr.map((n) => (n.notificationId === notif.notificationId ? { ...n, read: false } : n)));
       console.warn('[NotificationBell] markNotificationRead failed', err);
+      toast.error('Notification could not be marked as read.');
+    }
+  }
+
+  async function markAllRead() {
+    if (!isFirebaseConfigured || unread === 0) return;
+    const previous = items;
+    setItems((current) => current.map((notification) => ({ ...notification, read: true })));
+    try {
+      await httpsCallable(functions, 'markAllNotificationsRead')({});
+    } catch (error) {
+      setItems(previous);
+      console.warn('[NotificationBell] markAllNotificationsRead failed', error);
+      toast.error('Notifications could not be marked as read.');
     }
   }
 
@@ -131,13 +147,20 @@ export default function NotificationBell() {
 
       {open && (
         <div
-          className="absolute right-0 top-11 z-30 w-[360px] max-h-[480px] overflow-y-auto rounded-lg border border-[#ded5c5] bg-[#fffdf8] shadow-card"
+          className="fixed left-4 right-4 top-[68px] z-30 max-h-[min(480px,calc(100vh-5.5rem))] overflow-y-auto rounded-lg border border-[#ded5c5] bg-[#fffdf8] shadow-card sm:absolute sm:left-auto sm:right-0 sm:top-11 sm:w-[360px]"
           role="dialog"
           aria-label="Notifications"
         >
           <div className="flex items-center justify-between border-b border-[#e3dacb] px-4 py-3">
             <p className="text-sm font-bold uppercase tracking-[0.06em] text-ink-700">Notifications</p>
-            <span className="text-xs text-ink-500">{unread} unread</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-ink-500">{unread} unread</span>
+              {unread > 0 && (
+                <button type="button" onClick={markAllRead} className="inline-flex min-h-8 items-center gap-1 rounded px-2 text-xs font-semibold text-brand-700 hover:bg-brand-50" aria-label="Mark all notifications as read">
+                  <CheckCheck size={14} /> Read all
+                </button>
+              )}
+            </div>
           </div>
           {items.length === 0 ? (
             <p className="px-4 py-6 text-center text-sm text-ink-500">No notifications yet.</p>
@@ -149,8 +172,8 @@ export default function NotificationBell() {
                   className={`flex items-start gap-3 px-4 py-3 text-sm ${n.read ? 'bg-transparent' : 'bg-brand-50/40'}`}
                 >
                   <div className="min-w-0 flex-1">
-                    <p className="font-semibold text-ink-800">{n.title}</p>
-                    <p className="mt-0.5 text-xs leading-5 text-ink-600">{n.message}</p>
+                    <p className="font-semibold text-ink-800">{userFacingSystemText(n.title)}</p>
+                    <p className="mt-0.5 text-xs leading-5 text-ink-600">{userFacingSystemText(n.message)}</p>
                     {/* FR-M3-08: surface reason + suggestion as separate
                         lines when present, so the organizer sees the
                         full feedback (not just the message). Old
@@ -160,17 +183,18 @@ export default function NotificationBell() {
                         {n.reason && (
                           <p>
                             <span className="font-semibold text-ink-800">Reason:</span>{' '}
-                            <span className="whitespace-pre-line">{n.reason}</span>
+                            <span className="whitespace-pre-line">{userFacingSystemText(n.reason)}</span>
                           </p>
                         )}
                         {n.suggestion && (
                           <p className={n.reason ? 'mt-1' : ''}>
                             <span className="font-semibold text-ink-800">Suggestion:</span>{' '}
-                            <span className="whitespace-pre-line">{n.suggestion}</span>
+                            <span className="whitespace-pre-line">{userFacingSystemText(n.suggestion)}</span>
                           </p>
                         )}
                       </div>
                     )}
+                    {n.eventId && <Link to={`/organizer/events/${n.eventId}`} onClick={() => { void toggleRead(n); setOpen(false); }} className="mt-2 inline-flex min-h-9 items-center text-xs font-semibold text-brand-700 underline underline-offset-2">Open application</Link>}
                     <p className="mt-1 text-[11px] uppercase tracking-[0.06em] text-ink-400">{timeAgo(n.createdAt)}</p>
                   </div>
                   {!n.read && (

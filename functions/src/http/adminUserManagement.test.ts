@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validatePrivilegedAccountInput } from './adminUserManagement';
+import { validatePrivilegedAccountInput, validateResetUserPasswordInput } from './adminUserManagement';
 
 const valid = {
   email: ' Officer@Example.com ', password: 'StrongPass!234', name: ' Safety Officer ',
@@ -29,5 +29,24 @@ describe('M1 privileged account input', () => {
     [{ ...valid, name: 'x'.repeat(101) }, 'name must be'],
   ])('rejects adversarial payload %#', (payload, message) => {
     expect(() => validatePrivilegedAccountInput(payload)).toThrow(message);
+  });
+});
+
+describe('admin password reset input', () => {
+  it('accepts only a target uid and idempotency key', () => {
+    expect(validateResetUserPasswordInput({ uid: 'user_123', idempotencyKey: 'reset_123456' })).toEqual({
+      uid: 'user_123',
+      idempotencyKey: 'reset_123456',
+    });
+  });
+
+  it.each([
+    [null, 'user account is required'],
+    [{ uid: '', idempotencyKey: 'reset_123456' }, 'uid must be'],
+    [{ uid: 'user 123', idempotencyKey: 'reset_123456' }, 'uid cannot contain whitespace'],
+    [{ uid: 'user_123', idempotencyKey: 'short' }, 'idempotencyKey'],
+    [{ uid: 'user_123', idempotencyKey: 'reset_123456', password: 'attacker-controlled' }, 'Unsupported fields'],
+  ])('rejects an unsafe reset payload %#', (payload, message) => {
+    expect(() => validateResetUserPasswordInput(payload)).toThrow(message);
   });
 });

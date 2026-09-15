@@ -1,16 +1,26 @@
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import logoUrl from '../../assets/brand/steras-logo-horizontal.svg';
-import { CalendarPlus, ClipboardList, Home, LogOut } from 'lucide-react';
+import { CalendarPlus, ClipboardList, Home, LogOut, Siren } from 'lucide-react';
+import NotificationBell from './NotificationBell';
+import { useAppDialog } from '../../contexts/AppDialogContext';
 
 export default function AppLayout() {
   const { profile, signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const dialog = useAppDialog();
 
   const isOrganizer = profile?.role === 'organizer';
 
   const handleSignOut = async () => {
+    if (!await dialog.confirm({
+      title: 'Sign out of STERAS?',
+      description: 'Any changes you have not saved on this page will be lost.',
+      confirmLabel: 'Sign out',
+      cancelLabel: 'Stay signed in',
+      tone: 'danger',
+    })) return;
     await signOut();
     navigate('/login', { replace: true });
   };
@@ -19,6 +29,7 @@ export default function AppLayout() {
     { to: '/organizer', label: 'Dashboard' },
     { to: '/organizer/events/new', label: 'New Event' },
     { to: '/organizer/events', label: 'My Events' },
+    { to: '/organizer/incidents', label: 'Incidents' },
   ];
 
   const links = isOrganizer ? organizerLinks : [];
@@ -55,13 +66,15 @@ export default function AppLayout() {
             </div>
 
             <div className="flex items-center gap-3">
+              {isOrganizer && <NotificationBell />}
+              <Link to="/organizer/profile" state={{ returnTo: `${location.pathname}${location.search}` }} className="text-sm font-semibold text-brand-700 sm:hidden">Profile</Link>
               <div className="hidden items-center gap-2 text-sm text-ink-500 sm:flex">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
                   <circle cx="12" cy="7" r="4" />
                 </svg>
                 <div className="text-right">
-                  <div className="font-semibold text-ink-800">{profile?.name ?? 'User'}</div>
+                  <div className="font-semibold text-ink-800"><Link to="/organizer/profile" state={{ returnTo: `${location.pathname}${location.search}` }}>{profile?.name ?? 'User'}</Link></div>
                   <div className="text-xs capitalize text-ink-500">
                     {profile?.role === 'authority' ? profile?.authorityType : profile?.role}
                   </div>
@@ -93,11 +106,12 @@ export default function AppLayout() {
         </div>
       </footer>
 
-      <nav className="fixed inset-x-0 bottom-0 z-50 grid grid-cols-4 border-t border-[#d7ccb9] bg-[#fffdf8] px-2 pb-[max(.4rem,env(safe-area-inset-bottom))] pt-1 md:hidden" aria-label="Organizer mobile navigation">
+      <nav className="fixed inset-x-0 bottom-0 z-50 grid grid-cols-5 border-t border-[#d7ccb9] bg-[#fffdf8] px-2 pb-[max(.4rem,env(safe-area-inset-bottom))] pt-1 md:hidden" aria-label="Organizer mobile navigation">
         {[
           { to: '/organizer', label: 'Home', icon: Home, end: true },
           { to: '/organizer/events/new', label: 'New event', icon: CalendarPlus },
           { to: '/organizer/events', label: 'My events', icon: ClipboardList },
+          { to: '/organizer/incidents', label: 'Incidents', icon: Siren },
         ].map(({ to, label, icon: Icon, end }) => {
           const active = end ? location.pathname === to : location.pathname.startsWith(to);
           return <Link key={to} to={to} className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-md text-[11px] font-semibold ${active ? 'bg-brand-50 text-brand-700' : 'text-ink-500'}`}><Icon size={18} /><span>{label}</span></Link>;

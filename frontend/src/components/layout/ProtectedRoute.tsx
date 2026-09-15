@@ -1,4 +1,5 @@
-import { ReactNode } from 'react';
+import { ReactNode, useState } from 'react';
+import toast from 'react-hot-toast';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { UserRole } from '@shared/types';
@@ -10,7 +11,8 @@ interface Props {
 }
 
 export default function ProtectedRoute({ children, requiredRole }: Props) {
-  const { user, profile, loading, configured, signOut } = useAuth();
+  const { user, profile, loading, configured, signOut, refreshProfile, profileError } = useAuth();
+  const [busy, setBusy] = useState(false);
   const location = useLocation();
 
   if (!configured) {
@@ -43,8 +45,9 @@ export default function ProtectedRoute({ children, requiredRole }: Props) {
         <section className="card w-full max-w-md" aria-labelledby="profile-missing-title">
           <div className="card-body text-center">
             <h1 id="profile-missing-title" className="font-display text-xl font-bold text-ink-800">Workspace profile unavailable</h1>
-            <p className="mt-2 text-sm leading-6 text-ink-500">Your sign-in exists, but no organizer, authority, or admin profile is assigned. Contact the project administrator.</p>
-            <button type="button" className="btn-secondary mt-5" onClick={() => void signOut()}>Sign out</button>
+            <p className="mt-2 text-sm leading-6 text-ink-500" role="alert">{profileError || 'Your sign-in exists, but no workspace profile is assigned. Contact the project administrator.'}</p>
+            <button type="button" className="btn-primary mt-5 mr-3" disabled={busy} onClick={async () => { setBusy(true); try { await refreshProfile(); } finally { setBusy(false); } }}>{busy ? 'Trying again...' : 'Try again'}</button>
+            <button type="button" className="btn-secondary mt-5" disabled={busy} onClick={async () => { try { await signOut(); } catch { toast.error('Sign out failed. Please try again.'); } }}>Sign out</button>
           </div>
         </section>
       </main>

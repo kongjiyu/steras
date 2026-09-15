@@ -25,6 +25,7 @@ import { DashboardRecord } from './authority/dashboardData';
 import RiskAssessments from './authority/RiskAssessments';
 import ResourceRecommendations from './authority/ResourceRecommendations';
 import { M2PortfolioRecord } from './authority/m2PortfolioData';
+import Analytics from './authority/Analytics';
 
 const MOCK_USER = { name: 'Admin Officer', role: 'PDRM', initials: 'AO' };
 
@@ -94,6 +95,7 @@ export default function DashboardPreview() {
   const [searchParams] = useSearchParams();
   const view = searchParams.get('view');
   const records = PREVIEW_RECORDS as M2PortfolioRecord[];
+  if (view === 'reports') return <Analytics previewMode />;
   return (
     <AuthorityLayout mockUser={MOCK_USER}>
       {view === 'risk'

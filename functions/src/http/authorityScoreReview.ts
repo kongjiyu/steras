@@ -104,7 +104,7 @@ export async function submitScoreReviewForUser(uid: string, data: SubmitReviewRe
     if (profile?.role !== 'authority' || !profile.authorityType) throw new HttpsError('permission-denied', 'Only assigned authority officers may submit score reviews.');
     const event = eventSnap.data() as EventRecord | undefined;
     if (!event) throw new HttpsError('not-found', 'The event was not found.');
-    const { versionId, assessmentId } = assertReviewableEvent(event, profile.authorityType);
+    const { versionId, assessmentId } = assertReviewableEvent(event, profile.authorityType, uid);
     const assessmentRef = eventRef.collection(COLLECTIONS.ASSESSMENTS).doc(assessmentId);
     const summaryRef = eventRef.collection(COLLECTIONS.ASSESSMENT_SUMMARIES).doc(versionId);
     const versionRef = eventRef.collection(COLLECTIONS.VERSIONS).doc(versionId);
@@ -641,7 +641,7 @@ function organizerSummary(assessment: OfficialRiskAssessment, resource: Resource
     revision: resource.revision,
     stage: resource.stage,
     items: Object.fromEntries(RESOURCE_KEYS.map((key) => [key, { baseline: resource.items[key].baseline, planningRange: { ...resource.items[key].planningRange } }])) as OrganizerResourceRecommendation['items'],
-    disclaimer: 'Planning ranges derived from an official risk assessment; resource ratios remain internal prototype inputs.',
+    disclaimer: 'Planning ranges derived from an official risk assessment; resource ratios remain indicative and are not statutory minimums.',
   };
   return {
     assessmentId: assessment.assessmentId, eventId: assessment.eventId, versionId: assessment.versionId,
@@ -715,19 +715,37 @@ function isIdempotentOfficialOutput(
   }
 }
 
-function assertReviewableEvent(event: EventRecord | undefined, authority: AuthorityType) {
+export function assertReviewableEvent(event: EventRecord | undefined, authority: AuthorityType, uid: string) {
   if (!event?.currentVersionId || !event.currentAssessmentId
     || !isSafeDocumentId(event.currentVersionId) || !isSafeDocumentId(event.currentAssessmentId)
     || (event.currentResourceId !== undefined && !isSafeDocumentId(event.currentResourceId))
-    || !['Pending', 'UnderReview'].includes(event.status)
-    || event.reviewStage !== 'authority') throw new HttpsError('failed-precondition', 'The event is not open for authority review.');
+    || event.status !== 'UnderReview' || event.reviewStage !== 'authority') throw new HttpsError('failed-precondition', 'The event is not open for assigned authority review.');
   if (!validRequiredAuthorities(event.requiredAuthorities)) throw new HttpsError('failed-precondition', 'The assigned authority list is invalid.');
   if (!event.requiredAuthorities.includes(authority)) throw new HttpsError('permission-denied', 'This authority is not assigned to the event.');
+  if (event.assignedOfficerByAuthority?.[authority] !== uid || !event.assignedOfficerUids?.includes(uid)) {
+    throw new HttpsError('permission-denied', 'You are not the named officer assigned to this authority review.');
+  }
   return { versionId: event.currentVersionId, assessmentId: event.currentAssessmentId };
 }
 
 export function shouldReopenDecisionAfterScoreRevision(assignment: Pick<Assignment, 'status' | 'decision'>): boolean {
   return assignment.status === 'completed' && Boolean(assignment.decision);
+}
+
+export function assertActiveScoreReviewAssignment(
+  value: unknown,
+  assignmentId: string,
+  eventId: string,
+  versionId: string,
+  authorityType: AuthorityType,
+  uid: string,
+): asserts value is Assignment {
+  const assignment = value && typeof value === 'object' ? value as Partial<Assignment> : undefined;
+  if (!assignment || assignment.assignmentId !== assignmentId || assignment.eventId !== eventId
+    || assignment.versionId !== versionId || assignment.authorityType !== authorityType
+    || assignment.officerUid !== uid || !['pending', 'in_progress', 'completed'].includes(assignment.status ?? '')) {
+    throw new HttpsError('permission-denied', 'The named officer assignment is missing, revoked, completed, or stale.');
+  }
 }
 
 function validRequiredAuthorities(value: unknown): value is AuthorityType[] {

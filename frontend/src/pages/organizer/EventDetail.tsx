@@ -12,13 +12,15 @@ import PageHeader from '../../components/ui/PageHeader';
 import OrganizerAssessmentSummaryView, { OrganizerResourceSummaryView } from '../../components/m2/OrganizerAssessmentSummaryView';
 import { isCurrentEventRecord, isCurrentEventVersion, isOrganizerAssessmentSummary } from '../../components/m2/m2Contract';
 import OrganizerStatusBadge from './OrganizerStatusBadge';
-import { isEditableApplicationStatus, isWithdrawableApplicationStatus, nextVersionId, organizerAdminDecisionLabel, organizerPublicationLabel, organizerPublicationStateFromProjection, OrganizerPublicationState } from './organizerApplication';
+import { isEditableApplicationStatus, isWithdrawableApplicationStatus, nextVersionId, organizerAdminDecisionLabel, organizerAssessmentAvailability, organizerPublicationLabel, organizerPublicationStateFromProjection, OrganizerPublicationState } from './organizerApplication';
 import { findEventById } from '../../mock_data/events';
 import { findPublicEventById } from '../../mock_data/public_events';
+import { useAppDialog } from '../../contexts/AppDialogContext';
 
 export default function EventDetail() {
   const { eventId } = useParams<{ eventId: string }>();
   const navigate = useNavigate();
+  const dialog = useAppDialog();
   const [event, setEvent] = useState<EventRecord | null>(null);
   const [summary, setSummary] = useState<OrganizerAssessmentSummary | null>(null);
   const [versions, setVersions] = useState<EventVersion[]>([]);
@@ -129,18 +131,22 @@ export default function EventDetail() {
     && (event.assignedOfficerUids?.length ?? 0) === 0
     && Object.keys(event.assignedOfficerByAuthority ?? {}).length === 0;
   const rejectedWithFeedback = status === 'Rejected'
-    && event.initialReview?.decision === 'Rejected'
-    && (event.initialReview.reason?.trim().length ?? 0) > 0
-    && Boolean(event.initialReview.suggestion?.trim());
+    && ((event.initialReview?.decision === 'Rejected'
+      && (event.initialReview.reason?.trim().length ?? 0) > 0
+      && Boolean(event.initialReview.suggestion?.trim()))
+      || (event.secondReview?.confirmedDecision === 'Rejected'
+        && Boolean(event.secondReview.reason?.trim())
+        && Boolean(event.secondReview.suggestion?.trim())));
   const canPrepareEdit = pendingBeforeAdminReview || rejectedWithFeedback;
   const submittedVersionLabel = event.currentVersionId ?? 'Not submitted';
   const editableVersionLabel = event.editableVersionId ?? (editable ? nextVersionId(event.currentVersionNumber) : 'Locked');
   const revisionFeedback = versions.find((version) => version.versionId === event.currentVersionId)?.revisionSource ?? event.activeRevision;
+  const assessmentAvailability = organizerAssessmentAvailability(status, Boolean(event.currentVersionId), Boolean(event.currentAssessmentId), summary, legacySummary);
 
   const prepareEdit = async () => {
-    if (!isFirebaseConfigured || !window.confirm(status === 'Rejected'
-      ? 'Create a new Draft version from this rejected application? Previously submitted versions remain unchanged.'
-      : 'Return this Pending application to Draft? Uploaded documents must be supplied for the new immutable version.')) return;
+    if (!isFirebaseConfigured || !await dialog.confirm(status === 'Rejected'
+      ? { title: 'Revise this rejected application?', description: 'STERAS will create a new Draft. Previously submitted versions will remain unchanged.', confirmLabel: 'Create new draft', cancelLabel: 'Keep application' }
+      : { title: 'Return this application to Draft?', description: 'The Pending application will leave the review queue. Upload the required documents again for the new version.', confirmLabel: 'Return to draft', cancelLabel: 'Keep pending' })) return;
     setLifecycleAction('edit');
     try {
       const command = httpsCallable<{ eventId: string }>(functions, 'prepareApplicationRevision');
@@ -154,7 +160,7 @@ export default function EventDetail() {
   };
 
   const cancelPending = async () => {
-    if (!isFirebaseConfigured || !window.confirm('Cancel this Pending application before Admin review? This cannot be undone.')) return;
+    if (!isFirebaseConfigured || !await dialog.confirm({ title: 'Cancel this application?', description: 'This Pending application will be cancelled before Admin review. This action cannot be undone.', confirmLabel: 'Cancel application', cancelLabel: 'Keep application', tone: 'danger' })) return;
     setLifecycleAction('cancel');
     try {
       const command = httpsCallable<{ eventId: string }>(functions, 'cancelEvent');
@@ -168,7 +174,7 @@ export default function EventDetail() {
   };
 
   const withdraw = async () => {
-    const rationale = window.prompt('Why are you withdrawing this application? (10–500 characters)')?.trim();
+    const rationale = await dialog.prompt({ title: 'Withdraw this application?', description: 'The application will leave the active review workflow. Give reviewers a clear reason for the withdrawal.', inputLabel: 'Reason for withdrawal', placeholder: 'Explain why this application is being withdrawn', minLength: 10, maxLength: 500, confirmLabel: 'Withdraw application', cancelLabel: 'Keep application', tone: 'danger' });
     if (!rationale) return;
     if (!isFirebaseConfigured) {
       toast.error('Firebase is not configured. Withdrawal disabled.');
@@ -201,6 +207,7 @@ export default function EventDetail() {
           <div className="card-body divide-y divide-[#e3dacb] text-sm">
             <Row label="Type" value={details.type} />
             <Row label="Venue" value={venueName} />
+            <Row label="State" value={details.venueState ?? 'Not recorded'} />
             <Row label="Capacity" value={details.venueCapacity ? details.venueCapacity.toLocaleString() : 'Not set'} />
             <Row label="Attendance" value={details.expectedAttendance ? details.expectedAttendance.toLocaleString() : 'Not set'} />
             <Row label="Environment" value={`${details.environment}, ${details.coverage}, ${details.seating}`} />
@@ -216,7 +223,7 @@ export default function EventDetail() {
             <Row label="Submitted" value={submittedVersionLabel} />
             <Row label="Editable" value={editableVersionLabel} />
             <Row label="Submitted at" value={event.submittedAt ? format(new Date(event.submittedAt), 'PPp') : 'Not submitted'} />
-            <Row label="Assessment" value={event.currentAssessmentId ? 'Available' : status === 'Pending' ? 'Processing' : 'Unavailable'} />
+            <Row label="Assessment" value={assessmentAvailability.label} />
             <Row label="Admin decision" value={organizerAdminDecisionLabel(event)} />
             <Row label="Public" value={organizerPublicationLabel(publicationState)} />
             <Row label="Authorities" value={event.requiredAuthorities.length > 0 ? event.requiredAuthorities.join(', ') : 'Not assigned yet'} />
@@ -226,7 +233,7 @@ export default function EventDetail() {
         <section className="card">
           <div className="card-header"><div><h2 className="section-title">Risk assessment summary</h2><p className="mt-1 text-xs text-ink-500">{manualReviewRequired ? 'Automated assessment unavailable' : summary?.status === 'official_ready' ? 'Official result available for authority decision' : 'Provisional until authority confirmation is complete'}</p></div></div>
           <div className="card-body">
-            {manualReviewRequired ? <p className="rounded-md border border-gold-200 bg-gold-50 p-3 text-sm text-ink-700">Automated risk generation is unavailable. An Admin manual assessment is required before risk results can be shown.</p> : !summary ? <p className="text-sm text-ink-500">{!event.currentVersionId ? 'No assessment has been created for this application.' : legacySummary ? 'This version has a legacy assessment and must be recomputed before the current result can be shown.' : 'Assessment is processing.'}</p> : (
+            {manualReviewRequired ? <p className="rounded-md border border-gold-200 bg-gold-50 p-3 text-sm text-ink-700">Automated risk generation is unavailable. An Admin manual assessment is required before risk results can be shown.</p> : !summary ? <p className="text-sm text-ink-500">{assessmentAvailability.emptyMessage}</p> : (
               <OrganizerAssessmentSummaryView summary={summary} />
             )}
           </div>
@@ -235,15 +242,15 @@ export default function EventDetail() {
         <section className="card">
           <div className="card-header"><h2 className="section-title">Correction details</h2></div>
           <div className="card-body text-sm leading-6 text-ink-600">
-            {event.initialReview?.decision === 'Rejected' || revisionFeedback?.kind === 'rejected_revision' ? (
+            {event.initialReview?.decision === 'Rejected' || event.secondReview?.confirmedDecision === 'Rejected' || revisionFeedback?.kind === 'rejected_revision' ? (
               <div className="space-y-4">
                 <div>
                   <p className="text-xs font-bold uppercase tracking-[0.06em] text-ink-500">Reason</p>
-                  <p className="mt-1 text-ink-800">{event.initialReview?.reason || revisionFeedback?.rejectionReason || 'A correction was requested.'}</p>
+                  <p className="mt-1 text-ink-800">{event.secondReview?.reason || event.initialReview?.reason || revisionFeedback?.rejectionReason || 'A correction was requested.'}</p>
                 </div>
                 <div>
                   <p className="text-xs font-bold uppercase tracking-[0.06em] text-ink-500">Suggested correction</p>
-                  <p className="mt-1 text-ink-800">{event.initialReview?.suggestion || revisionFeedback?.rejectionSuggestion || 'Update the application and resubmit a new version.'}</p>
+                  <p className="mt-1 text-ink-800">{event.secondReview?.suggestion || event.initialReview?.suggestion || revisionFeedback?.rejectionSuggestion || 'Update the application and resubmit a new version.'}</p>
                 </div>
               </div>
             ) : (

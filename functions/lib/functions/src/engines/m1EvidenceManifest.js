@@ -3,6 +3,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.validateM1EvidenceManifest = validateM1EvidenceManifest;
 const m1EvidenceContract_1 = require("../../../shared/m1EvidenceContract");
 const RESPONSE_KEYS = new Set(['requirementId', 'applicability', 'documentPath', 'notApplicableReason']);
+function meaningfulReason(reason) {
+    return reason.length >= 20 && reason.split(/\s+/).filter(Boolean).length >= 3;
+}
 function validateM1EvidenceManifest(details, selection, documents, value) {
     const definitions = (0, m1EvidenceContract_1.m1EvidenceRequirementsFor)(selection.scenarioTemplateId);
     const errors = [];
@@ -57,8 +60,8 @@ function validateM1EvidenceManifest(details, selection, documents, value) {
             continue;
         }
         const reason = typeof response.notApplicableReason === 'string' ? response.notApplicableReason.trim() : '';
-        if (reason.length < 10 || reason.length > 500 || response.notApplicableReason !== reason) {
-            errors.push(`${definition.id} needs a 10–500 character not-applicable reason.`);
+        if (!meaningfulReason(reason) || reason.length > 500 || response.notApplicableReason !== reason) {
+            errors.push(`${definition.id} needs a specific 20–500 character not-applicable reason using at least 3 words.`);
             continue;
         }
         if (response.documentPath !== undefined)

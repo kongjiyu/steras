@@ -60,6 +60,20 @@ service firebase.storage {
       allow delete: if false;
     }
 
+    // M4 evidence is immutable and uploader-scoped. Backend callables verify
+    // metadata before attaching a path to an incident or history entry.
+    match /incident_evidence/{uid}/{fileName} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow create: if isSignedIn()
+                    && request.auth.uid == uid
+                    && resource == null
+                    && fileName.matches('[A-Za-z0-9._-]{1,200}')
+                    && request.resource.size > 0
+                    && request.resource.size <= 10 * 1024 * 1024
+                    && request.resource.contentType.matches('image/(jpeg|png|webp)|application/pdf');
+      allow update, delete: if false;
+    }
+
     // Default deny everything else
     match /{path=**} {
       allow read, write: if false;

@@ -6,6 +6,8 @@ const auth_1 = require("firebase-admin/auth");
 const firestore_1 = require("firebase-admin/firestore");
 const storage_1 = require("firebase-admin/storage");
 const types_1 = require("../../../shared/types");
+const m1TemplateContract_1 = require("../../../shared/m1TemplateContract");
+const m1EvidenceContract_1 = require("../../../shared/m1EvidenceContract");
 const projectId = process.env.FIREBASE_PROJECT_ID ?? 'linkos-496505';
 const apiKey = process.env.VITE_FIREBASE_API_KEY;
 const password = process.env.UAT_PASSWORD;
@@ -68,6 +70,7 @@ async function createScenario(scenario, index, organizer, authorities, admin) {
         ...(scenario === 'insufficient' ? {} : { venueId }),
         venueName: 'Putrajaya International Convention Centre',
         venueAddress: 'Presint 5, Putrajaya, Malaysia',
+        venueState: 'Putrajaya',
         venueLocation: { lat: 2.9006, lng: 101.6805 },
         venueCapacity: 3_000,
         expectedAttendance: 1_800,
@@ -91,15 +94,38 @@ async function createScenario(scenario, index, organizer, authorities, admin) {
         },
     };
     const now = Date.now();
-    const evidencePath = await uploadEvidence(eventId, 'v1', `${scenario}-safety-plan.pdf`);
+    const eventCategory = (0, m1TemplateContract_1.m1CategoryForEventType)(eventDetails.type);
+    const scenarioTemplateId = (0, m1TemplateContract_1.m1ScenarioTemplateIdFor)(eventCategory, 'indoor');
+    const templateSelection = {
+        eventCategory,
+        venueSetting: 'indoor',
+        coreTemplateId: 'STERAS-CORE',
+        scenarioTemplateId,
+        templateRegistryVersion: types_1.M1_TEMPLATE_REGISTRY_VERSION,
+        selectedAt: now,
+    };
+    const core = await uploadUatDocument(eventId, 'v1', `${scenario}-core-application.pdf`, 'core_template', now);
+    const scenarioDocument = await uploadUatDocument(eventId, 'v1', `${scenario}-scenario-application.pdf`, 'scenario_template', now);
+    const evidence = await uploadUatDocument(eventId, 'v1', `${scenario}-safety-plan.pdf`, 'supporting_evidence', now);
+    const draftDocuments = [core.document, scenarioDocument.document, evidence.document];
+    const evidenceManifest = (0, m1EvidenceContract_1.m1EvidenceRequirementsFor)(scenarioTemplateId).map((requirement) => ((0, m1EvidenceContract_1.isM1EvidenceForcedRequired)(requirement, eventDetails.riskProfile)
+        ? { requirementId: requirement.id, applicability: 'required', documentPath: evidence.document.path }
+        : { requirementId: requirement.id, applicability: 'not_applicable', notApplicableReason: 'Not applicable to this controlled UAT event scenario.' }));
+    const extractionId = `uat-extraction-${runId}`;
     const draft = {
         eventId,
         organizerId: organizer.profile.uid,
         eventDetails,
+        templateSelection,
         status: 'Draft',
         currentVersionNumber: 0,
         editableVersionId: 'v1',
-        draftDocumentPaths: [evidencePath],
+        draftDocumentPaths: draftDocuments.map((document) => document.path),
+        draftDocuments,
+        documentSchemaVersion: types_1.M1_DOCUMENT_SCHEMA_VERSION,
+        currentExtractionId: extractionId,
+        draftEvidenceManifest: evidenceManifest,
+        evidenceManifestSchemaVersion: types_1.M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
         requiredAuthorities: [],
         createdAt: now,
         updatedAt: now,
@@ -107,12 +133,37 @@ async function createScenario(scenario, index, organizer, authorities, admin) {
     if (scenario !== 'insufficient')
         await db.collection(types_1.COLLECTIONS.VENUES).doc(venueId).set({
             venueId, active: true, name: eventDetails.venueName, address: eventDetails.venueAddress,
+            state: eventDetails.venueState,
             capacity: eventDetails.venueCapacity, location: eventDetails.venueLocation,
             verifiedSafeCapacity: eventDetails.venueCapacity, nearestHospitalTravelMinutes: 12,
             fireCertificateStatus: 'valid', emergencyAccessVerified: true,
             datasetVersion: 'uat-canonical-venue-v1', synthetic: true,
         });
-    await db.collection(types_1.COLLECTIONS.EVENTS).doc(eventId).set(draft);
+    const extraction = {
+        extractionId,
+        eventId,
+        editableVersionId: 'v1',
+        status: 'ready',
+        schemaVersion: types_1.M1_EXTRACTION_SCHEMA_VERSION,
+        templateRegistryVersion: types_1.M1_TEMPLATE_REGISTRY_VERSION,
+        coreTemplateId: templateSelection.coreTemplateId,
+        scenarioTemplateId,
+        sourceDocuments: [
+            { ...core.document, role: 'core_template', sha256: core.sha256 },
+            { ...scenarioDocument.document, role: 'scenario_template', sha256: scenarioDocument.sha256 },
+        ],
+        extractedFields: [],
+        rawFieldIds: [],
+        warnings: [],
+        completionPercent: 100,
+        createdAt: now,
+        createdBy: organizer.profile.uid,
+    };
+    const eventReference = db.collection(types_1.COLLECTIONS.EVENTS).doc(eventId);
+    const batch = db.batch();
+    batch.set(eventReference, draft);
+    batch.set(eventReference.collection(types_1.COLLECTIONS.DOCUMENT_EXTRACTIONS).doc(extractionId), extraction);
+    await batch.commit();
     return { eventId, organizer, authorities, admin, eventDetails };
 }
 async function runAssessment(context) {
@@ -287,13 +338,25 @@ async function provisionUser(email, name, role, authorityType) {
     await db.collection(types_1.COLLECTIONS.USERS).doc(user.uid).set(profile);
     return { profile };
 }
-async function uploadEvidence(eventId, versionId, fileName) {
+async function uploadUatDocument(eventId, versionId, fileName, role, uploadedAt) {
     const path = `event_documents/${eventId}/${versionId}/${(0, node_crypto_1.randomUUID)()}-${fileName}`;
-    await bucket.file(path).save(Buffer.from('%PDF-1.4\n% STERAS staging UAT evidence\n%%EOF\n'), {
+    const buffer = Buffer.from(`%PDF-1.4\n% STERAS staging UAT ${role}\n%%EOF\n`);
+    await bucket.file(path).save(buffer, {
         resumable: false,
         metadata: { contentType: 'application/pdf' },
     });
-    return path;
+    return {
+        document: {
+            path,
+            role,
+            originalName: fileName,
+            mimeType: 'application/pdf',
+            sizeBytes: buffer.length,
+            uploadedAt,
+            schemaVersion: types_1.M1_DOCUMENT_SCHEMA_VERSION,
+        },
+        sha256: (0, node_crypto_1.createHash)('sha256').update(buffer).digest('hex'),
+    };
 }
 async function idTokenFor(email) {
     const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`, {

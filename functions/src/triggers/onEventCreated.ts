@@ -23,6 +23,7 @@ import {
   EventVersion,
   HARD_RULE_VERSION,
   ManualReviewRiskAssessment,
+  M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
   OrganizerAssessmentSummary,
   OrganizerResourceRecommendation,
   OFFICIAL_FORMULA_VERSION,
@@ -64,6 +65,8 @@ import { ASSESSMENT_SECRETS, MINIMAX_API_KEY, OPENWEATHER_API_KEY } from '../con
 import { FUNCTION_REGION } from '../config/runtime';
 import { createResourceCutoverQueueToken, RESOURCE_CUTOVER_LOCK_PATH } from '../config/resourceCutoverLock';
 import { validateEventDetails, validateEvidencePaths } from '../http/submitEvent';
+import { validateDraftDocuments } from '../http/extractApplicationDocuments';
+import { validateM1EvidenceManifest } from '../engines/m1EvidenceManifest';
 import { inspectStorageEvidence } from '../utils/storageEvidence';
 import { CANONICAL_EVIDENCE_KEYS } from '../engines/proposalContract';
 import {
@@ -71,6 +74,7 @@ import {
   m1CategoryForEventType,
   m1VenueSettingMatchesEnvironment,
 } from '@shared/m1TemplateContract';
+import { eventVersionInputHash } from '../utils/eventVersionHash';
 
 const CLAIM_LEASE_MS = 2 * 60 * 1000;
 
@@ -86,7 +90,8 @@ export interface PipelineResult {
 
 export interface RetryAuthorization {
   uid: string;
-  authorityType: UserProfile['authorityType'];
+  role: 'admin' | 'authority';
+  authorityType?: UserProfile['authorityType'];
 }
 
 export interface PipelineExecutionOptions {
@@ -158,12 +163,14 @@ export async function runRiskAndResourcePipeline(
         : currentEvent.currentAssessmentId !== undefined && currentEvent.currentAssessmentId !== assessmentId)) return false;
     if (retryManual) {
       const retryUser = retryUserSnapshot?.data() as UserProfile | undefined;
-      if (!retryAuthorization
-        || retryUser?.role !== 'authority'
-        || retryUser.authorityType !== retryAuthorization.authorityType
-        || !retryUser.authorityType
-        || !Array.isArray(currentEvent.requiredAuthorities)
-        || !currentEvent.requiredAuthorities.includes(retryUser.authorityType)) return 'retry-not-authorized';
+      const adminAuthorized = retryAuthorization?.role === 'admin' && retryUser?.role === 'admin';
+      const authorityAuthorized = retryAuthorization?.role === 'authority'
+        && retryUser?.role === 'authority'
+        && retryUser.authorityType === retryAuthorization.authorityType
+        && Boolean(retryUser.authorityType)
+        && Array.isArray(currentEvent.requiredAuthorities)
+        && currentEvent.requiredAuthorities.includes(retryUser.authorityType as NonNullable<UserProfile['authorityType']>);
+      if (!adminAuthorized && !authorityAuthorized) return 'retry-not-authorized';
     }
     const existing = existingSnapshot.data() as AssessmentRecord | undefined;
     if (retryManual && existing?.status !== 'manual_review_required' && existing?.status !== 'failed') {
@@ -480,6 +487,7 @@ export function isPipelineEventVersion(value: unknown, eventId: string, versionI
     && typeof eventDetails.type === 'string' && Boolean(eventDetails.type.trim())
     && typeof eventDetails.venueName === 'string' && Boolean(eventDetails.venueName.trim())
     && typeof eventDetails.venueAddress === 'string' && Boolean(eventDetails.venueAddress.trim())
+    && typeof eventDetails.venueState === 'string' && Boolean(eventDetails.venueState.trim())
     && Number.isFinite(eventDetails.venueCapacity) && Number(eventDetails.venueCapacity) >= 0
     && Number.isFinite(eventDetails.expectedAttendance) && Number(eventDetails.expectedAttendance) >= 0
     && ['indoor', 'outdoor', 'mixed'].includes(String(eventDetails.environment))
@@ -494,11 +502,25 @@ export function isPipelineEventVersion(value: unknown, eventId: string, versionI
     || !m1VenueSettingMatchesEnvironment(templateSelection.venueSetting, eventDetails.environment as EventEnvironment)
     || validateEventDetails(eventDetails, Number(version.submittedAt) - 1).length > 0
     || validateEvidencePaths(eventId, versionId, version.documentPaths).length > 0) return false;
-  const expectedInputHash = createHash('sha256').update(JSON.stringify({
-    eventDetails,
-    templateSelection,
-    documentPaths: version.documentPaths,
-  })).digest('hex');
+  if (version.evidenceManifestSchemaVersion !== M1_EVIDENCE_MANIFEST_SCHEMA_VERSION
+    || typeof version.extractionId !== 'string' || !isSafeDocumentId(version.extractionId)
+    || !Array.isArray(version.evidenceManifest)) return false;
+  try {
+    const documents = validateDraftDocuments(eventId, versionId, version.documentUploads);
+    const documentPaths = [...new Set(documents.map((document) => document.path))].sort();
+    if (stableStringify(documentPaths) !== stableStringify([...version.documentPaths].sort())) return false;
+    const manifest = validateM1EvidenceManifest(
+      eventDetails as unknown as EventVersion['eventDetails'],
+      templateSelection,
+      documents,
+      version.evidenceManifest,
+    );
+    if (manifest.errors.length > 0
+      || stableStringify(manifest.manifest) !== stableStringify(version.evidenceManifest)) return false;
+  } catch {
+    return false;
+  }
+  const expectedInputHash = eventVersionInputHash(value as EventVersion);
   return version.inputHash === expectedInputHash;
 }
 
@@ -720,13 +742,17 @@ function publishPendingAssessment(
   assessment: ProvisionalRiskAssessment | OfficialRiskAssessment | AdminManualOfficialRiskAssessment,
   pendingClaimMatches: boolean,
   computedAt: number,
+  pendingClaimId: string | undefined,
+  baseAuditExists: boolean,
 ): void {
-  if (!pendingClaimMatches) return;
+  if (!pendingClaimMatches || !pendingClaimId) return;
   transaction.set(
     eventReference.collection(COLLECTIONS.ASSESSMENTS).doc(assessment.assessmentId),
     assessment,
   );
-  const auditReference = eventReference.collection(COLLECTIONS.AUDIT_LOGS).doc(`${assessment.assessmentId}-risk-score-computed`);
+  const auditReference = eventReference.collection(COLLECTIONS.AUDIT_LOGS).doc(
+    riskScoreAuditId(assessment.assessmentId, pendingClaimId, baseAuditExists),
+  );
   transaction.create(auditReference, {
     id: auditReference.id,
     eventId: assessment.eventId,
@@ -744,6 +770,11 @@ function publishPendingAssessment(
       inputHash: assessment.inputHash,
     },
   });
+}
+
+export function riskScoreAuditId(assessmentId: string, claimId: string, baseAuditExists: boolean): string {
+  const baseId = `${assessmentId}-risk-score-computed`;
+  return baseAuditExists ? `${baseId}-retry-${claimId}` : baseId;
 }
 
 export async function recomputeResourceForStoredAssessment(
@@ -847,14 +878,17 @@ async function persistResourceCalculation(
   const resourceId = resourceDocumentId(stage, version.versionId, calculation.resourceInputHash);
   return db.runTransaction(async (transaction) => {
     const assessmentReference = eventReference.collection(COLLECTIONS.ASSESSMENTS).doc(assessment.assessmentId);
+    const riskAuditBaseReference = eventReference.collection(COLLECTIONS.AUDIT_LOGS)
+      .doc(`${assessment.assessmentId}-risk-score-computed`);
     const previousAssessmentReference = expectedCurrentAssessmentId
       ? eventReference.collection(COLLECTIONS.ASSESSMENTS).doc(expectedCurrentAssessmentId)
       : undefined;
-    const [currentEventSnapshot, currentAssessmentSnapshot, cutoverLockSnapshot, previousAssessmentSnapshot] = await Promise.all([
+    const [currentEventSnapshot, currentAssessmentSnapshot, cutoverLockSnapshot, previousAssessmentSnapshot, riskAuditBaseSnapshot] = await Promise.all([
       transaction.get(eventReference),
       transaction.get(assessmentReference),
       transaction.get(db.doc(RESOURCE_CUTOVER_LOCK_PATH)),
       previousAssessmentReference ? transaction.get(previousAssessmentReference) : Promise.resolve(undefined),
+      transaction.get(riskAuditBaseReference),
     ]);
     const currentEvent = currentEventSnapshot.data() as EventRecord | undefined;
     const currentAssessment = currentAssessmentSnapshot.data();
@@ -879,9 +913,12 @@ async function persistResourceCalculation(
     const pendingClaimMatches = Boolean(pendingClaimId && currentAssessment?.status === 'processing'
       && currentAssessment.claimId === pendingClaimId && currentAssessment.inputHash === assessment.inputHash
       && currentAssessment.assessmentId === assessment.assessmentId);
-    const currentPointerMatches = expectedCurrentAssessmentId
-      ? currentEvent?.currentAssessmentId === expectedCurrentAssessmentId
-      : pendingClaimMatches ? currentEvent?.currentAssessmentId === undefined : currentEvent?.currentAssessmentId === assessment.assessmentId;
+    const currentPointerMatches = currentAssessmentPointerMatches(
+      currentEvent?.currentAssessmentId,
+      assessment.assessmentId,
+      pendingClaimMatches,
+      expectedCurrentAssessmentId,
+    );
     if (!currentEvent
       || !['Pending', 'UnderReview'].includes(currentEvent.status)
       || currentEvent.currentVersionId !== version.versionId
@@ -963,7 +1000,10 @@ async function persistResourceCalculation(
           eventReference.collection(COLLECTIONS.ASSESSMENT_SUMMARIES).doc(version.versionId),
           organizerSummary(effectiveAssessment, pointedResource, computedAt),
         );
-        publishPendingAssessment(transaction, eventReference, effectiveAssessment, pendingClaimMatches, computedAt);
+        publishPendingAssessment(
+          transaction, eventReference, effectiveAssessment, pendingClaimMatches, computedAt,
+          pendingClaimId, riskAuditBaseSnapshot.exists,
+        );
         if (expectedCurrentAssessmentId || pendingClaimMatches) transaction.update(eventReference, {
           currentAssessmentId: assessment.assessmentId,
           currentResourceId: pointedResource.resourceId,
@@ -982,7 +1022,10 @@ async function persistResourceCalculation(
         eventReference.collection(COLLECTIONS.ASSESSMENT_SUMMARIES).doc(version.versionId),
         organizerSummary(effectiveAssessment, existing, computedAt),
       );
-      publishPendingAssessment(transaction, eventReference, effectiveAssessment, pendingClaimMatches, computedAt);
+      publishPendingAssessment(
+        transaction, eventReference, effectiveAssessment, pendingClaimMatches, computedAt,
+        pendingClaimId, riskAuditBaseSnapshot.exists,
+      );
       return { status: 'reused' as const, resourceId };
     }
     const previousId = currentEvent.currentResourceId && currentEvent.currentResourceId !== resourceId
@@ -1047,7 +1090,7 @@ async function persistResourceCalculation(
           },
           confidenceLevel: 'prototype',
           authorityReviewRequired: true,
-          notes: 'Provisional internal prototype planning ranges; authority validation and official assessment are pending.',
+          notes: 'Indicative planning ranges; authority validation and official assessment are pending.',
         };
     transaction.create(resourceReference, recommendation);
     transaction.update(eventReference, {
@@ -1059,7 +1102,10 @@ async function persistResourceCalculation(
       eventReference.collection(COLLECTIONS.ASSESSMENT_SUMMARIES).doc(version.versionId),
       organizerSummary(effectiveAssessment, recommendation, computedAt),
     );
-    publishPendingAssessment(transaction, eventReference, effectiveAssessment, pendingClaimMatches, computedAt);
+    publishPendingAssessment(
+      transaction, eventReference, effectiveAssessment, pendingClaimMatches, computedAt,
+      pendingClaimId, riskAuditBaseSnapshot.exists,
+    );
     const auditReference = eventReference.collection(COLLECTIONS.AUDIT_LOGS).doc(`${resourceId}-recommended`);
     transaction.create(auditReference, {
       id: auditReference.id,
@@ -1087,6 +1133,26 @@ async function persistResourceCalculation(
 
 /** Emulator-only atomic publication harness; not exported from the deployed Functions entrypoint. */
 export const __testOnlyPersistResourceCalculation = persistResourceCalculation;
+
+export function __testOnlyCurrentAssessmentPointerMatches(
+  currentAssessmentId: string | undefined,
+  assessmentId: string,
+  pendingClaimMatches: boolean,
+  expectedCurrentAssessmentId?: string,
+): boolean {
+  return currentAssessmentPointerMatches(currentAssessmentId, assessmentId, pendingClaimMatches, expectedCurrentAssessmentId);
+}
+
+function currentAssessmentPointerMatches(
+  currentAssessmentId: string | undefined,
+  assessmentId: string,
+  pendingClaimMatches: boolean,
+  expectedCurrentAssessmentId?: string,
+): boolean {
+  if (expectedCurrentAssessmentId !== undefined) return currentAssessmentId === expectedCurrentAssessmentId;
+  if (pendingClaimMatches) return currentAssessmentId === undefined || currentAssessmentId === assessmentId;
+  return currentAssessmentId === assessmentId;
+}
 
 export function resourceDocumentId(stage: 'provisional' | 'official', versionId: string, resourceInputHash: string): string {
   return `${stage}-${versionId}-${resourceInputHash}`;
@@ -1511,12 +1577,12 @@ function organizerResourceRecommendation(resources: ResourceRecommendation): Org
       planningRange: { ...item.planningRange },
     }])) as OrganizerResourceRecommendation['items'],
     disclaimer: resources.stage === 'provisional'
-      ? 'Provisional internal prototype planning ranges; not statutory or authority-issued minimums.'
-      : 'Planning ranges derived from an official risk assessment; resource ratios remain internal prototype inputs.',
+      ? 'Indicative planning ranges; not statutory or authority-issued minimums.'
+      : 'Planning ranges derived from an official risk assessment; resource ratios remain indicative and are not statutory minimums.',
   };
 }
 
-export const onEventCreated = onDocumentCreated({ document: `${COLLECTIONS.EVENTS}/{eventId}`, region: FUNCTION_REGION, secrets: ASSESSMENT_SECRETS }, async (trigger) => {
+export const onEventCreated = onDocumentCreated({ document: `${COLLECTIONS.EVENTS}/{eventId}`, region: FUNCTION_REGION, secrets: ASSESSMENT_SECRETS, timeoutSeconds: 240 }, async (trigger) => {
   const eventId = trigger.params.eventId;
   const createdData = trigger.data?.data() as { sterasTest?: { datasetId?: string; managedBy?: string } } | undefined;
   const legacyM3FixtureIds = new Set([
@@ -1534,11 +1600,10 @@ export const onEventCreated = onDocumentCreated({ document: `${COLLECTIONS.EVENT
   try { await runRiskAndResourcePipeline(eventId); } catch (error) { logger.error('[onEventCreated] failed', error); }
 });
 
-export const onEventUpdated = onDocumentUpdated({ document: `${COLLECTIONS.EVENTS}/{eventId}`, region: FUNCTION_REGION, secrets: ASSESSMENT_SECRETS }, async (trigger) => {
+export const onEventUpdated = onDocumentUpdated({ document: `${COLLECTIONS.EVENTS}/{eventId}`, region: FUNCTION_REGION, secrets: ASSESSMENT_SECRETS, timeoutSeconds: 240 }, async (trigger) => {
   const before = trigger.data?.before.data() as EventRecord | undefined;
   const after = trigger.data?.after.data() as EventRecord | undefined;
   if (!before || !after || after.status !== 'Pending') return;
   if (before.status === 'Pending' && before.currentVersionId === after.currentVersionId) return;
   try { await runRiskAndResourcePipeline(trigger.params.eventId); } catch (error) { logger.error('[onEventUpdated] failed', error); }
 });
-

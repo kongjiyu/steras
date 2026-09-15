@@ -4,7 +4,32 @@ export type UserRole = 'organizer' | 'authority' | 'public' | 'admin';
 
 export type AuthorityType = 'PDRM' | 'BOMBA' | 'KKM' | 'DBKL' | 'MOTAC';
 
+/** Privacy-safe taxonomy for M3 decision analytics. Free-text rationale stays private. */
+export const REJECTION_REASON_CATEGORIES = [
+  'incomplete_application',
+  'insufficient_evidence',
+  'risk_controls_inadequate',
+  'regulatory_non_compliance',
+  'resource_plan_inadequate',
+  'venue_or_capacity_issue',
+  'other',
+] as const;
+export type RejectionReasonCategory = typeof REJECTION_REASON_CATEGORIES[number];
+
+export const RESOURCE_OVERRIDE_REASON_CATEGORIES = [
+  'attendance_change',
+  'venue_constraint',
+  'risk_score_change',
+  'authority_operational_requirement',
+  'resource_availability',
+  'other',
+] as const;
+export type ResourceOverrideReasonCategory = typeof RESOURCE_OVERRIDE_REASON_CATEGORIES[number];
+
 export interface UserProfile {
+  termsVersion?: string;
+  termsAcceptedAt?: number;
+  onboardingCompleted?: boolean;
   uid: string;
   name: string;
   email: string;
@@ -68,9 +93,9 @@ export type EventEnvironment = 'indoor' | 'outdoor' | 'mixed';
 export type VenueCoverage = 'covered' | 'partially_covered' | 'uncovered';
 export type SeatingType = 'seated' | 'standing' | 'mixed';
 
-export const M1_TEMPLATE_REGISTRY_VERSION = '2026-08-28-v1';
+export const M1_TEMPLATE_REGISTRY_VERSION = '2026-09-04-v2';
 export const M1_DOCUMENT_SCHEMA_VERSION = '2026-08-28-document-v1';
-export const M1_EXTRACTION_SCHEMA_VERSION = '2026-08-29-document-fields-v2';
+export const M1_EXTRACTION_SCHEMA_VERSION = '2026-09-04-document-fields-v3';
 export const M1_EVIDENCE_MANIFEST_SCHEMA_VERSION = '2026-08-28-evidence-v1';
 
 export type M1EventCategory =
@@ -92,7 +117,7 @@ export interface M1TemplateSelection {
   selectedAt: number;
 }
 
-export type M1DocumentRole = 'core_template' | 'scenario_template' | 'combined_application' | 'supporting_evidence';
+export type M1DocumentRole = 'core_template' | 'scenario_template' | 'supporting_evidence';
 
 /** Organizer upload metadata. Storage bytes remain immutable after upload. */
 export interface M1DraftDocument {
@@ -108,6 +133,7 @@ export interface M1DraftDocument {
 export type M1AutoFillField =
   | 'name'
   | 'description'
+  | 'venueName'
   | 'venueAddress'
   | 'venueCapacity'
   | 'expectedAttendance'
@@ -117,11 +143,24 @@ export type M1AutoFillField =
   | 'organizerName'
   | 'organizerEmail'
   | 'organizerPhone'
+  | 'riskProfile.vulnerableAttendeesPercent'
+  | 'riskProfile.standingAttendeesPercent'
+  | 'riskProfile.internationalAttendees'
   | 'riskProfile.pyrotechnics'
   | 'riskProfile.temporaryStructures'
   | 'riskProfile.foodServed'
   | 'riskProfile.alcoholServed'
-  | 'riskProfile.ticketedEntry';
+  | 'riskProfile.freeDrinkingWater'
+  | 'riskProfile.ticketedEntry'
+  | 'riskProfile.overnightAccommodation'
+  | 'riskProfile.rivalryOrTensionExpected'
+  | 'riskProfile.crowdManagementPlan'
+  | 'riskProfile.trafficManagementPlan'
+  | 'riskProfile.severeWeatherPlan'
+  | 'riskProfile.medicalPlan'
+  | 'riskProfile.evacuationPlanTested'
+  | 'riskProfile.authorityCoordinationConfirmed'
+  | 'riskProfile.nearestHospitalTravelMinutes';
 
 export interface M1ExtractedField {
   target: M1AutoFillField;
@@ -141,7 +180,7 @@ export interface M1DocumentExtraction {
   scenarioTemplateId: string;
   sourceDocuments: Array<{
     path: string;
-    role: 'core_template' | 'scenario_template' | 'combined_application';
+    role: 'core_template' | 'scenario_template';
     originalName: string;
     mimeType: string;
     sizeBytes: number;
@@ -192,6 +231,8 @@ export interface EventDetails {
   venueId?: string;
   venueName: string;
   venueAddress: string;
+  /** Required for current submissions; optional only on immutable legacy records. */
+  venueState?: string;
   venueLocation?: VenueLocation;
   venueCapacity: number;
   expectedAttendance: number;
@@ -236,6 +277,7 @@ export interface EventRecord {
   withdrawnAt?: number;
   withdrawnFromStatus?: Exclude<EventStatus, 'Withdrawn'>;
   withdrawalRationale?: string;
+  withdrawalCleanupCompletedAt?: number;
   requiredAuthorities: AuthorityType[];
   /** M3 named-officer authorization. Populated atomically with assignments. */
   assignedOfficerUids?: string[];
@@ -254,6 +296,8 @@ export interface EventRecord {
     decision: 'Approved' | 'Rejected';
     /** Optional for an approval made after the reviewed-materials gate. */
     reason?: string;
+    reviewStage?: 'initial';
+    rejectionReasonCategory?: RejectionReasonCategory;
     suggestion?: string;
     reviewerUid: string;
     reviewedAt: number;
@@ -265,6 +309,28 @@ export interface EventRecord {
       reason: string;
       suggestion?: string;
       decidedAt?: number;
+    }>;
+  };
+  /** Admin's terminal second-review decision and organizer correction feedback. */
+  secondReview?: {
+    reviewerUid: string;
+    decidedAt: number;
+    confirmedDecision: DecisionValue;
+    aggregateDecision?: DecisionValue;
+    reviewStage?: 'second';
+    rejectionReasonCategory?: RejectionReasonCategory | null;
+    reason?: string | null;
+    suggestion?: string | null;
+    adminNote?: string | null;
+    featuredOfficerUid?: string | null;
+    /** Immutable snapshot of the officer proposals confirmed by this review. */
+    officerFeedback?: Array<{
+      authorityType: AuthorityType;
+      officerUid: string;
+      decision: DecisionValue;
+      reason: string;
+      suggestion?: string | null;
+      decidedAt?: number | null;
     }>;
   };
   /** Human assessment captured when AI-assisted assessment is unavailable. */
@@ -1121,6 +1187,8 @@ export interface ResourceOverrideRecord {
   authorityType: AuthorityType;
   reviewerId: string;
   rationale: string;
+  /** Required on new M3 records; absent only on legacy revisions. */
+  overrideReasonCategory?: ResourceOverrideReasonCategory;
   previousQuantities: ResourceQuantities;
   quantities: ResourceQuantities;
   idempotencyKey: string;
@@ -1172,6 +1240,8 @@ export interface AuthorityDecision {
   decision: DecisionValue;
   rationale: string;
   suggestion?: string;
+  reviewStage?: 'authority';
+  rejectionReasonCategory?: RejectionReasonCategory;
   materialsReviewed?: boolean;
   reviewerId: string;
   decidedAt: number;
@@ -1247,7 +1317,9 @@ export type NotificationType =
   | 'stage2_doc_published'
   | 'stage2_doc_rejected'
   | 'control_resubmit_required'
-  | 'control_restored';
+  | 'control_restored'
+  | 'incident_reported'
+  | 'incident_updated';
 
 export interface Notification {
   notificationId: string;
@@ -1337,7 +1409,7 @@ export interface Incident {
   incidentType: string;
   severity: 'low' | 'medium' | 'high';
   date: number;
-  status?: 'verified' | 'under_review' | 'rejected';
+  status?: 'verified' | 'under_review' | 'rejected' | 'resolved';
   assessmentEligible?: boolean;
   outcome?: {
     injured: number;
@@ -1402,11 +1474,18 @@ export interface PublicEvent {
   versionId: string;
   eventName: string;
   venueName: string;
+  venueAddress?: string;
+  venueState?: string;
+  venueLocation?: VenueLocation;
   eventType: EventType;
+  description?: string;
+  expectedAttendance?: number;
+  environment?: EventEnvironment;
   startDatetime: number;
   endDatetime: number;
   approvedBy: AuthorityType[];
   publicStatus: 'approved';
+  lastUpdatedAt?: number;
 }
 
 export const COLLECTIONS = {
@@ -1517,6 +1596,8 @@ export interface Stage1Doc {
   usePreviousSourceEventId?: string;
   verifiedBy?: string;
   verifiedAt?: number;
+  /** Optional, non-clickable verification locator supplied by the officer. */
+  verificationEvidencePath?: string;
   rejectionReason?: string;
   rejectionSuggestion?: string;
 }
@@ -1619,6 +1700,8 @@ export interface Assignment {
   status: 'pending' | 'in_progress' | 'completed' | 'revoked';
   decision?: DecisionValue;
   reason?: string;
+  reviewStage?: 'authority';
+  rejectionReasonCategory?: RejectionReasonCategory;
   suggestion?: string;
   decidedAt?: number;
   revokedAt?: number;
@@ -1630,10 +1713,14 @@ export interface Assignment {
  *  M3 listens (Q4) and updates the control's `label` via the
  *  `onM4ReportOutcome` trigger. */
 export interface PublicReport {
+  withdrawnAt?: number;
   ticketId: string;
   eventId: string;
   controlId: string;
   docId: string;
+  /** Immutable M3 generation binding consumed and revalidated by M4. */
+  versionId: string;
+  stage2PublishedAt: number;
   reporterUid: string;
   category: string;
   description: string;

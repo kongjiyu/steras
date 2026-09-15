@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.makeInitialReviewDecision = void 0;
 exports.makeInitialReviewDecisionForUser = makeInitialReviewDecisionForUser;
 exports.validateInitialReviewRequest = validateInitialReviewRequest;
+exports.isReviewableProvisionalAssessment = isReviewableProvisionalAssessment;
 /**
  * Admin initial-review gate (M3 FR-M3-02..08).
  *
@@ -23,6 +24,7 @@ const runtime_1 = require("../config/runtime");
 const resourceContract_1 = require("../engines/resourceContract");
 const notifications_1 = require("../utils/notifications");
 const applicationState_1 = require("../../../shared/applicationState");
+const resourceCalculator_1 = require("../engines/resourceCalculator");
 const REASON_MIN = 10;
 const REASON_MAX = 1_000;
 const SUGGESTION_MAX = 1_000;
@@ -32,7 +34,7 @@ exports.makeInitialReviewDecision = (0, https_1.onCall)({ region: runtime_1.FUNC
     return makeInitialReviewDecisionForUser(request.auth.uid, request.data);
 });
 async function makeInitialReviewDecisionForUser(uid, data, now = Date.now()) {
-    const { eventId, decision, reason, suggestion, attachOfficerFeedback } = validateInitialReviewRequest(data);
+    const { eventId, decision, reason, suggestion, attachOfficerFeedback, rejectionReasonCategory } = validateInitialReviewRequest(data);
     if (Object.prototype.hasOwnProperty.call(data, 'manualAssessment')) {
         throw new https_1.HttpsError('failed-precondition', 'Manual Review Required applications must be completed in the Admin manual assessment queue before initial review.');
     }
@@ -74,6 +76,7 @@ async function makeInitialReviewDecisionForUser(uid, data, now = Date.now()) {
     const assessment = assessmentSnap.data();
     const resource = resourceSnap?.data();
     const manualOfficial = isManualOfficialAssessment(assessment, eventId, versionId, assessmentId);
+    const provisionalReady = isReviewableProvisionalAssessment(assessment, eventId, versionId, assessmentId);
     // Feedback is read before the decision transaction so the admin can
     // explicitly attach the completed officer rationale to an initial reject.
     // Assignments are never deleted, so this also works when a previous review
@@ -101,7 +104,8 @@ async function makeInitialReviewDecisionForUser(uid, data, now = Date.now()) {
         assessment,
         resource,
     });
-    if (decision === 'Approved' && (!readiness.ready || !resourceSnap?.exists || !resource || !(0, resourceContract_1.validateResourceRecommendation)(resource).ok)) {
+    if (decision === 'Approved' && (!readiness.ready || !(manualOfficial || provisionalReady)
+        || !resourceSnap?.exists || !resource || !(0, resourceContract_1.validateResourceRecommendation)(resource).ok)) {
         if (event.status === 'Manual Review Required' || assessment?.status === 'manual_review_required') {
             throw new https_1.HttpsError('failed-precondition', 'Complete the Admin manual assessment queue before initial approval.');
         }
@@ -114,14 +118,21 @@ async function makeInitialReviewDecisionForUser(uid, data, now = Date.now()) {
         // records remain semantically distinct from legacy records that carried
         // a rationale, while readers continue to handle both shapes safely.
         ...(reason ? { reason } : {}),
+        reviewStage: 'initial',
+        ...(decision === 'Rejected' ? { rejectionReasonCategory } : {}),
         ...(suggestion ? { suggestion } : {}),
         reviewerUid: uid,
         reviewedAt: now,
         manualAssessmentRecorded: manualOfficial,
         ...(officerFeedback && officerFeedback.length > 0 ? { officerFeedback } : {}),
     };
+    const organizerRecipientUid = decision === 'Rejected' ? await (0, notifications_1.resolveAuthUid)(event.organizerId) : null;
     const result = await db.runTransaction(async (tx) => {
-        const currentEventSnap = await tx.get(eventRef);
+        const [currentEventSnap, currentAssessmentSnap, currentResourceSnap] = await Promise.all([
+            tx.get(eventRef),
+            tx.get(assessmentRef),
+            resourceRef ? tx.get(resourceRef) : Promise.resolve(undefined),
+        ]);
         const currentEvent = { eventId, ...currentEventSnap.data() };
         if (!currentEventSnap.exists
             || currentEvent.status !== event.status
@@ -132,6 +143,24 @@ async function makeInitialReviewDecisionForUser(uid, data, now = Date.now()) {
             || currentEvent.reviewStage === 'second'
             || (currentEvent.assignedOfficerUids?.length ?? 0) > 0) {
             throw new https_1.HttpsError('failed-precondition', 'Initial review was completed by another admin.');
+        }
+        if (decision === 'Approved') {
+            const currentAssessment = currentAssessmentSnap.data();
+            const currentResource = currentResourceSnap?.data();
+            const currentManualOfficial = isManualOfficialAssessment(currentAssessment, eventId, versionId, assessmentId);
+            const currentProvisional = isReviewableProvisionalAssessment(currentAssessment, eventId, versionId, assessmentId);
+            const currentReadiness = (0, applicationState_1.resolveInitialReviewReadiness)({
+                eventId,
+                versionId,
+                assessmentId,
+                resourceId,
+                assessment: currentAssessment,
+                resource: currentResource,
+            });
+            if (!currentReadiness.ready || !(currentManualOfficial || currentProvisional)
+                || !currentResource || !(0, resourceContract_1.validateResourceRecommendation)(currentResource).ok) {
+                throw new https_1.HttpsError('aborted', 'Assessment or resource artifacts changed before initial approval. Reload and retry.');
+            }
         }
         const eventUpdate = {
             status: nextStatus,
@@ -161,33 +190,30 @@ async function makeInitialReviewDecisionForUser(uid, data, now = Date.now()) {
                 reviewStage: 'initial',
                 decision,
                 suggestion: suggestion || null,
+                rejectionReasonCategory: decision === 'Rejected' ? rejectionReasonCategory : null,
                 attachedOfficerFeedback: officerFeedback?.length ?? 0,
                 manualAssessmentRecorded: manualOfficial,
             },
         });
+        if (organizerRecipientUid) {
+            const notificationId = `initial_review_${versionId}`;
+            tx.set(db.collection(types_1.COLLECTIONS.NOTIFICATIONS).doc(notificationId), {
+                notificationId,
+                recipientUid: organizerRecipientUid,
+                eventId,
+                versionId,
+                type: 'application_rejected',
+                title: 'Application rejected at initial review',
+                message: `${reason}${suggestion ? `. ${suggestion}` : ''}`,
+                sourceActionId: notificationId,
+                reason,
+                suggestion,
+                read: false,
+                createdAt: now,
+            }, { merge: false });
+        }
         return { eventId, versionId, status: nextStatus, organizerId: event.organizerId };
     });
-    if (decision === 'Rejected' && result.organizerId) {
-        try {
-            const recipientUid = await (0, notifications_1.resolveAuthUid)(result.organizerId);
-            if (recipientUid) {
-                await (0, notifications_1.createNotification)({
-                    recipientUid,
-                    eventId,
-                    versionId,
-                    type: 'application_rejected',
-                    title: 'Application rejected at initial review',
-                    message: `${reason}${suggestion ? `. ${suggestion}` : ''}`,
-                    sourceActionId: `initial_review_${versionId}`,
-                    reason,
-                    suggestion,
-                });
-            }
-        }
-        catch (error) {
-            console.warn('[makeInitialReviewDecision] organiser notification failed (non-fatal):', error);
-        }
-    }
     return { eventId, versionId, assessmentId, status: result.status, decision, manualAssessmentRecorded: manualOfficial };
 }
 function validateInitialReviewRequest(request) {
@@ -197,6 +223,7 @@ function validateInitialReviewRequest(request) {
     const reason = typeof value.reason === 'string' ? value.reason.trim() : '';
     const suggestion = typeof value.suggestion === 'string' ? value.suggestion.trim() : '';
     const attachOfficerFeedback = value.attachOfficerFeedback === true;
+    const rejectionReasonCategory = value.rejectionReasonCategory;
     if (!eventId)
         throw new https_1.HttpsError('invalid-argument', 'eventId is required.');
     if (decision !== 'Approved' && decision !== 'Rejected') {
@@ -214,7 +241,35 @@ function validateInitialReviewRequest(request) {
     if (decision === 'Rejected' && suggestion.length < REASON_MIN) {
         throw new https_1.HttpsError('invalid-argument', `suggestion must be ${REASON_MIN}-${SUGGESTION_MAX} characters when rejecting.`);
     }
-    return { eventId, decision, reason, suggestion, attachOfficerFeedback };
+    if (decision === 'Rejected' && !types_1.REJECTION_REASON_CATEGORIES.includes(rejectionReasonCategory)) {
+        throw new https_1.HttpsError('invalid-argument', 'A valid rejectionReasonCategory is required when rejecting.');
+    }
+    return {
+        eventId,
+        decision,
+        reason,
+        suggestion,
+        attachOfficerFeedback,
+        ...(decision === 'Rejected' ? { rejectionReasonCategory: rejectionReasonCategory } : {}),
+    };
+}
+function isReviewableProvisionalAssessment(value, eventId, versionId, assessmentId) {
+    if (!value || typeof value !== 'object')
+        return false;
+    const assessment = value;
+    if (assessment.status !== 'provisional_ready' || assessment.schemaVersion !== types_1.ASSESSMENT_SCHEMA_VERSION
+        || assessment.eventId !== eventId || assessment.versionId !== versionId || assessment.assessmentId !== assessmentId
+        || assessment.authorityReviewRequired !== true)
+        return false;
+    const proposal = assessment.aiProposal;
+    const provisionalResult = assessment.provisionalResult;
+    if (!proposal || proposal.status !== 'success' || !provisionalResult
+        || provisionalResult.proposalId !== proposal.proposalId
+        || !Array.isArray(assessment.evidence) || !Array.isArray(assessment.contextEvidence)
+        || assessment.contextEvidence.length === 0)
+        return false;
+    return (0, resourceCalculator_1.validateProvisionalAssessmentResult)(provisionalResult).length === 0
+        && (0, resourceCalculator_1.validateAssessmentResultAgainstProposal)(provisionalResult, proposal).length === 0;
 }
 function isManualOfficialAssessment(value, eventId, versionId, assessmentId) {
     if (!value || typeof value !== 'object')
@@ -227,7 +282,9 @@ function isManualOfficialAssessment(value, eventId, versionId, assessmentId) {
         && assessment.versionId === versionId
         && assessment.assessmentId === assessmentId
         && typeof assessment.activeManualAssessmentId === 'string'
-        && assessment.activeManualAssessmentId.length > 0;
+        && assessment.activeManualAssessmentId.length > 0
+        && assessment.officialResult !== undefined
+        && (0, resourceCalculator_1.validateManualOfficialAssessmentResult)(assessment.officialResult).length === 0;
 }
 function safeDocumentId(value) {
     return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);

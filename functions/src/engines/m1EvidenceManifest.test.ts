@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { EventDetails, M1_DOCUMENT_SCHEMA_VERSION, M1DraftDocument, M1TemplateSelection } from '@shared/types';
+import { EventDetails, M1_DOCUMENT_SCHEMA_VERSION, M1_TEMPLATE_REGISTRY_VERSION, M1DraftDocument, M1TemplateSelection } from '@shared/types';
 import { m1EvidenceRequirementsFor } from '@shared/m1EvidenceContract';
 import { validateM1EvidenceManifest } from './m1EvidenceManifest';
 
 const selection: M1TemplateSelection = {
   eventCategory: 'sports_recreational', venueSetting: 'outdoor_route_based', coreTemplateId: 'STERAS-CORE',
-  scenarioTemplateId: 'STERAS-T06-SPT-OR-v1.0', templateRegistryVersion: '2026-08-28-v1', selectedAt: 1,
+  scenarioTemplateId: 'STERAS-T06-SPT-OR-v1.0', templateRegistryVersion: M1_TEMPLATE_REGISTRY_VERSION, selectedAt: 1,
 };
 const details = { riskProfile: { temporaryStructures: false } } as EventDetails;
 
@@ -50,7 +50,7 @@ describe('M1 supporting-evidence manifest', () => {
       .toContain('T06-DOC-03 is required for the current event declarations.');
     temporary.notApplicableReason = 'short';
     expect(validateM1EvidenceManifest(details, selection, [evidence(path)], manifest).errors)
-      .toContain('T06-DOC-03 needs a 10–500 character not-applicable reason.');
+      .toContain('T06-DOC-03 needs a specific 20–500 character not-applicable reason using at least 3 words.');
   });
 
   it('rejects forged applicability, template-role files, and contradictory not-applicable entries', () => {
@@ -75,9 +75,9 @@ describe('M1 supporting-evidence manifest', () => {
       .toContain('T06-DOC-03 cannot reference a file when marked not applicable.');
 
     const paddedReason = manifest.map((item, index) => index === conditionalIndex
-      ? { ...item, notApplicableReason: '  This activity is not included.  ' }
+      ? { ...item, notApplicableReason: '  This activity is not included in this event.  ' }
       : item);
     expect(validateM1EvidenceManifest(details, selection, [evidence(path)], paddedReason).errors)
-      .toContain('T06-DOC-03 needs a 10–500 character not-applicable reason.');
+      .toContain('T06-DOC-03 needs a specific 20–500 character not-applicable reason using at least 3 words.');
   });
 });

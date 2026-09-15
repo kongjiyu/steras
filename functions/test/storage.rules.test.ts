@@ -32,6 +32,18 @@ async function seedEditableEvent() {
 }
 
 describe('Storage security rules', () => {
+  it('keeps M4 evidence uploader-scoped, immutable and type bounded', async () => {
+    const reporter = environment.authenticatedContext('reporter-1').storage();
+    const other = environment.authenticatedContext('reporter-2').storage();
+    const path = 'incident_evidence/reporter-1/photo.jpg';
+    await assertSucceeds(uploadBytes(ref(reporter, path), new Uint8Array([1, 2, 3]), { contentType: 'image/jpeg' }));
+    await assertSucceeds(getBytes(ref(reporter, path)));
+    await assertFails(getBytes(ref(other, path)));
+    await assertFails(deleteObject(ref(reporter, path)));
+    await assertFails(uploadBytes(ref(reporter, 'incident_evidence/reporter-1/script.svg'), new Uint8Array([1]), { contentType: 'image/svg+xml' }));
+    await assertFails(uploadBytes(ref(other, 'incident_evidence/reporter-1/forged.pdf'), new Uint8Array([1]), { contentType: 'application/pdf' }));
+  });
+
   it('allows supported uploads only inside the editable version', async () => {
     await seedEditableEvent();
     const storage = environment.authenticatedContext('organizer-1').storage();

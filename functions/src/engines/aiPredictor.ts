@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import Anthropic from '@anthropic-ai/sdk';
+import { logger } from 'firebase-functions/logger';
 import {
   AICategoryProposal,
   AIFailedProposal,
@@ -24,6 +25,8 @@ export { DEFAULT_MINIMAX_BASE_URL, DEFAULT_MINIMAX_MODEL } from '../config/minim
 export const PROMPT_VERSION = 'v5.0.0-prd-numeric-proposal';
 export const AI_RESPONSE_SCHEMA_VERSION = '2026-08-21-m2-proposal-v4';
 export const AI_TIMEOUT_MS = 30_000;
+export const AI_MAX_RETRIES = 3;
+export const AI_RETRY_BASE_DELAY_MS = 250;
 
 const MAX_RESPONSE_CHARS = 24_000;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1_000;
@@ -55,6 +58,12 @@ interface PredictOptions {
   now?: number;
   timeoutMs?: number;
   request?: (request: AIRequest) => Promise<string>;
+}
+
+interface AnalyseOptions {
+  maxRetries?: number;
+  retryDelayMs?: number;
+  sleep?: (milliseconds: number) => Promise<void>;
 }
 
 export class AIProposalError extends Error {
@@ -132,15 +141,36 @@ export async function analyseWithAI(
   context: AssessmentContextSnapshot,
   baseline: DeterministicCategoryResult,
   predictor: typeof predictWithAI = predictWithAI,
+  options: AnalyseOptions = {},
 ): Promise<AIProposalAttempt> {
   if (!apiKey) return failedProposal('unavailable', 'MiniMax is not configured.');
-  try {
-    return await predictor(apiKey, event, context, baseline);
-  } catch (error) {
-    const kind = error instanceof AIProposalError ? error.kind : 'unavailable';
-    const detail = error instanceof Error ? error.message : 'Unknown MiniMax failure';
-    return failedProposal(kind, detail);
+  const maxRetries = Math.min(AI_MAX_RETRIES, Math.max(0, Math.trunc(options.maxRetries ?? AI_MAX_RETRIES)));
+  const retryDelayMs = Math.max(0, Math.trunc(options.retryDelayMs ?? AI_RETRY_BASE_DELAY_MS));
+  const sleep = options.sleep ?? wait;
+  let lastFailure: { kind: AIFailedProposal['status']; detail: string } | undefined;
+  for (let attempt = 1; attempt <= maxRetries + 1; attempt += 1) {
+    try {
+      return await predictor(apiKey, event, context, baseline);
+    } catch (error) {
+      const kind = error instanceof AIProposalError ? error.kind : 'unavailable';
+      const detail = error instanceof Error ? error.message : 'Unknown MiniMax failure';
+      lastFailure = { kind, detail };
+      if (attempt > maxRetries) break;
+      logger.warn('[assessment-ai] MiniMax proposal attempt failed; retrying.', {
+        eventId: event.eventId,
+        attempt,
+        nextAttempt: attempt + 1,
+        maxAttempts: maxRetries + 1,
+        failureKind: kind,
+        errorSummary: detail.slice(0, 300),
+      });
+      await sleep(retryDelayMs * (2 ** (attempt - 1)));
+    }
   }
+  return failedProposal(
+    lastFailure?.kind ?? 'unavailable',
+    `MiniMax failed after ${maxRetries + 1} attempts: ${lastFailure?.detail ?? 'Unknown MiniMax failure'}`,
+  );
 }
 
 export function failedProposal(
@@ -446,6 +476,11 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
   } finally {
     if (timeout) clearTimeout(timeout);
   }
+}
+
+async function wait(milliseconds: number): Promise<void> {
+  if (milliseconds <= 0) return;
+  await new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

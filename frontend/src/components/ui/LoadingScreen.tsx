@@ -1,10 +1,3 @@
 export default function LoadingScreen() {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50">
-      <div className="text-center">
-        <div className="w-12 h-12 mx-auto rounded-full border-4 border-brand-200 border-t-brand-600 animate-spin" />
-        <p className="mt-4 text-sm text-slate-600">Loading STERAS…</p>
-      </div>
-    </div>
-  );
+  return <div className="flex min-h-screen items-center justify-center bg-cream-50" role="status"><div className="text-center"><div className="steras-loader mx-auto" aria-hidden="true"><span /><span /><span /></div><p className="mt-5 text-sm font-semibold text-brand-800">Loading STERAS…</p></div></div>;
 }

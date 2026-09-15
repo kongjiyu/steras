@@ -28,6 +28,7 @@ import toast from 'react-hot-toast';
 import { db, functions, isFirebaseConfigured } from '../../config/firebase';
 import {
   COLLECTIONS,
+  AssessmentJob,
   EventRecord,
   EventStatus,
   RiskAssessment,
@@ -35,18 +36,19 @@ import {
   AuthorityDecision,
   Assignment,
   DecisionValue,
-  UserProfile,
   AuthorityType,
   EventVersion,
+  REJECTION_REASON_CATEGORIES,
+  RejectionReasonCategory,
 } from '@shared/types';
 import { WorkspaceTopBar } from '../../components/layout/Sidebar';
 import { ApplicationDisplayBadge } from '../../components/ui/StatusBadge';
 import { resolveApplicationDisplayState, resolveInitialReviewReadiness } from '@shared/applicationState';
 import { useAuth } from '../../contexts/AuthContext';
-import ManualAssessmentForm from './ManualAssessmentForm';
+import ManualAssessmentForm, { AdminAiRetryPanel } from './ManualAssessmentForm';
 import { isAdminManualEligible } from './manualAssessmentEligibility';
 import { isAdminVisibleEvent } from './adminApplicationVisibility';
-import { isCurrentResourceRecommendation, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
+import { isCurrentAssessmentJob, isCurrentResourceRecommendation, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
 import {
   deriveAdminWorkflow,
   deriveAuthorityProgress,
@@ -54,6 +56,9 @@ import {
   friendlyDecisionStatus,
   friendlyRiskLevel,
 } from './adminApplicationPresentation';
+import { adminOfficerDecisionRows } from './adminOfficerDecisionPresentation';
+import { userFacingSystemText } from '../../utils/userFacingText';
+import { adminWorkflowState } from './adminWorkflow';
 
 const RISK_TONE: Record<string, string> = {
   Low: 'admin-badge admin-badge--good',
@@ -109,16 +114,16 @@ function assessmentDisplay(assessment: RiskAssessment): {
   };
 }
 
-const ALL_AUTHORITIES: AuthorityType[] = ['PDRM', 'BOMBA', 'KKM', 'DBKL', 'MOTAC'];
 
 interface SectionProps {
   title: string;
   icon: LucideIcon;
   children: React.ReactNode;
   defaultOpen?: boolean;
+  state?: 'Complete' | 'Review' | 'Waiting';
 }
 
-function Section({ title, icon: Icon, children, defaultOpen = true }: SectionProps) {
+function Section({ title, icon: Icon, children, defaultOpen = true, state }: SectionProps) {
   const [open, setOpen] = useState(defaultOpen);
   return (
     <section className="admin-section rounded-lg border border-[#ded5c5] bg-white shadow-card">
@@ -127,9 +132,7 @@ function Section({ title, icon: Icon, children, defaultOpen = true }: SectionPro
         onClick={() => setOpen((v) => !v)}
         className="flex w-full items-center justify-between gap-3 border-b border-[#e8e0cf] px-4 py-3 text-left"
       >
-        <span className="flex items-center gap-2 text-sm font-bold uppercase tracking-[0.06em] text-ink-700">
-          <Icon size={15} className="text-brand-700" /> {title}
-        </span>
+        <span className="flex items-center gap-2 text-sm font-bold uppercase tracking-[0.06em] text-ink-700"><Icon size={15} className="text-brand-700" /> {title}{state && <span className={`rounded-full px-2 py-0.5 text-[10px] normal-case tracking-normal ${state === 'Complete' ? 'bg-green-50 text-green-700' : state === 'Review' ? 'bg-amber-50 text-amber-800' : 'bg-stone-100 text-ink-500'}`}>{state}</span>}</span>
         <ChevronDown size={16} className={`text-ink-500 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && <div className="p-4">{children}</div>}
@@ -290,27 +293,20 @@ export default function AdminApplicationReview() {
   const [event, setEvent] = useState<EventRecord | null>(null);
   const [version, setVersion] = useState<EventVersion | null>(null);
   const [assessment, setAssessment] = useState<RiskAssessment | null>(null);
+  const [assessmentFailure, setAssessmentFailure] = useState<AssessmentJob | null>(null);
   const [resource, setResource] = useState<ResourceRecommendation | null>(null);
   const [decisions, setDecisions] = useState<AuthorityDecision[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
-  const [officers, setOfficers] = useState<UserProfile[]>([]);
   const [audit, setAudit] = useState<Array<{ id: string; action: string; timestamp: number; actorId: string; notes?: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reloadToken, setReloadToken] = useState(0);
 
-  // Officer assignment checklist
-  const [assigned, setAssigned] = useState<Record<AuthorityType, boolean>>({
-    PDRM: false, BOMBA: false, KKM: false, DBKL: false, MOTAC: false,
-  });
-  const [selectedOfficer, setSelectedOfficer] = useState<Record<AuthorityType, string>>({
-    PDRM: '', BOMBA: '', KKM: '', DBKL: '', MOTAC: '',
-  });
-
   // Decision form
   const [decisionMode, setDecisionMode] = useState<'approve' | 'reject' | null>(null);
   const [rationale, setRationale] = useState('');
   const [suggestion, setSuggestion] = useState('');
+  const [rejectionReasonCategory, setRejectionReasonCategory] = useState<RejectionReasonCategory | ''>('');
   const [attachOfficerFeedback, setAttachOfficerFeedback] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [finalDecision, setFinalDecision] = useState<DecisionValue | ''>('');
@@ -345,15 +341,11 @@ export default function AdminApplicationReview() {
         setEvent(eventData);
         setVersion(null);
         setAssessment(null);
+        setAssessmentFailure(null);
         setResource(null);
         setDecisions([]);
         setAssignments([]);
         setAudit([]);
-
-        // Default-check authorities based on event's required authorities
-        const initial: Record<AuthorityType, boolean> = { PDRM: false, BOMBA: false, KKM: false, DBKL: false, MOTAC: false };
-        for (const a of eventData.requiredAuthorities) initial[a] = true;
-        setAssigned(initial);
 
         // Load all related sub-collections in parallel
         const promises: Promise<unknown>[] = [];
@@ -372,6 +364,7 @@ export default function AdminApplicationReview() {
                   && value.assessmentId === eventData.currentAssessmentId
                   && value.eventId === eventId
                   && value.versionId === eventData.currentVersionId) setAssessment(value);
+                else if (isCurrentAssessmentJob(value) && value.status === 'failed') setAssessmentFailure(value);
               }),
           );
         }
@@ -397,10 +390,6 @@ export default function AdminApplicationReview() {
             .then((s) => setAssignments(s.docs.map((d) => ({ ...(d.data() as Assignment), assignmentId: d.id })))),
         );
         promises.push(
-          getDocs(query(collection(db, COLLECTIONS.USERS), where('role', '==', 'authority')))
-            .then((s) => setOfficers(s.docs.map((d) => d.data() as UserProfile))),
-        );
-        promises.push(
           getDocs(query(collection(eventRef, COLLECTIONS.AUDIT_LOGS), where('eventId', '==', eventId)))
             .then((s) => setAudit(s.docs.map((d) => d.data() as { id: string; action: string; timestamp: number; actorId: string; notes?: string }))),
         );
@@ -418,20 +407,17 @@ export default function AdminApplicationReview() {
   }, [eventId, reloadToken]);
 
   useEffect(() => {
-    if (!loading && searchParams.get('focus') === 'manual-assessment') {
+    if (!loading && ['manual-assessment', 'retry-ai'].includes(searchParams.get('focus') ?? '')) {
       const target = document.getElementById('manual-assessment');
       target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       window.setTimeout(() => target?.querySelector<HTMLElement>('input, select, textarea, button')?.focus(), 250);
     }
   }, [loading, searchParams]);
 
-  const officersByAuth = useMemo(() => {
-    const m: Record<AuthorityType, UserProfile[]> = { PDRM: [], BOMBA: [], KKM: [], DBKL: [], MOTAC: [] };
-    for (const o of officers) {
-      if (o.authorityType && m[o.authorityType]) m[o.authorityType].push(o);
-    }
-    return m;
-  }, [officers]);
+  const displayedOfficerDecisions = useMemo(
+    () => event ? adminOfficerDecisionRows(event, assignments, decisions) : [],
+    [event, assignments, decisions],
+  );
 
   const canReview = event && (event.status === 'Pending' || event.status === 'UnderReview' || event.status === 'Manual Review Required');
   const minRationaleLen = 10;
@@ -475,6 +461,7 @@ export default function AdminApplicationReview() {
   useEffect(() => {
     if (finalReviewReady && !finalDecision && officerAggregate) setFinalDecision(officerAggregate);
   }, [finalReviewReady, finalDecision, officerAggregate]);
+  const workflow = event ? adminWorkflowState(event) : null;
 
   const submitDecision = async () => {
     if (!eventId || !event || !decisionMode || !initialReviewOpen) return;
@@ -490,6 +477,10 @@ export default function AdminApplicationReview() {
       toast.error('The current M2 assessment and resource recommendation are not ready yet.');
       return;
     }
+    if (decisionMode === 'reject' && !rejectionReasonCategory) {
+      toast.error('Select a privacy-safe rejection category.');
+      return;
+    }
     setSubmitting(true);
     try {
       const decision = decisionMode === 'approve' ? 'Approved' : 'Rejected';
@@ -499,12 +490,14 @@ export default function AdminApplicationReview() {
         reason?: string;
         suggestion?: string;
         attachOfficerFeedback?: boolean;
+        rejectionReasonCategory?: RejectionReasonCategory;
       }, { status: EventStatus; decision: 'Approved' | 'Rejected' }>(functions, 'makeInitialReviewDecision');
       await command({
         eventId,
         decision,
         ...(rationale.trim() ? { reason: rationale.trim() } : {}),
         ...(suggestion.trim() ? { suggestion: suggestion.trim() } : {}),
+        ...(decision === 'Rejected' ? { rejectionReasonCategory: rejectionReasonCategory as RejectionReasonCategory } : {}),
         ...(decision === 'Rejected' && attachOfficerFeedback ? { attachOfficerFeedback: true } : {}),
       });
       toast.success(decision === 'Approved' ? 'Application released for authority assignment.' : 'Application rejected and feedback sent.');
@@ -563,7 +556,7 @@ export default function AdminApplicationReview() {
     <div className="min-h-screen bg-[#f3f1e9] pb-16">
       <WorkspaceTopBar
         title={event ? `Review · ${event.eventDetails.name}` : 'Application review'}
-        subtitle={event ? `M3 · submitted ${formatDateTime(event.submittedAt)}` : 'M3 · Authority Approval'}
+        subtitle={event ? `Application review · submitted ${formatDateTime(event.submittedAt)}` : 'Authority approval'}
         userInitials={initialsFor(profile?.name)}
         workspaceEyebrow="STERAS administration"
         workspaceEyebrowIcon={ShieldCheck}
@@ -603,11 +596,16 @@ export default function AdminApplicationReview() {
             })()}
             <AdminAuthorityProgressCard event={event} assessment={assessment} assignments={assignments} decisions={decisions} />
 
+            {workflow && <section className="mb-5 grid gap-3 rounded-lg border border-[#cfd7b4] bg-[#f8faef] p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+              <div><p className="text-xs font-bold uppercase tracking-[0.08em] text-brand-700">Current workflow</p><h2 className="mt-1 font-display text-lg font-bold text-ink-900">{workflow.stage}</h2><p className="mt-1 text-sm text-ink-600">{workflow.needsAction ? `Admin action required: ${workflow.actionLabel}.` : workflow.stage === 'Authority review' ? 'Assigned officers are completing their review. No admin decision is due yet.' : workflow.stage === 'Awaiting organiser documentation' ? 'The application is approved. The organiser can now provide the published control evidence.' : 'Review the record and audit history below.'}</p></div>
+              <span className={`w-fit rounded-full border px-3 py-1 text-xs font-bold ${workflow.priority === 'High' ? 'border-red-200 bg-red-50 text-red-700' : workflow.priority === 'Medium' ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-stone-200 bg-white text-ink-500'}`}>{workflow.priority} priority</span>
+            </section>}
+
             <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
               {/* Main column */}
               <div className="space-y-4">
                 {/* Organiser + venue info */}
-                <Section title="Application" icon={ClipboardList}>
+                <Section title="Application" icon={ClipboardList} state="Complete">
                   <dl className="grid gap-3 text-sm sm:grid-cols-2">
                     <div>
                       <dt className="text-xs text-ink-500">Organiser</dt>
@@ -641,7 +639,7 @@ export default function AdminApplicationReview() {
                 </Section>
 
                 {version && (
-                  <Section title={`Submitted version ${version.versionNumber}`} icon={ClipboardList}>
+                  <Section title={`Submitted version ${version.versionNumber}`} icon={ClipboardList} state="Complete">
                     <div className="grid gap-4 text-sm sm:grid-cols-2">
                       <Detail label="Event type" value={version.eventDetails.type} />
                       <Detail label="Event date" value={`${formatDateTime(version.eventDetails.startDatetime)} – ${formatDateTime(version.eventDetails.endDatetime)}`} />
@@ -658,13 +656,13 @@ export default function AdminApplicationReview() {
                       <p className="text-xs text-ink-500">Risk-profile answers</p>
                       {version.eventDetails.riskProfile && Object.keys(version.eventDetails.riskProfile).length > 0 ? (
                         <dl className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
-                          {Object.entries(version.eventDetails.riskProfile).map(([key, value]) => <div key={key} className="rounded border border-[#e8e0cf] bg-cream-50 px-3 py-2"><dt className="font-semibold text-ink-700">{key}</dt><dd className="mt-1 text-ink-600">{String(value)}</dd></div>)}
+                          {Object.entries(version.eventDetails.riskProfile).map(([key, value]) => <div key={key} className="rounded border border-[#e8e0cf] bg-cream-50 px-3 py-2"><dt className="font-semibold text-ink-700">{fieldLabel(key)}</dt><dd className="mt-1 text-ink-600">{typeof value === 'boolean' ? value ? 'Yes' : 'No' : String(value)}</dd></div>)}
                         </dl>
                       ) : <p className="mt-1 text-sm text-ink-500">No additional risk-profile answers.</p>}
                     </div>
                     <div className="mt-4">
                       <p className="text-xs text-ink-500">Submitted documents</p>
-                      {version.documentPaths.length ? <ul className="mt-2 space-y-1 text-xs text-ink-700">{version.documentPaths.map((path) => <li key={path} className="break-all rounded border border-[#e8e0cf] bg-cream-50 px-3 py-2">{path}</li>)}</ul> : <p className="mt-1 text-sm text-ink-500">No documents attached.</p>}
+                      {version.documentPaths.length ? <ul className="mt-2 space-y-1 text-xs text-ink-700">{version.documentPaths.map((path) => <li key={path} className="rounded border border-[#e8e0cf] bg-cream-50 px-3 py-2" title={submittedDocumentName(path)}>{submittedDocumentName(path)}</li>)}</ul> : <p className="mt-1 text-sm text-ink-500">No documents attached.</p>}
                     </div>
                   </Section>
                 )}
@@ -690,10 +688,10 @@ export default function AdminApplicationReview() {
                   const riskLevel = display.riskLevel ?? 'Risk pending';
                   const score = display.score;
                   const versionLabel = display.schemaVersion
-                    ? `Schema v${display.schemaVersion} · Logic v${display.formulaVersion}`
+                    ? `Assessment version ${display.schemaVersion} · Calculation ${display.formulaVersion}`
                     : '';
                   return (
-                    <Section title="M2 risk assessment" icon={ShieldCheck}>
+                    <Section title="Risk assessment" icon={ShieldCheck} state="Complete">
                       <div className="mb-3 flex flex-wrap items-center gap-2">
                         <span className={`${RISK_TONE[riskLevel] ?? 'admin-badge admin-badge--default'} text-sm`}>
                           {riskLevel}{score !== undefined ? ` · ${score}/100` : ''}
@@ -730,12 +728,12 @@ export default function AdminApplicationReview() {
                       {assessment.aiProposal && (
                         <div className="mt-3 rounded-md border border-gold-300 bg-gold-50 p-3 text-xs text-ink-700">
                           <p className="font-semibold text-gold-600">
-                            AI proposal · {assessment.aiProposal.model}
+                            AI proposal · MiniMax AI
                             <span className="ml-2 font-normal text-ink-500">
                               status: {assessment.aiProposal.status}
                             </span>
                           </p>
-                          <p className="mt-1">The assessment retains the AI proposal as provenance; the displayed score is calculated by the deterministic M2 rules.</p>
+                          <p className="mt-1">The assessment retains the AI proposal as provenance; the displayed score is calculated by versioned deterministic rules.</p>
                         </div>
                       )}
                     </Section>
@@ -752,6 +750,18 @@ export default function AdminApplicationReview() {
                       <ManualAssessmentForm
                         eventId={event.eventId}
                         assessment={manualReviewAssessment}
+                        onCompleted={() => setReloadToken((value) => value + 1)}
+                      />
+                    </Section>
+                  </div>
+                )}
+
+                {assessmentFailure && event && (
+                  <div id="manual-assessment" className="scroll-mt-24">
+                    <Section title="Assessment recovery" icon={FileWarning}>
+                      <AdminAiRetryPanel
+                        eventId={event.eventId}
+                        failureMessage={assessmentFailure.error ?? 'The previous pipeline run did not complete.'}
                         onCompleted={() => setReloadToken((value) => value + 1)}
                       />
                     </Section>
@@ -780,22 +790,33 @@ export default function AdminApplicationReview() {
 
                 {/* Officer decisions */}
                 <Section title="Authority officer decisions" icon={CheckCircle2} defaultOpen={false}>
-                  {decisions.length === 0 ? (
+                  {displayedOfficerDecisions.length === 0 ? (
                     <p className="text-sm text-ink-500">No officer decisions recorded yet.</p>
                   ) : (
                     <ul className="divide-y divide-[#e8e0cf]">
-                      {decisions.map((d) => (
-                        <li key={d.decisionId} className="flex items-start gap-3 py-2">
+                      {displayedOfficerDecisions.map((d) => (
+                        <li key={d.id} className="flex items-start gap-3 py-2">
                           <span className={`${RISK_TONE[d.decision]} text-xs`}>{d.decision}</span>
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-semibold text-ink-800">{d.authorityType}</p>
                             <p className="text-xs text-ink-500">{d.rationale}</p>
+                            {d.suggestion && <p className="mt-1 text-xs text-ink-600"><span className="font-semibold">Suggestion:</span> {d.suggestion}</p>}
                           </div>
                           <span className="text-xs text-ink-500">{formatDateTime(d.decidedAt)}</span>
                         </li>
                       ))}
                     </ul>
                   )}
+                </Section>
+
+                <Section title="Review timeline" icon={History} state={workflow?.needsAction ? 'Review' : 'Waiting'}>
+                  <ol className="space-y-3 text-sm">
+                    <TimelineItem label="Application submitted" date={event.submittedAt} complete={Boolean(event.submittedAt)} />
+                    <TimelineItem label="Initial admin decision" date={event.initialReview?.reviewedAt} complete={Boolean(event.initialReview)} />
+                    <TimelineItem label="Authority review completed" date={event.authorityReviewCompletedAt} complete={Boolean(event.authorityReviewCompletedAt)} />
+                    <TimelineItem label="Final admin decision" date={event.secondReview?.decidedAt} complete={Boolean(event.secondReview)} />
+                    <TimelineItem label="Event controls published" date={event.controlListGenerated ? event.updatedAt : undefined} complete={Boolean(event.controlListGenerated)} />
+                  </ol>
                 </Section>
 
                 {/* Audit log */}
@@ -809,12 +830,12 @@ export default function AdminApplicationReview() {
                         .sort((a, b) => b.timestamp - a.timestamp)
                         .slice(0, 8)
                         .map((a) => (
-                          <li key={a.id} className="flex items-start gap-2 border-l-2 border-[#c8d1a8] pl-3">
+                          <li key={a.id} className="flex flex-col items-start gap-2 border-l-2 border-[#c8d1a8] pl-3 sm:flex-row">
                             <div>
-                              <p className="font-semibold text-ink-800">{a.action}</p>
-                              {a.notes && <p className="text-xs text-ink-500">{a.notes}</p>}
+                              <p className="font-semibold capitalize text-ink-800">{a.action.replaceAll('_', ' ')}</p>
+                              {a.notes && <p className="text-xs text-ink-500">{userFacingSystemText(a.notes)}</p>}
                             </div>
-                            <span className="ml-auto text-xs text-ink-500">{formatDateTime(a.timestamp)}</span>
+                            <span className="shrink-0 text-xs text-ink-500 sm:ml-auto">{formatDateTime(a.timestamp)}</span>
                           </li>
                         ))}
                     </ol>
@@ -823,46 +844,11 @@ export default function AdminApplicationReview() {
               </div>
 
               {/* Side column: actions */}
-              <aside className="space-y-4">
+              <aside className="space-y-4 xl:sticky xl:top-20 xl:self-start">
                 {/* Officer assignment */}
                 <Section title="Officer assignment" icon={Users}>
-                  <p className="mb-3 text-xs text-ink-500">
-                    Default-checked from the event&apos;s required authorities. Edit before assigning.
-                  </p>
-                  <div className="space-y-2">
-                    {ALL_AUTHORITIES.map((auth) => {
-                      const isRequired = event.requiredAuthorities.includes(auth);
-                      const list = officersByAuth[auth];
-                      return (
-                        <div key={auth} className="admin-assignment-row rounded-md border border-[#e8e0cf] bg-cream-50/40 px-3 py-2">
-                          <input
-                            id={`assign-${auth}`}
-                            type="checkbox"
-                            checked={assigned[auth]}
-                            disabled={!isRequired}
-                            onChange={(e) => setAssigned((p) => ({ ...p, [auth]: e.target.checked }))}
-                            className="h-4 w-4 accent-brand-600"
-                          />
-                          <label htmlFor={`assign-${auth}`} className="min-w-0 text-sm">
-                            <span className="font-semibold text-ink-800">{auth}</span>
-                            {!isRequired && <span className="ml-1 text-[10px] uppercase text-ink-400">(not required)</span>}
-                          </label>
-                          {assigned[auth] && list.length > 0 && (
-                            <select
-                              value={selectedOfficer[auth]}
-                              onChange={(e) => setSelectedOfficer((p) => ({ ...p, [auth]: e.target.value }))}
-                              className="input w-full min-w-0 !h-8 !text-xs"
-                            >
-                              <option value="">Auto-assign</option>
-                              {list.map((o) => (
-                                <option key={o.uid} value={o.uid}>{o.name}</option>
-                              ))}
-                            </select>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
+                  <p className="mb-3 text-sm text-ink-600">Required agencies: {event.requiredAuthorities.join(', ')}. Choose named officers and review their eligibility in the assignment checklist.</p>
+                  <p className="text-sm font-semibold">{event.assignedOfficerUids?.length ?? 0} officer(s) currently assigned</p>
                 </Section>
 
                 <div className="space-y-2" data-testid="admin-detail-action-group">
@@ -928,6 +914,13 @@ export default function AdminApplicationReview() {
                         {decisionMode === 'reject' && (
                           <div className="space-y-2">
                             <label className="block text-xs font-semibold text-ink-600">
+                              Rejection category (required)
+                              <select className="input mt-1" value={rejectionReasonCategory} onChange={(event) => setRejectionReasonCategory(event.target.value as RejectionReasonCategory)}>
+                                <option value="">Select a category</option>
+                                {REJECTION_REASON_CATEGORIES.map((category) => <option key={category} value={category}>{category.replaceAll('_', ' ')}</option>)}
+                              </select>
+                            </label>
+                            <label className="block text-xs font-semibold text-ink-600">
                               Corrective suggestion (required)
                               <textarea className="input mt-1 min-h-20" maxLength={1000} value={suggestion} onChange={(e) => setSuggestion(e.target.value)} placeholder="Tell the organiser what must change before resubmission." />
                             </label>
@@ -953,7 +946,7 @@ export default function AdminApplicationReview() {
                         {event.status === 'Manual Review Required' && !manualOfficialReady && (
                           <div className="rounded-md border border-gold-300 bg-gold-50 p-3 text-sm text-ink-700">
                             <p className="font-semibold text-gold-700">Manual assessment required before initial review</p>
-                            <p className="mt-1 text-xs leading-5">Complete the locked eight-category assessment in the Admin manual assessment queue. This screen cannot create a legacy inline assessment or resource record.</p>
+                            <p className="mt-1 text-xs leading-5">Complete the locked eight-category assessment in the Admin manual assessment queue before making an application decision.</p>
                             <Link to="/admin" className="btn-secondary mt-3 inline-flex !px-3 !py-1.5 text-xs">Open manual assessment queue →</Link>
                           </div>
                         )}
@@ -977,9 +970,7 @@ export default function AdminApplicationReview() {
                           </button>
                         </div>
                         <p className="text-[11px] text-ink-500">
-                          <FileWarning size={11} className="inline" /> This dispatches the
-                          <code className="mx-1 rounded bg-cream-100 px-1">makeInitialReviewDecision</code>
-                          Cloud Function with full audit provenance.
+                          <FileWarning size={11} className="inline" /> This decision is recorded with immutable audit provenance.
                         </p>
                       </form>
                     )}
@@ -1040,4 +1031,19 @@ export default function AdminApplicationReview() {
 
 function Detail({ label, value }: { label: string; value: string }) {
   return <div><p className="text-xs text-ink-500">{label}</p><p className="mt-1 text-ink-800">{value}</p></div>;
+}
+
+function TimelineItem({ label, date, complete }: { label: string; date?: number; complete: boolean }) {
+  return <li className="flex items-center gap-3"><span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border ${complete ? 'border-green-300 bg-green-50 text-green-700' : 'border-stone-300 bg-stone-50 text-ink-400'}`}>{complete ? <Check size={13}/> : <span className="h-1.5 w-1.5 rounded-full bg-current"/>}</span><span className={complete ? 'font-semibold text-ink-800' : 'text-ink-500'}>{label}</span><span className="ml-auto text-xs text-ink-500">{complete ? formatDateTime(date) : 'Pending'}</span></li>;
+}
+
+function submittedDocumentName(path: string): string {
+  const encoded = path.split('/').pop() ?? 'Submitted document';
+  let decoded = encoded;
+  try { decoded = decodeURIComponent(encoded); } catch { /* Retain the safe stored filename when percent encoding is malformed. */ }
+  return decoded.replace(/^[0-9a-f]{8}-[0-9a-f-]{27}-/i, '');
+}
+
+function fieldLabel(value: string): string {
+  return value.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase());
 }

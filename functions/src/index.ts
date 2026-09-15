@@ -22,6 +22,7 @@ export { onEventCreated, onEventUpdated } from './triggers/onEventCreated';
 export { refreshAssessmentContext } from './triggers/refreshAssessmentContext';
 export { recomputeRiskAndResources } from './triggers/computeRisk';
 export { onM4ReportOutcome } from './triggers/onM4ReportOutcome';
+export { onPublicReportCreated } from './triggers/onPublicReportCreated';
 export { onEventStatusChanged } from './triggers/onEventStatusChanged';
 
 // HTTP-callable functions (e.g. for manual authority re-trigger, seed runs)
@@ -30,7 +31,8 @@ export { submitEvent } from './http/submitEvent';
 export { extractApplicationDocuments } from './http/extractApplicationDocuments';
 export { withdrawEvent } from './http/withdrawEvent';
 export { prepareApplicationRevision, cancelEvent } from './http/applicationLifecycle';
-export { createPrivilegedAccount } from './http/adminUserManagement';
+export { createPrivilegedAccount, resetUserPassword } from './http/adminUserManagement';
+export { resolveDisplayIdentities } from './http/resolveDisplayIdentities';
 export { saveVenue, verifyVenue, deactivateVenue } from './http/adminVenueManagement';
 export { makeAuthorityDecision } from './http/authorityDecision';
 export { submitAuthorityScoreReview, resolveAuthorityScoreConflict, retryOfficialFinalisation } from './http/authorityScoreReview';
@@ -39,7 +41,10 @@ export { makeInitialReviewDecision } from './http/initialReview';
 export { overrideResources } from './http/overrideResources';
 export { reviewAssessmentScores } from './http/reviewAssessmentScores';
 export { verifyStage1Doc } from './http/verifyStage1Doc';
-export { markNotificationRead, listMyNotifications } from './http/notifications';
+export { markNotificationRead, markAllNotificationsRead, listMyNotifications } from './http/notifications';
+// M5 — bounded, admin-only, privacy-safe analytics read model.
+export { getAnalyticsPortfolio } from './http/getAnalyticsPortfolio';
+export { submitIncident, listIncidents, manageIncident, listAuthorityDirectory, saveAuthorityDirectoryEntry, getIncidentEvidenceDownloadUrl } from './http/m4Incidents';
 // M3 control-list proposal: MiniMax-backed with a deterministic fallback.
 export { proposeEventControlList } from './http/proposeEventControlList';
 // M3 Workstream 1 — officer assignment + multi-stage review.
@@ -70,3 +75,7 @@ export { reportStage2Doc } from './http/reportStage2Doc';
 // per-doc `published == true` check.
 export { publishStage2Doc } from './http/publishStage2Doc';
 export { unpublishStage2Doc } from './http/unpublishStage2Doc';
+
+export { updateOwnProfile } from './http/updateOwnProfile';
+
+export { withdrawStage2Report } from './http/withdrawStage2Report';

@@ -8,7 +8,6 @@ import {
   EventRecord,
   EventRiskProfile,
   EventType,
-  EventVersion,
   M1_DOCUMENT_SCHEMA_VERSION,
   M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
   M1DocumentExtraction,
@@ -17,12 +16,14 @@ import {
   Notification,
 } from '@shared/types';
 import { isValidM1TemplateSelection, m1CategoryForEventType, m1VenueSettingMatchesEnvironment } from '@shared/m1TemplateContract';
+import { inferMalaysiaStateFromAddress, MALAYSIA_STATES } from '@shared/malaysiaStates';
 import { FUNCTION_REGION } from '../config/runtime';
 import { RESOURCE_CUTOVER_LOCK_PATH } from '../config/resourceCutoverLock';
 import { inspectStorageEvidence } from '../utils/storageEvidence';
 import { validateDraftDocuments } from './extractApplicationDocuments';
 import { validateM1EvidenceManifest } from '../engines/m1EvidenceManifest';
 import { hasValidActiveRevision } from './applicationLifecycle';
+import { buildSubmittedEventVersion } from '../utils/eventVersionHash';
 
 export { isValidEvidenceMetadata } from '../utils/storageEvidence';
 
@@ -63,15 +64,12 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
     throw new HttpsError('failed-precondition', 'The template recommendation no longer matches the event type or venue setting.');
   }
   const preflightVersionId = `v${(preflight.currentVersionNumber ?? 0) + 1}`;
-  const preflightDocuments = preflight.documentSchemaVersion === M1_DOCUMENT_SCHEMA_VERSION
-    ? validateDraftDocuments(eventId, preflightVersionId, preflight.draftDocuments)
-    : undefined;
-  const preflightExtraction = preflightDocuments
-    ? await loadCurrentExtraction(preflight, eventReference)
-    : undefined;
-  const preflightEvidenceManifest = preflightDocuments
-    ? validateCurrentEvidenceManifest(preflight, preflightDocuments)
-    : undefined;
+  if (preflight.documentSchemaVersion !== M1_DOCUMENT_SCHEMA_VERSION) {
+    throw new HttpsError('failed-precondition', 'Upload and extract the current versioned application documents before submission.');
+  }
+  const preflightDocuments = validateDraftDocuments(eventId, preflightVersionId, preflight.draftDocuments);
+  const preflightExtraction = await loadCurrentExtraction(preflight, eventReference);
+  const preflightEvidenceManifest = validateCurrentEvidenceManifest(preflight, preflightDocuments);
   await validateSubmissionAssets(eventId, preflightVersionId, preflight.draftDocumentPaths ?? []);
   await validateCanonicalVenue(preflight.eventDetails);
   const preflightFingerprint = submissionFingerprint(preflight);
@@ -111,6 +109,9 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
       throw new HttpsError('failed-precondition', 'The selected venue changed during submission. Review the verified venue and retry.');
     }
 
+    const owner = userSnapshot.data()!;
+    if (!owner.name || !owner.email || !owner.phone) throw new HttpsError('failed-precondition', 'Complete your name, email and phone in Profile before submitting.');
+    event.eventDetails = { ...event.eventDetails, organizerName: owner.name, organizerEmail: owner.email, organizerPhone: owner.phone };
     const errors = validateEventDetails(event.eventDetails, now);
     if (errors.length > 0) throw new HttpsError('invalid-argument', errors.join(' '));
     const versionNumber = (event.currentVersionNumber ?? 0) + 1;
@@ -124,34 +125,22 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
       throw new HttpsError('invalid-argument', 'One or more uploaded document paths do not belong to this application version.');
     }
 
-    const inputHash = createHash('sha256').update(JSON.stringify({
-      eventDetails: event.eventDetails,
-      templateSelection: event.templateSelection,
-      documentPaths,
-      documentUploads: preflightDocuments,
-      extractionId: preflightExtraction?.extractionId,
-      evidenceManifest: preflightEvidenceManifest,
-      evidenceManifestSchemaVersion: preflight.evidenceManifestSchemaVersion,
-      revisionSource: preflight.activeRevision,
-    })).digest('hex');
-    const version: EventVersion = {
+    const version = buildSubmittedEventVersion({
       versionId,
       eventId,
       versionNumber,
       eventDetails: event.eventDetails,
       templateSelection: event.templateSelection,
       documentPaths,
-      ...(preflightDocuments ? { documentUploads: preflightDocuments } : {}),
-      ...(preflightExtraction ? { extractionId: preflightExtraction.extractionId } : {}),
-      ...(preflightEvidenceManifest ? {
-        evidenceManifest: preflightEvidenceManifest,
-        evidenceManifestSchemaVersion: M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
-      } : {}),
+      documentUploads: preflightDocuments,
+      extractionId: preflightExtraction.extractionId,
+      evidenceManifest: preflightEvidenceManifest,
+      evidenceManifestSchemaVersion: M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
       ...(preflight.activeRevision ? { revisionSource: preflight.activeRevision } : {}),
       submittedBy: uid,
       submittedAt: now,
-      inputHash,
-    };
+    });
+    const { inputHash } = version;
     const versionReference = eventReference.collection(COLLECTIONS.VERSIONS).doc(versionId);
     const versionSnapshot = await transaction.get(versionReference);
     if (versionSnapshot.exists) throw new HttpsError('already-exists', 'This application version has already been submitted.');
@@ -168,6 +157,10 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
     const requiredAuthorities = requiredAuthoritiesFor(event.eventDetails);
     transaction.create(versionReference, version);
     transaction.update(eventReference, {
+      // Persist the document identity at the trusted submission boundary.
+      // This also self-heals Drafts created by clients predating this field.
+      eventId,
+      eventDetails: event.eventDetails,
       status: 'Pending',
       currentVersionId: versionId,
       currentVersionNumber: versionNumber,
@@ -181,6 +174,7 @@ export async function submitEventForUser(uid: string, eventId: string, now = Dat
       assignedOfficerByAuthority: {},
       reviewStage: 'initial',
       initialReview: FieldValue.delete(),
+      secondReview: FieldValue.delete(),
       activeRevision: FieldValue.delete(),
       manualAssessment: FieldValue.delete(),
       verifiedControlIds: [],
@@ -248,6 +242,16 @@ export function validateEventDetails(value: unknown, now = Date.now()): string[]
   requiredText(value.name, 'Event name', 200, errors);
   requiredText(value.venueName, 'Venue name', 200, errors);
   requiredText(value.venueAddress, 'Venue address', 500, errors);
+  if (typeof value.venueState !== 'string' || !value.venueState.trim()) {
+    errors.push('Select the venue state or federal territory.');
+  } else if (!MALAYSIA_STATES.includes(value.venueState as (typeof MALAYSIA_STATES)[number])) {
+    errors.push('The selected venue state is invalid. Choose it again.');
+  } else if (typeof value.venueAddress === 'string') {
+    const addressState = inferMalaysiaStateFromAddress(value.venueAddress);
+    if (addressState && value.venueState !== addressState) {
+      errors.push(`Venue state does not match the address. Select ${addressState}.`);
+    }
+  }
   requiredText(value.organizerName, 'Organizer name', 200, errors);
   requiredText(value.organizerEmail, 'Organizer email', 320, errors);
   if (typeof value.organizerEmail === 'string' && value.organizerEmail.trim() && !isEmail(value.organizerEmail)) {
@@ -339,6 +343,7 @@ export function validateCanonicalVenueRecord(details: EventDetails, value: unkno
   const canonicalCapacity = value.verifiedSafeCapacity ?? value.capacity;
   return normalizeText(details.venueName) !== normalizeText(value.name)
     || normalizeText(details.venueAddress) !== normalizeText(value.address)
+    || normalizeText(details.venueState) !== normalizeText(value.state)
     || details.venueCapacity !== canonicalCapacity
     || !sameCoordinate(details.venueLocation?.lat, location.lat)
     || !sameCoordinate(details.venueLocation?.lng, location.lng)
@@ -377,13 +382,13 @@ async function loadCurrentExtraction(
   eventReference: FirebaseFirestore.DocumentReference,
 ): Promise<M1DocumentExtraction> {
   if (!event.currentExtractionId || !/^[A-Za-z0-9_-]{1,128}$/.test(event.currentExtractionId)) {
-    throw new HttpsError('failed-precondition', 'Extract and review the combined PDF or completed Core and scenario DOCX files before submission.');
+    throw new HttpsError('failed-precondition', 'Extract and review the completed Core and scenario PDF/DOCX files before submission.');
   }
   const snapshot = await eventReference.collection(COLLECTIONS.DOCUMENT_EXTRACTIONS).doc(event.currentExtractionId).get();
   if (!snapshot.exists) throw new HttpsError('failed-precondition', 'The current document extraction could not be found. Extract the files again.');
   const extraction = snapshot.data() as M1DocumentExtraction;
   const expectedPaths = (event.draftDocuments ?? [])
-    .filter((document) => document.role === 'core_template' || document.role === 'scenario_template' || document.role === 'combined_application')
+    .filter((document) => document.role === 'core_template' || document.role === 'scenario_template')
     .map((document) => `${document.role}:${document.path}:${document.originalName}:${document.mimeType}:${document.sizeBytes}`)
     .sort();
   const actualPaths = Array.isArray(extraction.sourceDocuments)
@@ -428,11 +433,19 @@ const COVERAGE = new Set(['covered', 'partially_covered', 'uncovered']);
 const SEATING = new Set(['seated', 'standing', 'mixed']);
 
 function requiredText(value: unknown, label: string, max: number, errors: string[]) {
-  if (typeof value !== 'string' || value.trim().length === 0 || value.length > max) errors.push(`${label} is required and must be at most ${max} characters.`);
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    errors.push(`${label} is required.`);
+  } else if (value.length > max) {
+    errors.push(`${label} is too long. Use ${max} characters or fewer.`);
+  }
 }
 
 function optionalText(value: unknown, label: string, max: number, errors: string[]) {
-  if (value !== undefined && (typeof value !== 'string' || value.length > max)) errors.push(`${label} must be at most ${max} characters.`);
+  if (value !== undefined && typeof value !== 'string') {
+    errors.push(`${label} must be text.`);
+  } else if (typeof value === 'string' && value.length > max) {
+    errors.push(`${label} is too long. Use ${max} characters or fewer.`);
+  }
 }
 
 function positiveInteger(value: unknown, label: string, errors: string[]) {

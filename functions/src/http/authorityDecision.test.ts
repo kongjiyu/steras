@@ -17,7 +17,7 @@ import {
 } from '@shared/types';
 import { ACTIVE_CATEGORY_SCHEMA } from '../config/categorySchema';
 import { computeResources } from '../engines/resourceCalculator';
-import { aggregateDecisionStatus, assertOfficialAssessmentReady, validateDecisionRequest } from './authorityDecision';
+import { aggregateDecisionStatus, assertLegacyAuthorityDecisionEndpointAvailable, assertOfficialAssessmentReady, validateDecisionRequest } from './authorityDecision';
 import { validateOfficerProposalRequest, validateOfficerRejectionRationale } from './recordOfficerProposal';
 import { buildAuthorityReviewState, buildOfficialAssessmentResult } from '../engines/authorityFinalisation';
 
@@ -201,11 +201,14 @@ describe('officer decision boundary', () => {
       .toMatchObject({ eventId: 'event-1', decision: 'Approved', reason: '', confirmedReview: true });
   });
 
+  it('retires the legacy callable so initial-review events cannot bypass assignment or Admin second review', () => {
+    expect(() => assertLegacyAuthorityDecisionEndpointAvailable()).toThrow(/legacy decision endpoint is retired/i);
+  });
   it('requires material confirmation for approval and suggestions for adverse recommendations', () => {
     expect(() => validateDecisionRequest({ eventId: 'event-1', decision: 'Approved', rationale: 'Reviewed all required materials.' })).toThrow(HttpsError);
     expect(validateDecisionRequest({ eventId: 'event-1', decision: 'Approved', rationale: 'Reviewed all required materials.', materialsReviewed: true })).toMatchObject({ materialsReviewed: true });
     expect(() => validateDecisionRequest({ eventId: 'event-1', decision: 'Rejected', rationale: 'Evidence is not sufficient.' })).toThrow(HttpsError);
-    expect(validateDecisionRequest({ eventId: 'event-1', decision: 'Rejected', rationale: 'Evidence is not sufficient.', suggestion: 'Provide verified evidence and submit the application again.' })).toMatchObject({ decision: 'Rejected' });
+    expect(validateDecisionRequest({ eventId: 'event-1', decision: 'Rejected', rationale: 'Evidence is not sufficient.', suggestion: 'Provide verified evidence and submit the application again.', rejectionReasonCategory: 'insufficient_evidence' })).toMatchObject({ decision: 'Rejected', rejectionReasonCategory: 'insufficient_evidence' });
     expect(() => validateOfficerProposalRequest({ eventId: 'event-1', decision: 'Rejected', reason: 'Evidence is not sufficient.' })).toThrow(HttpsError);
     expect(() => validateOfficerProposalRequest({ eventId: 'event-1', decision: 'Rejected', reason: 'Evidence is not sufficient.', suggestion: 'Fix it.' })).toThrow(HttpsError);
   });

@@ -17,21 +17,27 @@ const retryableDependencies = {
     });
 });
 (0, vitest_1.describe)('validateRecomputeProfile', () => {
-    (0, vitest_1.it)('accepts a provisioned authority and rejects every other profile', () => {
-        (0, vitest_1.expect)(() => (0, manualRecompute_1.validateRecomputeProfile)({ role: 'authority', authorityType: 'PDRM' })).not.toThrow();
-        (0, vitest_1.expect)(() => (0, manualRecompute_1.validateRecomputeProfile)({ role: 'organizer' })).toThrow('Only provisioned authority accounts can retry assessments.');
-        (0, vitest_1.expect)(() => (0, manualRecompute_1.validateRecomputeProfile)({ role: 'authority' })).toThrow('Only provisioned authority accounts can retry assessments.');
-        (0, vitest_1.expect)(() => (0, manualRecompute_1.validateRecomputeProfile)(undefined)).toThrow('Only provisioned authority accounts can retry assessments.');
+    (0, vitest_1.it)('accepts provisioned Admin and authority profiles and rejects every other profile', () => {
+        (0, vitest_1.expect)((0, manualRecompute_1.validateRecomputeProfile)({ role: 'admin' })).toEqual({ role: 'admin' });
+        (0, vitest_1.expect)((0, manualRecompute_1.validateRecomputeProfile)({ role: 'authority', authorityType: 'PDRM' })).toEqual({ role: 'authority', authorityType: 'PDRM' });
+        (0, vitest_1.expect)(() => (0, manualRecompute_1.validateRecomputeProfile)({ role: 'organizer' })).toThrow('Only provisioned Admin or authority accounts can retry assessments.');
+        (0, vitest_1.expect)(() => (0, manualRecompute_1.validateRecomputeProfile)({ role: 'authority' })).toThrow('Only provisioned Admin or authority accounts can retry assessments.');
+        (0, vitest_1.expect)(() => (0, manualRecompute_1.validateRecomputeProfile)(undefined)).toThrow('Only provisioned Admin or authority accounts can retry assessments.');
     });
 });
 (0, vitest_1.describe)('manual recompute authorization', () => {
     (0, vitest_1.it)('requires the caller authority type to be assigned to the event', () => {
-        (0, vitest_1.expect)((0, manualRecompute_1.validateAuthorityAssignment)({ requiredAuthorities: ['PDRM'], currentVersionId: 'v1', currentAssessmentId: 'a1' }, 'PDRM')).toBe('a1');
-        (0, vitest_1.expect)(() => (0, manualRecompute_1.validateAuthorityAssignment)({ requiredAuthorities: ['PDRM'], currentVersionId: 'failed-v1' }, 'PDRM'))
+        const pdrm = { role: 'authority', authorityType: 'PDRM' };
+        (0, vitest_1.expect)((0, manualRecompute_1.validateAuthorityAssignment)({ requiredAuthorities: ['PDRM'], currentVersionId: 'v1', currentAssessmentId: 'a1' }, pdrm)).toBe('a1');
+        (0, vitest_1.expect)(() => (0, manualRecompute_1.validateAuthorityAssignment)({ requiredAuthorities: ['PDRM'], currentVersionId: 'failed-v1' }, pdrm))
             .toThrow('This application has no assessment that can be retried.');
-        (0, vitest_1.expect)((0, manualRecompute_1.validateAuthorityAssignment)({ requiredAuthorities: ['PDRM'], currentVersionId: 'v2', currentAssessmentId: 'assessment-v2' }, 'PDRM')).toBe('assessment-v2');
-        (0, vitest_1.expect)(() => (0, manualRecompute_1.validateAuthorityAssignment)({ requiredAuthorities: ['BOMBA'], currentAssessmentId: 'a1' }, 'PDRM'))
+        (0, vitest_1.expect)((0, manualRecompute_1.validateAuthorityAssignment)({ requiredAuthorities: ['PDRM'], currentVersionId: 'v2', currentAssessmentId: 'assessment-v2' }, pdrm)).toBe('assessment-v2');
+        (0, vitest_1.expect)(() => (0, manualRecompute_1.validateAuthorityAssignment)({ requiredAuthorities: ['BOMBA'], currentAssessmentId: 'a1' }, pdrm))
             .toThrow('Your authority is not assigned to this application.');
+    });
+    (0, vitest_1.it)('allows an Admin to retry the current assessment without authority assignment', () => {
+        (0, vitest_1.expect)((0, manualRecompute_1.validateAuthorityAssignment)({ requiredAuthorities: [], currentAssessmentId: 'assessment-v1' }, { role: 'admin' }))
+            .toBe('assessment-v1');
     });
     (0, vitest_1.it)('only permits forced retry from manual-review or failed state', () => {
         (0, vitest_1.expect)(() => (0, manualRecompute_1.validateRetryableAssessment)({ status: 'manual_review_required' })).not.toThrow();
@@ -60,6 +66,20 @@ const retryableDependencies = {
             recompute: async (eventId) => ({ status: 'processed', eventId, versionId: 'v1' }),
         });
         (0, vitest_1.expect)(result).toMatchObject({ success: true, status: 'processed', eventId: 'event-1' });
+    });
+    (0, vitest_1.it)('returns the pipeline result for a provisioned Admin', async () => {
+        let authorization;
+        const result = await (0, manualRecompute_1.manualRecomputeForUser)('admin-1', 'event-1', {
+            ...retryableDependencies,
+            loadProfile: async () => ({ role: 'admin' }),
+            loadEvent: async () => ({ requiredAuthorities: [], currentVersionId: 'v1', currentAssessmentId: 'assessment-1' }),
+            recompute: async (eventId, value) => {
+                authorization = value;
+                return { status: 'processed', eventId, versionId: 'v1', assessmentStatus: 'provisional_ready' };
+            },
+        });
+        (0, vitest_1.expect)(authorization).toEqual({ uid: 'admin-1', role: 'admin' });
+        (0, vitest_1.expect)(result).toMatchObject({ success: true, assessmentStatus: 'provisional_ready' });
     });
     (0, vitest_1.it)('rejects an unprovisioned caller before running the pipeline', async () => {
         let calls = 0;

@@ -54,6 +54,8 @@ import {
 import { FUNCTION_REGION } from '../config/runtime';
 import { createNotification } from '../utils/notifications';
 import { aggregateLabel } from '../utils/controlAggregate';
+import { validateBase64File } from '../utils/base64File';
+import { isActiveControlGeneration } from '../utils/controlLifecycle';
 
 interface SubmitStage1DocRequest {
   eventId?: string;
@@ -82,7 +84,7 @@ export const submitStage1Doc = onCall<SubmitStage1DocRequest>({ region: FUNCTION
     }
     const message = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
     console.error(`[submitStage1Doc] unexpected error: ${message}`);
-    throw new HttpsError('internal', message.slice(0, 500));
+    throw new HttpsError('internal', 'Unable to submit the Stage 1 document. Retry shortly.');
   }
 });
 
@@ -109,6 +111,7 @@ export async function submitStage1DocForUser(
     }
     if (!data.fileBase64) throw new HttpsError('invalid-argument', 'fileBase64 is required for upload.');
   }
+  const uploadedFile = usePrevious ? undefined : validateBase64File(data.fileBase64!, data.mimeType!, MAX_FILE_BYTES);
 
   const db = firestore();
   const eventRef = db.collection(COLLECTIONS.EVENTS).doc(eventId);
@@ -145,7 +148,7 @@ export async function submitStage1DocForUser(
     }
     const control = controlSnap.data() as EventControl;
     const versionId = event.currentVersionId ?? 'v1';
-    if (control.versionId !== versionId) {
+    if (!isActiveControlGeneration(event, control, eventId)) {
       throw new HttpsError('failed-precondition', `Control ${controlId} is for a prior version (${control.versionId}). The admin must re-commit the list for the current version.`);
     }
     // The docSlot must be in the control's stage1Requirements template.
@@ -172,10 +175,6 @@ export async function submitStage1DocForUser(
     };
     if (!usePrevious) {
       // File size validation (decode the base64 to byte count).
-      const approxBytes = approxBase64DecodedBytes(data.fileBase64!);
-      if (approxBytes > MAX_FILE_BYTES) {
-        throw new HttpsError('invalid-argument', `File too large: ${approxBytes} bytes. Max ${MAX_FILE_BYTES} bytes (~700 KB). Compress and re-upload.`);
-      }
       newDoc.filePath = `data:${data.mimeType};base64,${data.fileBase64}`;
     } else {
       // Use-previous: don't set filePath. The doc has no bytes.
@@ -205,7 +204,9 @@ export async function submitStage1DocForUser(
     const newAggregateLabel = aggregateLabel(merged);
 
     // Writes.
-    tx.set(docRef, newDoc, { merge: true });
+    // A resubmission replaces transient verification fields. Any rejection
+    // context intentionally retained above is copied into `newDoc` explicitly.
+    tx.set(docRef, newDoc);
     tx.update(controlRef, { label: newAggregateLabel, updatedAt: now });
 
     // Audit log.
@@ -223,7 +224,7 @@ export async function submitStage1DocForUser(
     if (!usePrevious) {
       metadata.fileName = data.fileName;
       metadata.mimeType = data.mimeType;
-      metadata.fileSizeBytes = approxBase64DecodedBytes(data.fileBase64!);
+      metadata.fileSizeBytes = uploadedFile!.sizeBytes;
     }
     tx.create(auditRef, {
       id: auditId,
@@ -273,18 +274,6 @@ export async function submitStage1DocForUser(
     status: result.usePrevious ? 'use_previous' : 'pending_verification',
     uploadedAt: result.uploadedAt,
   };
-}
-
-/** Estimate the decoded size of a base64 string (4 chars -> 3 bytes,
- *  with padding). Used for the file-size gate. */
-function approxBase64DecodedBytes(b64: string): number {
-  const len = b64.length;
-  if (len === 0) return 0;
-  // Strip any data URL prefix if present (defensive).
-  const comma = b64.indexOf(',');
-  const clean = comma >= 0 ? b64.slice(comma + 1) : b64;
-  const padding = clean.endsWith('==') ? 2 : clean.endsWith('=') ? 1 : 0;
-  return Math.floor((clean.length * 3) / 4) - padding;
 }
 
 async function fireSubmitNotifications(args: {

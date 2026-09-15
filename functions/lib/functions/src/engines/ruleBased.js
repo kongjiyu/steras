@@ -322,7 +322,7 @@ async function fetchHistoricalContext(event, now = Date.now()) {
         .map((document) => ({ incidentId: document.id, ...document.data() }))
         .filter((incident) => incident.date < eventStart
         && incident.date >= lookbackStart
-        && incident.status === 'verified'
+        && (incident.status === 'verified' || incident.status === 'resolved')
         && incident.assessmentEligible === true);
     const historicalEvents = historicalSnapshot.docs
         .map((document) => ({ historicalEventId: document.id, ...document.data() }))
@@ -412,6 +412,7 @@ async function fetchVenueContext(details, now = Date.now()) {
     const registeredCapacity = venue.verifiedSafeCapacity ?? venue.capacity;
     if (normalizeVenueName(venue.name) !== normalizeVenueName(details.venueName)
         || normalizeVenueName(venue.address) !== normalizeVenueName(details.venueAddress)
+        || normalizeVenueName(venue.state) !== normalizeVenueName(details.venueState)
         || registeredCapacity !== submittedCapacity
         || !sameLocation(venue.location, details.venueLocation)) {
         return { matched: false, submittedCapacity, fetchedAt: now };
@@ -444,6 +445,7 @@ async function resolveCanonicalVenueId(details) {
     const venue = { venueId: snapshot.id, ...snapshot.data() };
     return normalizeVenueName(venue.name) === normalizeVenueName(details.venueName)
         && normalizeVenueName(venue.address) === normalizeVenueName(details.venueAddress)
+        && normalizeVenueName(venue.state) === normalizeVenueName(details.venueState)
         && (venue.verifiedSafeCapacity ?? venue.capacity) === details.venueCapacity
         && sameLocation(venue.location, details.venueLocation)
         ? details.venueId : undefined;

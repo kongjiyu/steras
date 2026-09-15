@@ -1,3 +1,5 @@
+import { useOnlineStatus } from '../../hooks/useOnlineStatus';
+import '../../pages/authority/authority-dashboard.css';
 import { NavLink } from 'react-router-dom';
 import {
   Activity,
@@ -12,6 +14,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   ListChecks,
+  Siren,
   type LucideIcon,
 } from 'lucide-react';
 import logoUrl from '../../assets/brand/steras-logo-horizontal-inverse.svg';
@@ -65,6 +68,7 @@ export default function Sidebar({
   activePath,
   onSignOut,
 }: SidebarProps) {
+  const online = useOnlineStatus();
   return (
     <>
       <aside className="authority-sidebar sticky top-0 hidden h-screen w-[252px] flex-col overflow-hidden lg:flex">
@@ -73,7 +77,7 @@ export default function Sidebar({
           <img src={logoUrl} alt="STERAS" />
           <div className="authority-sidebar__workspace-label">
             <span>{workspaceLabel}</span>
-            <span className="authority-sidebar__live"><i /> Live</span>
+            <span className="authority-sidebar__live" role="status" title="Browser network connection; this does not confirm data synchronization.">{online ? 'Online' : 'Offline'}</span>
           </div>
         </div>
 
@@ -162,19 +166,14 @@ export const AUTHORITY_NAV: SidebarNavSection[] = [
     items: [
       { to: '/authority', label: 'Dashboard', mobileLabel: 'Home', icon: LayoutDashboard, end: true },
       { to: '/authority/applications', label: 'Applications', mobileLabel: 'Queue', icon: FileText },
+      { to: '/authority/incidents', label: 'Incidents', mobileLabel: 'Incidents', icon: Siren },
     ],
   },
   {
-    label: 'M2 intelligence',
+    label: 'Risk & Resource Planning',
     items: [
       { to: '/authority/risk', label: 'Risk assessments', mobileLabel: 'Risk', icon: ShieldAlert },
       { to: '/authority/resources', label: 'Resources', mobileLabel: 'Plans', icon: Boxes },
-    ],
-  },
-  {
-    label: 'Insights',
-    items: [
-      { to: '/authority/reports', label: 'Reports', mobileLabel: 'Reports', icon: ChartLine },
     ],
   },
 ];
@@ -184,21 +183,22 @@ export const AUTHORITY_NAV: SidebarNavSection[] = [
  * ============================================================================ */
 export const ADMIN_NAV: SidebarNavSection[] = [
   {
-    label: 'M3 — Authority Approval',
+    label: 'Application Approval',
     items: [
       { to: '/admin', label: 'Dashboard', mobileLabel: 'Home', icon: LayoutDashboard, end: true },
       { to: '/admin/applications', label: 'Application queue', mobileLabel: 'Queue', icon: ListChecks },
+      { to: '/admin/incidents', label: 'Incidents', mobileLabel: 'Incidents', icon: Siren },
     ],
   },
   {
-    label: 'M1 — User & Event Mgmt',
+    label: 'Users & Venues',
     items: [
       { to: '/admin/users', label: 'User accounts', mobileLabel: 'Users', icon: Users },
       { to: '/admin/venues', label: 'Venues', mobileLabel: 'Venues', icon: MapPin },
     ],
   },
   {
-    label: 'M5 — Analytics',
+    label: 'Analytics & Reporting',
     items: [
       { to: '/admin/analytics', label: 'Reports', mobileLabel: 'Reports', icon: ChartLine },
     ],
@@ -259,7 +259,7 @@ export function WorkspaceTopBar({
       </div>
       <div className="authority-topbar__tools">
         <div className="authority-topbar__system hidden md:flex">
-          <i /> Systems operational
+          <i /> Secure workspace
         </div>
         <div className="authority-topbar__date hidden sm:flex">
           <CalendarDays size={15} aria-hidden="true" />

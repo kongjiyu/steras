@@ -128,8 +128,8 @@ export const M1_CORE_TEMPLATE: M1TemplateDefinition = {
   sourcePath: 'core/Core Event Application Template.docx',
   fileName: 'Core Event Application Template.docx',
   previewFileName: 'Core Event Application Template.pdf',
-  sha256: '038fffe303b4cc680c9171ce5da141f01c43b7c2bcb85ab86921cda7d07d4bb6',
-  pageCount: 7,
+  sha256: '6c88b1bd7e4f8a97256c4c0a4f5043cd30639f20035691e35424eacafbbd2913',
+  pageCount: 9,
   supportingDocuments: CORE_DOCUMENTS,
 };
 

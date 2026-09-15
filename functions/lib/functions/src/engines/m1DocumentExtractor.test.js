@@ -15,31 +15,46 @@ const m1DocumentExtractor_1 = require("./m1DocumentExtractor");
         (0, vitest_1.expect)(core.fields.has('EVENT_NAME')).toBe(true);
         (0, vitest_1.expect)(scenario.fields.size).toBeGreaterThan(20);
         (0, vitest_1.expect)((0, m1DocumentExtractor_1.mapM1Documents)(core, scenario).extractedFields).toEqual([]);
-        (0, vitest_1.expect)((0, m1DocumentExtractor_1.validateCombinedTemplateIdentity)(core, 'STERAS-T01-ENT-IN-v2.0')).toContain('The combined PDF does not contain scenario template STERAS-T01-ENT-IN-v2.0.');
         await (0, vitest_1.expect)((0, m1DocumentExtractor_1.parseM1Pdf)(Buffer.from('not-a-pdf'))).rejects.toThrow('not a readable PDF');
     });
-    (0, vitest_1.it)('extracts the completed combined presentation PDF without leaking visual line wraps into fields', async () => {
-        const combined = await (0, m1DocumentExtractor_1.parseM1Pdf)((0, node_fs_1.readFileSync)('../output/pdf/m1-presentation-test-case/STERAS_DEMO_T01_Completed_Combined_Application.pdf'));
-        const fields = Object.fromEntries((0, m1DocumentExtractor_1.mapM1Documents)(combined, combined).extractedFields.map((field) => [field.target, field.value]));
-        (0, vitest_1.expect)((0, m1DocumentExtractor_1.validateCombinedTemplateIdentity)(combined, 'STERAS-T01-ENT-IN-v2.0')).toEqual([]);
-        (0, vitest_1.expect)(combined.fields.size).toBe(71);
+    (0, vitest_1.it)('extracts the completed Core and scenario presentation files separately', async () => {
+        const core = await (0, m1DocumentExtractor_1.parseM1Docx)((0, node_fs_1.readFileSync)('../output/m1-presentation-test-case/01_Filled_Core_Event_Application.docx'));
+        const scenario = await (0, m1DocumentExtractor_1.parseM1Docx)((0, node_fs_1.readFileSync)('../output/m1-presentation-test-case/02_Filled_Entertainment_and_Performance_Event_Indoor.docx'));
+        const mapped = (0, m1DocumentExtractor_1.mapM1Documents)(core, scenario);
+        const fields = Object.fromEntries(mapped.extractedFields.map((field) => [field.target, field.value]));
+        (0, vitest_1.expect)((0, m1DocumentExtractor_1.validateTemplateIdentity)(core, scenario, 'STERAS-T01-ENT-IN-v2.0')).toEqual([]);
+        (0, vitest_1.expect)(core.fields.size + scenario.fields.size).toBe(90);
+        (0, vitest_1.expect)(mapped.completionPercent).toBe(100);
+        (0, vitest_1.expect)(mapped.warnings).toEqual([]);
         (0, vitest_1.expect)(fields).toMatchObject({
             name: 'Malaysia Tourism Storytelling Showcase 2026',
+            venueName: 'Kuala Lumpur Convention Centre',
             venueAddress: 'Kuala Lumpur Convention Centre, Kuala Lumpur City Centre, 50088 Kuala Lumpur, Malaysia',
             expectedAttendance: 600,
             organizerEmail: 'aina.rahman@example.com',
             venueCapacity: 8000,
+            'riskProfile.vulnerableAttendeesPercent': 10,
+            'riskProfile.standingAttendeesPercent': 0,
+            'riskProfile.internationalAttendees': false,
+            'riskProfile.alcoholServed': false,
+            'riskProfile.foodServed': false,
+            'riskProfile.freeDrinkingWater': false,
+            'riskProfile.ticketedEntry': false,
+            'riskProfile.overnightAccommodation': false,
+            'riskProfile.pyrotechnics': false,
+            'riskProfile.temporaryStructures': false,
+            'riskProfile.rivalryOrTensionExpected': false,
+            'riskProfile.crowdManagementPlan': true,
+            'riskProfile.trafficManagementPlan': true,
+            'riskProfile.severeWeatherPlan': true,
+            'riskProfile.medicalPlan': true,
+            'riskProfile.evacuationPlanTested': true,
+            'riskProfile.authorityCoordinationConfirmed': false,
+            'riskProfile.nearestHospitalTravelMinutes': 10,
         });
+        (0, vitest_1.expect)(fields.startDatetime).toBe(new Date('2026-09-30T09:00:00+08:00').getTime());
+        (0, vitest_1.expect)(fields.endDatetime).toBe(new Date('2026-09-30T18:00:00+08:00').getTime());
         (0, vitest_1.expect)(fields.emergencyPlanSummary).toContain('two-metre stage buffer');
-    });
-    (0, vitest_1.it)('validates a combined Core and scenario identity without requiring forged document roles', () => {
-        const fields = new Map([
-            ['EVENT_NAME', 'Event'], ['EVENT_DATES', '2026-10-10'], ['EVENT_ADDRESS', 'KL'],
-            ['TOTAL_ATTENDANCE', '100'], ['RESPONSIBLE_PERSON', 'Organizer'], ['PERFORMANCE_TYPE', 'Concert'],
-        ]);
-        const combined = { text: 'STERAS-CORE STERAS-T01-ENT-IN-v2.0 T01-A01 / PERFORMANCE_TYPE', fields };
-        (0, vitest_1.expect)((0, m1DocumentExtractor_1.validateCombinedTemplateIdentity)(combined, 'STERAS-T01-ENT-IN-v2.0')).toEqual([]);
-        (0, vitest_1.expect)((0, m1DocumentExtractor_1.validateCombinedTemplateIdentity)(combined, 'STERAS-T02-ENT-OF-v1.0')).not.toEqual([]);
     });
     (0, vitest_1.it)('recognises the versioned repository Core and scenario templates', async () => {
         const core = await (0, m1DocumentExtractor_1.parseM1Docx)((0, node_fs_1.readFileSync)('../docs/templates/m1/core/Core Event Application Template.docx'));
@@ -62,6 +77,7 @@ const m1DocumentExtractor_1 = require("./m1DocumentExtractor");
             ['A02 / EVENT_PURPOSE', 'Promote local food and tourism.'],
             ['A04 / EVENT_DATES', 'Start date\n2026-10-10\nEnd date\n2026-10-11'],
             ['A05 / OPERATING_HOURS', 'Opening time\n10:00\nClosing time\n22:30'],
+            ['A06A / VENUE_NAME', 'Dataran Merdeka'],
             ['A06 / EVENT_ADDRESS', 'Dataran Merdeka, Kuala Lumpur'],
             ['A07 / TOTAL_ATTENDANCE', '12,500'],
             ['B03 / RESPONSIBLE_PERSON', 'Nur Aisyah'],
@@ -72,6 +88,24 @@ const m1DocumentExtractor_1 = require("./m1DocumentExtractor");
             ['D03 / MEDICAL', 'Two first-aid posts.'],
             ['D05 / EVACUATION', 'Signed routes to assembly points.'],
             ['D09 / DISRUPTION_ARRANGEMENTS', 'Weather monitoring and shelter.'],
+            ['H01 / VULNERABLE_ATTENDEES_PERCENT', '5'],
+            ['H02 / STANDING_ATTENDEES_PERCENT', '25'],
+            ['H03 / INTERNATIONAL_ATTENDEES', 'Yes'],
+            ['H04 / ALCOHOL_SERVED', 'No'],
+            ['H05 / FOOD_SERVED', 'Yes'],
+            ['H06 / FREE_DRINKING_WATER', 'Yes'],
+            ['H07 / TICKETED_ENTRY', 'Yes'],
+            ['H08 / OVERNIGHT_ACCOMMODATION', 'No'],
+            ['H09 / PYROTECHNICS', 'Yes'],
+            ['H10 / ALL_HAZARDS_TEMPORARY_STRUCTURES', 'No'],
+            ['H11 / RIVALRY_OR_TENSION_EXPECTED', 'No'],
+            ['H12 / CROWD_MANAGEMENT_PLAN', 'Yes'],
+            ['H13 / TRAFFIC_MANAGEMENT_PLAN', 'Yes'],
+            ['H14 / SEVERE_WEATHER_PLAN', 'Yes'],
+            ['H15 / MEDICAL_PLAN', 'Yes'],
+            ['H16 / EVACUATION_PLAN_TESTED', 'No'],
+            ['H17 / AUTHORITY_COORDINATION_CONFIRMED', 'Yes'],
+            ['H18 / NEAREST_HOSPITAL_TRAVEL_MINUTES', '15'],
         ], 'STERAS-CORE'));
         const scenario = await (0, m1DocumentExtractor_1.parseM1Docx)(await docx([
             ['T01-C02 / APPROVED_CAPACITY', 'Approved capacity: 15000'],
@@ -84,11 +118,12 @@ const m1DocumentExtractor_1 = require("./m1DocumentExtractor");
         const result = (0, m1DocumentExtractor_1.mapM1Documents)(core, scenario);
         const fields = Object.fromEntries(result.extractedFields.map((field) => [field.target, field.value]));
         (0, vitest_1.expect)(fields).toMatchObject({
-            name: 'Malaysia Night Market', expectedAttendance: 12_500, venueCapacity: 15_000,
+            name: 'Malaysia Night Market', venueName: 'Dataran Merdeka', expectedAttendance: 12_500, venueCapacity: 15_000,
             organizerName: 'Nur Aisyah', organizerEmail: 'nur@example.com',
             'riskProfile.ticketedEntry': true, 'riskProfile.pyrotechnics': true,
             'riskProfile.temporaryStructures': false, 'riskProfile.foodServed': true,
-            'riskProfile.alcoholServed': false,
+            'riskProfile.alcoholServed': false, 'riskProfile.standingAttendeesPercent': 25,
+            'riskProfile.nearestHospitalTravelMinutes': 15,
         });
         (0, vitest_1.expect)(fields.startDatetime).toBe(new Date('2026-10-10T10:00:00+08:00').getTime());
         (0, vitest_1.expect)(fields.endDatetime).toBe(new Date('2026-10-11T22:30:00+08:00').getTime());
@@ -129,6 +164,18 @@ const m1DocumentExtractor_1 = require("./m1DocumentExtractor");
         (0, vitest_1.expect)(targets).not.toContain('expectedAttendance');
         (0, vitest_1.expect)(targets).not.toContain('riskProfile.ticketedEntry');
         (0, vitest_1.expect)(targets).not.toContain('riskProfile.pyrotechnics');
+    });
+    (0, vitest_1.it)('accepts zero percentages and rejects out-of-range all-hazards numbers', async () => {
+        const core = await (0, m1DocumentExtractor_1.parseM1Docx)(await docx([
+            ['H01 / VULNERABLE_ATTENDEES_PERCENT', '101'],
+            ['H02 / STANDING_ATTENDEES_PERCENT', '0'],
+            ['H18 / NEAREST_HOSPITAL_TRAVEL_MINUTES', '241'],
+        ], 'STERAS-CORE'));
+        const scenario = await (0, m1DocumentExtractor_1.parseM1Docx)(await docx([['T01-A01 / PERFORMANCE_TYPE', '[Enter performance type]']], 'STERAS-T01-ENT-IN-v2.0'));
+        const fields = Object.fromEntries((0, m1DocumentExtractor_1.mapM1Documents)(core, scenario).extractedFields.map((field) => [field.target, field.value]));
+        (0, vitest_1.expect)(fields['riskProfile.standingAttendeesPercent']).toBe(0);
+        (0, vitest_1.expect)(fields).not.toHaveProperty('riskProfile.vulnerableAttendeesPercent');
+        (0, vitest_1.expect)(fields).not.toHaveProperty('riskProfile.nearestHospitalTravelMinutes');
     });
 });
 async function docx(rows, identity) {

@@ -10,10 +10,14 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react(), m1TemplateAssets()],
     resolve: {
-      alias: {
-        '@': path.resolve(__dirname, './src'),
-        '@shared': path.resolve(__dirname, '../shared'),
-      },
+      alias: [
+        { find: '@', replacement: path.resolve(__dirname, './src') },
+        { find: '@shared', replacement: path.resolve(__dirname, '../shared') },
+        // react-pdf imports the CommonJS `warning` package as a default export.
+        // Rolldown currently emits a broken interop wrapper for that package in
+        // production chunks, so use the package's tiny ESM-equivalent locally.
+        { find: /^warning$/, replacement: path.resolve(__dirname, './src/shims/warning.ts') },
+      ],
     },
     server: {
       port: 5173,

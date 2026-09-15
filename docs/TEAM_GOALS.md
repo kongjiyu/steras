@@ -191,10 +191,11 @@ Build the largest missing module as one complete vertical slice: reporting, admi
 
 ### Current progress
 
-- `/authority/reports` is implemented and scoped by the signed-in authority type.
-- The page currently provides date filtering, application/approval monthly trends, official-risk distribution, monthly average official score, AI agreement, fallback rate, turnaround summary, and CSV export.
+- `/admin/analytics` is implemented as an admin-only, read-only report page embedded in the shared admin shell; `/authority/reports` remains a compatibility redirect.
+- `/dashboard-preview?view=reports` renders the design-review version with representative data.
+- The page currently provides five report modes, date filtering, event-type scope, authority-scoped reads, application/approval trends, official-risk distribution, assessment-quality signals, review outcomes, operations summaries, explicit M4 unavailable states, and CSV/PDF export.
 - CSV cells already receive basic spreadsheet-formula neutralisation.
-- Current reads are client-side and the remaining PRD filters, resource/override/re-application metrics, M4 metrics, schema metadata, and synthetic-data exclusion are not complete.
+- Current reads are client-side and the remaining PRD filters, resource/override/re-application metrics, full M4 metrics, schema metadata, and synthetic-data exclusion are not complete.
 
 ### Current delivery goal
 

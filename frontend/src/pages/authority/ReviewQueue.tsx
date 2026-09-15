@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { collection, doc, getDoc, getDocs, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
 import { format } from 'date-fns';
 import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import { Assignment, COLLECTIONS, EventRecord } from '@shared/types';
@@ -13,7 +13,6 @@ import { ApplicationDisplayBadge } from '../../components/ui/StatusBadge';
 import { authorityQueueAction, AuthorityQueueRow, filterAndSortAuthorityQueue, pageCount, QueueFilter, QueueSort } from './reviewQueueData';
 
 const PAGE_SIZE = 10;
-const ACTIVE_STATUSES = ['Pending', 'UnderReview'] as const;
 
 export default function ReviewQueue() {
   const { profile } = useAuth();
@@ -34,9 +33,6 @@ export default function ReviewQueue() {
     const eventsQuery = query(
       collection(db, COLLECTIONS.EVENTS),
       where('assignedOfficerUids', 'array-contains', profile.uid),
-      where('status', 'in', ACTIVE_STATUSES),
-      orderBy('createdAt', 'desc'),
-      limit(100),
     );
     let active = true;
     let hydrationToken = 0;
@@ -104,6 +100,7 @@ export default function ReviewQueue() {
         </label>
       </div>
 
+      <p className="mb-3 text-sm text-ink-500">Pending: awaiting the initial review. Under Review: the application is in the authority review workflow.</p>
       <div className="mb-5 flex flex-wrap gap-2" aria-label="Filter queue by status">
         {(['all', 'pending', 'decided'] as const).map((status) => (
           <button

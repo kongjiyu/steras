@@ -246,7 +246,7 @@ export const mockEventSchedules: EventSchedule[] = [
   // E013 - KL Coastal Cleanup - 1 day
   mkSchedule(EVENT_IDS.E013, 'v1',
     daysAhead(-5), daysAhead(-5) + 3 * 60 * 60 * 1000,
-    [{ open: '08:00', close: '17:00', note: 'Past event - reporting for M4 incident flow.' }],
+    [{ open: '08:00', close: '17:00', note: 'Past event available for the incident-reporting flow.' }],
     [
       { startTime: '07:00', endTime: '08:00', activity: 'Registration + briefing',           location: 'Booth area',  estimatedAttendance: 100, responsiblePerson: 'Community Lead' },
       { startTime: '08:00', endTime: '12:00', activity: 'Cleanup activity (morning)',         location: 'Beach area',  estimatedAttendance: 500, responsiblePerson: 'Activities Lead' },

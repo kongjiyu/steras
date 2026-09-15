@@ -46,6 +46,23 @@ interface EditEventControlListResponse {
   controlListSnapshot: NonNullable<EventRecord['controlListSnapshot']>;
 }
 
+export function buildControlListSnapshot(
+  eventId: string,
+  items: ProposedControlItem[],
+  controlItemVersion: number,
+): NonNullable<EventRecord['controlListSnapshot']> {
+  return items.map((item) => ({
+    controlId: `${eventId}-ctrl-${item.authority.toLowerCase()}-v${controlItemVersion}`,
+    controlName: item.controlName,
+    authority: item.authority,
+    stageRequirement: item.stageRequirement,
+    stage1RequirementsCount: (item.stage1Requirements ?? []).length,
+    ...(item.stage2Requirement?.label ? { stage2Label: item.stage2Requirement.label } : {}),
+    controlItemVersion,
+    label: 'pending' as EventControl['label'],
+  }));
+}
+
 export const editEventControlList = onCall<EditEventControlListRequest>({ region: FUNCTION_REGION }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in before editing the control list.');
   const eventId = (request.data?.eventId ?? '').trim();
@@ -87,10 +104,8 @@ export const editEventControlList = onCall<EditEventControlListRequest>({ region
   if (!versionId) {
     throw new HttpsError('failed-precondition', 'The event has no submitted version.');
   }
-  // Allowed statuses: 'Approved' (post-second-review) or 'UnderReview'
-  // (mid-flow, in case the admin wants to pre-stage the list).
-  if (!['UnderReview', 'Approved'].includes(event.status)) {
-    throw new HttpsError('failed-precondition', `Control list can only be edited for events in UnderReview or Approved status (current: ${event.status}).`);
+  if (event.status !== 'Approved') {
+    throw new HttpsError('failed-precondition', `Control list can only be committed after Admin final approval (current: ${event.status}).`);
   }
   // The list's authorities must match the event's requiredAuthorities.
   const required = new Set(event.requiredAuthorities ?? []);
@@ -99,21 +114,18 @@ export const editEventControlList = onCall<EditEventControlListRequest>({ region
       throw new HttpsError('failed-precondition', `Item authority ${item.authority} is not in the event's requiredAuthorities.`);
     }
   }
+  if (seenAuths.size !== required.size || [...required].some((authority) => !seenAuths.has(authority))) {
+    throw new HttpsError('invalid-argument', 'items must contain exactly one control for every required authority.');
+  }
 
   const now = Date.now();
   const controlItemVersion = request.data?.controlItemVersion ?? 1;
+  if (!Number.isSafeInteger(controlItemVersion) || controlItemVersion < 1 || controlItemVersion > 10_000) {
+    throw new HttpsError('invalid-argument', 'controlItemVersion must be a positive safe integer.');
+  }
 
   // Compute the new snapshot for the parent event doc.
-  const newSnapshot: NonNullable<EventRecord['controlListSnapshot']> = items.map((item) => ({
-    controlId: `${eventId}-ctrl-${item.authority.toLowerCase()}-v${controlItemVersion}`,
-    controlName: item.controlName,
-    authority: item.authority,
-    stageRequirement: item.stageRequirement,
-    stage1RequirementsCount: (item.stage1Requirements ?? []).length,
-    stage2Label: item.stage2Requirement?.label,
-    controlItemVersion,
-    label: 'pending' as EventControl['label'],
-  }));
+  const newSnapshot = buildControlListSnapshot(eventId, items, controlItemVersion);
 
   return db.runTransaction(async (tx) => {
     // Reads first.
@@ -125,25 +137,11 @@ export const editEventControlList = onCall<EditEventControlListRequest>({ region
     if (ev.currentVersionId !== versionId) {
       throw new HttpsError('failed-precondition', 'The event was re-versioned while you were editing. Reload and try again.');
     }
-    // Wipe any existing controls for this version (idempotent re-commit).
+    // Published controls and their evidence are immutable. Corrections use a
+    // new controlItemVersion; prior records remain available for audit.
     const existingControls = await tx.get(eventRef.collection(COLLECTIONS.EVENT_CONTROLS).where('versionId', '==', versionId));
-    existingControls.docs.forEach((d) => tx.delete(d.ref));
-    // Also wipe all per-control sub-collections (stage1_docs +
-    // stage2_docs + Workstream 4 rate-limit counters) that may have
-    // been left from previous commits. Without this, orphan docs from
-    // a prior test run can leak into a new test that uses the same
-    // controlId (e.g. a stale m4TicketId would block the new upload).
-    for (const ctrl of existingControls.docs) {
-      const subCollections = [
-        COLLECTIONS.STAGE1_DOCS,
-        COLLECTIONS.STAGE2_DOCS,
-        COLLECTIONS.STAGE2_CONFIRMS,
-        COLLECTIONS.STAGE2_REPORTS,
-      ];
-      for (const subName of subCollections) {
-        const docs = await tx.get(ctrl.ref.collection(subName));
-        for (const d of docs.docs) tx.delete(d.ref);
-      }
+    if (!existingControls.empty) {
+      throw new HttpsError('failed-precondition', 'The published control list is immutable. Submit a new application version for corrections.');
     }
 
     // Writes — one event_controls/{id} per item, with the agreed shape.
@@ -204,6 +202,7 @@ export const editEventControlList = onCall<EditEventControlListRequest>({ region
       try {
         const recipientUid = await resolveAuthUid(event.organizerId);
         if (recipientUid) {
+          const sourceActionId = `control_list_published_${eventId}_${versionId}_${controlItemVersion}`;
           await createNotification({
             recipientUid,
             eventId,
@@ -211,13 +210,32 @@ export const editEventControlList = onCall<EditEventControlListRequest>({ region
             type: 'control_list_published',
             title: 'Event control list published',
             message: `The authority control list for "${event.eventDetails.name}" is ready. ${result.written} control${result.written === 1 ? '' : 's'} declared. You can now upload Stage 1 + Stage 2 evidence.`,
-            sourceActionId: `control_list_published_${versionId}_${controlItemVersion}`,
+            sourceActionId,
+            notificationId: `${sourceActionId}_${recipientUid}`,
           });
         }
       } catch (err) {
         console.warn('[editEventControlList] organiser notification failed (non-fatal):', err);
       }
     }
+    const authorityRecipients = [...new Set(Object.values(event.assignedOfficerByAuthority ?? {}).filter((uid): uid is string => Boolean(uid)))];
+    await Promise.all(authorityRecipients.map(async (recipientUid) => {
+      try {
+        const sourceActionId = `control_list_published_${eventId}_${versionId}_${controlItemVersion}`;
+        await createNotification({
+          recipientUid,
+          eventId,
+          versionId,
+          type: 'control_list_published',
+          title: 'Event controls published',
+          message: `The final control list for "${event.eventDetails.name}" is published. Review the organiser's evidence when it is submitted.`,
+          sourceActionId,
+          notificationId: `${sourceActionId}_${recipientUid}`,
+        });
+      } catch (err) {
+        console.warn(`[editEventControlList] authority notification failed for ${recipientUid} (non-fatal):`, err);
+      }
+    }));
     return {
       eventId,
       versionId,

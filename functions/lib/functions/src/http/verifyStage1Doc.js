@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.verifyStage1Doc = void 0;
 exports.verifyStage1DocForUser = verifyStage1DocForUser;
+exports.validateVerificationEvidencePath = validateVerificationEvidencePath;
 /**
  * verifyStage1Doc — server-mediated Stage 1 document verification
  * (FR-M3-22, FR-M3-23, Q1 refactor).
@@ -36,6 +37,7 @@ const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
 const notifications_1 = require("../utils/notifications");
 const controlAggregate_1 = require("../utils/controlAggregate");
+const controlLifecycle_1 = require("../utils/controlLifecycle");
 const RATIONALE_MIN = 10;
 const RATIONALE_MAX = 1_000;
 exports.verifyStage1Doc = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
@@ -51,7 +53,7 @@ exports.verifyStage1Doc = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGIO
         }
         const message = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
         console.error(`[verifyStage1Doc] unexpected error: ${message}`);
-        throw new https_1.HttpsError('internal', message.slice(0, 500));
+        throw new https_1.HttpsError('internal', 'Unable to record the Stage 1 verification. Retry shortly.');
     }
 });
 async function verifyStage1DocForUser(uid, data, now = Date.now()) {
@@ -60,7 +62,7 @@ async function verifyStage1DocForUser(uid, data, now = Date.now()) {
     const docId = (data.docId ?? '').trim();
     const status = data.status;
     const rationale = (data.rationale ?? '').trim();
-    const evidencePath = (data.evidencePath ?? '').trim() || undefined;
+    const evidencePath = validateVerificationEvidencePath(data.evidencePath);
     if (!eventId)
         throw new https_1.HttpsError('invalid-argument', 'eventId is required.');
     if (!controlId)
@@ -97,7 +99,7 @@ async function verifyStage1DocForUser(uid, data, now = Date.now()) {
             .find((candidate) => candidate.versionId === event.currentVersionId
             && candidate.authorityType === profile.authorityType
             && candidate.officerUid === uid
-            && (candidate.status === 'pending' || candidate.status === 'in_progress'));
+            && (candidate.status === 'pending' || candidate.status === 'in_progress' || candidate.status === 'completed'));
         if (!assignment) {
             throw new https_1.HttpsError('permission-denied', 'You are not the named officer assigned to this application.');
         }
@@ -105,6 +107,9 @@ async function verifyStage1DocForUser(uid, data, now = Date.now()) {
             throw new https_1.HttpsError('not-found', `Control ${controlId} was not found for this event.`);
         }
         const control = controlSnap.data();
+        if (!(0, controlLifecycle_1.isActiveControlGeneration)(event, control, eventId)) {
+            throw new https_1.HttpsError('failed-precondition', 'This control is not active for the current application version.');
+        }
         if (control.authority !== profile.authorityType) {
             throw new https_1.HttpsError('permission-denied', `This control belongs to ${control.authority}, not ${profile.authorityType}.`);
         }
@@ -137,10 +142,10 @@ async function verifyStage1DocForUser(uid, data, now = Date.now()) {
             updatedDoc.rejectionReason = '';
         }
         if (evidencePath) {
-            // Stash the evidence path on the doc so it's persisted with the
-            // verification (per FR-M3-22). The Stage1Doc type doesn't have
-            // evidencePath yet, so we use the filePath field.
-            updatedDoc.filePath = evidencePath;
+            // Keep officer verification provenance separate from the organizer's
+            // immutable uploaded file. This locator is deliberately not rendered
+            // as a link by the organizer UI.
+            updatedDoc.verificationEvidencePath = evidencePath;
         }
         // Recompute the aggregate (with the updated doc in the picture).
         const merged = allDocs.map((d) => (d.docId === docId ? updatedDoc : d));
@@ -227,5 +232,17 @@ async function verifyStage1DocForUser(uid, data, now = Date.now()) {
             idempotent: result.idempotent,
         };
     });
+}
+function validateVerificationEvidencePath(value) {
+    if (value === undefined || value === null || value === '')
+        return undefined;
+    if (typeof value !== 'string')
+        throw new https_1.HttpsError('invalid-argument', 'Evidence path must be text.');
+    const path = value.trim();
+    if (path.length < 1 || path.length > 400 || path.startsWith('/') || path.includes('..')
+        || !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(path)) {
+        throw new https_1.HttpsError('invalid-argument', 'Evidence path must be a safe relative locator.');
+    }
+    return path;
 }
 //# sourceMappingURL=verifyStage1Doc.js.map

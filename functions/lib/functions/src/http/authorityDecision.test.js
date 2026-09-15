@@ -104,11 +104,14 @@ const authorityFinalisation_1 = require("../engines/authorityFinalisation");
         (0, vitest_1.expect)((0, recordOfficerProposal_1.validateOfficerProposalRequest)({ eventId: 'event-1', decision: 'Approved', confirmedReview: true }))
             .toMatchObject({ eventId: 'event-1', decision: 'Approved', reason: '', confirmedReview: true });
     });
+    (0, vitest_1.it)('retires the legacy callable so initial-review events cannot bypass assignment or Admin second review', () => {
+        (0, vitest_1.expect)(() => (0, authorityDecision_1.assertLegacyAuthorityDecisionEndpointAvailable)()).toThrow(/legacy decision endpoint is retired/i);
+    });
     (0, vitest_1.it)('requires material confirmation for approval and suggestions for adverse recommendations', () => {
         (0, vitest_1.expect)(() => (0, authorityDecision_1.validateDecisionRequest)({ eventId: 'event-1', decision: 'Approved', rationale: 'Reviewed all required materials.' })).toThrow(https_1.HttpsError);
         (0, vitest_1.expect)((0, authorityDecision_1.validateDecisionRequest)({ eventId: 'event-1', decision: 'Approved', rationale: 'Reviewed all required materials.', materialsReviewed: true })).toMatchObject({ materialsReviewed: true });
         (0, vitest_1.expect)(() => (0, authorityDecision_1.validateDecisionRequest)({ eventId: 'event-1', decision: 'Rejected', rationale: 'Evidence is not sufficient.' })).toThrow(https_1.HttpsError);
-        (0, vitest_1.expect)((0, authorityDecision_1.validateDecisionRequest)({ eventId: 'event-1', decision: 'Rejected', rationale: 'Evidence is not sufficient.', suggestion: 'Provide verified evidence and submit the application again.' })).toMatchObject({ decision: 'Rejected' });
+        (0, vitest_1.expect)((0, authorityDecision_1.validateDecisionRequest)({ eventId: 'event-1', decision: 'Rejected', rationale: 'Evidence is not sufficient.', suggestion: 'Provide verified evidence and submit the application again.', rejectionReasonCategory: 'insufficient_evidence' })).toMatchObject({ decision: 'Rejected', rejectionReasonCategory: 'insufficient_evidence' });
         (0, vitest_1.expect)(() => (0, recordOfficerProposal_1.validateOfficerProposalRequest)({ eventId: 'event-1', decision: 'Rejected', reason: 'Evidence is not sufficient.' })).toThrow(https_1.HttpsError);
         (0, vitest_1.expect)(() => (0, recordOfficerProposal_1.validateOfficerProposalRequest)({ eventId: 'event-1', decision: 'Rejected', reason: 'Evidence is not sufficient.', suggestion: 'Fix it.' })).toThrow(https_1.HttpsError);
     });

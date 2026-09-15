@@ -30,7 +30,9 @@ export default {
           300: '#f0c340',   // main mustard
           400: '#eab12a',
           500: '#d49813',
-          600: '#a17932',   // muted mustard (logo fallback)
+          600: '#876216',   // accessible gold text on warm light surfaces
+          700: '#7a5612',
+          800: '#5f430d',
         },
         // Cream / sand background tones
         cream: {
@@ -49,7 +51,7 @@ export default {
           100: '#e7eaef',
           200: '#cfd5df',
           300: '#aab3c2',
-          400: '#7d8696',
+          400: '#687181',
           500: '#5b6473',
           600: '#3f4754',
           700: '#2c333d',
@@ -68,8 +70,8 @@ export default {
         'risk-high-inverse':   '#FF817B',
         'status-pending':  '#F0C340',
         'status-review':   '#F59E0B',
-        'status-approved': '#2DA44E',
-        'status-rejected': '#E63946',
+        'status-approved': '#287A45',
+        'status-rejected': '#B4232D',
         'status-amend':    '#A19432',
       },
       fontFamily: {

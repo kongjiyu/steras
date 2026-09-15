@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AIProposalError = exports.AI_TIMEOUT_MS = exports.AI_RESPONSE_SCHEMA_VERSION = exports.PROMPT_VERSION = exports.DEFAULT_MINIMAX_MODEL = exports.DEFAULT_MINIMAX_BASE_URL = void 0;
+exports.AIProposalError = exports.AI_RETRY_BASE_DELAY_MS = exports.AI_MAX_RETRIES = exports.AI_TIMEOUT_MS = exports.AI_RESPONSE_SCHEMA_VERSION = exports.PROMPT_VERSION = exports.DEFAULT_MINIMAX_MODEL = exports.DEFAULT_MINIMAX_BASE_URL = void 0;
 exports.predictWithAI = predictWithAI;
 exports.analyseWithAI = analyseWithAI;
 exports.failedProposal = failedProposal;
@@ -12,6 +12,7 @@ exports.buildAllowedInput = buildAllowedInput;
 exports.clearAICache = clearAICache;
 const node_crypto_1 = require("node:crypto");
 const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const logger_1 = require("firebase-functions/logger");
 const categorySchema_1 = require("../config/categorySchema");
 const hardRuleEvaluator_1 = require("./hardRuleEvaluator");
 const minimax_1 = require("../config/minimax");
@@ -23,6 +24,8 @@ Object.defineProperty(exports, "DEFAULT_MINIMAX_MODEL", { enumerable: true, get:
 exports.PROMPT_VERSION = 'v5.0.0-prd-numeric-proposal';
 exports.AI_RESPONSE_SCHEMA_VERSION = '2026-08-21-m2-proposal-v4';
 exports.AI_TIMEOUT_MS = 30_000;
+exports.AI_MAX_RETRIES = 3;
+exports.AI_RETRY_BASE_DELAY_MS = 250;
 const MAX_RESPONSE_CHARS = 24_000;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1_000;
 const MAX_CACHE_ENTRIES = 200;
@@ -101,17 +104,35 @@ async function predictWithAI(apiKey, event, context, baseline, options = {}) {
     CACHE.set(cacheKey, { value, expiresAt: now + CACHE_TTL_MS });
     return value;
 }
-async function analyseWithAI(apiKey, event, context, baseline, predictor = predictWithAI) {
+async function analyseWithAI(apiKey, event, context, baseline, predictor = predictWithAI, options = {}) {
     if (!apiKey)
         return failedProposal('unavailable', 'MiniMax is not configured.');
-    try {
-        return await predictor(apiKey, event, context, baseline);
+    const maxRetries = Math.min(exports.AI_MAX_RETRIES, Math.max(0, Math.trunc(options.maxRetries ?? exports.AI_MAX_RETRIES)));
+    const retryDelayMs = Math.max(0, Math.trunc(options.retryDelayMs ?? exports.AI_RETRY_BASE_DELAY_MS));
+    const sleep = options.sleep ?? wait;
+    let lastFailure;
+    for (let attempt = 1; attempt <= maxRetries + 1; attempt += 1) {
+        try {
+            return await predictor(apiKey, event, context, baseline);
+        }
+        catch (error) {
+            const kind = error instanceof AIProposalError ? error.kind : 'unavailable';
+            const detail = error instanceof Error ? error.message : 'Unknown MiniMax failure';
+            lastFailure = { kind, detail };
+            if (attempt > maxRetries)
+                break;
+            logger_1.logger.warn('[assessment-ai] MiniMax proposal attempt failed; retrying.', {
+                eventId: event.eventId,
+                attempt,
+                nextAttempt: attempt + 1,
+                maxAttempts: maxRetries + 1,
+                failureKind: kind,
+                errorSummary: detail.slice(0, 300),
+            });
+            await sleep(retryDelayMs * (2 ** (attempt - 1)));
+        }
     }
-    catch (error) {
-        const kind = error instanceof AIProposalError ? error.kind : 'unavailable';
-        const detail = error instanceof Error ? error.message : 'Unknown MiniMax failure';
-        return failedProposal(kind, detail);
-    }
+    return failedProposal(lastFailure?.kind ?? 'unavailable', `MiniMax failed after ${maxRetries + 1} attempts: ${lastFailure?.detail ?? 'Unknown MiniMax failure'}`);
 }
 function failedProposal(status, errorSummary, now = Date.now()) {
     return {
@@ -405,6 +426,11 @@ async function withTimeout(promise, timeoutMs) {
         if (timeout)
             clearTimeout(timeout);
     }
+}
+async function wait(milliseconds) {
+    if (milliseconds <= 0)
+        return;
+    await new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 function isRecord(value) {
     return typeof value === 'object' && value !== null && !Array.isArray(value);

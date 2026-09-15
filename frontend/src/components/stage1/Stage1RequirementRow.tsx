@@ -28,6 +28,8 @@ import {
 } from 'lucide-react';
 import { functions } from '../../config/firebase';
 import type { Stage1Doc } from '@shared/types';
+import { safeStage1DocumentHref } from './safeDocumentLink';
+import { useAppDialog } from '../../contexts/AppDialogContext';
 
 export interface Stage1Requirement {
   docId: string;
@@ -78,6 +80,7 @@ export default function Stage1RequirementRow(props: Stage1RequirementRowProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const dialog = useAppDialog();
 
   const status: Stage1Doc['status'] = doc?.status ?? 'pending_submission';
   const isReceipt = requirement.docType === 'receipt';
@@ -121,7 +124,7 @@ export default function Stage1RequirementRow(props: Stage1RequirementRowProps) {
 
   async function handleUsePrevious() {
     if (!isReceipt) return;
-    if (!window.confirm('Mark this receipt as "Use Previous"? Stage 2 is the public verification backstop — if the item is not actually at the venue, the public can report it via the M4 module.')) {
+    if (!await dialog.confirm({ title: 'Use the previous receipt?', description: 'STERAS will reuse the earlier receipt for this requirement. Public verification remains available, and missing items can still be reported through Incident reporting.', confirmLabel: 'Use previous receipt', cancelLabel: 'Upload another receipt' })) {
       return;
     }
     setSubmitting(true);
@@ -216,6 +219,7 @@ interface ActionsProps {
 }
 
 function renderActions({ status, isReceipt, filePath, disabled, onUpload, onUsePrevious }: ActionsProps) {
+  const safeFilePath = safeStage1DocumentHref(filePath);
   const uploadBtn = (label: string, icon: React.ReactNode, testid: string, key: string) => (
     <button
       key={key}
@@ -267,7 +271,7 @@ function renderActions({ status, isReceipt, filePath, disabled, onUpload, onUseP
     case 'pending_verification':
       return (
         <>
-          {filePath ? viewLink('View', filePath, 'pending') : viewLink('View', '#', 'pending')}
+          {safeFilePath ? viewLink('View', safeFilePath, 'pending') : viewLink('Unavailable', '#', 'pending')}
           {uploadBtn('Replace', <Replace size={14} />, 'stage1-replace', 'replace')}
         </>
       );

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
 import {
   User as FirebaseUser,
   onAuthStateChanged,
@@ -16,6 +16,7 @@ interface AuthContextValue {
   user: FirebaseUser | null;
   profile: UserProfile | null;
   loading: boolean;
+  profileError: string;
   configured: boolean;
   signIn: (email: string, password: string) => Promise<UserProfile | null>;
   signUp: (params: {
@@ -23,6 +24,7 @@ interface AuthContextValue {
     password: string;
     name: string;
     phone?: string;
+    termsVersion?: string;
   }) => Promise<void>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -34,17 +36,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [profileError, setProfileError] = useState('');
+  const profileRequest = useRef(0);
 
   // Fetch user profile from Firestore `users/{uid}`.
   const fetchProfile = async (uid: string): Promise<UserProfile | null> => {
     if (!isFirebaseConfigured) return null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const snap = await getDoc(doc(db, COLLECTIONS.USERS, uid));
+      const snap = await Promise.race([
+        getDoc(doc(db, COLLECTIONS.USERS, uid)),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('Profile request timed out')), 15000);
+        }),
+      ]);
       if (snap.exists()) {
         return snap.data() as UserProfile;
       }
     } catch (err) {
       console.error('[Auth] Failed to fetch profile:', err);
+      throw new Error('Your workspace profile could not be loaded. Check your connection and try again.');
+    } finally {
+      clearTimeout(timer);
     }
     return null;
   };
@@ -55,25 +68,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    let active = true;
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+      const request = ++profileRequest.current;
       setUser(fbUser);
-      if (fbUser) {
-        const p = await fetchProfile(fbUser.uid);
-        setProfile(p);
-      } else {
-        setProfile(null);
+      setProfile(null);
+      setProfileError('');
+      try {
+        const p = fbUser ? await fetchProfile(fbUser.uid) : null;
+        if (active && request === profileRequest.current) setProfile(p);
+      } catch (error) {
+        if (active && request === profileRequest.current) setProfileError((error as Error).message);
+      } finally {
+        if (active && request === profileRequest.current) setLoading(false);
       }
-      setLoading(false);
     });
-    return () => unsubscribe();
+    return () => { active = false; unsubscribe(); };
   }, []);
 
   const signIn = async (email: string, password: string) => {
     const credential = await signInWithEmailAndPassword(auth, email, password);
-    const nextProfile = await fetchProfile(credential.user.uid);
-    setUser(credential.user);
-    setProfile(nextProfile);
-    return nextProfile;
+    const request = ++profileRequest.current;
+    try {
+      const nextProfile = await fetchProfile(credential.user.uid);
+      if (request === profileRequest.current) {
+        setUser(credential.user);
+        setProfile(nextProfile);
+        setProfileError('');
+      }
+      return nextProfile;
+    } catch (error) {
+      if (request === profileRequest.current) {
+        setProfile(null);
+        setProfileError((error as Error).message);
+      }
+      throw error;
+    } finally {
+      if (request === profileRequest.current) setLoading(false);
+    }
   };
 
   const signUp: AuthContextValue['signUp'] = async (params) => {
@@ -93,6 +125,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await setDoc(doc(db, COLLECTIONS.USERS, uid), {
         ...newProfile,
+        ...(params.termsVersion ? { termsVersion: params.termsVersion, termsAcceptedAt: now } : {}),
         // Store serverTimestamp as well for server-side sorting consistency
         _serverCreatedAt: serverTimestamp(),
       });
@@ -106,18 +139,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       throw profileError;
     }
+    ++profileRequest.current;
+    setUser(cred.user);
     setProfile(newProfile);
+    setProfileError('');
+    setLoading(false);
   };
 
   const signOut = async () => {
     await fbSignOut(auth);
+    ++profileRequest.current;
+    setUser(null);
     setProfile(null);
+    setProfileError('');
+    setLoading(false);
   };
 
   const refreshProfile = async () => {
     if (user) {
-      const p = await fetchProfile(user.uid);
-      setProfile(p);
+      const request = ++profileRequest.current;
+      try {
+        const p = await fetchProfile(user.uid);
+        if (request === profileRequest.current) {
+          setProfile(p);
+          setProfileError('');
+        }
+      } catch (error) {
+        if (request === profileRequest.current) setProfileError((error as Error).message);
+      }
     }
   };
 
@@ -127,6 +176,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user,
         profile,
         loading,
+        profileError,
         configured: isFirebaseConfigured,
         signIn,
         signUp,

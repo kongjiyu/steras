@@ -443,7 +443,7 @@ function sampleEvent(sample: RealReviewSampleDefinition, userIds: UserIds, artif
     versionId: VERSION_ID, eventId: sample.id, versionNumber: 1, eventDetails: details,
     documentPaths: [`${STORAGE_PREFIX}/${sample.id}/${VERSION_ID}/application-evidence.txt`],
     documentUploads: [{
-      path: `${STORAGE_PREFIX}/${sample.id}/${VERSION_ID}/application-evidence.txt`, role: 'combined_application', originalName: 'synthetic-event-evidence.txt',
+      path: `${STORAGE_PREFIX}/${sample.id}/${VERSION_ID}/application-evidence.txt`, role: 'supporting_evidence', originalName: 'synthetic-event-evidence.txt',
        mimeType: 'text/plain', sizeBytes: evidenceSizeBytes, uploadedAt: now, schemaVersion: M1_DOCUMENT_SCHEMA_VERSION,
     }],
     evidenceManifest: [], evidenceManifestSchemaVersion: M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,

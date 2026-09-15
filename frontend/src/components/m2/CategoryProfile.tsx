@@ -52,9 +52,9 @@ export default function CategoryProfile({ assessment, density = 'detailed', show
 
       {showVersion && (
         <dl className="grid gap-x-5 gap-y-3 border-y border-[#e3dacb] py-3 text-xs sm:grid-cols-3">
-          <Meta label="Assessment schema" value={assessment.schemaVersion} />
-          <Meta label="Category schema" value={result.categorySchemaVersion} />
-          <Meta label="Formula" value={result.formulaVersion} />
+          <Meta label="Assessment contract" value={assessment.schemaVersion} />
+          <Meta label="Risk category set" value={result.categorySchemaVersion} />
+          <Meta label="Calculation" value={result.formulaVersion} />
         </dl>
       )}
 

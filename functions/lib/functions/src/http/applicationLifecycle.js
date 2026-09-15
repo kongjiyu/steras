@@ -54,6 +54,18 @@ function lifecycleRevisionSource(event, now) {
             rejectionSuggestion: event.initialReview.suggestion.trim(),
         };
     }
+    if (event.status === 'Rejected'
+        && event.secondReview?.confirmedDecision === 'Rejected'
+        && event.secondReview.reason?.trim()
+        && event.secondReview.suggestion?.trim()) {
+        return {
+            kind: 'rejected_revision',
+            sourceVersionId,
+            startedAt: now,
+            rejectionReason: event.secondReview.reason.trim(),
+            rejectionSuggestion: event.secondReview.suggestion.trim(),
+        };
+    }
     return undefined;
 }
 function hasCanonicalCurrentVersion(event) {

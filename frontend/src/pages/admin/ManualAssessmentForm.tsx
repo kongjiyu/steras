@@ -70,6 +70,47 @@ export function friendlyManualAssessmentError(code: string): string {
   return 'Complete the highlighted manual-assessment fields.';
 }
 
+interface AdminAiRetryPanelProps {
+  eventId: string;
+  onCompleted?: () => void;
+  failureMessage?: string;
+}
+
+export function AdminAiRetryPanel({ eventId, onCompleted, failureMessage }: AdminAiRetryPanelProps) {
+  const [retryingAI, setRetryingAI] = useState(false);
+  const retryAI = async () => {
+    setRetryingAI(true);
+    try {
+      const retryAssessment = httpsCallable<
+        { eventId: string },
+        { success: boolean; assessmentStatus?: string; reason?: string }
+      >(functions, 'manualRecompute', { timeout: 240_000 });
+      const result = (await retryAssessment({ eventId })).data;
+      if (!result.success) throw new Error(`AI retry was not applied${result.reason ? `: ${result.reason}` : '.'}`);
+      if (result.assessmentStatus === 'provisional_ready') {
+        toast.success('AI assessment completed and produced a provisional result.');
+      } else {
+        toast.error('AI remains unavailable after all retry attempts. Continue with the manual assessment.');
+      }
+      onCompleted?.();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'AI assessment retry failed.');
+    } finally {
+      setRetryingAI(false);
+    }
+  };
+  return (
+    <div className="rounded-md border border-brand-200 bg-brand-50/50 p-4">
+      <p className="text-sm font-semibold text-ink-800">Retry the AI assessment</p>
+      {failureMessage && <p className="mt-1 text-xs leading-5 text-status-rejected">Previous attempt: {failureMessage}</p>}
+      <p className="mt-1 text-xs leading-5 text-ink-600">STERAS will reassess this unchanged application and automatically retry invalid, timed-out or unavailable MiniMax responses up to three times.</p>
+      <button className="btn-secondary mt-3" disabled={retryingAI} onClick={retryAI} type="button">
+        {retryingAI ? 'AI is reassessing…' : 'Retry AI assessment'}
+      </button>
+    </div>
+  );
+}
+
 export default function ManualAssessmentForm({ eventId, assessment, onCompleted }: ManualAssessmentFormProps) {
   const eligibleEvidence = useMemo(
     () => assessment.evidence.filter((evidence) => evidence && evidence.eligibility === 'eligible' && evidence.quality !== 'missing'
@@ -91,6 +132,7 @@ export default function ManualAssessmentForm({ eventId, assessment, onCompleted 
   const evidenceKeys = eligibleEvidence.map((item) => item.key);
   const errors = useMemo(() => validateManualAssessmentDraft(hazards, categories, rationale, evidenceKeys), [categories, evidenceKeys, hazards, rationale]);
   const completeCategories = categories.filter((category) => Object.keys(validateManualAssessmentDraft([hazards[0]], [category], 'a'.repeat(20), evidenceKeys)).every((key) => !key.startsWith('category-'))).length;
+  const canRetryAI = assessment.aiProposal !== null && assessment.aiProposal.status !== 'success';
 
   const submit = async () => {
     const validationErrors = validateManualAssessmentDraft(hazards, categories, rationale, evidenceKeys);
@@ -143,6 +185,9 @@ export default function ManualAssessmentForm({ eventId, assessment, onCompleted 
         </div>
       ) : (
         <>
+          {canRetryAI && (
+            <div className="mb-5"><AdminAiRetryPanel eventId={eventId} onCompleted={onCompleted} /></div>
+          )}
           <div className="flex items-center justify-between">
             <div>
               <h3 className="font-display font-semibold text-ink-800">Manual hazard assessment</h3>

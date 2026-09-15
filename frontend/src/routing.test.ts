@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getPostLoginPath, getRoleHome } from './routing';
+import { getIncidentPath, getPostLoginPath, getRoleHome } from './routing';
 
 describe('routing policy', () => {
   it('maps workspace roles to their home routes', () => {
@@ -7,6 +7,13 @@ describe('routing policy', () => {
     expect(getRoleHome('authority')).toBe('/authority');
     expect(getRoleHome('admin')).toBe('/admin');
     expect(getRoleHome('public')).toBe('/calendar');
+  });
+
+  it('keeps incident reporting inside each authenticated workspace shell', () => {
+    expect(getIncidentPath('organizer')).toBe('/organizer/incidents');
+    expect(getIncidentPath('authority')).toBe('/authority/incidents');
+    expect(getIncidentPath('admin')).toBe('/admin/incidents');
+    expect(getIncidentPath('public')).toBe('/incidents');
   });
 
   it('restores a same-role protected route including search and hash', () => {

@@ -97,6 +97,12 @@ async function proposeControlItemsForEventWithMetadata(eventId, versionId) {
     if (event.currentVersionId && event.currentVersionId !== versionId) {
         throw new Error(`Version ${versionId} is not the current version for event ${eventId}.`);
     }
+    if (event.status !== 'Approved') {
+        throw new Error('The Admin second review must approve the current application before generating controls.');
+    }
+    if (!event.currentAssessmentId || !event.currentResourceId) {
+        throw new Error('The current official assessment/resource pointers are missing.');
+    }
     const required = event.requiredAuthorities ?? [];
     const fallbackItems = required.map((authority) => ({
         controlName: CONTROL_NAMES[authority] ?? `${authority} compliance`,
@@ -113,6 +119,15 @@ async function proposeControlItemsForEventWithMetadata(eventId, versionId) {
             ? (0, firebase_admin_1.firestore)().collection(types_1.COLLECTIONS.EVENTS).doc(eventId).collection(types_1.COLLECTIONS.RESOURCES).doc(event.currentResourceId).get()
             : Promise.resolve(null),
     ]);
+    const assessment = assessmentSnap?.data();
+    const resource = resourceSnap?.data();
+    if (!assessmentSnap?.exists || assessment?.status !== 'official_ready'
+        || assessment.eventId !== eventId || assessment.versionId !== versionId
+        || !resourceSnap?.exists || resource?.stage !== 'official'
+        || resource.eventId !== eventId || resource.versionId !== versionId
+        || resource.assessmentId !== event.currentAssessmentId) {
+        throw new Error('The control list requires a current official risk assessment and safety resource recommendation.');
+    }
     let apiKey = '';
     try {
         apiKey = secrets_1.MINIMAX_API_KEY.value();
@@ -124,8 +139,8 @@ async function proposeControlItemsForEventWithMetadata(eventId, versionId) {
     return (0, controlListProposer_1.proposeControlListWithMiniMax)(apiKey, {
         event,
         requiredAuthorities: required,
-        assessment: assessmentSnap?.exists ? assessmentSnap.data() : undefined,
-        resource: resourceSnap?.exists ? resourceSnap.data() : undefined,
+        assessment,
+        resource,
     }, fallbackItems);
 }
 //# sourceMappingURL=proposeEventControlList.js.map

@@ -6,7 +6,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.parseM1Docx = parseM1Docx;
 exports.parseM1Pdf = parseM1Pdf;
 exports.validateTemplateIdentity = validateTemplateIdentity;
-exports.validateCombinedTemplateIdentity = validateCombinedTemplateIdentity;
 exports.mapM1Documents = mapM1Documents;
 const jszip_1 = __importDefault(require("jszip"));
 const pdf_parse_1 = require("pdf-parse");
@@ -16,6 +15,7 @@ const MAX_PDF_TEXT_CHARACTERS = 2_000_000;
 const REQUIRED_AUTO_FILL_TARGETS = [
     'name',
     'description',
+    'venueName',
     'venueAddress',
     'expectedAttendance',
     'startDatetime',
@@ -24,6 +24,24 @@ const REQUIRED_AUTO_FILL_TARGETS = [
     'organizerName',
     'organizerEmail',
     'organizerPhone',
+    'riskProfile.vulnerableAttendeesPercent',
+    'riskProfile.standingAttendeesPercent',
+    'riskProfile.internationalAttendees',
+    'riskProfile.alcoholServed',
+    'riskProfile.foodServed',
+    'riskProfile.freeDrinkingWater',
+    'riskProfile.ticketedEntry',
+    'riskProfile.overnightAccommodation',
+    'riskProfile.pyrotechnics',
+    'riskProfile.temporaryStructures',
+    'riskProfile.rivalryOrTensionExpected',
+    'riskProfile.crowdManagementPlan',
+    'riskProfile.trafficManagementPlan',
+    'riskProfile.severeWeatherPlan',
+    'riskProfile.medicalPlan',
+    'riskProfile.evacuationPlanTested',
+    'riskProfile.authorityCoordinationConfirmed',
+    'riskProfile.nearestHospitalTravelMinutes',
 ];
 async function parseM1Docx(buffer) {
     let archive;
@@ -50,7 +68,7 @@ async function parseM1Docx(buffer) {
         const cells = (row.match(/<w:tc\b[\s\S]*?<\/w:tc>/g) ?? []).map(xmlText);
         if (cells.length < 2)
             continue;
-        const match = cells[0].match(/\b(?:[A-Z]\d{2}|T\d{2}-[A-Z]\d{2})\s*\/\s*([A-Z][A-Z0-9_]+)\b/);
+        const match = cells[0].match(/\b(?:[A-Z]\d{2}[A-Z]?|T\d{2}-[A-Z]\d{2})\s*\/\s*([A-Z][A-Z0-9_]+)\b/);
         if (!match)
             continue;
         const value = cleanResponse(cells.slice(1).join('\n'));
@@ -87,32 +105,32 @@ async function parseM1Pdf(buffer) {
         await parser.destroy();
     }
     if (!text)
-        throw new Error('The combined PDF contains no searchable text. Upload a text-based PDF rather than a scanned image.');
+        throw new Error('The PDF contains no searchable text. Upload a text-based PDF rather than a scanned image.');
     if (text.length > MAX_PDF_TEXT_CHARACTERS)
-        throw new Error('The combined PDF contains too much text to extract safely.');
+        throw new Error('The PDF contains too much text to extract safely.');
     const fields = new Map();
     for (const row of tableRows) {
-        const match = row[0]?.match(/\b(?:[A-Z]\d{2}|T\d{2}-[A-Z]\d{2})\s*\/\s*([A-Z][A-Z0-9_]+)\b/);
+        const match = row[0]?.match(/\b(?:[A-Z]\d{2}[A-Z]?|T\d{2}-[A-Z]\d{2})\s*\/\s*([A-Z][A-Z0-9_]+)\b/);
         if (!match)
             continue;
         if (fields.has(match[1]))
-            throw new Error(`The combined PDF contains duplicate field ID ${match[1]}.`);
+            throw new Error(`The PDF contains duplicate field ID ${match[1]}.`);
         fields.set(match[1], cleanPdfResponse(row.slice(1).join('\n').replace(/\[[\s\S]*?\]/g, '')));
     }
     if (fields.size === 0) {
-        const markers = [...text.matchAll(/\b(?:[A-Z]\d{2}|T\d{2}-[A-Z]\d{2})\s*\/\s*([A-Z][A-Z0-9_]+)\b/g)];
+        const markers = [...text.matchAll(/\b(?:[A-Z]\d{2}[A-Z]?|T\d{2}-[A-Z]\d{2})\s*\/\s*([A-Z][A-Z0-9_]+)\b/g)];
         for (let index = 0; index < markers.length; index += 1) {
             const marker = markers[index];
             const fieldId = marker[1];
             if (fields.has(fieldId))
-                throw new Error(`The combined PDF contains duplicate field ID ${fieldId}.`);
+                throw new Error(`The PDF contains duplicate field ID ${fieldId}.`);
             const start = (marker.index ?? 0) + marker[0].length;
             const end = markers[index + 1]?.index ?? text.length;
             fields.set(fieldId, pdfResponse(text.slice(start, end)));
         }
     }
     if (fields.size === 0)
-        throw new Error('No STERAS Field IDs were found in the combined PDF.');
+        throw new Error('No STERAS Field IDs were found in the PDF.');
     return { text, fields };
 }
 function pdfResponse(section) {
@@ -189,23 +207,6 @@ function validateTemplateIdentity(core, scenario, expectedScenarioTemplateId) {
         errors.push('The Core and scenario document roles appear to be reversed.');
     return errors;
 }
-function validateCombinedTemplateIdentity(document, expectedScenarioTemplateId) {
-    const errors = [];
-    if (!containsToken(document.text, 'STERAS-CORE'))
-        errors.push('The combined PDF does not contain the STERAS Core template.');
-    if (!['EVENT_NAME', 'EVENT_DATES', 'EVENT_ADDRESS', 'TOTAL_ATTENDANCE', 'RESPONSIBLE_PERSON'].every((fieldId) => document.fields.has(fieldId))) {
-        errors.push('The combined PDF is missing required Core STERAS Field IDs.');
-    }
-    if (!containsToken(document.text, expectedScenarioTemplateId)) {
-        errors.push(`The combined PDF does not contain scenario template ${expectedScenarioTemplateId}.`);
-    }
-    const expectedPrefix = expectedScenarioTemplateId.match(/STERAS-(T\d{2})-/)?.[1];
-    const scenarioPrefixes = new Set([...document.text.matchAll(/\b(T\d{2})-[A-Z]\d{2}\s*\//g)].map((match) => match[1]));
-    if (!expectedPrefix || scenarioPrefixes.size !== 1 || !scenarioPrefixes.has(expectedPrefix)) {
-        errors.push(`The combined PDF scenario Field IDs do not match ${expectedScenarioTemplateId}.`);
-    }
-    return errors;
-}
 function mapM1Documents(core, scenario) {
     const extractedFields = [];
     const warnings = [];
@@ -216,14 +217,17 @@ function mapM1Documents(core, scenario) {
     };
     add('name', meaningful(core.fields.get('EVENT_NAME')), ['EVENT_NAME']);
     add('description', meaningful(core.fields.get('EVENT_PURPOSE')), ['EVENT_PURPOSE']);
+    add('venueName', meaningful(core.fields.get('VENUE_NAME')), ['VENUE_NAME']);
     add('venueAddress', meaningful(core.fields.get('EVENT_ADDRESS')), ['EVENT_ADDRESS']);
     add('expectedAttendance', firstSafeInteger(core.fields.get('TOTAL_ATTENDANCE')), ['TOTAL_ATTENDANCE']);
     add('organizerName', meaningful(core.fields.get('RESPONSIBLE_PERSON')), ['RESPONSIBLE_PERSON']);
-    const contact = core.fields.get('RESPONSIBLE_CONTACT') ?? '';
+    const contact = `${core.fields.get('RESPONSIBLE_CONTACT') ?? ''}\n${fieldTextSection(core.text, 'RESPONSIBLE_CONTACT')}`;
     add('organizerEmail', firstEmail(contact), ['RESPONSIBLE_CONTACT']);
     add('organizerPhone', firstPhone(contact), ['RESPONSIBLE_CONTACT'], 'medium');
-    const dates = isoDates(core.fields.get('EVENT_DATES') ?? '');
-    const times = clockTimes(core.fields.get('OPERATING_HOURS') ?? '');
+    const sectionDates = isoDates(fieldTextSection(core.text, 'EVENT_DATES'));
+    const sectionTimes = clockTimes(fieldTextSection(core.text, 'OPERATING_HOURS'));
+    const dates = sectionDates.length >= 2 ? sectionDates : isoDates(core.fields.get('EVENT_DATES') ?? '');
+    const times = sectionTimes.length >= 2 ? sectionTimes : clockTimes(core.fields.get('OPERATING_HOURS') ?? '');
     if (dates[0])
         add('startDatetime', malaysiaTimestamp(dates[0], times[0] ?? '00:00'), ['EVENT_DATES', 'OPERATING_HOURS']);
     if (dates[1])
@@ -243,17 +247,44 @@ function mapM1Documents(core, scenario) {
     add('emergencyPlanSummary', emergencyParts.join('\n'), ['CROWD_MANAGEMENT', 'SECURITY', 'MEDICAL', 'EVACUATION', 'DISRUPTION_ARRANGEMENTS'], emergencyParts.length >= 3 ? 'high' : 'low');
     const capacity = findScenarioInteger(scenario.fields, ['APPROVED_CAPACITY', 'SITE_CAPACITY', 'ROUTE_CAPACITY']);
     add('venueCapacity', capacity, scenarioIds(scenario, ['APPROVED_CAPACITY', 'SITE_CAPACITY', 'ROUTE_CAPACITY']));
-    add('riskProfile.pyrotechnics', affirmativeScenarioField(scenario, ['SPECIAL_EFFECTS', 'PYROTECHNICS', 'FIREWORKS']), scenarioIds(scenario, ['SPECIAL_EFFECTS', 'PYROTECHNICS', 'FIREWORKS']));
-    add('riskProfile.temporaryStructures', affirmativeScenarioField(scenario, ['TEMPORARY_STRUCTURES']), scenarioIds(scenario, ['TEMPORARY_STRUCTURES']));
-    add('riskProfile.foodServed', affirmativeScenarioField(scenario, ['FOOD_BEVERAGE_INSIDE', 'FOOD_BEVERAGE', 'FOOD_SERVICE']), scenarioIds(scenario, ['FOOD_BEVERAGE_INSIDE', 'FOOD_BEVERAGE', 'FOOD_SERVICE']));
-    add('riskProfile.alcoholServed', affirmativeScenarioField(scenario, ['ALCOHOL_SERVICE']), scenarioIds(scenario, ['ALCOHOL_SERVICE']));
-    add('riskProfile.ticketedEntry', affirmative(core.fields.get('REGISTRATION_TICKETING')), ['REGISTRATION_TICKETING']);
+    add('riskProfile.vulnerableAttendeesPercent', boundedWholeNumber(core.fields.get('VULNERABLE_ATTENDEES_PERCENT'), 0, 100), ['VULNERABLE_ATTENDEES_PERCENT']);
+    add('riskProfile.standingAttendeesPercent', boundedWholeNumber(core.fields.get('STANDING_ATTENDEES_PERCENT'), 0, 100), ['STANDING_ATTENDEES_PERCENT']);
+    addRiskBoolean('riskProfile.internationalAttendees', 'INTERNATIONAL_ATTENDEES');
+    addRiskBoolean('riskProfile.alcoholServed', 'ALCOHOL_SERVED', ['ALCOHOL_SERVICE']);
+    addRiskBoolean('riskProfile.foodServed', 'FOOD_SERVED', ['FOOD_BEVERAGE_INSIDE', 'FOOD_BEVERAGE', 'FOOD_SERVICE']);
+    addRiskBoolean('riskProfile.freeDrinkingWater', 'FREE_DRINKING_WATER');
+    addRiskBoolean('riskProfile.ticketedEntry', 'TICKETED_ENTRY', ['REGISTRATION_TICKETING']);
+    addRiskBoolean('riskProfile.overnightAccommodation', 'OVERNIGHT_ACCOMMODATION');
+    addRiskBoolean('riskProfile.pyrotechnics', 'PYROTECHNICS', ['SPECIAL_EFFECTS', 'PYROTECHNICS', 'FIREWORKS']);
+    addRiskBoolean('riskProfile.temporaryStructures', 'ALL_HAZARDS_TEMPORARY_STRUCTURES', ['TEMPORARY_STRUCTURES']);
+    addRiskBoolean('riskProfile.rivalryOrTensionExpected', 'RIVALRY_OR_TENSION_EXPECTED');
+    addRiskBoolean('riskProfile.crowdManagementPlan', 'CROWD_MANAGEMENT_PLAN');
+    addRiskBoolean('riskProfile.trafficManagementPlan', 'TRAFFIC_MANAGEMENT_PLAN');
+    addRiskBoolean('riskProfile.severeWeatherPlan', 'SEVERE_WEATHER_PLAN');
+    addRiskBoolean('riskProfile.medicalPlan', 'MEDICAL_PLAN');
+    addRiskBoolean('riskProfile.evacuationPlanTested', 'EVACUATION_PLAN_TESTED');
+    addRiskBoolean('riskProfile.authorityCoordinationConfirmed', 'AUTHORITY_COORDINATION_CONFIRMED');
+    add('riskProfile.nearestHospitalTravelMinutes', boundedWholeNumber(core.fields.get('NEAREST_HOSPITAL_TRAVEL_MINUTES'), 0, 240), ['NEAREST_HOSPITAL_TRAVEL_MINUTES']);
     for (const target of REQUIRED_AUTO_FILL_TARGETS) {
         if (!extractedFields.some((field) => field.target === target))
             warnings.push(`${target} was not extracted and must be completed manually.`);
     }
     const completed = REQUIRED_AUTO_FILL_TARGETS.filter((target) => extractedFields.some((field) => field.target === target)).length;
     return { extractedFields, warnings, completionPercent: Math.round((completed / REQUIRED_AUTO_FILL_TARGETS.length) * 100) };
+    function addRiskBoolean(target, coreFieldId, fallbackScenarioSuffixes = []) {
+        const coreValue = affirmative(core.fields.get(coreFieldId));
+        if (coreValue !== undefined) {
+            add(target, coreValue, [coreFieldId]);
+            return;
+        }
+        const fallbackValue = fallbackScenarioSuffixes.includes('REGISTRATION_TICKETING')
+            ? affirmative(core.fields.get('REGISTRATION_TICKETING'))
+            : affirmativeScenarioField(scenario, fallbackScenarioSuffixes);
+        const fallbackIds = fallbackScenarioSuffixes.includes('REGISTRATION_TICKETING')
+            ? ['REGISTRATION_TICKETING']
+            : scenarioIds(scenario, fallbackScenarioSuffixes);
+        add(target, fallbackValue, fallbackIds);
+    }
 }
 function xmlText(xml) {
     const withBreaks = xml.replace(/<w:(?:tab|br)\b[^>]*\/>/g, '\n').replace(/<\/w:p>/g, '\n');
@@ -283,12 +314,27 @@ function meaningful(value) {
 function containsToken(value, token) {
     return value.toLocaleUpperCase().includes(token.toLocaleUpperCase());
 }
+function fieldTextSection(text, fieldId) {
+    const marker = new RegExp(`\\b(?:[A-Z]\\d{2}[A-Z]?|T\\d{2}-[A-Z]\\d{2})\\s*\\/\\s*${fieldId}\\b`).exec(text);
+    if (!marker || marker.index === undefined)
+        return '';
+    const start = marker.index + marker[0].length;
+    const next = /\b(?:[A-Z]\d{2}[A-Z]?|T\d{2}-[A-Z]\d{2})\s*\/\s*[A-Z][A-Z0-9_]+\b/.exec(text.slice(start));
+    return text.slice(start, next ? start + next.index : text.length);
+}
 function firstSafeInteger(value) {
     const match = value?.replace(/,/g, '').match(/\b\d+\b/);
     if (!match)
         return undefined;
     const number = Number(match[0]);
     return Number.isSafeInteger(number) && number > 0 ? number : undefined;
+}
+function boundedWholeNumber(value, minimum, maximum) {
+    const match = value?.replace(/,/g, '').match(/\b\d+\b/);
+    if (!match)
+        return undefined;
+    const number = Number(match[0]);
+    return Number.isSafeInteger(number) && number >= minimum && number <= maximum ? number : undefined;
 }
 function firstEmail(value) {
     const repairedPdfWrap = value.replace(/([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})[ \t]*\n[ \t]*([A-Z]{1,4})\b/i, '$1$2');

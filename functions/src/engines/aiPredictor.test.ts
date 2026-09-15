@@ -5,6 +5,7 @@ import { validateAndCalculateProvisional } from './assessmentValidator';
 import { computeResources } from './resourceCalculator';
 import {
   AIProposalError,
+  AI_MAX_RETRIES,
   AI_TIMEOUT_MS,
   analyseWithAI,
   buildAllowedInput,
@@ -147,11 +148,33 @@ describe('predictWithAI', () => {
   });
 
   it('returns failure attempts without fabricated categories', async () => {
+    let attempts = 0;
     const result = await analyseWithAI('secret', event, context, baseline, async () => {
+      attempts += 1;
       throw new AIProposalError('timeout', 'test timeout');
+    }, { retryDelayMs: 0 });
+    expect(attempts).toBe(AI_MAX_RETRIES + 1);
+    expect(result).toMatchObject({
+      status: 'timeout', retryable: true, cacheStatus: 'not-applicable',
+      errorSummary: expect.stringContaining(`after ${AI_MAX_RETRIES + 1} attempts`),
     });
-    expect(result).toMatchObject({ status: 'timeout', retryable: true, cacheStatus: 'not-applicable' });
     expect(result).not.toHaveProperty('categories');
+  });
+
+  it('returns a valid proposal when a retry recovers from malformed MiniMax output', async () => {
+    let attempts = 0;
+    const delays: number[] = [];
+    const result = await analyseWithAI('secret', event, context, baseline, async () => {
+      attempts += 1;
+      if (attempts < 3) throw new AIProposalError('invalid', 'unsupported field: concernes');
+      return {
+        status: 'success', proposalId: 'proposal-recovered', model: 'test', promptVersion: 'test',
+        responseSchemaVersion: 'test', ...parseAIProposal(validResponse, categoryIds), cacheStatus: 'miss', generatedAt: 1,
+      };
+    }, { retryDelayMs: 10, sleep: async (milliseconds) => { delays.push(milliseconds); } });
+    expect(attempts).toBe(3);
+    expect(delays).toEqual([10, 20]);
+    expect(result).toMatchObject({ status: 'success', proposalId: 'proposal-recovered' });
   });
 
   it.each(['unavailable', 'timeout', 'invalid'] as const)(
@@ -159,7 +182,7 @@ describe('predictWithAI', () => {
     async (status) => {
       const result = await analyseWithAI('secret', event, context, baseline, async () => {
         throw new AIProposalError(status, `test ${status}`);
-      });
+      }, { retryDelayMs: 0 });
       expect(result).toMatchObject({ status, retryable: true });
       expect(result).not.toHaveProperty('categories');
     },

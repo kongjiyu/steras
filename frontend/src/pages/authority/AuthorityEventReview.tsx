@@ -24,6 +24,8 @@ import {
   HARD_RULE_VERSION,
   MANUAL_ASSESSMENT_SCHEMA_VERSION,
   MANUAL_OFFICIAL_FORMULA_VERSION,
+  REJECTION_REASON_CATEGORIES,
+  RejectionReasonCategory,
   ResourceRecommendation,
   ResourceOverrideRecord,
   ResourceOverrideRequest,
@@ -45,6 +47,7 @@ import { RESOURCE_FIELDS, toResourceQuantities } from '../../components/m2/m2Pre
 import EmptyState from '../../components/ui/EmptyState';
 import { ApplicationDisplayBadge } from '../../components/ui/StatusBadge';
 import { useAuth } from '../../contexts/AuthContext';
+import { displayIdentityName, useDisplayIdentities, type DisplayIdentityMap } from '../../hooks/useDisplayIdentities';
 import { activeScoreResolutionId } from './authorityReviewPresentation';
 
 export default function AuthorityEventReview() {
@@ -74,6 +77,7 @@ export default function AuthorityEventReview() {
   // + the legacy makeAuthorityDecision) refuses Approved without it.
   const [confirmedReview, setConfirmedReview] = useState(false);
   const [suggestion, setSuggestion] = useState('');
+  const [rejectionReasonCategory, setRejectionReasonCategory] = useState<RejectionReasonCategory | ''>('');
   const [submittingDecision, setSubmittingDecision] = useState<DecisionValue | null>(null);
   const [editingResources, setEditingResources] = useState(false);
   const [resourceDraft, setResourceDraft] = useState<ResourceQuantities | null>(null);
@@ -235,6 +239,14 @@ export default function AuthorityEventReview() {
       : resources && latestResourceOverride ? applyResourceOverride(resources, latestResourceOverride) : resources,
     [assessment?.status, latestResourceOverride, resources],
   );
+  const identityNames = useDisplayIdentities([
+    ...assignments.flatMap((assignment) => [assignment.officerUid, assignment.assignedBy, assignment.revokedBy]),
+    ...resourceOverrides.map((override) => override.reviewerId),
+    ...Object.values(stage1DocsByControl).flatMap((documents) => documents.flatMap((document) => [document.uploadedBy, document.verifiedBy])),
+    scoreResolution?.resolvedBy,
+    manualAssessment?.submittedBy,
+    assessment?.status === 'official_ready' && 'officialResult' in assessment ? assessment.officialResult.finalizedBy : undefined,
+  ]);
   useEffect(() => {
     setScoreReviewSubmitted(false);
     setEditingScores(false);
@@ -339,7 +351,7 @@ export default function AuthorityEventReview() {
   // FR-M3-16: approval requires an explicit materials-review confirmation.
   const canApprove = isNamedOfficer && reviewOpen && evidenceReady
     && confirmedReview && assessment?.complianceStatus !== 'blocked';
-  const canReject = isNamedOfficer && reviewOpen && evidenceReady && rationale.trim().length >= rejectionRationaleMinimum && suggestion.trim().length >= 10;
+  const canReject = isNamedOfficer && reviewOpen && evidenceReady && rationale.trim().length >= rejectionRationaleMinimum && suggestion.trim().length >= 10 && Boolean(rejectionReasonCategory);
   const ownDecision = myAuthorityType ? currentDecisions.get(myAuthorityType) : undefined;
   const displayState = resolveApplicationDisplayState({
     status: event.status,
@@ -369,18 +381,21 @@ export default function AuthorityEventReview() {
         reason?: string;
         suggestion?: string;
         confirmedReview?: boolean;
+        rejectionReasonCategory?: RejectionReasonCategory;
       }>(functions, 'recordOfficerProposal');
       await command({
         eventId,
         decision,
         ...(rationale.trim() ? { reason: rationale.trim() } : {}),
         ...(suggestion.trim() ? { suggestion: suggestion.trim() } : {}),
+        ...(decision === 'Rejected' ? { rejectionReasonCategory: rejectionReasonCategory as RejectionReasonCategory } : {}),
         ...(isApproval ? { confirmedReview: true } : {}),
       });
       toast.success(decision === 'Approved' ? 'Approval proposal recorded.' : 'Rejection proposal recorded.');
       setRationale('');
       setConfirmedReview(false);
       setSuggestion('');
+      setRejectionReasonCategory('');
     } catch (error) {
       toast.error(callableErrorMessage(error, 'Unable to record decision.'));
     } finally {
@@ -520,7 +535,7 @@ export default function AuthorityEventReview() {
                   {assessment.status === 'manual_review_required'
                     ? null
                     : assessment.status === 'official_ready' && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual'
-                    ? <><ManualOfficialProvenance assessment={assessment} />{manualAssessment && <ManualAssessmentDetails assessment={manualAssessment} />}</>
+                    ? <><ManualOfficialProvenance assessment={assessment} finalizedByName={displayIdentityName(assessment.officialResult.finalizedBy, identityNames, 'STERAS administrator')} />{manualAssessment && <ManualAssessmentDetails assessment={manualAssessment} />}</>
                     : <AIAdvisory
                         advisory={assessment.aiProposal}
                         resultRiskLevel={assessmentRiskLevel(assessment)}
@@ -599,7 +614,7 @@ export default function AuthorityEventReview() {
                     <button type="button" className="btn-primary" disabled={savingResources || !selectedResourceKey || resourceRationale.trim().length < 10} onClick={saveResourceOverride}>{savingResources ? 'Saving...' : 'Save adjustment'}</button>
                   </div>
                 </div>
-              ) : <ResourceRecommendationView recommendation={effectiveResources} latestOverride={latestResourceOverride} showOverrideProvenance />}
+              ) : <ResourceRecommendationView recommendation={effectiveResources} latestOverride={latestResourceOverride} reviewerDisplayName={latestResourceOverride ? displayIdentityName(latestResourceOverride.reviewerId, identityNames, `${latestResourceOverride.authorityType} officer`) : undefined} showOverrideProvenance />}
             </div>
           </section>
 
@@ -636,6 +651,7 @@ export default function AuthorityEventReview() {
             docRationale={docRationale}
             docEvidencePath={docEvidencePath}
             submittingDoc={submittingDoc}
+            identityNames={identityNames}
             onRationaleChange={(key, value) => setDocRationale((current) => ({ ...current, [key]: value }))}
             onEvidencePathChange={(key, value) => setDocEvidencePath((current) => ({ ...current, [key]: value }))}
             onSubmit={submitControlVerification}
@@ -702,6 +718,12 @@ export default function AuthorityEventReview() {
               <label className="block text-xs font-medium text-ink-600">Suggestion / corrective action <span className="font-normal text-ink-400">(required for rejection)</span>
                 <textarea className="input mt-1 resize-y" rows={3} maxLength={1000} disabled={!reviewOpen || !isNamedOfficer} value={suggestion} onChange={(e) => setSuggestion(e.target.value)} placeholder="Explain the action the organizer should take, if applicable." />
               </label>
+              <label className="block text-xs font-medium text-ink-600">Rejection category
+                <select className="input mt-1" disabled={!reviewOpen || !isNamedOfficer} value={rejectionReasonCategory} onChange={(event) => setRejectionReasonCategory(event.target.value as RejectionReasonCategory)}>
+                  <option value="">Select when rejecting</option>
+                  {REJECTION_REASON_CATEGORIES.map((category) => <option key={category} value={category}>{category.replaceAll('_', ' ')}</option>)}
+                </select>
+              </label>
               {suggestion.trim().length === 0 && <p className="text-right text-xs text-ink-400">Required when rejecting</p>}
               <label className={`flex items-start gap-2 rounded-md border px-3 py-2 text-xs text-ink-600 ${confirmedReview ? 'border-brand-300 bg-brand-50/50' : 'border-ink-200 bg-white'}`}>
                 <input
@@ -728,11 +750,11 @@ export default function AuthorityEventReview() {
   );
 }
 
-function ManualOfficialProvenance({ assessment }: { assessment: import('@shared/types').AdminManualOfficialRiskAssessment }) {
+function ManualOfficialProvenance({ assessment, finalizedByName }: { assessment: import('@shared/types').AdminManualOfficialRiskAssessment; finalizedByName: string }) {
   return <div className="border-l-4 border-brand-500 bg-brand-50 p-4 text-sm text-ink-700">
     <p className="text-[11px] font-bold uppercase tracking-[0.09em] text-brand-700">Source · Admin manual assessment</p>
     <p className="mt-2">This official result was calculated from a locked human assessment after AI failure or insufficient data. No AI proposal was fabricated.</p>
-    <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2"><div><dt className="text-ink-500">Manual assessment</dt><dd className="font-mono text-ink-800">{assessment.activeManualAssessmentId}</dd></div><div><dt className="text-ink-500">Finalized by</dt><dd className="font-mono text-ink-800">{assessment.officialResult.finalizedBy}</dd></div></dl>
+    <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2"><div><dt className="text-ink-500">Manual assessment</dt><dd className="text-ink-800">Locked record</dd></div><div><dt className="text-ink-500">Finalized by</dt><dd className="font-semibold text-ink-800">{finalizedByName}</dd></div></dl>
     <h3 className="mt-4 font-display font-semibold text-ink-800">Manual hazards</h3>
     <ul className="mt-2 space-y-2">{assessment.officialResult.manualHazards.map((hazard) => <li key={hazard.hazardId} className="border-t border-brand-200 pt-2"><strong>{hazard.hazardName}</strong> · {formatWorkflowValue(hazard.categoryId)}<p className="mt-1 text-xs">{hazard.rationale}</p><p className="mt-1 text-[11px] text-ink-500">Evidence: {hazard.evidenceReferences.join(', ')}</p></li>)}</ul>
   </div>;
@@ -904,6 +926,7 @@ interface ControlVerificationSectionProps {
   docRationale: Record<string, string>;
   docEvidencePath: Record<string, string>;
   submittingDoc: string | null;
+  identityNames: DisplayIdentityMap;
   onRationaleChange: (key: string, value: string) => void;
   onEvidencePathChange: (key: string, value: string) => void;
   onSubmit: (controlId: string, docId: string, status: ControlVerificationStatus) => Promise<void>;
@@ -912,7 +935,7 @@ interface ControlVerificationSectionProps {
 function ControlVerificationSection(props: ControlVerificationSectionProps) {
   const {
     eventControls, stage1DocsByControl, myAuthorityType, isNamedOfficer, reviewOpen,
-    docRationale, docEvidencePath, submittingDoc,
+    docRationale, docEvidencePath, submittingDoc, identityNames,
     onRationaleChange, onEvidencePathChange, onSubmit,
   } = props;
   if (eventControls.length === 0) {
@@ -968,7 +991,7 @@ function ControlVerificationSection(props: ControlVerificationSectionProps) {
                         <div className="mt-2 text-xs text-ink-600">
                           <p>
                             <span className="font-semibold">{doc.status}</span>
-                            {doc.verifiedAt && <> on {format(new Date(doc.verifiedAt), 'PPp')} by <span className="font-mono">{doc.verifiedBy}</span></>}
+                            {doc.verifiedAt && <> on {format(new Date(doc.verifiedAt), 'PPp')} by <span className="font-semibold">{displayIdentityName(doc.verifiedBy, identityNames, `${control.authority} officer`)}</span></>}
                           </p>
                           {doc.rejectionReason && <p className="mt-1 whitespace-pre-line">{doc.rejectionReason}</p>}
                         </div>

@@ -28,7 +28,7 @@ describe('M2 presentation components', () => {
 
   it('shows numeric AI proposals and the validated provisional band', () => {
     render(<AIAdvisory advisory={assessment.aiProposal} resultRiskLevel={assessmentRiskLevel(assessment)} />);
-    expect(screen.getByText('AI proposal · MiniMax M3')).toBeInTheDocument();
+    expect(screen.getByText('AI proposal · MiniMax AI')).toBeInTheDocument();
     expect(screen.getByText(/Validated provisional result/)).toHaveTextContent(String(assessmentRiskLevel(assessment)));
   });
 
@@ -42,10 +42,10 @@ describe('M2 presentation components', () => {
     expect(screen.getByText(new RegExp(`AI proposal L${proposal.likelihood} × S${proposal.severity}`))).toBeInTheDocument();
   });
 
-  it('shows versioned prototype resource quantities and considerations', () => {
+  it('shows versioned indicative resource quantities and their safety boundary', () => {
     render(<ResourceRecommendationView recommendation={recommendation} />);
     expect(screen.getAllByText('Police officers').length).toBeGreaterThan(0);
-    expect(screen.getByText('Prototype guidance')).toBeInTheDocument();
+    expect(screen.getByText('Indicative planning guidance')).toBeInTheDocument();
     expect(screen.getByText('2026-08-19-deterministic-v4')).toBeInTheDocument();
     expect(screen.getAllByText(/internal academic prototype/i).length).toBeGreaterThan(0);
   });

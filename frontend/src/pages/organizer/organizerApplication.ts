@@ -1,6 +1,9 @@
-import { EventDetails, EventRecord, EventRiskProfile, EventStatus, EventType, M1_DOCUMENT_SCHEMA_VERSION, M1_EVIDENCE_MANIFEST_SCHEMA_VERSION, M1DocumentExtraction, M1DraftDocument, M1EvidenceRequirementResponse, M1ExtractedField, M1TemplateSelection, Venue } from '@shared/types';
+import { EventDetails, EventRecord, EventRiskProfile, EventStatus, EventType, M1_DOCUMENT_SCHEMA_VERSION, M1_EVIDENCE_MANIFEST_SCHEMA_VERSION, M1DocumentExtraction, M1DraftDocument, M1EventCategory, M1EvidenceRequirementResponse, M1ExtractedField, M1TemplateSelection, OrganizerAssessmentSummary, Venue } from '@shared/types';
 import { isValidM1TemplateSelection, m1CategoryForEventType, m1VenueSettingMatchesEnvironment } from '@shared/m1TemplateContract';
 import { isM1EvidenceForcedRequired, m1EvidenceRequirementsFor } from '@shared/m1EvidenceContract';
+import { inferMalaysiaStateFromAddress, MALAYSIA_STATES } from '@shared/malaysiaStates';
+
+export { inferMalaysiaStateFromAddress, MALAYSIA_STATES, normalizeMalaysiaState } from '@shared/malaysiaStates';
 
 export type OrganizerApplicationStatus = EventStatus;
 export type OrganizerStatusFilter = OrganizerApplicationStatus | 'all';
@@ -17,6 +20,11 @@ export const ORGANIZER_STATUS_FILTERS: OrganizerStatusFilter[] = [
   'Manual Review Required',
 ];
 
+export function isMeaningfulNotApplicableReason(reason: string | undefined): boolean {
+  const normalized = reason?.trim().replace(/\s+/g, ' ') ?? '';
+  return normalized.length >= 20 && normalized.split(' ').filter(Boolean).length >= 3;
+}
+
 export function isEditableApplicationStatus(status: unknown): status is 'Draft' {
   return status === 'Draft';
 }
@@ -29,9 +37,123 @@ export function isSelectableRegistryVenue(venue: Venue): boolean {
   return venue.active === true && venue.verificationStatus === 'verified' && venue.deactivatedAt === undefined;
 }
 
+function normalizedVenueName(value: string): string {
+  return value.toLocaleLowerCase('en-MY').replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function venueNameInitials(value: string): string {
+  return normalizedVenueName(value).split(' ').filter(Boolean).map((word) => word[0]).join('');
+}
+
+function leadingVenueAcronym(value: string): string | undefined {
+  const [firstToken = ''] = value.trim().split(/\s+/);
+  return /^[A-Z0-9]{4,8}$/.test(firstToken) ? firstToken.toLocaleLowerCase('en-MY') : undefined;
+}
+
+/** Auto-bind only when an extracted name identifies exactly one selectable registry venue. */
+export function findUniqueRegistryVenueMatch(venueName: string, venues: Venue[]): Venue | undefined {
+  const selectable = venues.filter(isSelectableRegistryVenue);
+  const normalized = normalizedVenueName(venueName);
+  if (!normalized) return undefined;
+  const exact = selectable.filter((venue) => normalizedVenueName(venue.name) === normalized);
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) return undefined;
+  const submittedInitials = venueNameInitials(venueName);
+  const submittedAcronym = leadingVenueAcronym(venueName);
+  const aliases = selectable.filter((venue) => {
+    const registryAcronym = leadingVenueAcronym(venue.name);
+    return (registryAcronym !== undefined && registryAcronym === submittedInitials)
+      || (submittedAcronym !== undefined && submittedAcronym === venueNameInitials(venue.name));
+  });
+  return aliases.length === 1 ? aliases[0] : undefined;
+}
+
+/** Registry identity fields are one atomic value and must never be mixed with extracted/custom values. */
+export function bindCanonicalVenue(details: EventDetails, venue: Venue): EventDetails {
+  const venueCapacity = venue.verifiedSafeCapacity ?? venue.capacity;
+  const venueState = venue.state ?? '';
+  if (details.venueId === venue.venueId
+    && details.venueName === venue.name
+    && details.venueAddress === venue.address
+    && details.venueState === venueState
+    && details.venueCapacity === venueCapacity
+    && details.venueLocation?.lat === venue.location.lat
+    && details.venueLocation?.lng === venue.location.lng) return details;
+  return {
+    ...details,
+    venueId: venue.venueId,
+    venueName: venue.name,
+    venueAddress: venue.address,
+    venueState,
+    venueCapacity,
+    venueLocation: { ...venue.location },
+  };
+}
+
 export function applicationStatusLabel(status: string): string {
   if (status === 'UnderReview') return 'Under Review';
   return status.replace(/([a-z])([A-Z])/g, '$1 $2');
+}
+
+export function assessmentLabel(event: Pick<EventRecord, 'status' | 'currentAssessmentId'>): string {
+  if (isEditableApplicationStatus(String(event.status))) return 'Not submitted';
+  if (event.status === 'Manual Review Required') return 'Manual assessment required';
+  if (event.status === 'Pending') return event.currentAssessmentId ? 'Risk assessment underway' : 'Risk assessment queued';
+  if (event.currentAssessmentId) return 'Risk assessment available';
+  return 'Assessment unavailable';
+}
+
+export interface AssessmentAvailability {
+  label: string;
+  description: string;
+  emptyMessage: string;
+  resourceMessage: string;
+}
+
+export function organizerAssessmentAvailability(
+  eventStatus: string,
+  hasVersion: boolean,
+  hasAssessmentPointer: boolean,
+  summary: OrganizerAssessmentSummary | null,
+  earlierSummary: boolean,
+): AssessmentAvailability {
+  if (summary?.status === 'official_ready') return {
+    label: 'Official result available', description: 'Official result available for authority decision', emptyMessage: '', resourceMessage: '',
+  };
+  if (summary?.status === 'failed') return {
+    label: 'Failed — retry required', description: 'Assessment failed and requires a retry', emptyMessage: '', resourceMessage: '',
+  };
+  if (summary?.status === 'manual_review_required') return {
+    label: 'Manual review required', description: 'Manual review is required before an official result can be produced', emptyMessage: '', resourceMessage: '',
+  };
+  if (summary) return {
+    label: 'Provisional result available', description: 'Provisional until authority confirmation is complete', emptyMessage: '', resourceMessage: '',
+  };
+  if (!hasVersion) return {
+    label: 'Not started', description: 'Assessment begins after the application is submitted',
+    emptyMessage: 'No assessment has been created for this application.',
+    resourceMessage: 'No resource recommendation has been created for this application.',
+  };
+  if (earlierSummary) return {
+    label: 'Recalculation required', description: 'This application needs a current assessment before review can continue',
+    emptyMessage: 'This assessment was created under an earlier calculation version and must be recalculated before it can be shown.',
+    resourceMessage: 'Resource recommendations will appear after the current assessment is recalculated.',
+  };
+  if (eventStatus === 'Manual Review Required') return {
+    label: 'Manual assessment required', description: 'No calculated risk result is available yet',
+    emptyMessage: 'An Admin must retry the AI assessment or complete a manual assessment before review can continue.',
+    resourceMessage: 'Resource recommendations will appear after a manual assessment is completed.',
+  };
+  if (['Approved', 'Rejected', 'Withdrawn', 'Cancelled'].includes(eventStatus)) return {
+    label: 'Record unavailable', description: 'The saved assessment summary is unavailable for this application version',
+    emptyMessage: 'This application is no longer processing, but its assessment summary is unavailable. Contact an administrator to verify the application record.',
+    resourceMessage: 'The saved resource recommendation is unavailable for this application version. Contact an administrator to verify the application record.',
+  };
+  return {
+    label: hasAssessmentPointer ? 'Assessment record created' : 'Processing', description: 'Assessment processing is in progress',
+    emptyMessage: 'Assessment is processing. Refresh later to view the result.',
+    resourceMessage: 'Resources will appear after the assessment is calculated.',
+  };
 }
 
 export function organizerAdminDecisionLabel(event: Pick<EventRecord, 'status' | 'initialReview'>): string {
@@ -84,6 +206,14 @@ export function validateEventApplication(
   requiredText(details.name, 'Event name', 200, errors);
   requiredText(details.venueName, 'Venue name', 200, errors);
   requiredText(details.venueAddress, 'Venue address', 500, errors);
+  if (!MALAYSIA_STATES.includes(details.venueState as (typeof MALAYSIA_STATES)[number])) {
+    errors.push('Select the venue state or federal territory.');
+  } else {
+    const addressState = inferMalaysiaStateFromAddress(details.venueAddress);
+    if (addressState && details.venueState !== addressState) {
+      errors.push(`Venue state does not match the address. Select ${addressState}.`);
+    }
+  }
   requiredText(details.organizerName, 'Organizer name', 200, errors);
   requiredText(details.organizerEmail, 'Organizer email', 320, errors);
   if (details.organizerEmail.trim() && !isEmail(details.organizerEmail)) errors.push('Organizer email is invalid.');
@@ -124,10 +254,8 @@ export function validateEventApplication(
   if (draftDocuments !== undefined) {
     const coreCount = draftDocuments.filter((document) => document.role === 'core_template').length;
     const scenarioCount = draftDocuments.filter((document) => document.role === 'scenario_template').length;
-    const combinedCount = draftDocuments.filter((document) => document.role === 'combined_application').length;
-    if (!((combinedCount === 1 && coreCount === 0 && scenarioCount === 0)
-      || (combinedCount === 0 && coreCount === 1 && scenarioCount === 1))) {
-      errors.push('Upload either one combined application PDF or one completed Core DOCX and one completed scenario DOCX.');
+    if (coreCount !== 1 || scenarioCount !== 1) {
+      errors.push('Upload one completed Core PDF/DOCX and one completed scenario PDF/DOCX.');
     }
     if (!currentExtractionId) errors.push('Extract and review the completed application documents before submission.');
     if (templateSelection) errors.push(...validateM1EvidenceChecklist(details, templateSelection, draftDocuments, evidenceManifest));
@@ -157,6 +285,7 @@ export function createInitialEventDetails(profile?: { name?: string; email?: str
     type: 'concert',
     venueName: '',
     venueAddress: '',
+    venueState: '',
     venueCapacity: 0,
     expectedAttendance: 0,
     environment: 'outdoor',
@@ -173,8 +302,31 @@ export function createInitialEventDetails(profile?: { name?: string; email?: str
   };
 }
 
-export function createM1DraftRecord(organizerId: string, eventDetails: EventDetails, templateSelection: M1TemplateSelection, now: number) {
+const DEFAULT_EVENT_TYPE_BY_CATEGORY: Record<M1EventCategory, EventType> = {
+  entertainment_performance: 'concert',
+  sports_recreational: 'sports',
+  cultural_heritage_festival: 'cultural',
+  exhibition_convention_promotional: 'exhibition',
+  carnival_public_celebration: 'fair',
+};
+
+/** Keep an editable Draft internally consistent when its template recommendation changes. */
+export function alignEventDetailsWithTemplate(
+  details: EventDetails,
+  selection: M1TemplateSelection,
+): EventDetails {
+  const type = m1CategoryForEventType(details.type) === selection.eventCategory
+    ? details.type
+    : DEFAULT_EVENT_TYPE_BY_CATEGORY[selection.eventCategory];
+  const venueStillMatches = m1VenueSettingMatchesEnvironment(selection.venueSetting, details.environment);
+  const environment = venueStillMatches ? details.environment : selection.venueSetting === 'indoor' ? 'indoor' : 'outdoor';
+  const coverage = venueStillMatches ? details.coverage : selection.venueSetting === 'indoor' ? 'covered' : 'uncovered';
+  return { ...details, type, environment, coverage };
+}
+
+export function createM1DraftRecord(eventId: string, organizerId: string, eventDetails: EventDetails, templateSelection: M1TemplateSelection, now: number) {
   return {
+    eventId,
     organizerId,
     eventDetails,
     templateSelection,
@@ -230,8 +382,8 @@ export function validateM1EvidenceChecklist(
       errors.push(`${definition.id} is required for the current event declarations.`);
     } else if (response.applicability === 'required' && (!response.documentPath || !supportingPaths.has(response.documentPath))) {
       errors.push(`Attach a supporting-evidence file to ${definition.id}.`);
-    } else if (response.applicability === 'not_applicable' && (response.notApplicableReason?.trim().length ?? 0) < 10) {
-      errors.push(`Explain why ${definition.id} is not applicable (at least 10 characters).`);
+    } else if (response.applicability === 'not_applicable' && !isMeaningfulNotApplicableReason(response.notApplicableReason)) {
+      errors.push(`${definition.id}: give a specific reason using at least 20 characters and 3 words.`);
     }
   }
   if ([...supportingPaths].some((path) => !referencedPaths.has(path))) errors.push('Every uploaded supporting-evidence file must be linked to a checklist item.');
@@ -241,29 +393,41 @@ export function validateM1EvidenceChecklist(
 export function applyM1ExtractedFields(details: EventDetails, fields: M1ExtractedField[]): EventDetails {
   const next: EventDetails = { ...details, riskProfile: completeRiskProfile(details.riskProfile) };
   for (const field of fields) {
+    if (field.target.startsWith('riskProfile.')) {
+      const key = field.target.slice('riskProfile.'.length) as keyof EventRiskProfile;
+      if (RISK_BOOLEAN_FIELDS.includes(key as (typeof RISK_BOOLEAN_FIELDS)[number]) && typeof field.value === 'boolean') {
+        next.riskProfile = { ...next.riskProfile, [key]: field.value };
+      } else if (RISK_NUMERIC_FIELDS.has(key) && typeof field.value === 'number' && Number.isFinite(field.value)) {
+        next.riskProfile = { ...next.riskProfile, [key]: field.value };
+      }
+      continue;
+    }
     switch (field.target) {
-      case 'name': case 'description': case 'venueAddress': case 'emergencyPlanSummary':
+      case 'name': case 'description': case 'emergencyPlanSummary':
       case 'organizerName': case 'organizerEmail': case 'organizerPhone':
         if (typeof field.value === 'string') Object.assign(next, { [field.target]: field.value });
         break;
-      case 'venueCapacity': case 'expectedAttendance': case 'startDatetime': case 'endDatetime':
+      case 'venueAddress':
+        if (!next.venueId && typeof field.value === 'string') next.venueAddress = field.value;
+        break;
+      case 'venueName':
+        if (!next.venueId && typeof field.value === 'string') next.venueName = field.value;
+        break;
+      case 'venueCapacity':
+        if (!next.venueId && typeof field.value === 'number' && Number.isFinite(field.value)) next.venueCapacity = field.value;
+        break;
+      case 'expectedAttendance': case 'startDatetime': case 'endDatetime':
         if (typeof field.value === 'number' && Number.isFinite(field.value)) Object.assign(next, { [field.target]: field.value });
         break;
-      case 'riskProfile.pyrotechnics': case 'riskProfile.temporaryStructures': case 'riskProfile.foodServed':
-      case 'riskProfile.alcoholServed': case 'riskProfile.ticketedEntry': {
-        if (typeof field.value !== 'boolean') break;
-        const key = field.target.slice('riskProfile.'.length) as keyof EventRiskProfile;
-        next.riskProfile = { ...next.riskProfile, [key]: field.value };
-        break;
-      }
     }
   }
+  if (!next.venueId) next.venueState = inferMalaysiaStateFromAddress(next.venueAddress) ?? next.venueState;
   return next;
 }
 
 export function extractionMatchesDraftDocuments(extraction: M1DocumentExtraction, documents: M1DraftDocument[]): boolean {
   const current = documents
-    .filter((document) => document.role === 'core_template' || document.role === 'scenario_template' || document.role === 'combined_application')
+    .filter((document) => document.role === 'core_template' || document.role === 'scenario_template')
     .map((document) => `${document.role}:${document.path}:${document.originalName}:${document.mimeType}:${document.sizeBytes}`)
     .sort();
   const extracted = Array.isArray(extraction.sourceDocuments)
@@ -271,10 +435,7 @@ export function extractionMatchesDraftDocuments(extraction: M1DocumentExtraction
       .map((document) => `${document.role}:${document.path}:${document.originalName}:${document.mimeType}:${document.sizeBytes}`)
       .sort()
     : [];
-  const validCount = current.length === 1
-    ? documents.some((document) => document.role === 'combined_application')
-    : current.length === 2;
-  return validCount && extracted.length === current.length && JSON.stringify(current) === JSON.stringify(extracted);
+  return current.length === 2 && extracted.length === current.length && JSON.stringify(current) === JSON.stringify(extracted);
 }
 
 export function completeRiskProfile(value: unknown = {}): EventRiskProfile {
@@ -332,6 +493,11 @@ const RISK_BOOLEAN_FIELDS = [
   'evacuationPlanTested',
   'authorityCoordinationConfirmed',
 ] as const;
+const RISK_NUMERIC_FIELDS = new Set<keyof EventRiskProfile>([
+  'vulnerableAttendeesPercent',
+  'standingAttendeesPercent',
+  'nearestHospitalTravelMinutes',
+]);
 
 function validateRiskProfile(value: EventDetails['riskProfile'], errors: string[]): void {
   if (!value || typeof value !== 'object') {
@@ -349,14 +515,18 @@ function validateRiskProfile(value: EventDetails['riskProfile'], errors: string[
 }
 
 function requiredText(value: string, label: string, max: number, errors: string[]): void {
-  if (typeof value !== 'string' || value.trim().length === 0 || value.length > max) {
-    errors.push(`${label} is required and must be at most ${max} characters.`);
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    errors.push(`${label} is required.`);
+  } else if (value.length > max) {
+    errors.push(`${label} is too long. Use ${max} characters or fewer.`);
   }
 }
 
 function optionalText(value: string | undefined, label: string, max: number, errors: string[]): void {
-  if (value !== undefined && (typeof value !== 'string' || value.length > max)) {
-    errors.push(`${label} must be at most ${max} characters.`);
+  if (value !== undefined && typeof value !== 'string') {
+    errors.push(`${label} must be text.`);
+  } else if (value !== undefined && value.length > max) {
+    errors.push(`${label} is too long. Use ${max} characters or fewer.`);
   }
 }
 

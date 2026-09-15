@@ -34,8 +34,8 @@ export default function ContextEvidence({ assessment }: { assessment: RiskAssess
         <EvidenceCell
           label="Comparable history"
           status={history.syntheticStatus === 'all' || history.syntheticEvidence
-            ? 'Synthetic demo evidence'
-            : history.syntheticStatus === 'partial' ? 'Mixed real and synthetic evidence'
+            ? 'Generated reference evidence'
+            : history.syntheticStatus === 'partial' ? 'Mixed-source reference evidence'
             : history.matched ? 'Venue history matched' : 'No stable venue match'}
           value={history.historicalEventCount !== undefined
             ? `${history.historicalEventCount} comparable events · ${history.total} eligible incidents · ${formatRate(history.patientPresentationRatePerThousand)} patient presentations/1,000`
@@ -47,8 +47,8 @@ export default function ContextEvidence({ assessment }: { assessment: RiskAssess
       {(history.syntheticEvidence || history.syntheticStatus === 'all' || history.syntheticStatus === 'partial') && (
         <p className="mt-3 border-l-4 border-gold-300 bg-gold-50 p-3 text-xs leading-5 text-ink-700">
           {history.syntheticStatus === 'partial'
-            ? 'This history mixes verified records with generated demo data. Synthetic items are identified in the provenance ledger and do not count as verified controls.'
-            : 'This history is generated demo data. It supports retrieval and UI testing only; it is not evidence of real incidents or predictive accuracy.'}
+            ? 'This history combines verified records with generated reference records. Generated items are identified below and never count as verified controls.'
+            : 'This history contains generated reference records. They support contextual comparison only and are not evidence of real incidents or predictive accuracy.'}
         </p>
       )}
 
@@ -70,7 +70,7 @@ export default function ContextEvidence({ assessment }: { assessment: RiskAssess
         <details className="mt-4 border-t border-[#e3dacb] pt-3">
           <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold text-brand-700">View contextual provenance</summary>
           <ul className="mt-2 divide-y divide-[#e3dacb] text-xs">
-            {assessment.contextEvidence.map((item) => <li key={item.evidenceId} className="grid gap-1 py-3 sm:grid-cols-[8rem_minmax(0,1fr)_8rem]"><strong>{item.evidenceKey}</strong><span className="break-all text-ink-600">{item.sourceKind} · {item.sourceLocator} · {item.sourceVersion}</span><span className="sm:text-right">{item.eligibility} · {item.synthetic ? 'synthetic' : 'non-synthetic'}</span>{item.eligibilityReason && <span className="text-gold-700 sm:col-span-3">{item.eligibilityReason}</span>}</li>)}
+            {assessment.contextEvidence.map((item) => <li key={item.evidenceId} className="grid gap-1 py-3 sm:grid-cols-[8rem_minmax(0,1fr)_10rem]"><strong>{humanize(item.evidenceKey)}</strong><span className="break-all text-ink-600">{humanize(item.sourceKind)} · {item.sourceLocator} · {item.sourceVersion}</span><span className="sm:text-right">{humanize(item.eligibility)} · {item.synthetic ? 'generated reference' : 'recorded source'}</span>{item.eligibilityReason && <span className="text-gold-700 sm:col-span-3">{item.eligibilityReason}</span>}</li>)}
           </ul>
         </details>
       )}
@@ -80,6 +80,10 @@ export default function ContextEvidence({ assessment }: { assessment: RiskAssess
 
 function formatRate(value: number | undefined): string {
   return value === undefined ? 'n/a' : value.toFixed(2);
+}
+
+function humanize(value: string): string {
+  return value.replaceAll('_', ' ');
 }
 
 function EvidenceCell({ label, status, value, timestamp }: { label: string; status: string; value: string; timestamp: number }) {

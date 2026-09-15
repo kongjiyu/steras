@@ -8,6 +8,9 @@ const { snapshotState } = vi.hoisted(() => ({
 }));
 
 vi.mock('../../config/firebase', () => ({ db: {}, isFirebaseConfigured: true }));
+vi.mock('../../contexts/AuthContext', () => ({
+  useAuth: () => ({ user: null, profile: null, signOut: vi.fn() }),
+}));
 vi.mock('firebase/firestore', () => ({
   collection: vi.fn(),
   query: vi.fn(),
@@ -29,12 +32,16 @@ describe('PublicCalendar', () => {
     render(<MemoryRouter><PublicCalendar /></MemoryRouter>);
     expect(await screen.findByRole('heading', { name: 'Tourism Forum' })).toBeInTheDocument();
     expect(screen.getByText('1 approved event')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Past events' })).toBeInTheDocument();
+    expect(screen.getAllByRole('navigation', { name: /Event time/ })).toHaveLength(2);
   });
 
   it('shows an error and recovers when the listener succeeds on retry', async () => {
     snapshotState.mode = 'error';
     render(<MemoryRouter><PublicCalendar /></MemoryRouter>);
     expect(await screen.findByRole('heading', { name: 'Events unavailable' })).toBeInTheDocument();
+    expect(screen.getByText('Event count unavailable')).toBeInTheDocument();
+    expect(screen.queryByText('0 approved events')).not.toBeInTheDocument();
 
     snapshotState.mode = 'success';
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));

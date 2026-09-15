@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { EventDetails } from '@shared/types';
-import { applyM1ExtractedFields, createM1DraftRecord, extractionMatchesDraftDocuments, isEditableApplicationStatus, isSelectableRegistryVenue, organizerAdminDecisionLabel, organizerPublicationLabel, organizerPublicationStateFromProjection, reconcileM1EvidenceManifest, validateEventApplication, validateM1EvidenceChecklist, validateTemplateCompatibility } from './organizerApplication';
+import { EventDetails, M1DocumentExtraction, M1_EXTRACTION_SCHEMA_VERSION, Venue } from '@shared/types';
+import { alignEventDetailsWithTemplate, applyM1ExtractedFields, bindCanonicalVenue, createM1DraftRecord, extractionMatchesDraftDocuments, findUniqueRegistryVenueMatch, inferMalaysiaStateFromAddress, isEditableApplicationStatus, isMeaningfulNotApplicableReason, isSelectableRegistryVenue, normalizeMalaysiaState, organizerAdminDecisionLabel, organizerPublicationLabel, organizerPublicationStateFromProjection, reconcileM1EvidenceManifest, validateEventApplication, validateM1EvidenceChecklist, validateTemplateCompatibility } from './organizerApplication';
 import { createTemplateSelection } from '../../features/m1/templateRegistry';
 
 const future = Date.now() + 7 * 24 * 60 * 60 * 1000;
@@ -12,6 +12,7 @@ function validDetails(overrides: Partial<EventDetails> = {}): EventDetails {
     type: 'conference',
     venueName: 'PICC',
     venueAddress: 'Putrajaya, Malaysia',
+    venueState: 'Putrajaya',
     venueLocation: { lat: 2.9264, lng: 101.6964 },
     venueCapacity: 1000,
     expectedAttendance: 500,
@@ -63,14 +64,14 @@ describe('organizer application lifecycle helpers', () => {
   });
 
   it('reports the actual Admin review stage without conflating authority progress', () => {
-    const initialApproved = { decision: 'Approved' as const, reason: 'Complete', reviewerUid: 'admin-1', reviewedAt: 1 };
+    const initialApproved = { decision: 'Approved' as const, reason: 'Complete', reviewStage: 'initial' as const, reviewerUid: 'admin-1', reviewedAt: 1 };
     expect(organizerAdminDecisionLabel({ status: 'Pending' })).toBe('No Admin decision recorded');
     expect(organizerAdminDecisionLabel({ status: 'UnderReview', initialReview: initialApproved })).toBe('Initial Admin review approved');
     expect(organizerAdminDecisionLabel({ status: 'Approved', initialReview: initialApproved })).toBe('Final Admin review approved');
     expect(organizerAdminDecisionLabel({ status: 'Rejected', initialReview: initialApproved })).toBe('Final Admin review rejected');
     expect(organizerAdminDecisionLabel({
       status: 'Rejected',
-      initialReview: { decision: 'Rejected', reason: 'Incomplete', suggestion: 'Attach evidence', reviewerUid: 'admin-1', reviewedAt: 1 },
+      initialReview: { decision: 'Rejected', reason: 'Incomplete', reviewStage: 'initial', suggestion: 'Attach evidence', reviewerUid: 'admin-1', reviewedAt: 1 },
     })).toBe('Initial Admin review rejected');
   });
 
@@ -92,14 +93,38 @@ describe('organizer application lifecycle helpers', () => {
     expect(validateEventApplication(validDetails(), ['event_documents/event-1/v1/plan.pdf'], templateSelection)).toEqual([]);
   });
 
+  it('explains missing and overlong text with different messages', () => {
+    expect(validateEventApplication(validDetails({ venueName: '' }), [], templateSelection)).toContain('Venue name is required.');
+    expect(validateEventApplication(validDetails({ venueName: 'x'.repeat(201) }), [], templateSelection)).toContain('Venue name is too long. Use 200 characters or fewer.');
+  });
+
   it('creates new Drafts with the structured document contract required by Firestore rules', () => {
-    expect(createM1DraftRecord('organizer-1', validDetails(), templateSelection, 123)).toMatchObject({
-      organizerId: 'organizer-1', status: 'Draft', editableVersionId: 'v1', currentVersionNumber: 0,
+    expect(createM1DraftRecord('event-1', 'organizer-1', validDetails(), templateSelection, 123)).toMatchObject({
+      eventId: 'event-1', organizerId: 'organizer-1', status: 'Draft', editableVersionId: 'v1', currentVersionNumber: 0,
       draftDocumentPaths: [], draftDocuments: [], documentSchemaVersion: '2026-08-28-document-v1',
       evidenceManifestSchemaVersion: '2026-08-28-evidence-v1',
       requiredAuthorities: [], createdAt: 123, updatedAt: 123,
     });
-    expect(createM1DraftRecord('organizer-1', validDetails(), templateSelection, 123).draftEvidenceManifest).toHaveLength(16);
+    expect(createM1DraftRecord('event-1', 'organizer-1', validDetails(), templateSelection, 123).draftEvidenceManifest).toHaveLength(16);
+  });
+
+  it('aligns existing Draft details with a changed template recommendation without erasing unrelated fields', () => {
+    const changedSelection = createTemplateSelection('cultural_heritage_festival', 'outdoor_fixed_site', 2);
+    const current = validDetails({ description: 'Keep this description' });
+    const aligned = alignEventDetailsWithTemplate(current, changedSelection);
+    expect(aligned).toMatchObject({
+      type: 'cultural',
+      environment: 'outdoor',
+      coverage: 'uncovered',
+      description: 'Keep this description',
+      name: current.name,
+    });
+    expect(validateTemplateCompatibility(aligned, changedSelection)).toEqual([]);
+
+    const unchangedCategory = alignEventDetailsWithTemplate(current, templateSelection);
+    expect(unchangedCategory.type).toBe('conference');
+    expect(unchangedCategory.environment).toBe('indoor');
+    expect(unchangedCategory.coverage).toBe('covered');
   });
 
   it('blocks attendance above capacity and missing evidence before submit', () => {
@@ -133,9 +158,10 @@ describe('organizer application lifecycle helpers', () => {
   });
 
   it('applies only type-compatible extracted fields and preserves unrelated values', () => {
-    const details = validDetails({ name: 'Old name', venueName: 'Verified venue' });
+    const details = validDetails({ name: 'Old name', venueId: 'venue-klcc', venueName: 'Verified venue' });
     const next = applyM1ExtractedFields(details, [
       { target: 'name', value: 'Extracted name', sourceFieldIds: ['EVENT_NAME'], confidence: 'high' },
+      { target: 'venueName', value: 'Untrusted extracted venue', sourceFieldIds: ['VENUE_NAME'], confidence: 'high' },
       { target: 'expectedAttendance', value: 800, sourceFieldIds: ['TOTAL_ATTENDANCE'], confidence: 'high' },
       { target: 'organizerEmail', value: 123, sourceFieldIds: ['RESPONSIBLE_CONTACT'], confidence: 'low' },
       { target: 'riskProfile.pyrotechnics', value: true, sourceFieldIds: ['SPECIAL_EFFECTS'], confidence: 'high' },
@@ -147,20 +173,100 @@ describe('organizer application lifecycle helpers', () => {
     expect(next.riskProfile?.pyrotechnics).toBe(true);
   });
 
-  it('requires a complete split or combined application upload and a current extraction', () => {
+  it('auto-fills an explicit venue name only for a custom venue', () => {
+    const details = validDetails({ venueId: undefined, venueName: '' });
+    const next = applyM1ExtractedFields(details, [
+      { target: 'venueName', value: 'Kuala Lumpur Convention Centre', sourceFieldIds: ['VENUE_NAME'], confidence: 'high' },
+    ]);
+    expect(next.venueName).toBe('Kuala Lumpur Convention Centre');
+  });
+
+  it('matches an extracted full venue name to a unique verified registry acronym', () => {
+    const klcc: Venue = {
+      venueId: 'ven-klcc', active: true, verificationStatus: 'verified', name: 'KLCC Convention Centre',
+      address: 'Kuala Lumpur City Centre, 50088 KL', state: 'Kuala Lumpur', capacity: 15_000,
+      verifiedSafeCapacity: 14_000, location: { lat: 3.1578, lng: 101.7117 },
+    };
+    expect(findUniqueRegistryVenueMatch('Kuala Lumpur Convention Centre', [klcc])).toBe(klcc);
+    expect(findUniqueRegistryVenueMatch('KLCC Convention Centre', [klcc])).toBe(klcc);
+    expect(findUniqueRegistryVenueMatch('Kuala Lumpur Convention Centre', [
+      { ...klcc, name: 'Kuala Lumpur Cultural Centre' },
+    ])).toBeUndefined();
+    expect(findUniqueRegistryVenueMatch('Kuala Lumpur Convention Centre', [
+      klcc,
+      { ...klcc, venueId: 'ven-klcc-hall', name: 'KLCC Hall' },
+    ])).toBeUndefined();
+    expect(findUniqueRegistryVenueMatch('Kuala Lumpur Convention Centre', [
+      { ...klcc, active: false },
+    ])).toBeUndefined();
+  });
+
+  it('atomically replaces stale extracted venue identity with canonical registry values', () => {
+    const venue: Venue = {
+      venueId: 'ven-klcc', active: true, verificationStatus: 'verified', name: 'KLCC Convention Centre',
+      address: 'Kuala Lumpur City Centre, 50088 KL', state: 'Kuala Lumpur', capacity: 15_000,
+      verifiedSafeCapacity: 14_000, location: { lat: 3.1578, lng: 101.7117 },
+    };
+    const bound = bindCanonicalVenue(validDetails({
+      venueId: venue.venueId,
+      venueName: venue.name,
+      venueAddress: 'Extracted long-form address',
+      venueCapacity: 8_000,
+    }), venue);
+    expect(bound).toMatchObject({
+      venueId: venue.venueId,
+      venueName: venue.name,
+      venueAddress: venue.address,
+      venueState: venue.state,
+      venueCapacity: 14_000,
+      venueLocation: venue.location,
+    });
+    expect(bindCanonicalVenue(bound, venue)).toBe(bound);
+  });
+
+  it('does not let extraction overwrite identity fields for a selected registry venue', () => {
+    const details = validDetails({ venueId: 'ven-klcc', venueAddress: 'Canonical address', venueCapacity: 14_000 });
+    const next = applyM1ExtractedFields(details, [
+      { target: 'venueAddress', value: 'Extracted address', sourceFieldIds: ['VENUE_ADDRESS'], confidence: 'high' },
+      { target: 'venueCapacity', value: 8_000, sourceFieldIds: ['VENUE_CAPACITY'], confidence: 'high' },
+    ]);
+    expect(next.venueAddress).toBe('Canonical address');
+    expect(next.venueCapacity).toBe(14_000);
+  });
+
+  it('normalizes Google state names and infers a missing state from an extracted address', () => {
+    expect(normalizeMalaysiaState('Federal Territory of Kuala Lumpur')).toBe('Kuala Lumpur');
+    expect(normalizeMalaysiaState('Penang')).toBe('Pulau Pinang');
+    expect(normalizeMalaysiaState('Malacca')).toBe('Melaka');
+    expect(inferMalaysiaStateFromAddress('Jalan Genting Kelang, Setapak, 53300 Kuala Lumpur, Malaysia')).toBe('Kuala Lumpur');
+
+    const next = applyM1ExtractedFields(validDetails({ venueState: undefined, venueAddress: '' }), [
+      { target: 'venueAddress', value: 'Jalan Genting Kelang, Setapak, 53300 Kuala Lumpur, Malaysia', sourceFieldIds: ['EVENT_ADDRESS'], confidence: 'high' },
+    ]);
+    expect(next.venueState).toBe('Kuala Lumpur');
+  });
+
+  it('replaces a stale state and rejects an address-state mismatch', () => {
+    const address = 'Jalan Genting Kelang, Setapak, 53300 Kuala Lumpur, Malaysia';
+    const next = applyM1ExtractedFields(validDetails({ venueAddress: '', venueState: 'Sarawak' }), [
+      { target: 'venueAddress', value: address, sourceFieldIds: ['EVENT_ADDRESS'], confidence: 'high' },
+    ]);
+    expect(next.venueState).toBe('Kuala Lumpur');
+    expect(validateEventApplication(validDetails({ venueAddress: address, venueState: 'Sarawak' }), [], templateSelection)).toContain(
+      'Venue state does not match the address. Select Kuala Lumpur.',
+    );
+  });
+
+  it('requires separate Core and scenario uploads and a current extraction', () => {
     const documents = [{
       path: 'event_documents/event-1/v1/core.docx', role: 'core_template' as const,
       originalName: 'core.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       sizeBytes: 100, uploadedAt: 1, schemaVersion: '2026-08-28-document-v1' as const,
     }];
     expect(validateEventApplication(validDetails(), documents.map((document) => document.path), templateSelection, documents, '')).toEqual(expect.arrayContaining([
-      'Upload either one combined application PDF or one completed Core DOCX and one completed scenario DOCX.',
+      'Upload one completed Core PDF/DOCX and one completed scenario PDF/DOCX.',
       'Extract and review the completed application documents before submission.',
     ]));
-
-    const combined = [{ ...documents[0], path: 'event_documents/event-1/v1/combined.pdf', role: 'combined_application' as const, originalName: 'combined.pdf', mimeType: 'application/pdf' }];
-    expect(validateEventApplication(validDetails(), combined.map((document) => document.path), templateSelection, combined, 'extract-1'))
-      .not.toContain('Upload either one combined application PDF or one completed Core DOCX and one completed scenario DOCX.');
   });
 
   it('does not restore a stale extraction after either completed template is replaced', () => {
@@ -169,9 +275,9 @@ describe('organizer application lifecycle helpers', () => {
       originalName: `${role}.docx`, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       sizeBytes: 100, uploadedAt: 1, schemaVersion: '2026-08-28-document-v1' as const,
     }));
-    const extraction = {
+    const extraction: M1DocumentExtraction = {
       extractionId: 'extract-1', eventId: 'event-1', editableVersionId: 'v1', status: 'ready' as const,
-      schemaVersion: '2026-08-29-document-fields-v2' as const, templateRegistryVersion: templateSelection.templateRegistryVersion,
+      schemaVersion: M1_EXTRACTION_SCHEMA_VERSION, templateRegistryVersion: templateSelection.templateRegistryVersion,
       coreTemplateId: templateSelection.coreTemplateId, scenarioTemplateId: templateSelection.scenarioTemplateId,
       sourceDocuments: documents.map((document) => ({ ...document, role: document.role, sha256: 'a'.repeat(64) })),
       extractedFields: [], rawFieldIds: [], warnings: [], completionPercent: 0, createdAt: 1, createdBy: 'organizer-1',
@@ -180,26 +286,15 @@ describe('organizer application lifecycle helpers', () => {
     expect(extractionMatchesDraftDocuments(extraction, [documents[0], { ...documents[1], path: 'event_documents/event-1/v1/replacement.docx' }])).toBe(false);
   });
 
-  it('matches a current extraction produced from one combined PDF', () => {
-    const document = {
-      path: 'event_documents/event-1/v1/combined.pdf', role: 'combined_application' as const,
-      originalName: 'combined.pdf', mimeType: 'application/pdf', sizeBytes: 100, uploadedAt: 1,
-      schemaVersion: '2026-08-28-document-v1' as const,
-    };
-    const extraction = {
-      extractionId: 'extract-combined', eventId: 'event-1', editableVersionId: 'v1', status: 'ready' as const,
-      schemaVersion: '2026-08-29-document-fields-v2' as const, templateRegistryVersion: templateSelection.templateRegistryVersion,
-      coreTemplateId: templateSelection.coreTemplateId, scenarioTemplateId: templateSelection.scenarioTemplateId,
-      sourceDocuments: [{ ...document, sha256: 'b'.repeat(64) }], extractedFields: [], rawFieldIds: [], warnings: [],
-      completionPercent: 0, createdAt: 1, createdBy: 'organizer-1',
-    };
-    expect(extractionMatchesDraftDocuments(extraction, [document])).toBe(true);
-  });
-
   it('forces declared evidence conditions and blocks incomplete checklist items', () => {
     const details = validDetails({ riskProfile: { ...validDetails().riskProfile, temporaryStructures: true } });
     const manifest = reconcileM1EvidenceManifest(templateSelection, details, []);
     expect(manifest.find((item) => item.requirementId === 'T10-DOC-01')).toEqual({ requirementId: 'T10-DOC-01', applicability: 'required' });
     expect(validateM1EvidenceChecklist(details, templateSelection, [], manifest)).toContain('Attach a supporting-evidence file to DOC-A01.');
+  });
+
+  it('only accepts a specific not-applicable explanation', () => {
+    expect(isMeaningfulNotApplicableReason('not applicable')).toBe(false);
+    expect(isMeaningfulNotApplicableReason('No foreign performers are included in this local programme.')).toBe(true);
   });
 });

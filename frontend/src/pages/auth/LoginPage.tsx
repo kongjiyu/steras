@@ -1,13 +1,13 @@
+import { ADMIN_CONTACT_EMAIL } from '@shared/accountValidation';
 import { FormEvent, useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import toast from 'react-hot-toast';
-import { sendPasswordResetEmail } from 'firebase/auth';
-import { auth } from '../../config/firebase';
 import AuthShell from '../../components/layout/AuthShell';
 import { getPostLoginPath, getRoleHome, ReturnLocation } from '../../routing';
 import { authErrorMessage } from '../../contexts/authErrors';
 import { LogIn, LogOut } from 'lucide-react';
+import { useAppDialog } from '../../contexts/AppDialogContext';
 
 export default function LoginPage() {
   const { user, profile, signIn, signOut, configured } = useAuth();
@@ -15,14 +15,19 @@ export default function LoginPage() {
   const location = useLocation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const dialog = useAppDialog();
   const existingSessionHome = user ? getRoleHome(profile?.role) : null;
 
   const handleSignOut = async () => {
+    if (!await dialog.confirm({ title: 'Sign out of STERAS?', description: 'You will need to sign in again to return to your workspace.', confirmLabel: 'Sign out', cancelLabel: 'Stay signed in', tone: 'danger' })) return;
     setSigningOut(true);
     try {
       await signOut();
+    } catch (error) {
+      toast.error(authErrorMessage(error));
     } finally {
       setSigningOut(false);
     }
@@ -30,6 +35,7 @@ export default function LoginPage() {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    setError('');
     const requestedRoute = (location.state as { from?: ReturnLocation } | null)?.from;
     setSubmitting(true);
     try {
@@ -39,21 +45,11 @@ export default function LoginPage() {
         await signOut();
         throw new Error('This account does not have a valid STERAS workspace profile. Contact the project administrator.');
       }
-      toast.success('Signed in.');
+      sessionStorage.setItem('steras-signed-in', 'true');
       navigate(destination, { replace: true });
     } catch (err) {
-      toast.error(authErrorMessage(err));
+      setError(authErrorMessage(err));
       setSubmitting(false);
-    }
-  };
-
-  const resetPassword = async () => {
-    if (!email.trim()) return toast.error('Enter your email address first.');
-    try {
-      await sendPasswordResetEmail(auth, email.trim());
-      toast.success('Password reset email sent.');
-    } catch (error) {
-      toast.error(authErrorMessage(error));
     }
   };
 
@@ -152,10 +148,13 @@ export default function LoginPage() {
                 placeholder="••••••••"
               />
             </div>
+            {error && <p role="alert" className="rounded bg-red-50 p-3 text-sm text-red-700">{error}</p>}
             <button type="submit" disabled={submitting || !configured} className="btn-primary w-full">
               {submitting ? 'Signing in…' : 'Sign in'}
             </button>
-            <button type="button" disabled={!configured} onClick={resetPassword} className="w-full text-sm font-medium text-brand-700 hover:text-brand-800">Forgot password?</button>
+            <p className="text-center text-sm leading-6 text-ink-600">
+              <Link to="/reset-password" className="font-semibold text-brand-700 underline">Forgot your password?</Link><br />Need account help? Email <a className="underline" href={`mailto:${ADMIN_CONTACT_EMAIL}`}>{ADMIN_CONTACT_EMAIL}</a>.
+            </p>
           </form>
 
           <p className="mt-6 border-t border-[#e3dacb] pt-5 text-center text-sm text-ink-500">
