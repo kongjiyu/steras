@@ -59,7 +59,7 @@ interface AuthorityDecisionRequest {
 
 /** Minimum rationale length when the assessment is provisional / insufficient. */
 const PROVISIONAL_MIN_RATIONALE = 80;
-/** Standard rationale length floor (FR-M3-16: 10–1000 chars). */
+/** Standard rejection rationale length floor (approval rationale is optional). */
 const STANDARD_MIN_RATIONALE = 10;
 
 export const makeAuthorityDecision = onCall<AuthorityDecisionRequest>({ region: FUNCTION_REGION }, async (request) => {
@@ -208,7 +208,7 @@ export async function makeAuthorityDecisionForUser(
     const isProvisional = readiness === 'provisional' || readiness === 'insufficient_data';
     const finalizedAdminManual = assessment?.status === 'official_ready'
       && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual';
-    if (!finalizedAdminManual && isProvisional && rationale.trim().length < PROVISIONAL_MIN_RATIONALE) {
+    if (decision === 'Rejected' && !finalizedAdminManual && isProvisional && rationale.trim().length < PROVISIONAL_MIN_RATIONALE) {
       throw new HttpsError(
         'invalid-argument',
         `When the assessment is ${readiness}, the decision rationale must explain the gap ` +
@@ -607,8 +607,11 @@ export function validateDecisionRequest(request: unknown): {
   if (!eventId) throw new HttpsError('invalid-argument', 'eventId is required.');
   if (!isSafeDocumentId(eventId)) throw new HttpsError('invalid-argument', 'eventId must be a valid document id.');
   if (!isDecision(decision)) throw new HttpsError('invalid-argument', 'A valid decision is required.');
-  if (rationale.length < STANDARD_MIN_RATIONALE || rationale.length > 1_000) {
-    throw new HttpsError('invalid-argument', `Rationale must be between ${STANDARD_MIN_RATIONALE} and 1,000 characters.`);
+  if (decision === 'Rejected' && (rationale.length < STANDARD_MIN_RATIONALE || rationale.length > 1_000)) {
+    throw new HttpsError('invalid-argument', `Rationale must be between ${STANDARD_MIN_RATIONALE} and 1,000 characters when rejecting.`);
+  }
+  if (decision === 'Approved' && rationale.length > 1_000) {
+    throw new HttpsError('invalid-argument', 'Rationale must be at most 1,000 characters.');
   }
   if (decision === 'Approved' && value.materialsReviewed !== true && value.confirmedReview !== true) {
     throw new HttpsError('invalid-argument', 'Confirm review of all listed materials before approval.');

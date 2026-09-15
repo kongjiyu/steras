@@ -1,6 +1,38 @@
-import { EventRecord, EventStatus } from '@shared/types';
+import { Assignment, DecisionValue, EventRecord, EventStatus } from '@shared/types';
 
 export type QueueSort = 'newest' | 'eventSoonest' | 'attendance';
+export type QueueFilter = 'all' | 'pending' | 'decided';
+
+export interface AuthorityQueueRow {
+  event: EventRecord;
+  assignment?: Pick<Assignment, 'status' | 'decision' | 'versionId' | 'authorityType'>;
+  action: 'review' | 'amend' | 'view';
+  decision?: DecisionValue;
+}
+
+export function authorityQueueAction(row: Pick<AuthorityQueueRow, 'event' | 'assignment'>): AuthorityQueueRow['action'] {
+  if (row.event.reviewStage !== 'authority') return 'view';
+  if (row.assignment?.status === 'completed' && row.assignment.decision) return 'amend';
+  return 'review';
+}
+
+export function filterAndSortAuthorityQueue(
+  rows: AuthorityQueueRow[],
+  filter: QueueFilter,
+  search: string,
+  sort: QueueSort,
+): AuthorityQueueRow[] {
+  const normalizedSearch = search.trim().toLocaleLowerCase();
+  return rows
+    .filter((row) => filter === 'all' || (filter === 'decided' ? row.assignment?.status === 'completed' : row.assignment?.status !== 'completed'))
+    .filter((row) => !normalizedSearch || [row.event.eventDetails.name, row.event.eventDetails.venueName, row.event.eventDetails.type]
+      .some((value) => value.toLocaleLowerCase().includes(normalizedSearch)))
+    .sort((left, right) => {
+      if (sort === 'eventSoonest') return left.event.eventDetails.startDatetime - right.event.eventDetails.startDatetime;
+      if (sort === 'attendance') return right.event.eventDetails.expectedAttendance - left.event.eventDetails.expectedAttendance;
+      return right.event.createdAt - left.event.createdAt;
+    });
+}
 
 export function filterAndSortQueue(
   events: EventRecord[],

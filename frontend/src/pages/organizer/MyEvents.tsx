@@ -3,6 +3,7 @@ import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { Link } from 'react-router-dom';
 import { db, isFirebaseConfigured } from '../../config/firebase';
 import { COLLECTIONS, EventRecord } from '@shared/types';
+import { resolveApplicationDisplayState } from '@shared/applicationState';
 import { useAuth } from '../../contexts/AuthContext';
 import PageHeader from '../../components/ui/PageHeader';
 import EmptyState from '../../components/ui/EmptyState';
@@ -144,7 +145,7 @@ export default function MyEvents() {
                   <td className="px-4 py-3 tabular-nums text-ink-600">
                     {e.eventDetails.startDatetime ? format(new Date(e.eventDetails.startDatetime), 'PP') : 'Not scheduled'}
                   </td>
-                  <td className="px-4 py-3"><OrganizerStatusBadge status={String(e.status)} /></td>
+                  <td className="px-4 py-3"><OrganizerStatusBadge status={String(e.status)} state={resolveApplicationDisplayState(e)} /></td>
                   <td className="px-4 py-3 text-right">
                     <Link to={isEditableApplicationStatus(String(e.status)) ? `/organizer/events/${e.eventId}/edit` : `/organizer/events/${e.eventId}`} className="text-brand-600 hover:text-brand-700 text-sm font-medium">
                       {isEditableApplicationStatus(String(e.status)) ? 'Edit' : 'View'}
@@ -160,7 +161,7 @@ export default function MyEvents() {
             {filtered.map((e) => {
               const editable = isEditableApplicationStatus(String(e.status));
               return <li key={e.eventId}><Link to={editable ? `/organizer/events/${e.eventId}/edit` : `/organizer/events/${e.eventId}`} className="block rounded-lg border border-[#ded5c5] bg-[#fffdf8] p-4 active:bg-cream-100">
-                <div className="flex items-start justify-between gap-3"><h2 className="font-display text-base font-bold leading-snug text-ink-800">{e.eventDetails.name || 'Untitled event'}</h2><OrganizerStatusBadge status={String(e.status)} /></div>
+                <div className="flex items-start justify-between gap-3"><h2 className="font-display text-base font-bold leading-snug text-ink-800">{e.eventDetails.name || 'Untitled event'}</h2><OrganizerStatusBadge status={String(e.status)} state={resolveApplicationDisplayState(e)} /></div>
                 <div className="mt-3 space-y-1 text-sm text-ink-500"><p className="flex items-center gap-2"><MapPin size={14} />{e.eventDetails.venueName || 'Venue not set'}</p><p className="tabular-nums">{e.eventDetails.startDatetime ? format(new Date(e.eventDetails.startDatetime), 'PP') : 'Not scheduled'}</p><p>{versionLabel(e)} - {assessmentLabel(e)}</p><p>{organizerAdminDecisionLabel(e)} - {organizerPublicationLabel(publicationStateFor(e))}</p></div>
                 <div className="mt-4 flex items-center justify-between border-t border-[#e3dacb] pt-3 text-sm font-semibold text-brand-700"><span>{editable ? 'Continue application' : 'View application'}</span><ArrowRight size={16} /></div>
               </Link></li>;

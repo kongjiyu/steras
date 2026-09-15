@@ -3,16 +3,18 @@ import { Link, useSearchParams } from 'react-router-dom';
 import {
   ChevronRight,
   ClipboardList,
+  Eye,
   Filter,
   Search,
   ShieldCheck,
-  UserCheck,
 } from 'lucide-react';
 import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
 import { db, isFirebaseConfigured } from '../../config/firebase';
-import { COLLECTIONS, EventRecord, EventStatus } from '@shared/types';
+import { COLLECTIONS, EventRecord } from '@shared/types';
+import { resolveApplicationDisplayState } from '@shared/applicationState';
 import { WorkspaceTopBar } from '../../components/layout/Sidebar';
 import { useAuth } from '../../contexts/AuthContext';
+import { ApplicationDisplayBadge } from '../../components/ui/StatusBadge';
 import {
   ADMIN_VISIBLE_EVENT_STATUSES,
   adminStatusFromQuery,
@@ -22,23 +24,34 @@ import {
 const STATUS_FILTERS: Array<{ value: AdminVisibleEventStatus | 'all'; label: string }> = [
   { value: 'all', label: 'All' },
   { value: 'Pending', label: 'Pending' },
-  { value: 'UnderReview', label: 'Under review' },
+  { value: 'UnderReview', label: 'Under Review' },
+  { value: 'Manual Review Required', label: 'Manual Review Required' },
   { value: 'Approved', label: 'Approved' },
   { value: 'Rejected', label: 'Rejected' },
   { value: 'Cancelled', label: 'Cancelled' },
   { value: 'Withdrawn', label: 'Withdrawn' },
 ];
 
-const STATUS_BADGE: Record<EventStatus, string> = {
-  Draft: 'admin-badge admin-badge--default',
-  Pending: 'admin-badge admin-badge--warn',
-  UnderReview: 'admin-badge admin-badge--warn',
-  Approved: 'admin-badge admin-badge--good',
-  Rejected: 'admin-badge admin-badge--bad',
-  Cancelled: 'admin-badge admin-badge--default',
-  Withdrawn: 'admin-badge admin-badge--default',
-  'Manual Review Required': 'admin-badge admin-badge--warn',
+export type AdminQueueAction = {
+  label: 'Review' | 'Assign officers' | 'View';
+  to: string;
+  variant: 'primary' | 'secondary';
 };
+
+export function getAdminQueueAction(event: Pick<EventRecord, 'eventId' | 'status' | 'reviewStage' | 'initialReview' | 'assignedOfficerUids'>): AdminQueueAction {
+  if (event.reviewStage === 'second') {
+    return { label: 'View', to: `/admin/applications/${event.eventId}`, variant: 'secondary' };
+  }
+  if (event.initialReview?.decision === 'Approved' && !event.assignedOfficerUids?.length && !['Approved', 'Rejected', 'Cancelled', 'Withdrawn'].includes(event.status)) {
+    return { label: 'Assign officers', to: `/admin/applications/${event.eventId}/assign`, variant: 'primary' };
+  }
+  if (!event.initialReview && !event.assignedOfficerUids?.length
+    && (event.status === 'Pending' || event.status === 'UnderReview' || event.status === 'Manual Review Required' || event.reviewStage === 'manual')
+    && event.reviewStage !== 'authority') {
+    return { label: 'Review', to: `/admin/applications/${event.eventId}`, variant: 'primary' };
+  }
+  return { label: 'View', to: `/admin/applications/${event.eventId}`, variant: 'secondary' };
+}
 
 function initialsFor(name?: string) {
   if (!name) return 'AD';
@@ -159,13 +172,13 @@ export default function AdminApplicationQueue() {
 
         {/* List */}
         <section className="overflow-hidden rounded-lg border border-[#ded5c5] bg-white shadow-card">
-          <header className="grid grid-cols-[1.5rem_minmax(0,2fr)_minmax(0,1.4fr)_9rem_7rem_4rem] gap-3 border-b border-[#e8e0cf] bg-cream-50 px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.06em] text-ink-500">
+          <header className="admin-queue-header grid grid-cols-[1.5rem_minmax(0,2fr)_minmax(0,1.4fr)_9rem_7rem_9rem] gap-3 border-b border-[#e8e0cf] bg-cream-50 px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.06em] text-ink-500">
             <span aria-hidden="true" />
             <span>Application</span>
             <span>Organiser · Venue</span>
             <span>Status</span>
             <span>Event date</span>
-            <span className="text-right">Open</span>
+            <span className="text-right">Action</span>
           </header>
 
           {loading ? (
@@ -178,40 +191,47 @@ export default function AdminApplicationQueue() {
           ) : (
             <ul className="divide-y divide-[#e8e0cf]">
               {filtered.map((e) => {
-                // Per-row "Assign" link is hidden when the event is
-                // past the assignment stage (second review, closed).
-                const showAssign = e.reviewStage !== 'second'
-                  && !['Approved', 'Rejected', 'Withdrawn'].includes(e.status);
+                    const action = getAdminQueueAction(e);
                 return (
-                  <li key={e.eventId} className="flex items-stretch">
+                  <li key={e.eventId} className="admin-queue-row grid grid-cols-[1.5rem_minmax(0,2fr)_minmax(0,1.4fr)_9rem_7rem_9rem] items-center gap-3 px-4 py-3 transition hover:bg-cream-50">
+                    <ClipboardList size={16} className="text-ink-500" />
                     <Link
                       to={`/admin/applications/${e.eventId}`}
-                      className="admin-queue-row grid flex-1 grid-cols-[1.5rem_minmax(0,2fr)_minmax(0,1.4fr)_9rem_7rem_4rem] items-center gap-3 px-4 py-3 transition hover:bg-cream-50"
+                      className="min-w-0"
                     >
-                      <ClipboardList size={16} className="text-ink-500" />
                       <div className="min-w-0">
                         <p className="truncate text-sm font-semibold text-ink-900">{e.eventDetails.name}</p>
                         <p className="truncate text-xs text-ink-500">
                           {e.eventDetails.type} · {e.eventDetails.expectedAttendance.toLocaleString()} attendees
                         </p>
                       </div>
-                      <div className="min-w-0">
-                        <p className="truncate text-sm text-ink-800">{e.eventDetails.organizerName}</p>
-                        <p className="truncate text-xs text-ink-500">{e.eventDetails.venueName}</p>
-                      </div>
-                      <span className={STATUS_BADGE[e.status]}>{e.status}</span>
-                      <span className="text-xs text-ink-600">{formatDate(e.eventDetails.startDatetime)}</span>
-                      <ChevronRight size={16} className="justify-self-end text-ink-400" />
                     </Link>
-                    {showAssign && (
-                      <Link
-                        to={`/admin/applications/${e.eventId}/assign`}
-                        className="flex items-center gap-1 border-l border-[#e8e0cf] px-3 text-xs font-semibold text-brand-700 transition hover:bg-cream-50"
-                        aria-label={`Assign officers for ${e.eventDetails.name}`}
-                      >
-                        <UserCheck size={14} /> Assign
-                      </Link>
-                    )}
+                    <div className="min-w-0">
+                      <p className="truncate text-sm text-ink-800">{e.eventDetails.organizerName}</p>
+                      <p className="truncate text-xs text-ink-500">{e.eventDetails.venueName}</p>
+                    </div>
+                    <ApplicationDisplayBadge state={resolveApplicationDisplayState({
+                      status: e.status,
+                      reviewStage: e.reviewStage,
+                      currentVersionId: e.currentVersionId,
+                      currentAssessmentId: e.currentAssessmentId,
+                      currentResourceId: e.currentResourceId,
+                      initialReview: e.initialReview,
+                      assignedOfficerUids: e.assignedOfficerUids,
+                    })} />
+                    <span className="text-xs text-ink-600">{formatDate(e.eventDetails.startDatetime)}</span>
+                    <Link
+                      to={action.to}
+                      className={`admin-queue-action admin-queue-action--${action.variant}`}
+                      aria-label={`${action.label} ${e.eventDetails.name}`}
+                      data-testid={`queue-action-${e.eventId}`}
+                    >
+                      <span className="admin-queue-action__label-group">
+                        {action.label === 'View' ? <Eye size={14} aria-hidden="true" /> : <ClipboardList size={14} aria-hidden="true" />}
+                        <span>{action.label}</span>
+                      </span>
+                      <ChevronRight className="admin-queue-action__chevron" size={14} aria-hidden="true" />
+                    </Link>
                   </li>
                 );
               })}

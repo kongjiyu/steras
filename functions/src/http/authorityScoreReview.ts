@@ -1,9 +1,12 @@
 import { createHash } from 'node:crypto';
 import { firestore } from 'firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import {
   ASSESSMENT_SCHEMA_VERSION,
+  Assignment,
   AssessmentRecord,
+  AuthorityDecision,
   AuthorityReviewState,
   AuthorityScoreResolution,
   AuthorityScoreReview,
@@ -105,12 +108,30 @@ export async function submitScoreReviewForUser(uid: string, data: SubmitReviewRe
     const assessmentRef = eventRef.collection(COLLECTIONS.ASSESSMENTS).doc(assessmentId);
     const summaryRef = eventRef.collection(COLLECTIONS.ASSESSMENT_SUMMARIES).doc(versionId);
     const versionRef = eventRef.collection(COLLECTIONS.VERSIONS).doc(versionId);
-    const [assessmentSnap, versionSnap, summarySnap] = await Promise.all([transaction.get(assessmentRef), transaction.get(versionRef), transaction.get(summaryRef)]);
+    const assignmentId = `${versionId}_${profile.authorityType}`;
+    const assignmentRef = eventRef.collection(COLLECTIONS.ASSIGNMENTS).doc(assignmentId);
+    const currentDecisionRef = eventRef.collection(COLLECTIONS.DECISIONS).doc(assignmentId);
+    const [assessmentSnap, versionSnap, summarySnap, assignmentSnap, currentDecisionSnap] = await Promise.all([
+      transaction.get(assessmentRef), transaction.get(versionRef), transaction.get(summaryRef),
+      transaction.get(assignmentRef), transaction.get(currentDecisionRef),
+    ]);
     const assessment = assessmentSnap.data() as AssessmentRecord | undefined;
     const version = versionSnap.data() as EventVersion | undefined;
     if (!version || version.eventId !== eventId || version.versionId !== versionId) throw new HttpsError('failed-precondition', 'The current immutable event version is missing.');
     if (!assessment || !(assessment.status === 'provisional_ready' || assessment.status === 'authority_review' || assessment.status === 'official_ready')) {
       throw new HttpsError('failed-precondition', 'A current provisional assessment is required.');
+    }
+    const assignment = assignmentSnap.data() as Assignment | undefined;
+    if (!assignment || assignment.assignmentId !== assignmentId
+      || assignment.eventId !== eventId || assignment.versionId !== versionId
+      || assignment.authorityType !== profile.authorityType || assignment.officerUid !== uid) {
+      throw new HttpsError('permission-denied', 'The named officer assignment is missing, revoked, completed, or stale.');
+    }
+    if (assignment.status === 'revoked') {
+      throw new HttpsError('failed-precondition', 'The named officer assignment is missing, revoked, completed, or stale.');
+    }
+    if (!['pending', 'in_progress', 'completed'].includes(assignment.status)) {
+      throw new HttpsError('failed-precondition', 'The named officer assignment is missing, revoked, completed, or stale.');
     }
     if (isManualOfficialAssessment(assessment)) throw new HttpsError('failed-precondition', 'Admin manual official assessments do not accept authority score reviews.');
     if (!isCurrentAssessmentIdentity(assessment, eventId, assessmentId, version, versionId)) {
@@ -208,6 +229,47 @@ export async function submitScoreReviewForUser(uid: string, data: SubmitReviewRe
       transaction.create(reviewRef, review);
       writeReviewAudit(transaction, eventRef, review, Boolean(review.supersedesReviewId));
     }
+    let decisionReopened = false;
+    if (!existingReviewSnap.exists && shouldReopenDecisionAfterScoreRevision(assignment)) {
+      const previousDecision = currentDecisionSnap.data() as Partial<AuthorityDecision> | undefined;
+      const historyId = `${assignmentId}_score_revision_${now}_${createHash('sha256').update(review.reviewId).digest('hex').slice(0, 12)}`;
+      transaction.create(eventRef.collection(COLLECTIONS.DECISION_HISTORY).doc(historyId), {
+        decisionId: historyId,
+        eventId,
+        versionId,
+        authorityType: assignment.authorityType,
+        decision: previousDecision?.decision ?? assignment.decision,
+        rationale: previousDecision?.rationale ?? assignment.reason ?? '',
+        ...(previousDecision?.suggestion ?? assignment.suggestion
+          ? { suggestion: previousDecision?.suggestion ?? assignment.suggestion }
+          : {}),
+        reviewerId: previousDecision?.reviewerId ?? assignment.officerUid,
+        decidedAt: previousDecision?.decidedAt ?? assignment.decidedAt ?? now,
+        current: false,
+        amendedAt: now,
+        amendedBy: uid,
+        amendmentReason: 'Score review revised; the officer must reconfirm the decision against the new scores.',
+      });
+      if (currentDecisionSnap.exists && previousDecision?.current === true) {
+        transaction.set(currentDecisionRef, { current: false, archivedAt: now }, { merge: true });
+      }
+      transaction.update(assignmentRef, {
+        status: 'in_progress',
+        decision: FieldValue.delete(),
+        reason: FieldValue.delete(),
+        suggestion: FieldValue.delete(),
+        decidedAt: FieldValue.delete(),
+        confirmedReview: FieldValue.delete(),
+      });
+      const reopenAudit = eventRef.collection(COLLECTIONS.AUDIT_LOGS).doc(`${historyId}_audit`);
+      transaction.create(reopenAudit, auditRecord(reopenAudit.id, eventId, versionId, 'decision_reopened_after_score_revision', uid, 'authority', now, {
+        authorityType: assignment.authorityType,
+        assignmentId,
+        supersededReviewId: review.supersedesReviewId ?? null,
+        archivedDecision: previousDecision?.decision ?? assignment.decision,
+      }));
+      decisionReopened = true;
+    }
     transaction.set(assessmentRef, { status: 'authority_review', authorityReviewState: state }, { merge: true });
     transaction.update(eventRef, { updatedAt: now });
     if (summarySnap.exists) transaction.set(summaryRef, {
@@ -217,10 +279,10 @@ export async function submitScoreReviewForUser(uid: string, data: SubmitReviewRe
       computedAt: now,
     }, { merge: true });
     if (reviews.length === event.requiredAuthorities.length && state.conflicts.length === 0) {
-      return { eventId, versionId, assessmentId, reviewId, status: 'authority_review' as const, shouldFinalize: true, idempotent: existingReviewSnap.exists };
+      return { eventId, versionId, assessmentId, reviewId, status: 'authority_review' as const, shouldFinalize: true, idempotent: existingReviewSnap.exists, decisionReopened };
     }
     if (!existingReviewSnap.exists && state.conflicts.length > 0) writeConflictAudit(transaction, eventRef, versionId, state, now);
-    return { eventId, reviewId, status: 'authority_review' as const, conflicts: state.conflicts, shouldFinalize: false, idempotent: existingReviewSnap.exists };
+    return { eventId, reviewId, status: 'authority_review' as const, conflicts: state.conflicts, shouldFinalize: false, idempotent: existingReviewSnap.exists, decisionReopened };
   });
   if (!('shouldFinalize' in persisted) || !persisted.shouldFinalize) return persisted;
   if (!persisted.versionId || !persisted.assessmentId) throw new HttpsError('failed-precondition', 'The finalized review identity is incomplete.');
@@ -657,10 +719,15 @@ function assertReviewableEvent(event: EventRecord | undefined, authority: Author
   if (!event?.currentVersionId || !event.currentAssessmentId
     || !isSafeDocumentId(event.currentVersionId) || !isSafeDocumentId(event.currentAssessmentId)
     || (event.currentResourceId !== undefined && !isSafeDocumentId(event.currentResourceId))
-    || !['Pending', 'UnderReview'].includes(event.status)) throw new HttpsError('failed-precondition', 'The event is not open for authority review.');
+    || !['Pending', 'UnderReview'].includes(event.status)
+    || event.reviewStage !== 'authority') throw new HttpsError('failed-precondition', 'The event is not open for authority review.');
   if (!validRequiredAuthorities(event.requiredAuthorities)) throw new HttpsError('failed-precondition', 'The assigned authority list is invalid.');
   if (!event.requiredAuthorities.includes(authority)) throw new HttpsError('permission-denied', 'This authority is not assigned to the event.');
   return { versionId: event.currentVersionId, assessmentId: event.currentAssessmentId };
+}
+
+export function shouldReopenDecisionAfterScoreRevision(assignment: Pick<Assignment, 'status' | 'decision'>): boolean {
+  return assignment.status === 'completed' && Boolean(assignment.decision);
 }
 
 function validRequiredAuthorities(value: unknown): value is AuthorityType[] {

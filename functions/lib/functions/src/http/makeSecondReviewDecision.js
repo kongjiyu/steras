@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.makeSecondReviewDecision = void 0;
+exports.isManagedRealReviewFixture = isManagedRealReviewFixture;
 /**
  * makeSecondReviewDecision — admin-only callable (M3 Workstream 1).
  *
@@ -75,7 +76,11 @@ exports.makeSecondReviewDecision = (0, https_1.onCall)({ region: runtime_1.FUNCT
     const versionId = event.currentVersionId;
     if (!versionId)
         throw new https_1.HttpsError('failed-precondition', 'The application has no submitted version.');
-    if (event.reviewStage !== 'second') {
+    // `second` is the canonical stage after the last officer decision.  Accept
+    // `authority` as a defensive compatibility path when legacy data contains
+    // a fully completed assignment set but the stage projection was not
+    // advanced; the required-assignment check below remains authoritative.
+    if (event.reviewStage !== 'second' && event.reviewStage !== 'authority') {
         throw new https_1.HttpsError('failed-precondition', 'All officers have not yet completed their review.');
     }
     // Read all assignments for this version.
@@ -104,6 +109,7 @@ exports.makeSecondReviewDecision = (0, https_1.onCall)({ region: runtime_1.FUNCT
     const notifType = finalDecision === 'Approved' ? 'application_approved'
         : 'application_rejected';
     return db.runTransaction(async (tx) => {
+        const managedFixture = isManagedRealReviewFixture(event);
         tx.update(eventRef, {
             status: finalDecision,
             reviewStage: finalDecision === 'Rejected' ? 'closed' : null,
@@ -117,6 +123,7 @@ exports.makeSecondReviewDecision = (0, https_1.onCall)({ region: runtime_1.FUNCT
                 aggregateDecision: aggregate,
                 reason: reason || null,
                 suggestion: suggestion || null,
+                managedFixture,
                 adminNote: adminNote || null,
                 featuredOfficerUid: reasonOfficer?.officerUid ?? null,
             },
@@ -147,7 +154,7 @@ exports.makeSecondReviewDecision = (0, https_1.onCall)({ region: runtime_1.FUNCT
             },
         });
         const publicRef = db.collection(types_1.COLLECTIONS.PUBLIC_EVENTS).doc(eventId);
-        if (finalDecision === 'Approved') {
+        if (finalDecision === 'Approved' && !managedFixture) {
             const details = versionSnap.data().eventDetails;
             const publicEvent = {
                 eventId,
@@ -210,7 +217,11 @@ exports.makeSecondReviewDecision = (0, https_1.onCall)({ region: runtime_1.FUNCT
                         type: result.notifType,
                         title,
                         message,
-                        sourceActionId: `second_review_${versionId}`,
+                        // Scope the idempotency key to the event as well as the version.
+                        // A version id such as `v1` is reused across applications; using
+                        // it alone would make the first event's notification suppress
+                        // every later event's final-decision notification.
+                        sourceActionId: `second_review_${eventId}_${versionId}`,
                         ...(reason ? { reason } : result.reasonOfficer?.reason ? { reason: result.reasonOfficer.reason } : adminNote ? { reason: adminNote } : {}),
                         ...(suggestion ? { suggestion } : result.reasonOfficer?.suggestion ? { suggestion: result.reasonOfficer.suggestion } : {}),
                     });
@@ -223,6 +234,11 @@ exports.makeSecondReviewDecision = (0, https_1.onCall)({ region: runtime_1.FUNCT
         return { eventId, status: result.finalDecision, aggregate: result.aggregate };
     });
 });
+function isManagedRealReviewFixture(event) {
+    const marker = event.sterasFixture;
+    return marker?.datasetId === 'steras-module3-real-review-samples-v1'
+        && marker?.managedBy === 'seed:steras:real-review-samples';
+}
 function aggregateFromAssignments(assignments, required) {
     const byAuthority = new Map();
     for (const a of assignments) {

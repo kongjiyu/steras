@@ -36,6 +36,7 @@ import {
 import { db, functions } from '../../config/firebase';
 import EmptyState from '../../components/ui/EmptyState';
 import StatusBadge from '../../components/ui/StatusBadge';
+import { friendlyAdminStatus } from './adminApplicationPresentation';
 
 interface ProposedResponse {
   items: ProposedControlItem[];
@@ -216,7 +217,7 @@ export default function AdminControlListEditor() {
 
       {!canEdit && (
         <div className="mb-5 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
-          The event is in {event.status} status. The control list can only be generated / edited for events in <strong>UnderReview</strong> or <strong>Approved</strong>.
+          The event is in {friendlyAdminStatus(event.status)} status. The control list can only be generated / edited for events in <strong>Under Review</strong> or <strong>Approved</strong>.
         </div>
       )}
 

@@ -9,6 +9,13 @@ describe('validateResourceOverrideRequest', () => {
       .toEqual({ eventId: 'event-1', quantities, rationale: 'Operational review.', idempotencyKey: 'override-key-1' });
   });
 
+  it('does not require the retired overrideReasonCategory field', () => {
+    expect(validateResourceOverrideRequest({
+      eventId: 'event-1', quantities, rationale: 'Authority confirmed the revised crowd plan.', idempotencyKey: 'override-key-2',
+      overrideReasonCategory: undefined,
+    })).toMatchObject({ eventId: 'event-1', quantities, idempotencyKey: 'override-key-2' });
+  });
+
   it.each([
     [{ eventId: '', quantities, rationale: 'Operational review.' }, 'eventId is required.'],
     [{ eventId: 'event-1', quantities: { ...quantities, police: -1 }, rationale: 'Operational review.', idempotencyKey: 'override-key-1' }, 'Every resource quantity must be a non-negative integer.'],

@@ -25,12 +25,14 @@ import {
 import { FUNCTION_REGION } from '../config/runtime';
 import { validateResourceRecommendation } from '../engines/resourceContract';
 import { createNotification, resolveAuthUid } from '../utils/notifications';
+import { resolveInitialReviewReadiness } from '@shared/applicationState';
 
 type InitialDecision = 'Approved' | 'Rejected';
 
-interface InitialReviewRequest {
+export interface InitialReviewRequest {
   eventId?: string;
   decision?: InitialDecision;
+  /** Optional for approval; required for rejection. */
   reason?: string;
   suggestion?: string;
   /** Include completed named-officer feedback in an initial rejection. */
@@ -47,24 +49,7 @@ export const makeInitialReviewDecision = onCall<InitialReviewRequest>({ region: 
 });
 
 export async function makeInitialReviewDecisionForUser(uid: string, data: InitialReviewRequest, now = Date.now()) {
-  const eventId = (data.eventId ?? '').trim();
-  const decision = data.decision;
-  const reason = (data.reason ?? '').trim();
-  const suggestion = (data.suggestion ?? '').trim();
-  const attachOfficerFeedback = data.attachOfficerFeedback === true;
-  if (!eventId) throw new HttpsError('invalid-argument', 'eventId is required.');
-  if (decision !== 'Approved' && decision !== 'Rejected') {
-    throw new HttpsError('invalid-argument', 'decision must be Approved or Rejected.');
-  }
-  if (reason.length < REASON_MIN || reason.length > REASON_MAX) {
-    throw new HttpsError('invalid-argument', `reason must be ${REASON_MIN}-${REASON_MAX} characters.`);
-  }
-  if (suggestion.length > SUGGESTION_MAX) {
-    throw new HttpsError('invalid-argument', `suggestion must be at most ${SUGGESTION_MAX} characters.`);
-  }
-  if (decision === 'Rejected' && suggestion.length === 0) {
-    throw new HttpsError('invalid-argument', 'A suggestion is required when rejecting.');
-  }
+  const { eventId, decision, reason, suggestion, attachOfficerFeedback } = validateInitialReviewRequest(data);
   if (Object.prototype.hasOwnProperty.call(data, 'manualAssessment')) {
     throw new HttpsError(
       'failed-precondition',
@@ -131,23 +116,28 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
       }));
   }
 
-  if (decision === 'Approved' && (!(isReadyAssessment(assessment, eventId, versionId, assessmentId) || manualOfficial)
-    || !resourceSnap?.exists || !resource || !resourceId
-    || !validateResourceRecommendation(resource).ok
-    || resource.resourceId !== resourceId
-    || resource.eventId !== eventId
-    || resource.versionId !== versionId
-    || resource.assessmentId !== assessmentId)) {
+  const readiness = resolveInitialReviewReadiness({
+    eventId,
+    versionId,
+    assessmentId,
+    resourceId,
+    assessment,
+    resource,
+  });
+  if (decision === 'Approved' && (!readiness.ready || !resourceSnap?.exists || !resource || !validateResourceRecommendation(resource).ok)) {
     if (event.status === 'Manual Review Required' || assessment?.status === 'manual_review_required') {
       throw new HttpsError('failed-precondition', 'Complete the Admin manual assessment queue before initial approval.');
     }
-    throw new HttpsError('failed-precondition', 'Smart Risk Assessment and Safety Resource Recommendation must be ready before initial approval.');
+    throw new HttpsError('failed-precondition', readiness.message);
   }
 
   const nextStatus: EventRecord['status'] = decision === 'Approved' ? 'UnderReview' : 'Rejected';
   const initialReview = {
     decision,
-    reason,
+    // Approval rationale is optional. Do not persist an empty field so new
+    // records remain semantically distinct from legacy records that carried
+    // a rationale, while readers continue to handle both shapes safely.
+    ...(reason ? { reason } : {}),
     ...(suggestion ? { suggestion } : {}),
     reviewerUid: uid,
     reviewedAt: now,
@@ -228,18 +218,36 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
   return { eventId, versionId, assessmentId, status: result.status, decision, manualAssessmentRecorded: manualOfficial };
 }
 
-function isReadyAssessment(value: unknown, eventId?: string, versionId?: string, assessmentId?: string): value is RiskAssessment {
-  if (!value || typeof value !== 'object') return false;
-  const assessment = value as Record<string, unknown>;
-  // The current M2 contract uses `official_ready` (the older M3 fixture used
-  // `ready`). Accept only a current, non-manual assessment here so initial
-  // review cannot release an incomplete or legacy record.
-  return assessment.status === 'official_ready'
-    && assessment.assessmentReadiness === 'complete'
-    && Array.isArray(assessment.evidence)
-    && (!eventId || assessment.eventId === eventId)
-    && (!versionId || assessment.versionId === versionId)
-    && (!assessmentId || assessment.assessmentId === assessmentId);
+export function validateInitialReviewRequest(request: unknown): {
+  eventId: string;
+  decision: InitialDecision;
+  reason: string;
+  suggestion: string;
+  attachOfficerFeedback: boolean;
+} {
+  const value = typeof request === 'object' && request !== null ? request as Record<string, unknown> : {};
+  const eventId = typeof value.eventId === 'string' ? value.eventId.trim() : '';
+  const decision = value.decision;
+  const reason = typeof value.reason === 'string' ? value.reason.trim() : '';
+  const suggestion = typeof value.suggestion === 'string' ? value.suggestion.trim() : '';
+  const attachOfficerFeedback = value.attachOfficerFeedback === true;
+  if (!eventId) throw new HttpsError('invalid-argument', 'eventId is required.');
+  if (decision !== 'Approved' && decision !== 'Rejected') {
+    throw new HttpsError('invalid-argument', 'decision must be Approved or Rejected.');
+  }
+  if (reason.length > REASON_MAX) {
+    throw new HttpsError('invalid-argument', `reason must be at most ${REASON_MAX} characters.`);
+  }
+  if (decision === 'Rejected' && reason.length < REASON_MIN) {
+    throw new HttpsError('invalid-argument', `reason must be ${REASON_MIN}-${REASON_MAX} characters when rejecting.`);
+  }
+  if (suggestion.length > SUGGESTION_MAX) {
+    throw new HttpsError('invalid-argument', `suggestion must be at most ${SUGGESTION_MAX} characters.`);
+  }
+  if (decision === 'Rejected' && suggestion.length < REASON_MIN) {
+    throw new HttpsError('invalid-argument', `suggestion must be ${REASON_MIN}-${SUGGESTION_MAX} characters when rejecting.`);
+  }
+  return { eventId, decision, reason, suggestion, attachOfficerFeedback };
 }
 
 function isManualOfficialAssessment(value: unknown, eventId: string, versionId: string, assessmentId: string): boolean {

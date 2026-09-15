@@ -11,7 +11,7 @@ const { listener, authValue } = vi.hoisted(() => ({
 vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => authValue }));
 vi.mock('../../config/firebase', () => ({ db: {}, isFirebaseConfigured: true }));
 vi.mock('firebase/firestore', () => ({
-  collection: vi.fn(), limit: vi.fn(), orderBy: vi.fn(), query: vi.fn(), where: vi.fn(),
+  collection: vi.fn(), doc: vi.fn(), getDoc: vi.fn(async () => ({ exists: () => false })), getDocs: vi.fn(async () => ({ docs: [] })), limit: vi.fn(), orderBy: vi.fn(), query: vi.fn(), where: vi.fn(),
   onSnapshot: vi.fn((_query, onNext: (value: unknown) => void, onError: () => void) => {
     if (listener.mode === 'error') onError();
     else onNext({ docs: [{ id: 'event-1', data: () => ({

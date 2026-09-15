@@ -6,6 +6,7 @@ import { COLLECTIONS, EventRecord, ManualReviewRiskAssessment } from '@shared/ty
 import { db, isFirebaseConfigured } from '../../config/firebase';
 import { isCurrentEventRecord, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
 import { isAdminManualEligible } from './manualAssessmentEligibility';
+import { friendlyAdminStatus } from './adminApplicationPresentation';
 
 export type ManualQueueEvent = EventRecord & {
   currentVersionId: string;
@@ -16,6 +17,7 @@ export type ManualQueueEvent = EventRecord & {
 export interface ManualQueueCase {
   event: ManualQueueEvent;
   assessment: ManualReviewRiskAssessment;
+  eligible: boolean;
 }
 
 const CANDIDATE_STATUSES = ['Pending', 'UnderReview', 'Manual Review Required'] as const;
@@ -45,8 +47,7 @@ export default function ManualAssessmentQueue() {
             && assessment.eventId === event.eventId
             && assessment.versionId === event.currentVersionId
             && assessment.assessmentId === event.currentAssessmentId
-            && isAdminManualEligible(assessment)
-            ? { event, assessment }
+            ? { event, assessment, eligible: isAdminManualEligible(assessment) }
             : null;
         }));
         if (current !== generation) return;
@@ -78,7 +79,7 @@ export default function ManualAssessmentQueue() {
         <span>Application</span><span>Organizer / venue</span><span>Status</span><span>Assessment</span><span className="text-right">Open</span>
       </div>
       <ul className="divide-y divide-[#e8e0cf]">
-        {cases.map(({ event, assessment }) => (
+        {cases.map(({ event, assessment, eligible }) => (
           <li key={`${event.eventId}:${assessment.assessmentId}`}>
             <Link
               to={`/admin/applications/${event.eventId}?focus=manual-assessment`}
@@ -96,10 +97,10 @@ export default function ManualAssessmentQueue() {
                 <span className="block truncate font-semibold text-ink-700">{event.eventDetails.organizerName}</span>
                 <span className="block truncate" title={event.eventDetails.venueAddress}>{event.eventDetails.venueName}</span>
               </span>
-              <span className="text-xs"><span className="badge badge-amber">{event.status}</span></span>
+              <span className="text-xs"><span className="badge badge-amber">{friendlyAdminStatus(event.status)}</span></span>
               <span className="text-xs text-ink-600" title={assessment.manualReviewReason}>
-                <span className="block font-semibold capitalize text-ink-700">{assessment.assessmentReadiness.replaceAll('_', ' ')}</span>
-                <span className="block capitalize">{assessment.complianceStatus.replaceAll('_', ' ')} · {assessment.warnings.length} warning{assessment.warnings.length === 1 ? '' : 's'}</span>
+                <span className="block font-semibold capitalize text-ink-700">{eligible ? assessment.assessmentReadiness.replaceAll('_', ' ') : 'Data integrity check required'}</span>
+                <span className="block capitalize">{eligible ? `${assessment.complianceStatus.replaceAll('_', ' ')} · ${assessment.warnings.length} warning${assessment.warnings.length === 1 ? '' : 's'}` : 'Evidence storage generation is missing or malformed'}</span>
               </span>
               <span className="flex items-center justify-end gap-1 text-xs font-semibold text-brand-700">Review <ArrowRight size={14} /></span>
             </Link>

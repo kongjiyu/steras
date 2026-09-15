@@ -12,7 +12,19 @@ const resourceContract_1 = require("../engines/resourceContract");
 exports.overrideResources = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
     if (!request.auth)
         throw new https_1.HttpsError('unauthenticated', 'Sign in before overriding resources.');
-    return overrideResourcesForUser(request.auth.uid, request.data);
+    try {
+        return await overrideResourcesForUser(request.auth.uid, request.data);
+    }
+    catch (error) {
+        const value = error;
+        console.warn('[overrideResources] rejected request', {
+            uid: request.auth.uid,
+            eventId: typeof request.data?.eventId === 'string' ? request.data.eventId : undefined,
+            code: value?.code,
+            message: value?.message,
+        });
+        throw error;
+    }
 });
 async function overrideResourcesForUser(uid, request, now = Date.now()) {
     const { eventId, quantities, rationale, idempotencyKey } = validateResourceOverrideRequest(request);
@@ -41,15 +53,16 @@ async function overrideResourcesForUser(uid, request, now = Date.now()) {
             throw new https_1.HttpsError('failed-precondition', 'The application current-generation pointers are invalid.');
         }
         const assignment = assignmentsSnapshot.docs
-            .map((snapshot) => snapshot.data())
+            .map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }))
             .find((candidate) => candidate.versionId === event.currentVersionId
             && candidate.authorityType === profile.authorityType
             && candidate.officerUid === uid
-            && (candidate.status === 'pending' || candidate.status === 'in_progress'));
+            && candidate.id === `${event.currentVersionId}_${profile.authorityType}`);
         if (!assignment)
             throw new https_1.HttpsError('permission-denied', 'You are not the named officer assigned to this application.');
-        if (!['Pending', 'UnderReview'].includes(event.status)) {
-            throw new https_1.HttpsError('failed-precondition', 'Resources can only be changed during active review.');
+        const authorityReviewOpen = event.reviewStage === 'authority' && ['Pending', 'UnderReview'].includes(event.status);
+        if (!authorityReviewOpen || !['pending', 'in_progress', 'completed'].includes(assignment.status ?? '')) {
+            throw new https_1.HttpsError('failed-precondition', 'Resources can only be changed during Authority Review.');
         }
         const resourceReference = eventReference.collection(types_1.COLLECTIONS.RESOURCES).doc(event.currentResourceId);
         const assessmentReference = eventReference.collection(types_1.COLLECTIONS.ASSESSMENTS).doc(event.currentAssessmentId);

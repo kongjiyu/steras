@@ -28,6 +28,7 @@ import {
   AuthorityType,
   COLLECTIONS,
   EventRecord,
+  EventVersion,
   OfficerProfile,
   UserProfile,
   Venue,
@@ -77,15 +78,20 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
     throw new HttpsError('failed-precondition', 'This event has no required authorities.');
   }
 
-  // Resolve the venue state. If the venue has no `state`, fall back to
-  // 'ALL' so federal officers can still match.
-  let venueState = 'ALL';
-  if (event.eventDetails?.venueId) {
-    const venueSnap = await db.collection(COLLECTIONS.VENUES).doc(event.eventDetails.venueId).get();
-    if (venueSnap.exists) {
-      venueState = (venueSnap.data() as Venue).state ?? 'ALL';
-    }
+  // Resolve the registry venue from the immutable submitted version.  A
+  // mutable event projection must not be allowed to silently change the
+  // state used for officer eligibility after submission.
+  const versionRef = eventRef.collection(COLLECTIONS.VERSIONS).doc(versionId);
+  const versionSnap = await versionRef.get();
+  if (!versionSnap.exists) throw new HttpsError('failed-precondition', 'The immutable application version is missing.');
+  const version = versionSnap.data() as EventVersion;
+  const submittedVenueId = version.eventDetails?.venueId?.trim() || '';
+  if (submittedVenueId !== (event.eventDetails?.venueId?.trim() || '')) {
+    throw new HttpsError('failed-precondition', 'The submitted registry venue state is stale or invalid.');
   }
+  const venueRef = submittedVenueId ? db.collection(COLLECTIONS.VENUES).doc(submittedVenueId) : undefined;
+  const venueSnap = venueRef ? await venueRef.get() : undefined;
+  const venueState = validateSubmittedVenue(venueSnap, version.eventDetails, submittedVenueId);
 
   // Load all active officers grouped by authorityType. In a real
   // production system this would be indexed / sharded; for the
@@ -95,6 +101,7 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
 
   // Filter by state scope (A4).
   const isEligible = (o: OfficerProfile) => {
+    if (!submittedVenueId) return o.scopeType === 'federal';
     if (o.scopeType === 'federal') return true;
     return o.state === venueState;
   };
@@ -164,6 +171,16 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
     // Firestore requires all reads to complete before any writes.
     const evSnap = await tx.get(eventRef);
     const ev = evSnap.data() as EventRecord;
+    const txVersionSnap = await tx.get(versionRef);
+    const txVenueSnap = venueRef ? await tx.get(venueRef) : undefined;
+    if (!evSnap.exists || !ev || !txVersionSnap.exists || ev.currentVersionId !== versionId
+      || ev.eventDetails?.venueId?.trim() !== submittedVenueId) {
+      throw new HttpsError('aborted', 'The submitted application version changed before assignment.');
+    }
+    const txVenueState = validateSubmittedVenue(txVenueSnap, (txVersionSnap.data() as EventVersion).eventDetails, submittedVenueId);
+    if (txVenueState !== venueState) {
+      throw new HttpsError('aborted', 'The submitted registry venue state changed before assignment.');
+    }
     if (ev.initialReview?.decision !== 'Approved') {
       throw new HttpsError('failed-precondition', 'Complete and approve the admin initial review before assigning officers.');
     }
@@ -199,7 +216,13 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
       if (!officer.active) {
         throw new HttpsError('failed-precondition', `Officer ${officerUid} is inactive.`);
       }
-      if (officer.scopeType === 'state' && officer.state !== venueState) {
+      if (!submittedVenueId && officer.scopeType !== 'federal') {
+        throw new HttpsError(
+          'permission-denied',
+          `Officer ${officerUid} is state-scoped and cannot be assigned to a custom venue without a registry state.`,
+        );
+      }
+      if (submittedVenueId && officer.scopeType === 'state' && officer.state !== venueState) {
         throw new HttpsError(
           'permission-denied',
           `Officer ${officerUid} is state-scoped to ${officer.state}, but the event is at ${venueState}.`,
@@ -275,3 +298,27 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
     return { checklist: result.checklist, assigned: result.assigned, venueState };
   });
 });
+
+export function validateSubmittedVenue(
+  snapshot: FirebaseFirestore.DocumentSnapshot | undefined,
+  details: EventVersion['eventDetails'] | undefined,
+  venueId: string,
+): string {
+  // Custom/unregistered venues have no registry state; only federal officers
+  // can match the ALL sentinel in that legacy path.
+  if (!venueId) return 'ALL';
+  const venue = snapshot?.data() as Venue | undefined;
+  const detailsVenueId = details?.venueId?.trim() || '';
+  if (!snapshot?.exists || !venue
+    || venue.venueId !== venueId
+    || detailsVenueId !== venueId
+    || venue.active !== true
+    || venue.verificationStatus !== 'verified'
+    || typeof venue.state !== 'string' || !venue.state.trim()
+    || venue.name !== details?.venueName
+    || venue.address !== details?.venueAddress
+    || venue.capacity !== details?.venueCapacity) {
+    throw new HttpsError('failed-precondition', 'The submitted registry venue state is stale or invalid.');
+  }
+  return venue.state.trim();
+}

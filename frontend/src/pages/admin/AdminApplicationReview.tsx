@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -34,26 +34,26 @@ import {
   ResourceRecommendation,
   AuthorityDecision,
   Assignment,
+  DecisionValue,
   UserProfile,
   AuthorityType,
   EventVersion,
 } from '@shared/types';
 import { WorkspaceTopBar } from '../../components/layout/Sidebar';
+import { ApplicationDisplayBadge } from '../../components/ui/StatusBadge';
+import { resolveApplicationDisplayState, resolveInitialReviewReadiness } from '@shared/applicationState';
 import { useAuth } from '../../contexts/AuthContext';
 import ManualAssessmentForm from './ManualAssessmentForm';
 import { isAdminManualEligible } from './manualAssessmentEligibility';
 import { isAdminVisibleEvent } from './adminApplicationVisibility';
-
-const STATUS_TONE: Record<EventStatus, string> = {
-  Draft: 'admin-badge admin-badge--default',
-  Pending: 'admin-badge admin-badge--warn',
-  UnderReview: 'admin-badge admin-badge--warn',
-  Approved: 'admin-badge admin-badge--good',
-  Rejected: 'admin-badge admin-badge--bad',
-  Cancelled: 'admin-badge admin-badge--default',
-  Withdrawn: 'admin-badge admin-badge--default',
-  'Manual Review Required': 'admin-badge admin-badge--warn',
-};
+import { isCurrentResourceRecommendation, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
+import {
+  deriveAdminWorkflow,
+  deriveAuthorityProgress,
+  friendlyAdminStatus,
+  friendlyDecisionStatus,
+  friendlyRiskLevel,
+} from './adminApplicationPresentation';
 
 const RISK_TONE: Record<string, string> = {
   Low: 'admin-badge admin-badge--good',
@@ -85,7 +85,7 @@ interface AdminAssessmentCategory {
 }
 
 function assessmentDisplay(assessment: RiskAssessment): {
-  riskLevel: string;
+  riskLevel?: string;
   score?: number;
   schemaVersion?: string;
   formulaVersion?: string;
@@ -95,7 +95,7 @@ function assessmentDisplay(assessment: RiskAssessment): {
     ? assessment.officialResult
     : 'provisionalResult' in assessment ? assessment.provisionalResult : undefined;
   return {
-    riskLevel: result?.overallRiskLevel ?? 'Medium',
+    riskLevel: result?.overallRiskLevel,
     score: result?.overallScore,
     schemaVersion: result?.categorySchemaVersion,
     formulaVersion: result?.formulaVersion,
@@ -137,6 +137,150 @@ function Section({ title, icon: Icon, children, defaultOpen = true }: SectionPro
   );
 }
 
+function aggregateOfficerDecisions(assignments: Assignment[], required: AuthorityType[]): DecisionValue | null {
+  const byAuthority = new Map<AuthorityType, DecisionValue>();
+  for (const assignment of assignments) {
+    if (assignment.status === 'completed' && assignment.decision) byAuthority.set(assignment.authorityType, assignment.decision);
+  }
+  if (required.some((authority) => byAuthority.get(authority) === 'Rejected')) return 'Rejected';
+  return required.length > 0 && required.every((authority) => byAuthority.get(authority) === 'Approved') ? 'Approved' : null;
+}
+
+function AdminApplicationSummary({
+  event,
+  assessment,
+  workflow,
+  assignments,
+  decisions,
+}: {
+  event: EventRecord;
+  assessment: RiskAssessment | null;
+  workflow: ReturnType<typeof deriveAdminWorkflow>;
+  assignments: Assignment[];
+  decisions: AuthorityDecision[];
+}) {
+  const display = assessment ? assessmentDisplay(assessment) : undefined;
+  const displayState = resolveApplicationDisplayState({
+    ...event,
+    assessmentStatus: assessment?.status,
+    assessmentReadiness: assessment?.assessmentReadiness,
+    assignments,
+    decisions,
+  });
+  return (
+    <>
+      <header className="mb-4 rounded-lg border border-[#ded5c5] bg-white p-5 shadow-card" data-testid="admin-application-summary">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-xs font-bold uppercase tracking-[0.06em] text-ink-500">{event.eventDetails.type}</p>
+            <h1 className="mt-1 font-display text-2xl font-bold text-ink-900">{event.eventDetails.name}</h1>
+            <p className="mt-1 text-sm text-ink-500">
+              {event.eventDetails.organizerName} · {event.eventDetails.venueName} · {formatDate(event.eventDetails.startDatetime)} · {event.eventDetails.expectedAttendance.toLocaleString()} attendees
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 sm:flex-col sm:items-end">
+            <ApplicationDisplayBadge state={displayState} />
+            {display?.riskLevel && <span className={`${RISK_TONE[display.riskLevel] ?? 'admin-badge admin-badge--default'} text-xs`}>
+              {`${friendlyRiskLevel(display.riskLevel)} risk`}{display.score !== undefined ? ` · ${display.score}/100` : ''}
+            </span>}
+          </div>
+        </div>
+        <div className="mt-5 flex items-center justify-between gap-3 border-t border-[#e8e0cf] pt-4">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-[0.08em] text-ink-500">Review progress</p>
+            <p className="mt-1 text-sm font-semibold text-ink-800">{workflow.completedCount} of 5 steps</p>
+          </div>
+          {workflow.terminalLabel && <span className="text-xs font-semibold text-ink-500">Terminal: {workflow.terminalLabel}</span>}
+        </div>
+      </header>
+      <AdminWorkflowTimeline workflow={workflow} />
+    </>
+  );
+}
+
+function AdminWorkflowTimeline({ workflow }: { workflow: ReturnType<typeof deriveAdminWorkflow> }) {
+  return (
+    <section className="mb-5 rounded-lg border border-[#ded5c5] bg-white p-4 shadow-card" aria-labelledby="admin-workflow-heading" data-testid="admin-workflow-timeline">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p id="admin-workflow-heading" className="text-[11px] font-bold uppercase tracking-[0.08em] text-ink-500">Application workflow</p>
+          <p className="mt-1 text-xs text-ink-500">Current version progress across the five M3 stages.</p>
+        </div>
+        {workflow.terminal && <span className="admin-badge admin-badge--default">{workflow.terminalLabel}</span>}
+      </div>
+      <ol className="mt-5 grid gap-3 sm:grid-cols-5">
+        {workflow.steps.map((step, index) => (
+          <li key={step.id} className="relative min-w-0" data-testid={`workflow-step-${step.id}`} data-state={step.state}>
+            {index < workflow.steps.length - 1 && <span className="absolute left-7 top-3 hidden h-px w-[calc(100%-1.25rem)] bg-[#d9cfbc] sm:block" aria-hidden="true" />}
+            <div className="relative flex items-start gap-2 sm:block">
+              <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[11px] font-bold ${workflowStepTone(step.state)}`} aria-label={`${step.label}: ${step.state}`}>
+                {step.state === 'complete' ? <Check size={13} aria-hidden="true" /> : step.state === 'rejected' ? <AlertCircle size={13} aria-hidden="true" /> : index + 1}
+              </span>
+              <div className="min-w-0 sm:mt-2">
+                <p className="text-xs font-semibold text-ink-800">{step.label}</p>
+                <p className="mt-0.5 text-[11px] leading-4 text-ink-500">{step.detail}</p>
+              </div>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function workflowStepTone(state: ReturnType<typeof deriveAdminWorkflow>['steps'][number]['state']): string {
+  if (state === 'complete') return 'border-status-approved bg-green-100 text-status-approved';
+  if (state === 'rejected') return 'border-status-rejected bg-red-100 text-status-rejected';
+  if (state === 'active') return 'border-gold-500 bg-gold-100 text-gold-700';
+  if (state === 'skipped') return 'border-ink-200 bg-ink-50 text-ink-400';
+  return 'border-ink-200 bg-white text-ink-500';
+}
+
+function AdminAuthorityProgressCard({
+  event,
+  assessment,
+  assignments,
+  decisions,
+}: {
+  event: EventRecord;
+  assessment: RiskAssessment | null;
+  assignments: Assignment[];
+  decisions: AuthorityDecision[];
+}) {
+  const rows = deriveAuthorityProgress(event, assessment, assignments, decisions);
+  return (
+    <section className="mb-5 rounded-lg border border-[#ded5c5] bg-white p-4 shadow-card" aria-labelledby="authority-progress-heading" data-testid="authority-review-progress">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p id="authority-progress-heading" className="text-[11px] font-bold uppercase tracking-[0.08em] text-ink-500">Authority review progress</p>
+          <p className="mt-1 text-xs text-ink-500">Current-version score reviews and officer decisions.</p>
+        </div>
+        <span className="text-xs font-semibold text-ink-500">{rows.length} required</span>
+      </div>
+      <div className="mt-4 divide-y divide-[#e8e0cf] rounded-md border border-[#e8e0cf]">
+        {rows.map((row) => (
+          <div key={row.authority} className="authority-progress-row px-3 py-3" data-testid={`authority-progress-${row.authority}`}>
+            <span className="min-w-0 text-sm font-semibold text-ink-800">{row.authority}</span>
+            {row.assignmentStatus === 'not_assigned' ? (
+              <span className="admin-badge admin-badge--default justify-self-start">Not assigned</span>
+            ) : (
+              <span className={`admin-badge justify-self-start ${row.scoreStatus === 'reviewed' || row.scoreStatus === 'manual_official' ? 'admin-badge--good' : row.scoreStatus === 'record_missing' ? 'admin-badge--warn' : 'admin-badge--default'}`}>
+                {row.scoreStatus === 'reviewed' ? 'Scores reviewed' : row.scoreStatus === 'manual_official' ? 'Admin assessed' : row.scoreStatus === 'record_missing' ? 'Review record missing' : 'Scores pending'}
+              </span>
+            )}
+            {row.assignmentStatus === 'not_assigned' ? (
+              <span className="text-xs text-ink-300" aria-hidden="true">—</span>
+            ) : (
+              <span className={`admin-badge justify-self-start ${row.decisionStatus === 'approved' ? 'admin-badge--good' : row.decisionStatus === 'rejected' ? 'admin-badge--bad' : 'admin-badge--warn'}`}>{friendlyDecisionStatus(row.decisionStatus)}</span>
+            )}
+          </div>
+        ))}
+        {rows.length === 0 && <p className="px-3 py-4 text-sm text-ink-500">No authorities are required for this application.</p>}
+      </div>
+    </section>
+  );
+}
+
 export default function AdminApplicationReview() {
   const { eventId } = useParams<{ eventId: string }>();
   const { profile } = useAuth();
@@ -169,6 +313,12 @@ export default function AdminApplicationReview() {
   const [suggestion, setSuggestion] = useState('');
   const [attachOfficerFeedback, setAttachOfficerFeedback] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [finalDecision, setFinalDecision] = useState<DecisionValue | ''>('');
+  const [finalReason, setFinalReason] = useState('');
+  const [finalSuggestion, setFinalSuggestion] = useState('');
+  const [finalAdminNote, setFinalAdminNote] = useState('');
+  const [submittingFinalDecision, setSubmittingFinalDecision] = useState(false);
+  const manualAssessmentSectionRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!isFirebaseConfigured || !eventId) {
@@ -194,6 +344,11 @@ export default function AdminApplicationReview() {
         }
         setEvent(eventData);
         setVersion(null);
+        setAssessment(null);
+        setResource(null);
+        setDecisions([]);
+        setAssignments([]);
+        setAudit([]);
 
         // Default-check authorities based on event's required authorities
         const initial: Record<AuthorityType, boolean> = { PDRM: false, BOMBA: false, KKM: false, DBKL: false, MOTAC: false };
@@ -211,13 +366,26 @@ export default function AdminApplicationReview() {
         if (eventData.currentAssessmentId) {
           promises.push(
             getDoc(doc(eventRef, COLLECTIONS.ASSESSMENTS, eventData.currentAssessmentId))
-              .then((s) => { if (s.exists()) setAssessment(s.data() as RiskAssessment); }),
+              .then((s) => {
+                const value = s.data();
+                if (s.exists() && isCurrentRiskAssessment(value)
+                  && value.assessmentId === eventData.currentAssessmentId
+                  && value.eventId === eventId
+                  && value.versionId === eventData.currentVersionId) setAssessment(value);
+              }),
           );
         }
         if (eventData.currentResourceId) {
           promises.push(
             getDoc(doc(eventRef, COLLECTIONS.RESOURCES, eventData.currentResourceId))
-              .then((s) => { if (s.exists()) setResource(s.data() as ResourceRecommendation); }),
+              .then((s) => {
+                const value = s.data();
+                if (s.exists() && isCurrentResourceRecommendation(value)
+                  && value.resourceId === eventData.currentResourceId
+                  && value.eventId === eventId
+                  && value.versionId === eventData.currentVersionId
+                  && value.assessmentId === eventData.currentAssessmentId) setResource(value);
+              }),
           );
         }
         promises.push(
@@ -251,7 +419,9 @@ export default function AdminApplicationReview() {
 
   useEffect(() => {
     if (!loading && searchParams.get('focus') === 'manual-assessment') {
-      document.getElementById('manual-assessment')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const target = document.getElementById('manual-assessment');
+      target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      window.setTimeout(() => target?.querySelector<HTMLElement>('input, select, textarea, button')?.focus(), 250);
     }
   }, [loading, searchParams]);
 
@@ -264,9 +434,20 @@ export default function AdminApplicationReview() {
   }, [officers]);
 
   const canReview = event && (event.status === 'Pending' || event.status === 'UnderReview' || event.status === 'Manual Review Required');
-  const manualOfficialReady = assessment?.status === 'official_ready'
-    && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual';
-  const manualReviewAssessment = assessment?.status === 'manual_review_required' && isAdminManualEligible(assessment)
+  const minRationaleLen = 10;
+  const initialReadiness = event ? resolveInitialReviewReadiness({
+    eventId: event.eventId,
+    versionId: event.currentVersionId,
+    assessmentId: event.currentAssessmentId,
+    resourceId: event.currentResourceId,
+    assessment,
+    resource,
+  }) : { ready: false, message: 'The application is not available.' };
+  const manualOfficialReady = Boolean(assessment?.status === 'official_ready'
+    && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual'
+    && initialReadiness.ready);
+  const manualAssessmentEligible = assessment?.status === 'manual_review_required' && isAdminManualEligible(assessment);
+  const manualReviewAssessment = manualAssessmentEligible
     ? assessment
     : null;
   const initialReviewOpen = Boolean(canReview
@@ -275,16 +456,38 @@ export default function AdminApplicationReview() {
     && !event?.assignedOfficerUids?.length
     && !['authority', 'second', 'closed'].includes(event?.reviewStage ?? ''));
   const attachableOfficerFeedback = assignments.filter((assignment) => Boolean(assignment.decision && assignment.reason && assignment.versionId === event?.currentVersionId));
-  const minRationaleLen = 10;
+  const initialReviewReady = initialReadiness.ready;
+  const openManualAssessment = () => {
+    manualAssessmentSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    window.setTimeout(() => manualAssessmentSectionRef.current?.querySelector<HTMLElement>('input, select, textarea, button')?.focus(), 250);
+  };
+  const currentAssignments = assignments.filter((assignment) => assignment.versionId === event?.currentVersionId);
+  const finalReviewReady = Boolean(
+    (event?.reviewStage === 'second' || event?.reviewStage === 'authority')
+      && event.status === 'UnderReview'
+      && event.requiredAuthorities.length > 0
+      && event.requiredAuthorities.every((authority) => currentAssignments.some((assignment) => assignment.authorityType === authority && assignment.status === 'completed' && assignment.decision)),
+  );
+  const officerAggregate = finalReviewReady && event
+    ? aggregateOfficerDecisions(currentAssignments, event.requiredAuthorities)
+    : null;
+
+  useEffect(() => {
+    if (finalReviewReady && !finalDecision && officerAggregate) setFinalDecision(officerAggregate);
+  }, [finalReviewReady, finalDecision, officerAggregate]);
 
   const submitDecision = async () => {
     if (!eventId || !event || !decisionMode || !initialReviewOpen) return;
-    if (rationale.trim().length < minRationaleLen) {
+    if (decisionMode === 'reject' && rationale.trim().length < minRationaleLen) {
       toast.error('Please provide a rationale (at least 10 characters).');
       return;
     }
     if (decisionMode === 'reject' && suggestion.trim().length === 0) {
       toast.error('A suggestion is required when rejecting.');
+      return;
+    }
+    if (decisionMode === 'approve' && !initialReviewReady) {
+      toast.error('The current M2 assessment and resource recommendation are not ready yet.');
       return;
     }
     setSubmitting(true);
@@ -293,14 +496,14 @@ export default function AdminApplicationReview() {
       const command = httpsCallable<{
         eventId: string;
         decision: 'Approved' | 'Rejected';
-        reason: string;
+        reason?: string;
         suggestion?: string;
         attachOfficerFeedback?: boolean;
       }, { status: EventStatus; decision: 'Approved' | 'Rejected' }>(functions, 'makeInitialReviewDecision');
       await command({
         eventId,
         decision,
-        reason: rationale.trim(),
+        ...(rationale.trim() ? { reason: rationale.trim() } : {}),
         ...(suggestion.trim() ? { suggestion: suggestion.trim() } : {}),
         ...(decision === 'Rejected' && attachOfficerFeedback ? { attachOfficerFeedback: true } : {}),
       });
@@ -312,12 +515,47 @@ export default function AdminApplicationReview() {
         ...current,
         status: decision === 'Approved' ? 'UnderReview' : 'Rejected',
         reviewStage: decision === 'Approved' ? 'initial' : 'closed',
-        initialReview: { decision, reason: rationale.trim(), ...(suggestion.trim() ? { suggestion: suggestion.trim() } : {}), reviewerUid: profile?.uid ?? '', reviewedAt: Date.now(), manualAssessmentRecorded: manualOfficialReady },
+        initialReview: { decision, ...(rationale.trim() ? { reason: rationale.trim() } : {}), ...(suggestion.trim() ? { suggestion: suggestion.trim() } : {}), reviewerUid: profile?.uid ?? '', reviewedAt: Date.now(), manualAssessmentRecorded: manualOfficialReady },
       } : current);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Unable to record the initial review.');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const submitFinalDecision = async () => {
+    if (!eventId || !finalReviewReady || !finalDecision) return;
+    if (finalDecision === 'Rejected' && (finalReason.trim().length < minRationaleLen || finalSuggestion.trim().length === 0)) {
+      toast.error('A final rejection requires a reason of at least 10 characters and a corrective suggestion.');
+      return;
+    }
+    setSubmittingFinalDecision(true);
+    try {
+      const command = httpsCallable<{
+        eventId: string;
+        finalDecision: DecisionValue;
+        reason?: string;
+        suggestion?: string;
+        adminNote?: string;
+      }, { status: DecisionValue }>(functions, 'makeSecondReviewDecision');
+      const result = await command({
+        eventId,
+        finalDecision,
+        ...(finalDecision === 'Rejected'
+          ? { reason: finalReason.trim(), suggestion: finalSuggestion.trim() }
+          : { adminNote: finalAdminNote.trim() || undefined }),
+      });
+      toast.success(`Final decision recorded: ${result.data.status}.`);
+      setFinalReason('');
+      setFinalSuggestion('');
+      setFinalAdminNote('');
+      setFinalDecision('');
+      setReloadToken((value) => value + 1);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Unable to record the final decision.');
+    } finally {
+      setSubmittingFinalDecision(false);
     }
   };
 
@@ -359,26 +597,11 @@ export default function AdminApplicationReview() {
           </div>
         ) : (
           <>
-            {/* Header card */}
-            <header className="mb-5 rounded-lg border border-[#ded5c5] bg-white p-5 shadow-card">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-xs font-bold uppercase tracking-[0.06em] text-ink-500">{event.eventDetails.type}</p>
-                  <h1 className="mt-1 font-display text-2xl font-bold text-ink-900">{event.eventDetails.name}</h1>
-                  <p className="mt-1 text-sm text-ink-500">
-                    {event.eventDetails.venueName} · {formatDate(event.eventDetails.startDatetime)} · {event.eventDetails.expectedAttendance.toLocaleString()} attendees
-                  </p>
-                </div>
-                <div className="flex flex-col items-end gap-1">
-                  <span className={STATUS_TONE[event.status]}>{event.status}</span>
-                  {assessment && (
-                    <span className={`${RISK_TONE[assessmentDisplay(assessment).riskLevel]} text-xs`}>
-                      {assessmentDisplay(assessment).riskLevel} risk
-                    </span>
-                  )}
-                </div>
-              </div>
-            </header>
+            {(() => {
+              const workflow = deriveAdminWorkflow(event, assessment, version, assignments, decisions);
+               return <AdminApplicationSummary event={event} assessment={assessment} workflow={workflow} assignments={assignments} decisions={decisions} />;
+            })()}
+            <AdminAuthorityProgressCard event={event} assessment={assessment} assignments={assignments} decisions={decisions} />
 
             <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
               {/* Main column */}
@@ -448,8 +671,23 @@ export default function AdminApplicationReview() {
 
                 {/* Current M2 deterministic assessment and advisory. */}
                 {assessment && (() => {
+                  if (assessment.status === 'manual_review_required' && !manualOfficialReady) {
+                    return (
+                      <Section title="M2 risk assessment" icon={ShieldCheck}>
+                        <div className="rounded-md border border-gold-200 bg-gold-50 p-4 text-sm text-ink-700" data-testid="manual-review-required-notice">
+                          <p className="font-semibold text-gold-700">Automated M2 assessment unavailable</p>
+                          <p className="mt-1 text-xs leading-5">No AI risk score or resource recommendation is available for this application. Complete the Admin manual assessment below; the system will calculate the official risk and resource recommendation from those Admin-selected category scores.</p>
+                           {manualAssessmentEligible ? (
+                             <button type="button" onClick={openManualAssessment} className="btn-secondary mt-3 inline-flex !px-3 !py-1.5 text-xs">Open manual assessment</button>
+                           ) : (
+                             <p className="mt-3 rounded border border-status-rejected/30 bg-red-50 px-3 py-2 text-xs text-status-rejected">Manual-review evidence metadata is incomplete, so the assessment form cannot be opened. Reload the application after the evidence is repaired.</p>
+                           )}
+                        </div>
+                      </Section>
+                    );
+                  }
                   const display = assessmentDisplay(assessment);
-                  const riskLevel = display.riskLevel;
+                  const riskLevel = display.riskLevel ?? 'Risk pending';
                   const score = display.score;
                   const versionLabel = display.schemaVersion
                     ? `Schema v${display.schemaVersion} · Logic v${display.formulaVersion}`
@@ -457,7 +695,7 @@ export default function AdminApplicationReview() {
                   return (
                     <Section title="M2 risk assessment" icon={ShieldCheck}>
                       <div className="mb-3 flex flex-wrap items-center gap-2">
-                        <span className={`${RISK_TONE[riskLevel]} text-sm`}>
+                        <span className={`${RISK_TONE[riskLevel] ?? 'admin-badge admin-badge--default'} text-sm`}>
                           {riskLevel}{score !== undefined ? ` · ${score}/100` : ''}
                         </span>
                         {versionLabel && <span className="text-xs text-ink-500">{versionLabel}</span>}
@@ -504,12 +742,12 @@ export default function AdminApplicationReview() {
                   );
                 })()}
 
-                {manualReviewAssessment && event && (
-                  <div id="manual-assessment" className="scroll-mt-24">
+                  {manualReviewAssessment && event && (
+                   <div id="manual-assessment" ref={manualAssessmentSectionRef} className="scroll-mt-24" tabIndex={-1}>
                     <Section title="Admin manual assessment" icon={FileWarning}>
                       <div className="mb-4 rounded-md border border-gold-200 bg-gold-50 p-3 text-sm text-ink-700">
                         <p className="font-semibold text-gold-700">This application requires Admin manual review before an application decision.</p>
-                        <p className="mt-1 text-xs leading-5">Review the complete application and M2 evidence above, then submit the locked assessment. The application decision remains Approve or Reject only.</p>
+                        <p className="mt-1 text-xs leading-5">Review the submitted application and available evidence, then submit the locked assessment. The system will calculate the official risk and resource recommendation from your category scores.</p>
                       </div>
                       <ManualAssessmentForm
                         eventId={event.eventId}
@@ -521,7 +759,13 @@ export default function AdminApplicationReview() {
                 )}
 
                 {/* Resource recommendations */}
-                {resource && (
+                {assessment?.status === 'manual_review_required' && !manualOfficialReady ? (
+                  <Section title="M2 resource recommendations" icon={Users} defaultOpen={false}>
+                    <p className="rounded-md border border-gold-200 bg-gold-50 p-3 text-sm text-ink-700" data-testid="manual-resource-notice">
+                      Automated resource planning is unavailable. Resource quantities will be calculated after the Admin manual assessment is finalized.
+                    </p>
+                  </Section>
+                ) : resource ? (
                   <Section title="M2 resource recommendations" icon={Users} defaultOpen={false}>
                     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                       {(['police', 'security', 'medicalTeams', 'ambulances', 'toilets', 'wasteBins', 'fireOfficers'] as const).map((key) => (
@@ -532,7 +776,7 @@ export default function AdminApplicationReview() {
                       ))}
                     </div>
                   </Section>
-                )}
+                ) : null}
 
                 {/* Officer decisions */}
                 <Section title="Authority officer decisions" icon={CheckCircle2} defaultOpen={false}>
@@ -590,7 +834,7 @@ export default function AdminApplicationReview() {
                       const isRequired = event.requiredAuthorities.includes(auth);
                       const list = officersByAuth[auth];
                       return (
-                        <div key={auth} className="flex items-center gap-2 rounded-md border border-[#e8e0cf] bg-cream-50/40 px-3 py-2">
+                        <div key={auth} className="admin-assignment-row rounded-md border border-[#e8e0cf] bg-cream-50/40 px-3 py-2">
                           <input
                             id={`assign-${auth}`}
                             type="checkbox"
@@ -599,7 +843,7 @@ export default function AdminApplicationReview() {
                             onChange={(e) => setAssigned((p) => ({ ...p, [auth]: e.target.checked }))}
                             className="h-4 w-4 accent-brand-600"
                           />
-                          <label htmlFor={`assign-${auth}`} className="flex-1 text-sm">
+                          <label htmlFor={`assign-${auth}`} className="min-w-0 text-sm">
                             <span className="font-semibold text-ink-800">{auth}</span>
                             {!isRequired && <span className="ml-1 text-[10px] uppercase text-ink-400">(not required)</span>}
                           </label>
@@ -607,7 +851,7 @@ export default function AdminApplicationReview() {
                             <select
                               value={selectedOfficer[auth]}
                               onChange={(e) => setSelectedOfficer((p) => ({ ...p, [auth]: e.target.value }))}
-                              className="input !h-8 !text-xs"
+                              className="input w-full min-w-0 !h-8 !text-xs"
                             >
                               <option value="">Auto-assign</option>
                               {list.map((o) => (
@@ -619,10 +863,21 @@ export default function AdminApplicationReview() {
                       );
                     })}
                   </div>
-                  <Link to={`/admin/applications/${event.eventId}/assign`} className="btn-primary mt-3 w-full">
-                    <Users size={14} /> Open assignment checklist
-                  </Link>
                 </Section>
+
+                <div className="space-y-2" data-testid="admin-detail-action-group">
+                  <Link to={`/admin/applications/${event.eventId}/assign`} className="btn-primary w-full justify-start">
+                    <Users size={14} /> Officer Assignment
+                  </Link>
+                  <Link to={`/admin/applications/${event.eventId}/controls`} className="btn-secondary w-full justify-start">
+                    Event Control List
+                  </Link>
+                  {event.controlListGenerated === true && (
+                    <Link to={`/admin/applications/${event.eventId}/stage2-review`} className="btn-secondary w-full justify-start">
+                      Stage 2 Images
+                    </Link>
+                  )}
+                </div>
 
                 {/* Admin decision */}
                 {initialReviewOpen ? (
@@ -644,29 +899,32 @@ export default function AdminApplicationReview() {
                         }}
                         className="space-y-3"
                       >
-                        <p className="text-xs uppercase tracking-[0.06em] text-ink-500">
-                          {decisionMode === 'approve' ? 'Approval rationale' : 'Rejection reason + suggestion'}
-                        </p>
-                        <textarea
-                          rows={4}
-                          className="input min-h-24"
-                          maxLength={1000}
-                          value={rationale}
-                          onChange={(e) => setRationale(e.target.value)}
-                          placeholder={
-                            decisionMode === 'approve'
-                              ? 'Briefly state the basis for approval.'
-                              : 'State the rejection reason and a constructive suggestion for revision.'
-                          }
-                        />
-                        <div className="flex items-center justify-between text-xs text-ink-500">
-                          <span>{rationale.trim().length}/1000 · minimum 10</span>
-                          <span>
-                            {rationale.trim().length >= minRationaleLen
-                              ? <Check size={12} className="inline text-emerald-600" />
-                              : <AlertCircle size={12} className="inline text-amber-600" />}
-                          </span>
-                        </div>
+                        {decisionMode === 'approve' ? (
+                          <div className="rounded-md border border-brand-200 bg-brand-50/60 p-3 text-sm text-ink-700">
+                            <p className={`font-semibold ${initialReviewReady ? 'text-brand-800' : 'text-gold-700'}`}>{initialReviewReady ? 'Ready for Admin approval' : 'Not ready for Admin approval'}</p>
+                            <p className="mt-1 text-xs leading-5">{initialReadiness.message}</p>
+                          </div>
+                        ) : (
+                          <>
+                            <p className="text-xs uppercase tracking-[0.06em] text-ink-500">Rejection reason + suggestion</p>
+                            <textarea
+                              rows={4}
+                              className="input min-h-24"
+                              maxLength={1000}
+                              value={rationale}
+                              onChange={(e) => setRationale(e.target.value)}
+                              placeholder="State the rejection reason and a constructive suggestion for revision."
+                            />
+                            <div className="flex items-center justify-between text-xs text-ink-500">
+                              <span>{rationale.trim().length}/1000 · minimum 10</span>
+                              <span>
+                                {rationale.trim().length >= minRationaleLen
+                                  ? <Check size={12} className="inline text-emerald-600" />
+                                  : <AlertCircle size={12} className="inline text-amber-600" />}
+                              </span>
+                            </div>
+                          </>
+                        )}
                         {decisionMode === 'reject' && (
                           <div className="space-y-2">
                             <label className="block text-xs font-semibold text-ink-600">
@@ -709,7 +967,7 @@ export default function AdminApplicationReview() {
                           </button>
                           <button
                             type="submit"
-                            disabled={submitting || rationale.trim().length < minRationaleLen}
+                            disabled={submitting || (decisionMode === 'approve' ? !initialReviewReady : rationale.trim().length < minRationaleLen)}
                             className={
                               decisionMode === 'approve' ? 'btn-success flex-1' : 'btn-danger flex-1'
                             }
@@ -726,9 +984,42 @@ export default function AdminApplicationReview() {
                       </form>
                     )}
                   </Section>
+                ) : finalReviewReady ? (
+                  <Section title="Final decision" icon={CheckCircle2} defaultOpen={true}>
+                    <form onSubmit={(e) => { e.preventDefault(); void submitFinalDecision(); }} className="space-y-3" data-testid="admin-final-decision">
+                      <div className="rounded-md bg-cream-50 p-3 text-sm text-ink-700">
+                        Officer aggregate recommendation: <span className="font-semibold">{officerAggregate ?? 'Pending'}</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button type="button" className={finalDecision === 'Approved' ? 'btn-success' : 'btn-secondary'} onClick={() => setFinalDecision('Approved')}>
+                          <Check size={14} /> Approve
+                        </button>
+                        <button type="button" className={finalDecision === 'Rejected' ? 'btn-danger' : 'btn-secondary'} onClick={() => setFinalDecision('Rejected')}>
+                          <AlertCircle size={14} /> Reject
+                        </button>
+                      </div>
+                      {finalDecision === 'Rejected' ? (
+                        <>
+                          <label className="block text-xs font-medium text-ink-600">Rejection reason (required)
+                            <textarea className="input mt-1 resize-y" rows={3} maxLength={1000} value={finalReason} onChange={(e) => setFinalReason(e.target.value)} placeholder="Explain why the application cannot proceed." />
+                          </label>
+                          <label className="block text-xs font-medium text-ink-600">Corrective suggestion (required)
+                            <textarea className="input mt-1 resize-y" rows={3} maxLength={1000} value={finalSuggestion} onChange={(e) => setFinalSuggestion(e.target.value)} placeholder="Provide the required corrective direction." />
+                          </label>
+                        </>
+                      ) : (
+                        <label className="block text-xs font-medium text-ink-600">Admin note (optional)
+                          <textarea className="input mt-1 resize-y" rows={3} maxLength={1000} value={finalAdminNote} onChange={(e) => setFinalAdminNote(e.target.value)} placeholder="Any context for the final audit record." />
+                        </label>
+                      )}
+                      <button type="submit" className={finalDecision === 'Rejected' ? 'btn-danger w-full' : 'btn-success w-full'} disabled={submittingFinalDecision || !finalDecision || (finalDecision === 'Rejected' && (finalReason.trim().length < minRationaleLen || finalSuggestion.trim().length === 0))}>
+                        {submittingFinalDecision ? <><Loader2 size={14} className="animate-spin" /> Recording…</> : `Record final ${finalDecision || 'decision'}`}
+                      </button>
+                    </form>
+                  </Section>
                 ) : (
                   <div className="rounded-lg border border-[#ded5c5] bg-cream-50 p-4 text-sm text-ink-500">
-                    This review is closed (status: {event.status}). Re-open not available in the
+                    This review is closed (status: {friendlyAdminStatus(event.status)}). Re-open not available in the
                     current build.
                   </div>
                 )}
@@ -737,23 +1028,8 @@ export default function AdminApplicationReview() {
 
             <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
               <Link to="/admin/applications" className="text-sm font-semibold text-brand-700 hover:text-brand-800">
-                ← Back to application queue
+                Back to application queue
               </Link>
-              {event && (
-                <div className="flex flex-wrap gap-2">
-                  <Link to={`/admin/applications/${event.eventId}/assign`} className="btn-secondary !py-1.5 !px-3 text-xs">
-                    Open officer assignment →
-                  </Link>
-                  <Link to={`/admin/applications/${event.eventId}/controls`} className="btn-secondary !py-1.5 !px-3 text-xs">
-                    Open event control list →
-                  </Link>
-                  {event.controlListGenerated === true && (
-                    <Link to={`/admin/applications/${event.eventId}/stage2-review`} className="btn-secondary !py-1.5 !px-3 text-xs">
-                      Review Stage 2 images →
-                    </Link>
-                  )}
-                </div>
-              )}
             </div>
           </>
         )}

@@ -6,6 +6,7 @@ const types_1 = require("../../../shared/types");
 const categorySchema_1 = require("../config/categorySchema");
 const resourceCalculator_1 = require("../engines/resourceCalculator");
 const authorityDecision_1 = require("./authorityDecision");
+const recordOfficerProposal_1 = require("./recordOfficerProposal");
 const authorityFinalisation_1 = require("../engines/authorityFinalisation");
 (0, vitest_1.describe)('assertOfficialAssessmentReady', () => {
     vitest_1.it.each(['processing', 'manual_review_required', 'provisional_ready', 'authority_review', 'failed'])('blocks decisions while assessment status is %s', (status) => {
@@ -97,11 +98,26 @@ const authorityFinalisation_1 = require("../engines/authorityFinalisation");
     });
 });
 (0, vitest_1.describe)('officer decision boundary', () => {
+    (0, vitest_1.it)('allows an approval with no rationale when reviewed-material confirmation is present', () => {
+        (0, vitest_1.expect)((0, authorityDecision_1.validateDecisionRequest)({ eventId: 'event-1', decision: 'Approved', confirmedReview: true }))
+            .toMatchObject({ eventId: 'event-1', decision: 'Approved', rationale: '', materialsReviewed: true });
+        (0, vitest_1.expect)((0, recordOfficerProposal_1.validateOfficerProposalRequest)({ eventId: 'event-1', decision: 'Approved', confirmedReview: true }))
+            .toMatchObject({ eventId: 'event-1', decision: 'Approved', reason: '', confirmedReview: true });
+    });
     (0, vitest_1.it)('requires material confirmation for approval and suggestions for adverse recommendations', () => {
         (0, vitest_1.expect)(() => (0, authorityDecision_1.validateDecisionRequest)({ eventId: 'event-1', decision: 'Approved', rationale: 'Reviewed all required materials.' })).toThrow(https_1.HttpsError);
         (0, vitest_1.expect)((0, authorityDecision_1.validateDecisionRequest)({ eventId: 'event-1', decision: 'Approved', rationale: 'Reviewed all required materials.', materialsReviewed: true })).toMatchObject({ materialsReviewed: true });
         (0, vitest_1.expect)(() => (0, authorityDecision_1.validateDecisionRequest)({ eventId: 'event-1', decision: 'Rejected', rationale: 'Evidence is not sufficient.' })).toThrow(https_1.HttpsError);
         (0, vitest_1.expect)((0, authorityDecision_1.validateDecisionRequest)({ eventId: 'event-1', decision: 'Rejected', rationale: 'Evidence is not sufficient.', suggestion: 'Provide verified evidence and submit the application again.' })).toMatchObject({ decision: 'Rejected' });
+        (0, vitest_1.expect)(() => (0, recordOfficerProposal_1.validateOfficerProposalRequest)({ eventId: 'event-1', decision: 'Rejected', reason: 'Evidence is not sufficient.' })).toThrow(https_1.HttpsError);
+        (0, vitest_1.expect)(() => (0, recordOfficerProposal_1.validateOfficerProposalRequest)({ eventId: 'event-1', decision: 'Rejected', reason: 'Evidence is not sufficient.', suggestion: 'Fix it.' })).toThrow(https_1.HttpsError);
+    });
+    (0, vitest_1.it)('retains the stronger rationale rule for provisional or insufficient assessments on rejection', () => {
+        const provisional = 'a'.repeat(79);
+        const valid = 'a'.repeat(80);
+        (0, vitest_1.expect)(() => (0, recordOfficerProposal_1.validateOfficerRejectionRationale)('Rejected', 'provisional', false, provisional)).toThrow(https_1.HttpsError);
+        (0, vitest_1.expect)(() => (0, recordOfficerProposal_1.validateOfficerRejectionRationale)('Rejected', 'insufficient_data', false, valid)).not.toThrow();
+        (0, vitest_1.expect)(() => (0, recordOfficerProposal_1.validateOfficerRejectionRationale)('Rejected', 'provisional', true, provisional)).not.toThrow();
     });
     (0, vitest_1.it)('rejects event IDs that could escape the event document path', () => {
         (0, vitest_1.expect)(() => (0, authorityDecision_1.validateDecisionRequest)({ eventId: 'events/nested', decision: 'Rejected', rationale: 'Evidence is not sufficient.', suggestion: 'Provide verified evidence and submit the application again.' })).toThrow(https_1.HttpsError);

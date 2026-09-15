@@ -4,6 +4,7 @@ import { collection, doc, onSnapshot, orderBy, query } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions';
 import { format } from 'date-fns';
 import { COLLECTIONS, EventRecord, EventVersion, OrganizerAssessmentSummary } from '@shared/types';
+import { resolveApplicationDisplayState } from '@shared/applicationState';
 import { db, functions, isFirebaseConfigured } from '../../config/firebase';
 import toast from 'react-hot-toast';
 import EmptyState from '../../components/ui/EmptyState';
@@ -11,7 +12,7 @@ import PageHeader from '../../components/ui/PageHeader';
 import OrganizerAssessmentSummaryView, { OrganizerResourceSummaryView } from '../../components/m2/OrganizerAssessmentSummaryView';
 import { isCurrentEventRecord, isCurrentEventVersion, isOrganizerAssessmentSummary } from '../../components/m2/m2Contract';
 import OrganizerStatusBadge from './OrganizerStatusBadge';
-import { applicationStatusLabel, isEditableApplicationStatus, isWithdrawableApplicationStatus, nextVersionId, organizerAdminDecisionLabel, organizerPublicationLabel, organizerPublicationStateFromProjection, OrganizerPublicationState } from './organizerApplication';
+import { isEditableApplicationStatus, isWithdrawableApplicationStatus, nextVersionId, organizerAdminDecisionLabel, organizerPublicationLabel, organizerPublicationStateFromProjection, OrganizerPublicationState } from './organizerApplication';
 import { findEventById } from '../../mock_data/events';
 import { findPublicEventById } from '../../mock_data/public_events';
 
@@ -108,6 +109,18 @@ export default function EventDetail() {
   const startLabel = details.startDatetime ? format(new Date(details.startDatetime), 'PPp') : 'Not scheduled';
   const endLabel = details.endDatetime ? format(new Date(details.endDatetime), 'PPp') : 'Not scheduled';
   const status = String(event.status);
+  const displayState = resolveApplicationDisplayState({
+    ...event,
+    // The summary is the organizer-safe projection of the current M2
+    // assessment. Include it when resolving the badge so a stale event
+    // status cannot hide a current Manual Review Required state.
+    assessmentStatus: summary?.status,
+    assessmentReadiness: summary?.assessmentReadiness,
+  });
+  // Treat the assessment record as authoritative for visibility as well as
+  // the persisted event label. This keeps stale summaries/resources hidden
+  // even when a legacy event document still says `Pending`.
+  const manualReviewRequired = displayState === 'Manual Review Required' || summary?.status === 'manual_review_required';
   const editable = isEditableApplicationStatus(status);
   const withdrawable = isWithdrawableApplicationStatus(status);
   const pendingBeforeAdminReview = status === 'Pending'
@@ -117,7 +130,7 @@ export default function EventDetail() {
     && Object.keys(event.assignedOfficerByAuthority ?? {}).length === 0;
   const rejectedWithFeedback = status === 'Rejected'
     && event.initialReview?.decision === 'Rejected'
-    && event.initialReview.reason.trim().length > 0
+    && (event.initialReview.reason?.trim().length ?? 0) > 0
     && Boolean(event.initialReview.suggestion?.trim());
   const canPrepareEdit = pendingBeforeAdminReview || rejectedWithFeedback;
   const submittedVersionLabel = event.currentVersionId ?? 'Not submitted';
@@ -180,7 +193,7 @@ export default function EventDetail() {
       <PageHeader
         title={eventName}
         description={`${venueName} - ${startLabel}`}
-        action={<><OrganizerStatusBadge status={status} />{editable && <Link to={`/organizer/events/${event.eventId}/edit`} className="btn-secondary">Edit application</Link>}{canPrepareEdit && <button type="button" disabled={lifecycleAction !== null} onClick={prepareEdit} className="btn-secondary">{lifecycleAction === 'edit' ? 'Preparing…' : status === 'Rejected' ? 'Revise application' : 'Edit before review'}</button>}{pendingBeforeAdminReview && <button type="button" disabled={lifecycleAction !== null} onClick={cancelPending} className="btn-secondary">{lifecycleAction === 'cancel' ? 'Cancelling…' : 'Cancel application'}</button>}{withdrawable && <button type="button" disabled={withdrawing} onClick={withdraw} className="btn-secondary">{withdrawing ? 'Withdrawing...' : 'Withdraw'}</button>}</>}
+         action={<><OrganizerStatusBadge status={status} state={displayState} />{editable && <Link to={`/organizer/events/${event.eventId}/edit`} className="btn-secondary">Edit application</Link>}{canPrepareEdit && <button type="button" disabled={lifecycleAction !== null} onClick={prepareEdit} className="btn-secondary">{lifecycleAction === 'edit' ? 'Preparing…' : status === 'Rejected' ? 'Revise application' : 'Edit before review'}</button>}{pendingBeforeAdminReview && <button type="button" disabled={lifecycleAction !== null} onClick={cancelPending} className="btn-secondary">{lifecycleAction === 'cancel' ? 'Cancelling…' : 'Cancel application'}</button>}{withdrawable && <button type="button" disabled={withdrawing} onClick={withdraw} className="btn-secondary">{withdrawing ? 'Withdrawing...' : 'Withdraw'}</button>}</>}
       />
       <div className="grid gap-5 lg:grid-cols-[minmax(0,.9fr)_minmax(0,1.1fr)]">
         <section className="card">
@@ -199,7 +212,7 @@ export default function EventDetail() {
         <section className="card">
           <div className="card-header"><h2 className="section-title">Application lifecycle</h2></div>
           <div className="card-body divide-y divide-[#e3dacb] text-sm">
-            <Row label="Status" value={applicationStatusLabel(status)} />
+             <Row label="Status" value={displayState} />
             <Row label="Submitted" value={submittedVersionLabel} />
             <Row label="Editable" value={editableVersionLabel} />
             <Row label="Submitted at" value={event.submittedAt ? format(new Date(event.submittedAt), 'PPp') : 'Not submitted'} />
@@ -211,9 +224,9 @@ export default function EventDetail() {
         </section>
 
         <section className="card">
-          <div className="card-header"><div><h2 className="section-title">Risk assessment summary</h2><p className="mt-1 text-xs text-ink-500">{summary?.status === 'official_ready' ? 'Official result available for authority decision' : 'Provisional until authority confirmation is complete'}</p></div></div>
+          <div className="card-header"><div><h2 className="section-title">Risk assessment summary</h2><p className="mt-1 text-xs text-ink-500">{manualReviewRequired ? 'Automated assessment unavailable' : summary?.status === 'official_ready' ? 'Official result available for authority decision' : 'Provisional until authority confirmation is complete'}</p></div></div>
           <div className="card-body">
-            {!summary ? <p className="text-sm text-ink-500">{!event.currentVersionId ? 'No assessment has been created for this application.' : legacySummary ? 'This version has a legacy assessment and must be recomputed before the current result can be shown.' : 'Assessment is processing.'}</p> : (
+            {manualReviewRequired ? <p className="rounded-md border border-gold-200 bg-gold-50 p-3 text-sm text-ink-700">Automated risk generation is unavailable. An Admin manual assessment is required before risk results can be shown.</p> : !summary ? <p className="text-sm text-ink-500">{!event.currentVersionId ? 'No assessment has been created for this application.' : legacySummary ? 'This version has a legacy assessment and must be recomputed before the current result can be shown.' : 'Assessment is processing.'}</p> : (
               <OrganizerAssessmentSummaryView summary={summary} />
             )}
           </div>
@@ -249,7 +262,7 @@ export default function EventDetail() {
         <section className="card lg:col-span-2">
           <div className="card-header"><div><h2 className="section-title">Recommended resources</h2><p className="mt-1 text-xs text-ink-500">Operational quantities linked to the current assessment</p></div></div>
           <div className="card-body">
-            {!summary ? <p className="text-sm text-ink-500">{event.currentVersionId ? 'Resources appear after assessment.' : 'No resource recommendation has been created for this application.'}</p> : (
+            {manualReviewRequired ? <p className="rounded-md border border-gold-200 bg-gold-50 p-3 text-sm text-ink-700">Automated resource planning is unavailable until the Admin manual assessment is completed.</p> : !summary ? <p className="text-sm text-ink-500">{event.currentVersionId ? 'Resources appear after assessment.' : 'No resource recommendation has been created for this application.'}</p> : (
               <OrganizerResourceSummaryView summary={summary} />
             )}
           </div>

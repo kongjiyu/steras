@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.makeInitialReviewDecision = void 0;
 exports.makeInitialReviewDecisionForUser = makeInitialReviewDecisionForUser;
+exports.validateInitialReviewRequest = validateInitialReviewRequest;
 /**
  * Admin initial-review gate (M3 FR-M3-02..08).
  *
@@ -21,6 +22,7 @@ const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
 const resourceContract_1 = require("../engines/resourceContract");
 const notifications_1 = require("../utils/notifications");
+const applicationState_1 = require("../../../shared/applicationState");
 const REASON_MIN = 10;
 const REASON_MAX = 1_000;
 const SUGGESTION_MAX = 1_000;
@@ -30,25 +32,7 @@ exports.makeInitialReviewDecision = (0, https_1.onCall)({ region: runtime_1.FUNC
     return makeInitialReviewDecisionForUser(request.auth.uid, request.data);
 });
 async function makeInitialReviewDecisionForUser(uid, data, now = Date.now()) {
-    const eventId = (data.eventId ?? '').trim();
-    const decision = data.decision;
-    const reason = (data.reason ?? '').trim();
-    const suggestion = (data.suggestion ?? '').trim();
-    const attachOfficerFeedback = data.attachOfficerFeedback === true;
-    if (!eventId)
-        throw new https_1.HttpsError('invalid-argument', 'eventId is required.');
-    if (decision !== 'Approved' && decision !== 'Rejected') {
-        throw new https_1.HttpsError('invalid-argument', 'decision must be Approved or Rejected.');
-    }
-    if (reason.length < REASON_MIN || reason.length > REASON_MAX) {
-        throw new https_1.HttpsError('invalid-argument', `reason must be ${REASON_MIN}-${REASON_MAX} characters.`);
-    }
-    if (suggestion.length > SUGGESTION_MAX) {
-        throw new https_1.HttpsError('invalid-argument', `suggestion must be at most ${SUGGESTION_MAX} characters.`);
-    }
-    if (decision === 'Rejected' && suggestion.length === 0) {
-        throw new https_1.HttpsError('invalid-argument', 'A suggestion is required when rejecting.');
-    }
+    const { eventId, decision, reason, suggestion, attachOfficerFeedback } = validateInitialReviewRequest(data);
     if (Object.prototype.hasOwnProperty.call(data, 'manualAssessment')) {
         throw new https_1.HttpsError('failed-precondition', 'Manual Review Required applications must be completed in the Admin manual assessment queue before initial review.');
     }
@@ -109,22 +93,27 @@ async function makeInitialReviewDecisionForUser(uid, data, now = Date.now()) {
             ...(assignment.decidedAt ? { decidedAt: assignment.decidedAt } : {}),
         }));
     }
-    if (decision === 'Approved' && (!(isReadyAssessment(assessment, eventId, versionId, assessmentId) || manualOfficial)
-        || !resourceSnap?.exists || !resource || !resourceId
-        || !(0, resourceContract_1.validateResourceRecommendation)(resource).ok
-        || resource.resourceId !== resourceId
-        || resource.eventId !== eventId
-        || resource.versionId !== versionId
-        || resource.assessmentId !== assessmentId)) {
+    const readiness = (0, applicationState_1.resolveInitialReviewReadiness)({
+        eventId,
+        versionId,
+        assessmentId,
+        resourceId,
+        assessment,
+        resource,
+    });
+    if (decision === 'Approved' && (!readiness.ready || !resourceSnap?.exists || !resource || !(0, resourceContract_1.validateResourceRecommendation)(resource).ok)) {
         if (event.status === 'Manual Review Required' || assessment?.status === 'manual_review_required') {
             throw new https_1.HttpsError('failed-precondition', 'Complete the Admin manual assessment queue before initial approval.');
         }
-        throw new https_1.HttpsError('failed-precondition', 'Smart Risk Assessment and Safety Resource Recommendation must be ready before initial approval.');
+        throw new https_1.HttpsError('failed-precondition', readiness.message);
     }
     const nextStatus = decision === 'Approved' ? 'UnderReview' : 'Rejected';
     const initialReview = {
         decision,
-        reason,
+        // Approval rationale is optional. Do not persist an empty field so new
+        // records remain semantically distinct from legacy records that carried
+        // a rationale, while readers continue to handle both shapes safely.
+        ...(reason ? { reason } : {}),
         ...(suggestion ? { suggestion } : {}),
         reviewerUid: uid,
         reviewedAt: now,
@@ -201,19 +190,31 @@ async function makeInitialReviewDecisionForUser(uid, data, now = Date.now()) {
     }
     return { eventId, versionId, assessmentId, status: result.status, decision, manualAssessmentRecorded: manualOfficial };
 }
-function isReadyAssessment(value, eventId, versionId, assessmentId) {
-    if (!value || typeof value !== 'object')
-        return false;
-    const assessment = value;
-    // The current M2 contract uses `official_ready` (the older M3 fixture used
-    // `ready`). Accept only a current, non-manual assessment here so initial
-    // review cannot release an incomplete or legacy record.
-    return assessment.status === 'official_ready'
-        && assessment.assessmentReadiness === 'complete'
-        && Array.isArray(assessment.evidence)
-        && (!eventId || assessment.eventId === eventId)
-        && (!versionId || assessment.versionId === versionId)
-        && (!assessmentId || assessment.assessmentId === assessmentId);
+function validateInitialReviewRequest(request) {
+    const value = typeof request === 'object' && request !== null ? request : {};
+    const eventId = typeof value.eventId === 'string' ? value.eventId.trim() : '';
+    const decision = value.decision;
+    const reason = typeof value.reason === 'string' ? value.reason.trim() : '';
+    const suggestion = typeof value.suggestion === 'string' ? value.suggestion.trim() : '';
+    const attachOfficerFeedback = value.attachOfficerFeedback === true;
+    if (!eventId)
+        throw new https_1.HttpsError('invalid-argument', 'eventId is required.');
+    if (decision !== 'Approved' && decision !== 'Rejected') {
+        throw new https_1.HttpsError('invalid-argument', 'decision must be Approved or Rejected.');
+    }
+    if (reason.length > REASON_MAX) {
+        throw new https_1.HttpsError('invalid-argument', `reason must be at most ${REASON_MAX} characters.`);
+    }
+    if (decision === 'Rejected' && reason.length < REASON_MIN) {
+        throw new https_1.HttpsError('invalid-argument', `reason must be ${REASON_MIN}-${REASON_MAX} characters when rejecting.`);
+    }
+    if (suggestion.length > SUGGESTION_MAX) {
+        throw new https_1.HttpsError('invalid-argument', `suggestion must be at most ${SUGGESTION_MAX} characters.`);
+    }
+    if (decision === 'Rejected' && suggestion.length < REASON_MIN) {
+        throw new https_1.HttpsError('invalid-argument', `suggestion must be ${REASON_MIN}-${SUGGESTION_MAX} characters when rejecting.`);
+    }
+    return { eventId, decision, reason, suggestion, attachOfficerFeedback };
 }
 function isManualOfficialAssessment(value, eventId, versionId, assessmentId) {
     if (!value || typeof value !== 'object')

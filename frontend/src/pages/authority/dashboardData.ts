@@ -17,7 +17,10 @@ export function dashboardSummary(records: DashboardRecord[]) {
     underReview: count('UnderReview'),
     approved: count('Approved'),
     highRisk: records.filter(({ assessment }) => assessmentRiskLevel(assessment) === 'High').length,
-    unassessed: records.filter(({ assessment }) => !assessment).length,
+    // A manual-review record is a valid assessment document but has no risk
+    // result yet; count it with other unassessed work rather than implying a
+    // score exists.
+    unassessed: records.filter(({ assessment }) => !assessmentRiskLevel(assessment)).length,
     resolved: records.filter(({ event }) => ['Approved', 'Rejected', 'Withdrawn'].includes(event.status)).length,
   };
 }

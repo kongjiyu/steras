@@ -23,9 +23,10 @@ import {
   Stage1Doc,
   Stage2Doc,
 } from '@shared/types';
+import { resolveApplicationDisplayState } from '@shared/applicationState';
 import { db } from '../../config/firebase';
 import EmptyState from '../../components/ui/EmptyState';
-import StatusBadge from '../../components/ui/StatusBadge';
+import { ApplicationDisplayBadge } from '../../components/ui/StatusBadge';
 import Stage1RequirementRow from '../../components/stage1/Stage1RequirementRow';
 import Stage2RequirementRow from '../../components/stage2/Stage2RequirementRow';
 
@@ -193,7 +194,7 @@ export default function OrganizerEventControls() {
           </p>
         </div>
         <div className="flex flex-col items-end gap-1">
-          <StatusBadge status={event.status} />
+           <ApplicationDisplayBadge state={resolveApplicationDisplayState(event)} />
           {generated && <span className="text-xs font-semibold text-status-approved">List published</span>}
         </div>
       </div>

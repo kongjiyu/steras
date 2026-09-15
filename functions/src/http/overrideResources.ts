@@ -6,6 +6,7 @@ import {
   EventRecord,
   RESOURCE_KEYS,
   ResourceOverrideRecord,
+  ResourceOverrideRequest,
   ResourceQuantities,
   ResourceRecommendation,
   UserProfile,
@@ -13,17 +14,22 @@ import {
 import { FUNCTION_REGION } from '../config/runtime';
 import { validateResourceRecommendation } from '../engines/resourceContract';
 
-interface OverrideResourcesRequest {
-  eventId?: string;
-  quantities?: ResourceQuantities;
-  rationale?: string;
-  /** Stable client key used to make retries return the same append-only record. */
-  idempotencyKey?: string;
-}
+type OverrideResourcesRequest = Partial<ResourceOverrideRequest>;
 
 export const overrideResources = onCall<OverrideResourcesRequest>({ region: FUNCTION_REGION }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in before overriding resources.');
-  return overrideResourcesForUser(request.auth.uid, request.data);
+  try {
+    return await overrideResourcesForUser(request.auth.uid, request.data);
+  } catch (error) {
+    const value = error as { code?: unknown; message?: unknown };
+    console.warn('[overrideResources] rejected request', {
+      uid: request.auth.uid,
+      eventId: typeof request.data?.eventId === 'string' ? request.data.eventId : undefined,
+      code: value?.code,
+      message: value?.message,
+    });
+    throw error;
+  }
 });
 
 export async function overrideResourcesForUser(uid: string, request: OverrideResourcesRequest, now = Date.now()) {
@@ -55,14 +61,15 @@ export async function overrideResourcesForUser(uid: string, request: OverrideRes
     }
 
     const assignment = assignmentsSnapshot.docs
-      .map((snapshot) => snapshot.data() as { versionId?: string; authorityType?: string; officerUid?: string; status?: string })
+      .map((snapshot) => ({ id: snapshot.id, ...snapshot.data() as { versionId?: string; authorityType?: string; officerUid?: string; status?: string } }))
       .find((candidate) => candidate.versionId === event.currentVersionId
         && candidate.authorityType === profile.authorityType
         && candidate.officerUid === uid
-        && (candidate.status === 'pending' || candidate.status === 'in_progress'));
+        && candidate.id === `${event.currentVersionId}_${profile.authorityType}`);
     if (!assignment) throw new HttpsError('permission-denied', 'You are not the named officer assigned to this application.');
-    if (!['Pending', 'UnderReview'].includes(event.status)) {
-      throw new HttpsError('failed-precondition', 'Resources can only be changed during active review.');
+    const authorityReviewOpen = event.reviewStage === 'authority' && ['Pending', 'UnderReview'].includes(event.status);
+    if (!authorityReviewOpen || !['pending', 'in_progress', 'completed'].includes(assignment.status ?? '')) {
+      throw new HttpsError('failed-precondition', 'Resources can only be changed during Authority Review.');
     }
 
     const resourceReference = eventReference.collection(COLLECTIONS.RESOURCES).doc(event.currentResourceId);

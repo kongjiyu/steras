@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.assignAuthorityOfficers = void 0;
+exports.validateSubmittedVenue = validateSubmittedVenue;
 /**
  * assignAuthorityOfficers — admin-only callable (M3 Workstream 1).
  *
@@ -55,15 +56,21 @@ exports.assignAuthorityOfficers = (0, https_1.onCall)({ region: runtime_1.FUNCTI
     if (required.length === 0) {
         throw new https_1.HttpsError('failed-precondition', 'This event has no required authorities.');
     }
-    // Resolve the venue state. If the venue has no `state`, fall back to
-    // 'ALL' so federal officers can still match.
-    let venueState = 'ALL';
-    if (event.eventDetails?.venueId) {
-        const venueSnap = await db.collection(types_1.COLLECTIONS.VENUES).doc(event.eventDetails.venueId).get();
-        if (venueSnap.exists) {
-            venueState = venueSnap.data().state ?? 'ALL';
-        }
+    // Resolve the registry venue from the immutable submitted version.  A
+    // mutable event projection must not be allowed to silently change the
+    // state used for officer eligibility after submission.
+    const versionRef = eventRef.collection(types_1.COLLECTIONS.VERSIONS).doc(versionId);
+    const versionSnap = await versionRef.get();
+    if (!versionSnap.exists)
+        throw new https_1.HttpsError('failed-precondition', 'The immutable application version is missing.');
+    const version = versionSnap.data();
+    const submittedVenueId = version.eventDetails?.venueId?.trim() || '';
+    if (submittedVenueId !== (event.eventDetails?.venueId?.trim() || '')) {
+        throw new https_1.HttpsError('failed-precondition', 'The submitted registry venue state is stale or invalid.');
     }
+    const venueRef = submittedVenueId ? db.collection(types_1.COLLECTIONS.VENUES).doc(submittedVenueId) : undefined;
+    const venueSnap = venueRef ? await venueRef.get() : undefined;
+    const venueState = validateSubmittedVenue(venueSnap, version.eventDetails, submittedVenueId);
     // Load all active officers grouped by authorityType. In a real
     // production system this would be indexed / sharded; for the
     // prototype the officer pool is small.
@@ -71,6 +78,8 @@ exports.assignAuthorityOfficers = (0, https_1.onCall)({ region: runtime_1.FUNCTI
         .docs.map((d) => d.data());
     // Filter by state scope (A4).
     const isEligible = (o) => {
+        if (!submittedVenueId)
+            return o.scopeType === 'federal';
         if (o.scopeType === 'federal')
             return true;
         return o.state === venueState;
@@ -133,6 +142,16 @@ exports.assignAuthorityOfficers = (0, https_1.onCall)({ region: runtime_1.FUNCTI
         // Firestore requires all reads to complete before any writes.
         const evSnap = await tx.get(eventRef);
         const ev = evSnap.data();
+        const txVersionSnap = await tx.get(versionRef);
+        const txVenueSnap = venueRef ? await tx.get(venueRef) : undefined;
+        if (!evSnap.exists || !ev || !txVersionSnap.exists || ev.currentVersionId !== versionId
+            || ev.eventDetails?.venueId?.trim() !== submittedVenueId) {
+            throw new https_1.HttpsError('aborted', 'The submitted application version changed before assignment.');
+        }
+        const txVenueState = validateSubmittedVenue(txVenueSnap, txVersionSnap.data().eventDetails, submittedVenueId);
+        if (txVenueState !== venueState) {
+            throw new https_1.HttpsError('aborted', 'The submitted registry venue state changed before assignment.');
+        }
         if (ev.initialReview?.decision !== 'Approved') {
             throw new https_1.HttpsError('failed-precondition', 'Complete and approve the admin initial review before assigning officers.');
         }
@@ -163,7 +182,10 @@ exports.assignAuthorityOfficers = (0, https_1.onCall)({ region: runtime_1.FUNCTI
             if (!officer.active) {
                 throw new https_1.HttpsError('failed-precondition', `Officer ${officerUid} is inactive.`);
             }
-            if (officer.scopeType === 'state' && officer.state !== venueState) {
+            if (!submittedVenueId && officer.scopeType !== 'federal') {
+                throw new https_1.HttpsError('permission-denied', `Officer ${officerUid} is state-scoped and cannot be assigned to a custom venue without a registry state.`);
+            }
+            if (submittedVenueId && officer.scopeType === 'state' && officer.state !== venueState) {
                 throw new https_1.HttpsError('permission-denied', `Officer ${officerUid} is state-scoped to ${officer.state}, but the event is at ${venueState}.`);
             }
             if (officer.workloadCount >= officer.workloadLimit) {
@@ -227,4 +249,24 @@ exports.assignAuthorityOfficers = (0, https_1.onCall)({ region: runtime_1.FUNCTI
         return { checklist: result.checklist, assigned: result.assigned, venueState };
     });
 });
+function validateSubmittedVenue(snapshot, details, venueId) {
+    // Custom/unregistered venues have no registry state; only federal officers
+    // can match the ALL sentinel in that legacy path.
+    if (!venueId)
+        return 'ALL';
+    const venue = snapshot?.data();
+    const detailsVenueId = details?.venueId?.trim() || '';
+    if (!snapshot?.exists || !venue
+        || venue.venueId !== venueId
+        || detailsVenueId !== venueId
+        || venue.active !== true
+        || venue.verificationStatus !== 'verified'
+        || typeof venue.state !== 'string' || !venue.state.trim()
+        || venue.name !== details?.venueName
+        || venue.address !== details?.venueAddress
+        || venue.capacity !== details?.venueCapacity) {
+        throw new https_1.HttpsError('failed-precondition', 'The submitted registry venue state is stale or invalid.');
+    }
+    return venue.state.trim();
+}
 //# sourceMappingURL=assignAuthorityOfficers.js.map

@@ -41,13 +41,13 @@ export function lifecycleRevisionSource(event: EventRecord, now: number): M1Appl
   }
   if (event.status === 'Rejected'
     && event.initialReview?.decision === 'Rejected'
-    && event.initialReview.reason.trim().length > 0
+    && (event.initialReview.reason?.trim().length ?? 0) > 0
     && event.initialReview.suggestion?.trim()) {
     return {
       kind: 'rejected_revision',
       sourceVersionId,
       startedAt: now,
-      rejectionReason: event.initialReview.reason.trim(),
+      rejectionReason: event.initialReview.reason?.trim() ?? '',
       rejectionSuggestion: event.initialReview.suggestion.trim(),
     };
   }
