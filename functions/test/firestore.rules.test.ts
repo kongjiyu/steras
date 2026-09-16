@@ -2527,6 +2527,16 @@ function manualRequest() {
     hazards: [{ hazardId: 'manual-hazard-1', hazardName: 'Crowd congestion', categoryId: 'crowd' as const, evidenceReferences: ['crowd' as const], rationale: 'Verified attendance evidence supports the identified congestion hazard.' }],
     categories: ACTIVE_CATEGORY_SCHEMA.categories.map((category) => ({ categoryId: category.id, likelihood: 2 as const, severity: 2 as const, evidenceReferences: ['crowd' as const], rationale: `Admin reviewed all available evidence for ${category.name}.`, missingInformation: '' })),
     rationale: 'The complete immutable application and available contextual evidence were assessed manually.',
+    resourcePlan: {
+      police: { quantity: 2, maximum: 4 },
+      security: { quantity: 2, maximum: 4 },
+      medicalTeams: { quantity: 1, maximum: 2 },
+      ambulances: { quantity: 1, maximum: 2 },
+      fireOfficers: { quantity: 1, maximum: 2 },
+      toilets: { quantity: 4, maximum: 6 },
+      wasteBins: { quantity: 3, maximum: 5 },
+    },
+    resourceRationale: 'Admin reviewed venue capacity, attendance, and emergency coverage for the manual resource plan.',
   };
 }
 

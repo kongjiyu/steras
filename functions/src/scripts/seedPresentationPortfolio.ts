@@ -44,6 +44,7 @@ const HOUR = 3_600_000;
 
 type Action = 'dry-run' | 'apply' | 'verify' | 'cleanup';
 type RiskBand = 'low' | 'medium' | 'high';
+type PostFinalStage = 'controls' | 'stage1_submitted' | 'stage2_submitted';
 
 interface Scenario {
   slug: string;
@@ -56,6 +57,7 @@ interface Scenario {
   attendance: number;
   incidentSeverities: Array<'low' | 'medium' | 'high'>;
   incidentCategories?: M4IncidentCategory[];
+  postFinalStage?: PostFinalStage;
 }
 
 interface SeedIdentity {
@@ -75,6 +77,10 @@ const SCENARIOS: Scenario[] = [
   scenario('merdeka-music', 'Merdeka Music Evening', 'concert', 'Rejected', 'high', '2026-05-02', '2026-09-12', 12500, []),
   scenario('river-lanterns', 'River of Life Lantern Festival', 'festival', 'UnderReview', 'medium', '2026-05-21', '2026-09-19', 7200, []),
   scenario('urban-parade', 'Kuala Lumpur Urban Culture Parade', 'cultural', 'UnderReview', 'high', '2026-06-09', '2026-09-26', 15000, []),
+  scenario('putrajaya-community-run', 'Putrajaya Community Wellness Run', 'cultural', 'UnderReview', 'medium', '2026-06-18', '2026-10-03', 8200, [], 'none'),
+  scenario('penang-heritage-weekend', 'Penang Heritage Weekend', 'cultural', 'Approved', 'medium', '2026-06-24', '2026-10-17', 6800, [], 'controls'),
+  scenario('selangor-food-festival', 'Selangor Food & Culture Festival', 'festival', 'Approved', 'high', '2026-07-02', '2026-10-24', 11800, ['low'], 'stage1_submitted'),
+  scenario('johor-waterfront-fair', 'Johor Waterfront Tourism Fair', 'fair', 'Approved', 'medium', '2026-07-09', '2026-11-07', 7600, ['medium'], 'stage2_submitted'),
   scenario('craft-market', 'Malaysia Craft & Design Market', 'fair', 'Pending', 'medium', '2026-06-28', '2026-10-03', 4800, []),
   scenario('community-harmony', 'Community Harmony Gathering', 'religious', 'Approved', 'medium', '2026-07-17', '2026-10-10', 5400, []),
   scenario('innovation-summit', 'Tourism Innovation Summit', 'conference', 'Rejected', 'low', '2026-08-06', '2026-10-17', 1600, []),
@@ -93,7 +99,7 @@ const PRESENTATION_IMAGES = [
   'm4-crowd-arrival-surge.jpg',
 ];
 
-function scenario(slug: string, name: string, type: EventType, status: EventStatus, risk: RiskBand, createdDate: string, eventDate: string, attendance: number, incidentSeverities: Scenario['incidentSeverities']): Scenario {
+function scenario(slug: string, name: string, type: EventType, status: EventStatus, risk: RiskBand, createdDate: string, eventDate: string, attendance: number, incidentSeverities: Scenario['incidentSeverities'], postFinalStage?: PostFinalStage | 'none'): Scenario {
   return {
     slug,
     name,
@@ -104,6 +110,7 @@ function scenario(slug: string, name: string, type: EventType, status: EventStat
     startAt: Date.parse(`${eventDate}T02:00:00.000Z`),
     attendance,
     incidentSeverities,
+    ...(postFinalStage && postFinalStage !== 'none' ? { postFinalStage } : {}),
   };
 }
 
@@ -137,12 +144,17 @@ export function parsePresentationArgs(argv: string[]) {
   };
   const projectId = valueAfter('--project') ?? '';
   const confirm = valueAfter('--confirm') ?? '';
+  const only = valueAfter('--only');
   if (projectId !== EXPECTED_PROJECT) throw new Error(`--project must be ${EXPECTED_PROJECT}.`);
   const action = actionFlags[0].slice(2) as Action;
+  if (argv.includes('--only') && !only) throw new Error('--only requires a managed presentation event ID.');
   if ((action === 'apply' || action === 'cleanup') && confirm !== EXPECTED_PROJECT) {
     throw new Error(`--confirm must be ${EXPECTED_PROJECT} for writes.`);
   }
-  return { action, projectId };
+  if (only && !SCENARIOS.some((scenarioValue) => eventIdFor(scenarioValue) === only)) {
+    throw new Error(`--only must identify a managed presentation event (received ${only}).`);
+  }
+  return { action, projectId, only };
 }
 
 async function loadIdentities(db: Firestore): Promise<SeedIdentity> {
@@ -448,7 +460,7 @@ async function writeScenario(db: Firestore, scenarioValue: Scenario, venue: Venu
   const requiredAuthorities = authoritiesFor(scenarioValue.type);
   const terminal = scenarioValue.status === 'Approved' || scenarioValue.status === 'Rejected';
   const initialReviewed = scenarioValue.status !== 'Pending';
-  const secondReviewReady = scenarioValue.slug === 'urban-parade';
+  const secondReviewReady = ['urban-parade', 'putrajaya-community-run'].includes(scenarioValue.slug);
   const authorityCompleted = terminal || secondReviewReady;
   const eventBase = {
     eventId,
@@ -509,9 +521,9 @@ async function writeScenario(db: Firestore, scenarioValue: Scenario, venue: Venu
   if (scenarioValue.status === 'Approved') {
     await writeControl(db, scenarioValue, event, identities, organizer, index, terminalAt);
   }
-  if (scenarioValue.status === 'Approved') {
-    await db.collection(COLLECTIONS.PUBLIC_EVENTS).doc(eventId).set({ eventId, versionId: VERSION_ID, eventName: details.name, venueName: details.venueName, eventType: details.type, startDatetime: details.startDatetime, endDatetime: details.endDatetime, approvedBy: requiredAuthorities, publicStatus: 'approved', presentationData: marker(eventId) });
-  }
+  // Presentation fixtures are intentionally private. Final approval and
+  // control evidence are exercised through authenticated surfaces and must
+  // never enter the public event projection.
   await writeIncidents(db, scenarioValue, event, identities, organizer, index);
 }
 
@@ -519,28 +531,34 @@ async function writeControl(db: Firestore, scenarioValue: Scenario, event: Recor
   const eventId = String(event.eventId);
   const controlId = `${eventId}-crowd-control`;
   const controlRef = db.collection(COLLECTIONS.EVENTS).doc(eventId).collection(COLLECTIONS.EVENT_CONTROLS).doc(controlId);
-  const label = scenarioValue.status === 'Approved' ? 'approved' : scenarioValue.status === 'Rejected' ? 'resubmit_required' : 'pending';
+  const isManagedPostFinal = Boolean(scenarioValue.postFinalStage);
+  const stage1Submitted = scenarioValue.postFinalStage === 'stage1_submitted';
+  const stage2Submitted = scenarioValue.postFinalStage === 'stage2_submitted';
+  const label = scenarioValue.status === 'Approved'
+    ? stage1Submitted ? 'pending' : 'approved'
+    : scenarioValue.status === 'Rejected' ? 'resubmit_required' : 'pending';
   const stage1Requirements = [
     { docType: 'application' as const, label: 'Authority acknowledgement', required: true },
     { docType: 'insurance' as const, label: 'Public liability insurance', required: true },
   ];
+  const seedStage1 = !isManagedPostFinal || stage1Submitted || stage2Submitted;
+  const seedStage2 = !isManagedPostFinal || stage2Submitted;
   const imageName = PRESENTATION_IMAGES[index % (PRESENTATION_IMAGES.length - 1)];
-  const bytes = await readFile(resolve(process.cwd(), '..', 'docs', 'presentation', 'assets', 'e2e-2026-09-30', imageName));
-  const uploaded = await uploadFile(`events/${eventId}/controls/${controlId}/stage2/${imageName}`, bytes, 'image/jpeg', eventId);
+  const bytes = seedStage2 ? await readFile(resolve(process.cwd(), '..', 'docs', 'presentation', 'assets', 'e2e-2026-09-30', imageName)) : null;
+  const uploaded = bytes ? await uploadFile(`events/${eventId}/controls/${controlId}/stage2/${imageName}`, bytes, 'image/jpeg', eventId) : null;
   const batch = db.batch();
   batch.set(controlRef, { controlId, eventId, versionId: VERSION_ID, controlName: 'Crowd entry and venue readiness', authority: 'PDRM', stageRequirement: 'stage1_and_stage2', stage1Requirements, stage2Requirement: { kind: 'image', label: 'Photo of the prepared entry and safety-control area' }, controlItemVersion: 1, label, createdAt: now, updatedAt: now, presentationData: marker(eventId) });
-  for (const requirement of stage1Requirements) {
+  if (seedStage1) for (const requirement of stage1Requirements) {
     const docId = `${controlId}-${requirement.docType}`;
-    batch.set(controlRef.collection(COLLECTIONS.STAGE1_DOCS).doc(docId), { docId, docType: requirement.docType, label: requirement.label, status: label === 'approved' ? 'verified' : label === 'resubmit_required' ? 'rejected' : 'pending_verification', uploadedAt: now - DAY, uploadedBy: organizer.uid, filePath: `events/${eventId}/controls/${controlId}/stage1/${docId}.pdf`, ...(label === 'approved' ? { verifiedBy: identities.authorityUids.PDRM ?? identities.adminUid, verifiedAt: now } : {}), ...(label === 'resubmit_required' ? { rejectionReason: 'The submitted document requires an updated validity date.', rejectionSuggestion: 'Upload the current endorsed document.' } : {}), presentationData: marker(eventId) });
+    const verified = !stage1Submitted;
+    batch.set(controlRef.collection(COLLECTIONS.STAGE1_DOCS).doc(docId), { docId, docType: requirement.docType, label: requirement.label, status: verified ? 'verified' : 'pending_verification', uploadedAt: now - DAY, uploadedBy: organizer.uid, filePath: `events/${eventId}/controls/${controlId}/stage1/${docId}.pdf`, ...(verified ? { verifiedBy: identities.authorityUids.PDRM ?? identities.adminUid, verifiedAt: now } : {}), presentationData: marker(eventId) });
   }
-  const stage2Id = `${controlId}-stage2`;
-  batch.set(controlRef.collection(COLLECTIONS.STAGE2_DOCS).doc(stage2Id), { docId: stage2Id, imageUrl: uploaded.url, uploadedAt: now, uploadedBy: organizer.uid, publicConfirmCount: 0, published: scenarioValue.status === 'Approved', ...(scenarioValue.status === 'Approved' ? { publishedAt: now, publishedBy: identities.adminUid } : {}), presentationData: marker(eventId) });
+  if (seedStage2) {
+    const stage2Id = `${controlId}-stage2`;
+    if (!uploaded) throw new Error(`${eventId}: Stage 2 upload artifact was not created.`);
+    batch.set(controlRef.collection(COLLECTIONS.STAGE2_DOCS).doc(stage2Id), { docId: stage2Id, imageUrl: uploaded.url, uploadedAt: now, uploadedBy: organizer.uid, publicConfirmCount: 0, published: !isManagedPostFinal && scenarioValue.status === 'Approved', ...(!isManagedPostFinal && scenarioValue.status === 'Approved' ? { publishedAt: now, publishedBy: identities.adminUid } : {}), presentationData: marker(eventId) });
+  }
   await batch.commit();
-  if (scenarioValue.status === 'Approved') {
-    const publicRoot = db.collection(COLLECTIONS.PUBLIC_EVENT_CONTROLS).doc(eventId);
-    await publicRoot.set({ eventId, versionId: VERSION_ID, updatedAt: now, presentationData: marker(eventId) });
-    await publicRoot.collection(COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS).doc(stage2Id).set({ publicControlId: stage2Id, eventId, versionId: VERSION_ID, controlId, docId: stage2Id, authority: 'PDRM', controlName: 'Crowd entry and venue readiness', stage2Label: 'Photo of the prepared entry and safety-control area', imageUrl: uploaded.url, publicConfirmCount: 0, reported: false, publishedAt: now, sanitized: true, sanitizedAt: now, sanitizedBy: identities.adminUid, presentationData: marker(eventId) });
-  }
 }
 
 async function writeIncidents(db: Firestore, scenarioValue: Scenario, event: Record<string, unknown>, identities: SeedIdentity, organizer: UserProfile, scenarioIndex: number) {
@@ -615,14 +633,14 @@ function incidentNarrative(category: M4IncidentCategory) {
   return values[category];
 }
 
-async function clearDataset(db: Firestore) {
+async function clearDataset(db: Firestore, selectedScenarios: Scenario[]) {
   const manifestSnapshot = await db.collection(COLLECTIONS.DATASET_MANIFESTS).doc(DATASET_ID).get();
   const manifest = manifestSnapshot.data();
   const manifestEventIds = Array.isArray(manifest?.eventIds) ? manifest.eventIds : [];
   const ownedManifest = manifestSnapshot.exists
     && manifest?.datasetId === DATASET_ID
     && manifest?.managedBy === MANAGED_BY;
-  for (const scenarioValue of SCENARIOS) {
+  for (const scenarioValue of selectedScenarios) {
     const eventId = eventIdFor(scenarioValue);
     const eventRef = db.collection(COLLECTIONS.EVENTS).doc(eventId);
     const event = await eventRef.get();
@@ -650,14 +668,19 @@ async function clearDataset(db: Firestore) {
       }
     }
   }
-  await getStorage().bucket().deleteFiles({ prefix: `event_documents/presentation-`, force: true });
-  await getStorage().bucket().deleteFiles({ prefix: `events/presentation-`, force: true });
-  const reporterProfiles = await db.collection(COLLECTIONS.USERS).where('role', 'in', ['organizer', 'public']).limit(20).get();
-  for (const profile of reporterProfiles.docs) await getStorage().bucket().deleteFiles({ prefix: `incident_evidence/${profile.id}/presentation-`, force: true });
-  await db.collection(COLLECTIONS.DATASET_MANIFESTS).doc(DATASET_ID).delete();
+  for (const scenarioValue of selectedScenarios) {
+    const eventId = eventIdFor(scenarioValue);
+    await getStorage().bucket().deleteFiles({ prefix: `event_documents/${eventId}/`, force: true });
+    await getStorage().bucket().deleteFiles({ prefix: `events/${eventId}/`, force: true });
+  }
+  if (selectedScenarios.length === SCENARIOS.length) {
+    const reporterProfiles = await db.collection(COLLECTIONS.USERS).where('role', 'in', ['organizer', 'public']).limit(20).get();
+    for (const profile of reporterProfiles.docs) await getStorage().bucket().deleteFiles({ prefix: `incident_evidence/${profile.id}/presentation-`, force: true });
+    await db.collection(COLLECTIONS.DATASET_MANIFESTS).doc(DATASET_ID).delete();
+  }
 }
 
-async function applyDataset(db: Firestore) {
+async function applyDataset(db: Firestore, only?: string) {
   const identities = await loadIdentities(db);
   const organizerSnapshot = await db.collection(COLLECTIONS.USERS).doc(identities.organizerUid).get();
   const organizer = organizerSnapshot.data() as UserProfile;
@@ -665,21 +688,44 @@ async function applyDataset(db: Firestore) {
   if (venues.length === 0) throw new Error('At least one active venue is required.');
   const initialReviewVenue = venues.find((venue) => venue.state === 'Kuala Lumpur' && venue.jurisdiction === 'DBKL');
   if (!initialReviewVenue) throw new Error('An active Kuala Lumpur DBKL venue is required for the initial-review demonstration.');
-  await clearDataset(db);
-  for (const [index, scenarioValue] of SCENARIOS.entries()) {
+  const selectedScenarios = only ? SCENARIOS.filter((scenarioValue) => eventIdFor(scenarioValue) === only) : SCENARIOS;
+  await clearDataset(db, selectedScenarios);
+  for (const [index, scenarioValue] of selectedScenarios.entries()) {
     const venue = scenarioValue.status === 'Pending' ? initialReviewVenue : venues[index % venues.length];
     await writeScenario(db, scenarioValue, venue, organizer, identities, index);
   }
-  await db.collection(COLLECTIONS.DATASET_MANIFESTS).doc(DATASET_ID).set({ datasetId: DATASET_ID, managedBy: MANAGED_BY, synthetic: true, intendedUse: 'STERAS classroom presentation, participant incident-flow testing and analytics demonstration only.', generatedAt: Date.now(), eventIds: SCENARIOS.map(eventIdFor), participantUid: identities.participantUid, counts: { events: SCENARIOS.length, reportableEvents: SCENARIOS.filter((item) => item.slug.startsWith('participant-')).length, incidents: SCENARIOS.reduce((sum, item) => sum + item.incidentSeverities.length, 0) } });
+  const manifestRef = db.collection(COLLECTIONS.DATASET_MANIFESTS).doc(DATASET_ID);
+  const existingManifest = (await manifestRef.get()).data() ?? {};
+  const eventIds = only
+    ? [...new Set([...(Array.isArray(existingManifest.eventIds) ? existingManifest.eventIds : []), ...selectedScenarios.map(eventIdFor)])]
+    : SCENARIOS.map(eventIdFor);
+  const manifestUpdate = {
+    datasetId: DATASET_ID,
+    managedBy: MANAGED_BY,
+    synthetic: true,
+    intendedUse: 'STERAS classroom presentation, participant incident-flow testing and analytics demonstration only.',
+    generatedAt: Date.now(),
+    eventIds,
+    participantUid: identities.participantUid,
+    ...(!only ? {
+      counts: {
+        events: SCENARIOS.length,
+        reportableEvents: SCENARIOS.filter((item) => item.slug.startsWith('participant-')).length,
+        incidents: SCENARIOS.reduce((sum, item) => sum + item.incidentSeverities.length, 0),
+      },
+    } : {}),
+  };
+  await manifestRef.set(manifestUpdate, { merge: true });
 }
 
-async function verifyDataset(db: Firestore) {
+async function verifyDataset(db: Firestore, only?: string) {
   const failures: string[] = [];
   let incidentCount = 0;
   const incidentCategories = new Set<M4IncidentCategory>();
   let reportableEventCount = 0;
   const now = Date.now();
-  for (const scenarioValue of SCENARIOS) {
+  const selectedScenarios = only ? SCENARIOS.filter((scenarioValue) => eventIdFor(scenarioValue) === only) : SCENARIOS;
+  for (const scenarioValue of selectedScenarios) {
     const eventId = eventIdFor(scenarioValue);
     const eventRef = db.collection(COLLECTIONS.EVENTS).doc(eventId);
     const eventSnapshot = await eventRef.get();
@@ -688,6 +734,11 @@ async function verifyDataset(db: Firestore) {
       failures.push(`${eventId}: invalid event`);
       continue;
     }
+    const [publicEvent, publicControls] = await Promise.all([
+      db.collection(COLLECTIONS.PUBLIC_EVENTS).doc(eventId).get(),
+      db.collection(COLLECTIONS.PUBLIC_EVENT_CONTROLS).doc(eventId).get(),
+    ]);
+    if (publicEvent.exists || publicControls.exists) failures.push(`${eventId}: managed presentation fixture has a public projection`);
     if (event.eventDetails.organizerEmail !== ORGANIZER_DEMO_EMAIL) failures.push(`${eventId}: unexpected organiser ${event.eventDetails.organizerEmail}`);
     if (event.status === 'Pending') {
       const pendingAssignments = await eventRef.collection(COLLECTIONS.ASSIGNMENTS).get();
@@ -701,7 +752,7 @@ async function verifyDataset(db: Firestore) {
       }
       if (event.eventDetails.venueState !== 'Kuala Lumpur') failures.push(`${eventId}: pending venue is not assignment-ready`);
     }
-    if (scenarioValue.slug === 'urban-parade' && (event.status !== 'UnderReview' || event.reviewStage !== 'second' || !event.authorityReviewCompletedAt)) {
+    if (['urban-parade', 'putrajaya-community-run'].includes(scenarioValue.slug) && (event.status !== 'UnderReview' || event.reviewStage !== 'second' || !event.authorityReviewCompletedAt)) {
       failures.push(`${eventId}: second-review demonstration state is invalid`);
     }
     const [assessment, resource, incidents] = await Promise.all([
@@ -722,6 +773,43 @@ async function verifyDataset(db: Firestore) {
         failures.push(`${eventId}: pending resource is not provisional`);
       }
     }
+    if (scenarioValue.postFinalStage) {
+      if (event.status !== 'Approved' || event.reviewStage !== null || !event.controlListGenerated) {
+        failures.push(`${eventId}: post-final workflow state is invalid`);
+      }
+      const assignments = await eventRef.collection(COLLECTIONS.ASSIGNMENTS).where('versionId', '==', VERSION_ID).get();
+      if (assignments.size !== event.requiredAuthorities.length
+        || assignments.docs.some((snapshot) => snapshot.data()?.status !== 'completed' || !snapshot.data()?.decision)) {
+        failures.push(`${eventId}: post-final fixture authority assignments are incomplete`);
+      }
+      const controls = await eventRef.collection(COLLECTIONS.EVENT_CONTROLS).get();
+      if (controls.empty) failures.push(`${eventId}: confirmed control list is missing`);
+      const control = controls.docs[0];
+      const stage1 = control ? await control.ref.collection(COLLECTIONS.STAGE1_DOCS).get() : null;
+      const stage2 = control ? await control.ref.collection(COLLECTIONS.STAGE2_DOCS).get() : null;
+      const expectedStage1 = scenarioValue.postFinalStage === 'controls' ? 0 : 2;
+      const expectedStage2 = scenarioValue.postFinalStage === 'stage2_submitted' ? 1 : 0;
+      if ((stage1?.size ?? 0) !== expectedStage1) failures.push(`${eventId}: unexpected Stage 1 evidence count`);
+      if ((stage2?.size ?? 0) !== expectedStage2) failures.push(`${eventId}: unexpected Stage 2 evidence count`);
+      if (scenarioValue.postFinalStage === 'stage1_submitted' && stage1?.docs.some((document) => document.data()?.status !== 'pending_verification')) failures.push(`${eventId}: Stage 1 evidence should await verification`);
+      if (scenarioValue.postFinalStage === 'stage2_submitted' && stage2?.docs.some((document) => document.data()?.published === true)) failures.push(`${eventId}: Stage 2 evidence must await Admin publication`);
+      const publicProjection = await db.collection(COLLECTIONS.PUBLIC_EVENTS).doc(eventId).get();
+      const publicControls = await db.collection(COLLECTIONS.PUBLIC_EVENT_CONTROLS).doc(eventId).get();
+      if (publicProjection.exists || publicControls.exists) failures.push(`${eventId}: managed post-final fixture was published publicly`);
+    }
+    if (scenarioValue.slug === 'putrajaya-community-run') {
+      const [assignments, decisions, reviews] = await Promise.all([
+        eventRef.collection(COLLECTIONS.ASSIGNMENTS).where('versionId', '==', VERSION_ID).get(),
+        eventRef.collection(COLLECTIONS.DECISION_HISTORY).where('versionId', '==', VERSION_ID).get(),
+        assessment.exists ? assessment.ref.collection(COLLECTIONS.SCORE_REVIEWS).where('versionId', '==', VERSION_ID).get() : null,
+      ]);
+      if (assignments.size !== event.requiredAuthorities.length
+        || assignments.docs.some((snapshot) => snapshot.data()?.status !== 'completed' || !snapshot.data()?.decision)) {
+        failures.push(`${eventId}: second-review assignments must contain five completed authority decisions`);
+      }
+      if (reviews && reviews.size !== event.requiredAuthorities.length) failures.push(`${eventId}: second-review score heads are incomplete`);
+      if (decisions.size < event.requiredAuthorities.length) failures.push(`${eventId}: second-review decision history is incomplete`);
+    }
     const ownedIncidents = incidents.docs.filter((document) => document.data()?.presentationData?.datasetId === DATASET_ID);
     const incidentValues = ownedIncidents.map((document) => ({ ...document.data(), incidentId: document.id }) as M4IncidentRecord);
     if (selectValidAnalyticsIncidents(incidentValues).length !== ownedIncidents.length) failures.push(`${eventId}: invalid incident`);
@@ -729,25 +817,26 @@ async function verifyDataset(db: Firestore) {
     if (event.status === 'Approved' && event.eventDetails.startDatetime <= now && event.eventDetails.endDatetime >= now - 7 * DAY) reportableEventCount += 1;
     incidentCount += ownedIncidents.length;
   }
-  const expectedIncidents = SCENARIOS.reduce((sum, item) => sum + item.incidentSeverities.length, 0);
+  const expectedIncidents = selectedScenarios.reduce((sum, item) => sum + item.incidentSeverities.length, 0);
   if (incidentCount !== expectedIncidents) failures.push(`incident count ${incidentCount}, expected ${expectedIncidents}`);
-  if (reportableEventCount !== 5) failures.push(`reportable event count ${reportableEventCount}, expected 5`);
-  if (incidentCategories.size !== 10) failures.push(`incident category coverage ${incidentCategories.size}, expected 10`);
+  if (!only && reportableEventCount !== 5) failures.push(`reportable event count ${reportableEventCount}, expected 5`);
+  if (!only && incidentCategories.size !== 10) failures.push(`incident category coverage ${incidentCategories.size}, expected 10`);
   if (failures.length > 0) throw new Error(`Presentation dataset verification failed:\n- ${failures.join('\n- ')}`);
-  console.info(JSON.stringify({ datasetId: DATASET_ID, events: SCENARIOS.length, reportableEvents: reportableEventCount, incidents: incidentCount, incidentCategories: [...incidentCategories].sort(), verified: true }, null, 2));
+  console.info(JSON.stringify({ datasetId: DATASET_ID, events: selectedScenarios.length, reportableEvents: reportableEventCount, incidents: incidentCount, incidentCategories: [...incidentCategories].sort(), verified: true }, null, 2));
 }
 
 async function main() {
-  const { action, projectId } = parsePresentationArgs(process.argv.slice(2));
+  const { action, projectId, only } = parsePresentationArgs(process.argv.slice(2));
   if (action === 'dry-run') {
-    console.info(JSON.stringify({ projectId, action, datasetId: DATASET_ID, events: SCENARIOS.map(({ slug, name, status, risk, startAt, incidentSeverities, incidentCategories }) => ({ eventId: eventIdFor({ slug }), name, status, risk, startAt: new Date(startAt).toISOString(), reportableDemo: slug.startsWith('participant-'), incidents: incidentSeverities.length, incidentCategories })) }, null, 2));
+    const selectedScenarios = only ? SCENARIOS.filter((scenarioValue) => eventIdFor(scenarioValue) === only) : SCENARIOS;
+    console.info(JSON.stringify({ projectId, action, datasetId: DATASET_ID, events: selectedScenarios.map(({ slug, name, status, risk, startAt, incidentSeverities, incidentCategories, postFinalStage }) => ({ eventId: eventIdFor({ slug }), name, status, risk, startAt: new Date(startAt).toISOString(), reportableDemo: slug.startsWith('participant-'), postFinalStage, incidents: incidentSeverities.length, incidentCategories })) }, null, 2));
     return;
   }
   initializeApp({ credential: applicationDefault(), projectId, storageBucket: `${projectId}.firebasestorage.app` });
   const db = getFirestore();
-  if (action === 'apply') await applyDataset(db);
-  if (action === 'verify') await verifyDataset(db);
-  if (action === 'cleanup') await clearDataset(db);
+  if (action === 'apply') await applyDataset(db, only);
+  if (action === 'verify') await verifyDataset(db, only);
+  if (action === 'cleanup') await clearDataset(db, only ? SCENARIOS.filter((scenarioValue) => eventIdFor(scenarioValue) === only) : SCENARIOS);
   console.info(`[presentation-portfolio] ${action} complete for ${DATASET_ID}.`);
 }
 

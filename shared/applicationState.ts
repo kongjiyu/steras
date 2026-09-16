@@ -109,6 +109,123 @@ export interface InitialReviewReadiness {
   message: string;
 }
 
+export interface OfficerDecisionReadinessInput {
+  eventId: string;
+  versionId?: string;
+  assessmentId?: string;
+  resourceId?: string;
+  authorityType: AuthorityType;
+  eventStatus?: EventStatus;
+  reviewStage?: EventRecord['reviewStage'];
+  assignment?: {
+    assignmentId?: string;
+    eventId?: string;
+    versionId?: string;
+    authorityType?: AuthorityType;
+    officerUid?: string;
+    status?: Assignment['status'];
+  } | null;
+  officerUid?: string;
+  assessment?: {
+    status?: AssessmentStatus;
+    sourceKind?: string;
+    eventId?: string;
+    versionId?: string;
+    assessmentId?: string;
+    authorityReviewRequired?: boolean;
+    complianceStatus?: ComplianceStatus;
+    authorityReviewState?: {
+      activeReviewHeads?: Partial<Record<AuthorityType, { reviewId?: string }>>;
+    };
+    officialResult?: object | null;
+  } | null;
+  resource?: {
+    resourceId?: string;
+    eventId?: string;
+    versionId?: string;
+    assessmentId?: string;
+    stage?: 'provisional' | 'official';
+  } | null;
+  requiredAuthorities?: readonly AuthorityType[];
+}
+
+export type OfficerDecisionReadinessReason =
+  | 'review_closed'
+  | 'not_assigned'
+  | 'assignment_mismatch'
+  | 'assessment_missing'
+  | 'assessment_identity_mismatch'
+  | 'resource_missing'
+  | 'resource_identity_mismatch'
+  | 'manual_not_finalized'
+  | 'own_score_review_required'
+  | 'other_score_reviews_pending'
+  | 'officialisation_pending'
+  | 'compliance_blocked';
+
+export interface OfficerDecisionReadiness {
+  ready: boolean;
+  reason?: OfficerDecisionReadinessReason;
+  message: string;
+}
+
+/** Resolve the exact blocker for an officer application decision. This is a
+ * pure, serialisable rule shared by the Authority UI and callable fences. */
+export function resolveOfficerDecisionReadiness(input: OfficerDecisionReadinessInput): OfficerDecisionReadiness {
+  if (input.eventStatus !== 'UnderReview' || input.reviewStage !== 'authority') {
+    return { ready: false, reason: 'review_closed', message: 'Officer decisions are available only during Authority Review.' };
+  }
+  const assignment = input.assignment;
+  if (!assignment || assignment.status === 'revoked') {
+    return { ready: false, reason: 'not_assigned', message: 'You are not assigned to this authority review.' };
+  }
+  if ((assignment.assignmentId !== undefined && assignment.assignmentId !== `${input.versionId}_${input.authorityType}`)
+    || assignment.eventId !== input.eventId || assignment.versionId !== input.versionId
+    || assignment.authorityType !== input.authorityType
+    || (input.officerUid !== undefined && assignment.officerUid !== input.officerUid)) {
+    return { ready: false, reason: 'assignment_mismatch', message: 'Your current officer assignment does not match this application version.' };
+  }
+  const assessment = input.assessment;
+  if (!assessment) return { ready: false, reason: 'assessment_missing', message: 'The official M2 assessment is not available yet.' };
+  if (assessment.eventId !== input.eventId || assessment.versionId !== input.versionId || assessment.assessmentId !== input.assessmentId) {
+    return { ready: false, reason: 'assessment_identity_mismatch', message: 'The M2 assessment does not match the current application version.' };
+  }
+  if (assessment.complianceStatus === 'blocked') {
+    return { ready: false, reason: 'compliance_blocked', message: 'Approval is blocked while compliance checks remain blocked.' };
+  }
+  const isManual = assessment.sourceKind === 'admin_manual';
+  const heads = assessment.authorityReviewState?.activeReviewHeads ?? {};
+  // Surface the actionable score-review blocker before the downstream
+  // official-resource check. Officers should be told to submit their own
+  // review (or wait for another authority) rather than seeing a generic
+  // finalisation message while M2 is still collecting reviews.
+  if (!isManual && !heads[input.authorityType]?.reviewId) {
+    return { ready: false, reason: 'own_score_review_required', message: 'Submit your score review first. Decisions unlock after it is finalised.' };
+  }
+  const required = input.requiredAuthorities ?? [];
+  if (!isManual && required.length > 0 && !required.every((authority) => Boolean(heads[authority]?.reviewId))) {
+    return { ready: false, reason: 'other_score_reviews_pending', message: 'Waiting for the other required authority score reviews.' };
+  }
+  const resource = input.resource;
+  if (!resource) return { ready: false, reason: 'resource_missing', message: 'The matching official resource recommendation is not available yet.' };
+  if (resource.resourceId !== input.resourceId || resource.eventId !== input.eventId
+    || resource.versionId !== input.versionId || resource.assessmentId !== input.assessmentId) {
+    return { ready: false, reason: 'resource_identity_mismatch', message: 'The resource recommendation does not match the current application version.' };
+  }
+  if (resource.stage !== 'official' || assessment.status !== 'official_ready') {
+    return { ready: false, reason: 'manual_not_finalized', message: 'Wait for M2 official assessment finalisation before recording a decision.' };
+  }
+  if (isManual) {
+    return { ready: true, message: 'The Admin manual assessment and official resources are ready.' };
+  }
+  const officialReviewIds = isRecord(assessment.officialResult) && Array.isArray(assessment.officialResult.reviewIds)
+    ? assessment.officialResult.reviewIds.filter((value): value is string => typeof value === 'string') : [];
+  if (!officialReviewIds.includes(heads[input.authorityType]!.reviewId!)) {
+    return { ready: false, reason: 'officialisation_pending', message: 'All score reviews are present, but M2 officialisation is still pending.' };
+  }
+  return { ready: true, message: 'The official assessment and resources are ready.' };
+}
+
 /** Resolve whether the current M2 generation may enter Admin initial review. */
 export function resolveInitialReviewReadiness(input: InitialReviewReadinessInput): InitialReviewReadiness {
   const assessment = input.assessment;
@@ -215,4 +332,8 @@ export function isTerminalApplicationDisplayState(state: ApplicationDisplayState
 
 export function isApplicationDecision(value: unknown): value is ApplicationDecision {
   return value === 'Approved' || value === 'Rejected';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

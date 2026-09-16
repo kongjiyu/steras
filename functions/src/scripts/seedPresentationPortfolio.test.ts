@@ -14,6 +14,10 @@ describe('presentation portfolio seed safety', () => {
   it('allows read-only operations without destructive confirmation', () => {
     expect(parsePresentationArgs(['--dry-run', '--project', 'linkos-496505'])).toEqual({ action: 'dry-run', projectId: 'linkos-496505' });
     expect(parsePresentationArgs(['--verify', '--project', 'linkos-496505'])).toEqual({ action: 'verify', projectId: 'linkos-496505' });
+    expect(parsePresentationArgs(['--verify', '--project', 'linkos-496505', '--only', 'presentation-putrajaya-community-run'])).toEqual({
+      action: 'verify', projectId: 'linkos-496505', only: 'presentation-putrajaya-community-run',
+    });
+    expect(() => parsePresentationArgs(['--verify', '--project', 'linkos-496505', '--only', 'not-managed'])).toThrow('--only must identify');
   });
 
   it('requires exact confirmation for every write operation', () => {

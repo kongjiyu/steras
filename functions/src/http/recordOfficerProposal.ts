@@ -42,6 +42,7 @@ import {
   RiskAssessment,
   UserProfile,
 } from '@shared/types';
+import { resolveOfficerDecisionReadiness } from '@shared/applicationState';
 import { FUNCTION_REGION } from '../config/runtime';
 import { validateResourceRecommendation } from '../engines/resourceContract';
 import { createNotification } from '../utils/notifications';
@@ -124,6 +125,12 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
   if (assignment.status === 'revoked') {
     throw new HttpsError('failed-precondition', 'This assignment was revoked.');
   }
+  const decisionReadiness = resolveOfficerDecisionReadiness({
+    eventId, versionId, assessmentId, resourceId, authorityType,
+    officerUid: callerUid, eventStatus: event.status, reviewStage: event.reviewStage,
+    assignment, assessment, resource, requiredAuthorities: event.requiredAuthorities ?? [],
+  });
+  if (!decisionReadiness.ready) throw new HttpsError('failed-precondition', decisionReadiness.message);
 
   const now = Date.now();
   return db.runTransaction(async (tx) => {
@@ -161,6 +168,15 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
       || currentAssignment.status === 'revoked') {
       throw new HttpsError('permission-denied', 'This assignment is no longer yours to review.');
     }
+    const currentAssessment = currentAssessmentSnap.data() as RiskAssessment | undefined;
+    const currentResource = currentResourceSnap.data() as ResourceRecommendation | undefined;
+    const transactionReadiness = resolveOfficerDecisionReadiness({
+      eventId, versionId, assessmentId, resourceId, authorityType,
+      officerUid: request.auth!.uid, eventStatus: currentEvent.status, reviewStage: currentEvent.reviewStage,
+      assignment: currentAssignment, assessment: currentAssessment, resource: currentResource,
+      requiredAuthorities: currentEvent.requiredAuthorities ?? [],
+    });
+    if (!transactionReadiness.ready) throw new HttpsError('aborted', transactionReadiness.message);
     const isAmendment = currentAssignment.status === 'completed';
     const previousReason = currentAssignment.reason ?? '';
     const previousSuggestion = currentAssignment.suggestion ?? '';

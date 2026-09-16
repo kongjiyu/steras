@@ -77,7 +77,6 @@
 /* ---------- Queue list (AdminApplicationQueue) ---------- */
 .admin-queue-row {
   display: grid !important;
-  grid-template-columns: 1.25rem minmax(0, 1fr) auto;
   font-size: 14px;
 }
 .admin-queue-action {

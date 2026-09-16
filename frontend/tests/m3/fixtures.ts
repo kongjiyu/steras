@@ -36,6 +36,15 @@ export const EVENTS = {
   publicStage2: STERAS_TEST_EVENTS.publicStage2,
 } as const;
 
+/** Authenticated presentation-only post-final workflow samples. These are
+ * intentionally kept separate from the deterministic steras-test fixtures. */
+export const PRESENTATION_EVENTS = {
+  secondReview: 'presentation-putrajaya-community-run',
+  documentationReady: 'presentation-penang-heritage-weekend',
+  stage1Pending: 'presentation-selangor-food-festival',
+  stage2PendingPublication: 'presentation-johor-waterfront-fair',
+} as const;
+
 export type EventKey = keyof typeof EVENTS;
 
 /**

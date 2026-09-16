@@ -797,10 +797,50 @@ export async function recomputeResourceForStoredAssessment(
   ]);
   const version = versionSnapshot.data() as EventVersion | undefined;
   const assessment = assessmentSnapshot.data();
-  if (!version
-    || version.versionId !== event.currentVersionId
-    || version.eventId !== eventId
-    || !isResourceEligibleAssessment(assessment, eventId, version.versionId, version.eventDetails)) {
+  if (!version || version.versionId !== event.currentVersionId || version.eventId !== eventId) {
+    return { status: 'failed', reason: 'provisional-assessment-not-ready' };
+  }
+  // Manual-official assessments own their resource quantities.  The
+  // automatic calculator must never replace or revise that Admin-entered
+  // recommendation when an assessment trigger is retried.  Validate the
+  // pointed resource and simply report it as reused; malformed or tampered
+  // provenance fails closed so a retry cannot mint a second resource.
+  if (isManualOfficialAssessment(assessment)) {
+    const resourceId = event.currentResourceId;
+    if (!resourceId || !isSafeDocumentId(resourceId)) return { status: 'failed', reason: 'missing-manual-resource' };
+    const [manualSnapshot, resourceSnapshot] = await Promise.all([
+      eventReference.collection(COLLECTIONS.ASSESSMENTS).doc(assessment.assessmentId)
+        .collection(COLLECTIONS.MANUAL_ASSESSMENTS).doc(assessment.activeManualAssessmentId).get(),
+      eventReference.collection(COLLECTIONS.RESOURCES).doc(resourceId).get(),
+    ]);
+    const manual = manualSnapshot.data() as AdminManualAssessment | undefined;
+    const resource = resourceSnapshot.data() as ResourceRecommendation | undefined;
+    let manualResultValid = false;
+    if (manual && manualSnapshot.id === assessment.activeManualAssessmentId
+      && manual.manualAssessmentId === assessment.activeManualAssessmentId) {
+      try {
+        const expectedResult = buildManualOfficialAssessmentResult({
+          assessment: assessment as unknown as ManualReviewRiskAssessment,
+          manualAssessment: manual,
+          eventDetails: version.eventDetails,
+          eventVersionInputHash: version.inputHash,
+          finalizedAt: assessment.officialResult.finalizedAt,
+          finalizedBy: assessment.officialResult.finalizedBy,
+        });
+        manualResultValid = stableStringify(expectedResult) === stableStringify(assessment.officialResult);
+      } catch {
+        manualResultValid = false;
+      }
+    }
+    if (!manualResultValid || !resourceSnapshot.exists || !resource || !validateResourceRecommendation(resource).ok
+      || resource.eventId !== eventId || resource.versionId !== version.versionId
+      || resource.assessmentId !== assessment.assessmentId || resource.stage !== 'official'
+      || !resourceReferenceMatches(resource, assessment)) {
+      return { status: 'failed', reason: 'official-provenance-invalid' };
+    }
+    return { status: 'reused', resourceId };
+  }
+  if (!isResourceEligibleAssessment(assessment, eventId, version.versionId, version.eventDetails)) {
     return { status: 'failed', reason: 'provisional-assessment-not-ready' };
   }
   const assessmentResult = resourceAssessmentResult(assessment);

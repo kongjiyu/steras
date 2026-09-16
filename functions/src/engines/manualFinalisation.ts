@@ -12,6 +12,8 @@ import {
   MANUAL_OFFICIAL_FORMULA_VERSION,
   ManualOfficialAssessmentResult,
   ManualReviewRiskAssessment,
+  AdminManualResourcePlan,
+  RESOURCE_KEYS,
   riskLevelFor,
   ScoreEvidence,
   ScoreRating,
@@ -28,6 +30,28 @@ export interface ManualAssessmentInput {
   categories: AdminManualCategoryInput[];
   rationale: string;
   idempotencyKey: string;
+  resourcePlan?: AdminManualResourcePlan;
+  resourceRationale?: string;
+}
+
+/** Validate the Admin-owned resource plan separately from the eight-category
+ * risk assessment so legacy manual records remain readable. */
+export function validateManualResourcePlan(input: Pick<ManualAssessmentInput, 'resourcePlan' | 'resourceRationale'>): string[] {
+  const errors: string[] = [];
+  if (!isRecord(input.resourcePlan)) errors.push('resource-plan');
+  for (const key of RESOURCE_KEYS) {
+    const value = isRecord(input.resourcePlan) ? input.resourcePlan[key] : undefined;
+    if (!isRecord(value)) {
+      errors.push(`resource-${key}`);
+      continue;
+    }
+    if (!isWholeNonNegative(value.quantity)) errors.push(`resource-${key}-quantity`);
+    if (!isWholeNonNegative(value.maximum)) errors.push(`resource-${key}-maximum`);
+    if (isWholeNonNegative(value.quantity) && isWholeNonNegative(value.maximum)
+      && Number(value.maximum) < Number(value.quantity)) errors.push(`resource-${key}-range`);
+  }
+  if (!validText(input.resourceRationale, 10, 2000)) errors.push('resource-rationale');
+  return [...new Set(errors)];
 }
 
 export function validateManualAssessmentInput(input: unknown, evidence: unknown): string[] {
@@ -78,6 +102,12 @@ export function buildManualAssessment(args: {
 }): AdminManualAssessment {
   const errors = validateManualAssessmentInput(args.input, args.assessment.evidence);
   if (errors.length) throw new Error(`invalid-manual-assessment:${errors.join(',')}`);
+  // Legacy records may omit the Admin resource plan, but once a plan is
+  // supplied it must be complete before it can be persisted or finalised.
+  if (args.input.resourcePlan !== undefined || args.input.resourceRationale !== undefined) {
+    const resourceErrors = validateManualResourcePlan(args.input);
+    if (resourceErrors.length) throw new Error(`invalid-manual-resource-plan:${resourceErrors.join(',')}`);
+  }
   return {
     manualAssessmentId: args.manualAssessmentId,
     schemaVersion: MANUAL_ASSESSMENT_SCHEMA_VERSION,
@@ -92,6 +122,7 @@ export function buildManualAssessment(args: {
     hazards: args.input.hazards.map((hazard) => ({ ...hazard, evidenceReferences: [...hazard.evidenceReferences], rationale: hazard.rationale.trim(), hazardName: hazard.hazardName.trim() })),
     categories: args.input.categories.map((category) => ({ ...category, evidenceReferences: [...category.evidenceReferences], rationale: category.rationale.trim(), missingInformation: category.missingInformation.trim() })),
     rationale: args.input.rationale.trim(),
+    ...(args.input.resourcePlan ? { resourcePlan: cloneResourcePlan(args.input.resourcePlan), resourceRationale: args.input.resourceRationale?.trim() } : {}),
     submittedBy: args.submittedBy,
     idempotencyKey: args.input.idempotencyKey,
     createdAt: args.createdAt,
@@ -241,6 +272,17 @@ function validText(value: unknown, min: number, max: number): value is string {
 
 function isScore(value: unknown): value is ScoreRating {
   return Number.isInteger(value) && Number(value) >= 1 && Number(value) <= 5;
+}
+
+function isWholeNonNegative(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function cloneResourcePlan(value: AdminManualResourcePlan): AdminManualResourcePlan {
+  return Object.fromEntries(RESOURCE_KEYS.map((key) => [key, {
+    quantity: value[key].quantity,
+    maximum: value[key].maximum,
+  }])) as AdminManualResourcePlan;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
