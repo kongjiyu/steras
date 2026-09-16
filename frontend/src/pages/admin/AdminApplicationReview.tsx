@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -57,7 +57,6 @@ import {
   friendlyDecisionStatus,
   friendlyRiskLevel,
 } from './adminApplicationPresentation';
-import { adminOfficerDecisionRows } from './adminOfficerDecisionPresentation';
 import { userFacingSystemText } from '../../utils/userFacingText';
 import { adminWorkflowState } from './adminWorkflow';
 
@@ -417,11 +416,6 @@ export default function AdminApplicationReview() {
     }
   }, [loading, searchParams]);
 
-  const displayedOfficerDecisions = useMemo(
-    () => event ? adminOfficerDecisionRows(event, assignments, decisions) : [],
-    [event, assignments, decisions],
-  );
-
   const canReview = event && (event.status === 'Pending' || event.status === 'UnderReview' || event.status === 'Manual Review Required');
   const minRationaleLen = 10;
   const initialReadiness = event ? resolveInitialReviewReadiness({
@@ -680,7 +674,7 @@ export default function AdminApplicationReview() {
                       <Section title="M2 risk assessment" icon={ShieldCheck}>
                         <div className="rounded-md border border-gold-200 bg-gold-50 p-4 text-sm text-ink-700" data-testid="manual-review-required-notice">
                           <p className="font-semibold text-gold-700">Automated M2 assessment unavailable</p>
-                          <p className="mt-1 text-xs leading-5">No AI risk score or resource recommendation is available for this application. Complete the Admin manual assessment below; the system will calculate the official risk and resource recommendation from those Admin-selected category scores.</p>
+                          <p className="mt-1 text-xs leading-5">No AI risk score or resource recommendation is available for this application. Complete the Admin manual assessment below and enter the official resource quantities yourself.</p>
                            {manualAssessmentEligible ? (
                              <button type="button" onClick={openManualAssessment} className="btn-secondary mt-3 inline-flex !px-3 !py-1.5 text-xs">Open manual assessment</button>
                            ) : (
@@ -751,7 +745,7 @@ export default function AdminApplicationReview() {
                     <Section title="Admin manual assessment" icon={FileWarning}>
                       <div className="mb-4 rounded-md border border-gold-200 bg-gold-50 p-3 text-sm text-ink-700">
                         <p className="font-semibold text-gold-700">This application requires Admin manual review before an application decision.</p>
-                        <p className="mt-1 text-xs leading-5">Review the submitted application and available evidence, then submit the locked assessment. The system will calculate the official risk and resource recommendation from your category scores.</p>
+                        <p className="mt-1 text-xs leading-5">Review the submitted application and available evidence, then submit the locked assessment and your Admin-owned resource plan.</p>
                       </div>
                       <ManualAssessmentForm
                         eventId={event.eventId}
@@ -778,7 +772,7 @@ export default function AdminApplicationReview() {
                 {assessment?.status === 'manual_review_required' && !manualOfficialReady ? (
                   <Section title="M2 resource recommendations" icon={Users} defaultOpen={false}>
                     <p className="rounded-md border border-gold-200 bg-gold-50 p-3 text-sm text-ink-700" data-testid="manual-resource-notice">
-                      Automated resource planning is unavailable. Resource quantities will be calculated after the Admin manual assessment is finalized.
+                      Automated resource planning is unavailable. Enter the resource quantities and planning ranges in the Admin manual assessment.
                     </p>
                   </Section>
                 ) : resource ? (
@@ -793,37 +787,6 @@ export default function AdminApplicationReview() {
                     </div>
                   </Section>
                 ) : null}
-
-                {/* Officer decisions */}
-                <Section title="Authority officer decisions" icon={CheckCircle2} defaultOpen={false}>
-                  {displayedOfficerDecisions.length === 0 ? (
-                    <p className="text-sm text-ink-500">No officer decisions recorded yet.</p>
-                  ) : (
-                    <ul className="divide-y divide-[#e8e0cf]">
-                      {displayedOfficerDecisions.map((d) => (
-                        <li key={d.id} className="flex items-start gap-3 py-2">
-                          <span className={`${RISK_TONE[d.decision]} text-xs`}>{d.decision}</span>
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-semibold text-ink-800">{d.authorityType}</p>
-                            <p className="text-xs text-ink-500">{d.rationale}</p>
-                            {d.suggestion && <p className="mt-1 text-xs text-ink-600"><span className="font-semibold">Suggestion:</span> {d.suggestion}</p>}
-                          </div>
-                          <span className="text-xs text-ink-500">{formatDateTime(d.decidedAt)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </Section>
-
-                <Section title="Review timeline" icon={History} state={workflow?.needsAction ? 'Review' : 'Waiting'}>
-                  <ol className="space-y-3 text-sm">
-                    <TimelineItem label="Application submitted" date={event.submittedAt} complete={Boolean(event.submittedAt)} />
-                    <TimelineItem label="Initial admin decision" date={event.initialReview?.reviewedAt} complete={Boolean(event.initialReview)} />
-                    <TimelineItem label="Authority review completed" date={event.authorityReviewCompletedAt} complete={Boolean(event.authorityReviewCompletedAt)} />
-                    <TimelineItem label="Final admin decision" date={event.secondReview?.decidedAt} complete={Boolean(event.secondReview)} />
-                    <TimelineItem label="Event controls published" date={event.controlListGenerated ? event.updatedAt : undefined} complete={Boolean(event.controlListGenerated)} />
-                  </ol>
-                </Section>
 
                 {/* Audit log */}
                 <Section title="Audit log" icon={History} defaultOpen={false}>
@@ -1051,10 +1014,6 @@ export default function AdminApplicationReview() {
 
 function Detail({ label, value }: { label: string; value: string }) {
   return <div><p className="text-xs text-ink-500">{label}</p><p className="mt-1 text-ink-800">{value}</p></div>;
-}
-
-function TimelineItem({ label, date, complete }: { label: string; date?: number; complete: boolean }) {
-  return <li className="flex items-center gap-3"><span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border ${complete ? 'border-green-300 bg-green-50 text-green-700' : 'border-stone-300 bg-stone-50 text-ink-400'}`}>{complete ? <Check size={13}/> : <span className="h-1.5 w-1.5 rounded-full bg-current"/>}</span><span className={complete ? 'font-semibold text-ink-800' : 'text-ink-500'}>{label}</span><span className="ml-auto text-xs text-ink-500">{complete ? formatDateTime(date) : 'Pending'}</span></li>;
 }
 
 function submittedDocumentName(path: string): string {

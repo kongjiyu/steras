@@ -22,6 +22,7 @@ import {
   ManualReviewRiskAssessment,
   RESOURCE_CONFIG_VERSION,
   RESOURCE_FORMULA_VERSION,
+  RESOURCE_KEYS,
   RESOURCE_SOURCE_REGISTRY_VERSION,
   ResourceRecommendation,
   UserProfile,
@@ -41,7 +42,7 @@ import { buildOfficialAssessmentResult } from '../engines/authorityFinalisation'
 import { validateResourceRecommendation, validateResourceRevisionChain } from '../engines/resourceContract';
 import { computeCategoryBasedAssessment } from '../engines/ruleBased';
 import { evaluateCategoryHardRules } from '../engines/hardRuleEvaluator';
-import { buildManualOfficialAssessmentResult } from '../engines/manualFinalisation';
+import { buildManualOfficialAssessmentResult, validateManualResourcePlan } from '../engines/manualFinalisation';
 import { createNotification, resolveAuthUid } from '../utils/notifications';
 
 interface AuthorityDecisionRequest {
@@ -415,6 +416,7 @@ export function assertOfficialAssessmentReady(
     officialAssessment?.assessmentId,
     expectedHash,
     expectedCalculation?.ok ? expectedCalculation.items : undefined,
+    manualAssessment,
   );
   const official = isRecord(assessment) && isRecord(assessment.officialResult) ? assessment.officialResult : undefined;
   const proposal = isRecord(assessment) && isRecord(assessment.aiProposal) ? assessment.aiProposal : undefined;
@@ -586,7 +588,42 @@ function isValidOfficialResources(
   assessmentId: string | undefined,
   expectedHash: string | undefined,
   expectedItems: ResourceRecommendation['items'] | undefined,
+  manualAssessment?: AdminManualAssessment,
 ): boolean {
+  if (manualAssessment?.resourcePlan && manualAssessment.resourceRationale) {
+    const planErrors = validateManualResourcePlan(manualAssessment);
+    if (planErrors.length > 0 || !isRecord(resources)) return false;
+    const manualInputHash = createHash('sha256').update(stableStringify({
+      sourceKind: 'admin_manual', eventId, versionId, assessmentId,
+      manualAssessmentId: manualAssessment.manualAssessmentId,
+      resourcePlan: manualAssessment.resourcePlan,
+      resourceRationale: manualAssessment.resourceRationale,
+    })).digest('hex');
+    return resources.eventId === eventId
+      && resources.versionId === versionId
+      && resources.assessmentId === assessmentId
+      && resources.stage === 'official'
+      && resources.formulaVersion === RESOURCE_FORMULA_VERSION
+      && resources.configVersion === RESOURCE_CONFIG_VERSION
+      && resources.sourceRegistryVersion === RESOURCE_SOURCE_REGISTRY_VERSION
+      && resources.resourceInputHash === manualInputHash
+      && resources.resourceId === `official-${versionId}-${manualInputHash}`
+      && resources.assessmentReference.stage === 'official'
+      && resources.assessmentReference.sourceKind === 'admin_manual'
+      && resources.assessmentReference.manualAssessmentId === manualAssessment.manualAssessmentId
+      && Number.isFinite(resources.assessmentReference.finalizedAt)
+      && typeof resources.assessmentReference.finalizedBy === 'string'
+      && RESOURCE_KEYS.every((key) => {
+        const plan = manualAssessment.resourcePlan?.[key];
+        const item = resources.items?.[key];
+        return Boolean(plan && isRecord(item)
+          && item.resource === key
+          && item.baseline === plan.quantity
+          && item.planningRange?.min === plan.quantity
+          && item.planningRange?.max === plan.maximum);
+      })
+      && validateResourceRecommendation(resources).ok;
+  }
   return Boolean(isRecord(resources)
     && expectedHash
     && resources.eventId === eventId

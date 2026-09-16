@@ -34,7 +34,7 @@ import {
   RiskAssessment,
   Stage1Doc,
 } from '@shared/types';
-import { resolveApplicationDisplayState } from '@shared/applicationState';
+import { resolveApplicationDisplayState, resolveOfficerDecisionReadiness } from '@shared/applicationState';
 import { db, functions, isFirebaseConfigured, storage } from '../../config/firebase';
 import AIAdvisory from '../../components/m2/AIAdvisory';
 import CategoryProfile from '../../components/m2/CategoryProfile';
@@ -338,37 +338,28 @@ export default function AuthorityEventReview() {
   const isNamedOfficer = Boolean(ownAssignment);
   const manualOfficialAssessment = assessment?.status === 'official_ready'
     && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual';
-  const activeReviewHeads = assessment && 'authorityReviewState' in assessment
-    ? assessment.authorityReviewState?.activeReviewHeads ?? {}
-    : {};
   const requiredAuthorities = event.requiredAuthorities ?? [];
-  const hasOwnScoreHead = Boolean(profile?.authorityType && activeReviewHeads[profile.authorityType]?.reviewId);
-  const allScoreHeadsPresent = requiredAuthorities.length > 0
-    && requiredAuthorities.every((authority) => Boolean(activeReviewHeads[authority]?.reviewId));
-  const officialArtifactsReady = Boolean(
-    assessment?.status === 'official_ready'
-    && resources?.stage === 'official'
-    && resources.assessmentId === assessment.assessmentId
-    && resources.versionId === event.currentVersionId
-    && resources.eventId === event.eventId
-    && event.currentResourceId === resources.resourceId,
-  );
-  const decisionReadinessMessage = (() => {
-    if (!reviewOpen || !isNamedOfficer || manualOfficialAssessment && officialArtifactsReady) return '';
-    if (manualOfficialAssessment && !officialArtifactsReady) return 'The Admin manual assessment is not paired with a current official resource yet. Wait for finalisation to complete.';
-    if (!assessment || assessment.status === 'manual_review_required') return 'An Admin manual assessment is required before an authority decision can be recorded.';
-    if (!hasOwnScoreHead) return 'Submit your score review first. Approval and rejection become available after your category scores are recorded.';
-    if (!allScoreHeadsPresent) return 'Waiting for the other required authority score reviews. Decisions unlock after every required score review is submitted.';
-    if (!officialArtifactsReady) return 'The authority score reviews are complete, but M2 official assessment finalisation is incomplete. Ask Admin to retry finalisation.';
-    return '';
-  })();
+  const decisionReadiness = resolveOfficerDecisionReadiness({
+    eventId: event.eventId,
+    versionId: event.currentVersionId,
+    assessmentId: event.currentAssessmentId,
+    resourceId: event.currentResourceId,
+    authorityType: profile?.authorityType ?? 'PDRM',
+    officerUid: profile?.uid,
+    eventStatus: event.status,
+    reviewStage: event.reviewStage,
+    assignment: ownAssignment,
+    assessment,
+    resource: resources,
+    requiredAuthorities,
+  });
+  const decisionReadinessMessage = reviewOpen && isNamedOfficer && !decisionReadiness.ready ? decisionReadiness.message : '';
   const requiresExtendedRejectionRationale = Boolean(!manualOfficialAssessment
     && (assessment?.assessmentReadiness === 'provisional' || assessment?.assessmentReadiness === 'insufficient_data'));
   const rejectionRationaleMinimum = requiresExtendedRejectionRationale ? 80 : 10;
   // FR-M3-16: approval requires an explicit materials-review confirmation.
-  const canApprove = isNamedOfficer && reviewOpen && officialArtifactsReady
-    && confirmedReview && assessment?.complianceStatus !== 'blocked';
-  const canReject = isNamedOfficer && reviewOpen && officialArtifactsReady && rationale.trim().length >= rejectionRationaleMinimum && suggestion.trim().length >= 10 && Boolean(rejectionReasonCategory);
+  const canApprove = isNamedOfficer && decisionReadiness.ready && confirmedReview;
+  const canReject = isNamedOfficer && decisionReadiness.ready && rationale.trim().length >= rejectionRationaleMinimum && suggestion.trim().length >= 10 && Boolean(rejectionReasonCategory);
   const ownDecision = myAuthorityType ? currentDecisions.get(myAuthorityType) : undefined;
   const displayState = resolveApplicationDisplayState({
     status: event.status,
@@ -598,7 +589,7 @@ export default function AuthorityEventReview() {
             <div className="card-body">
               {assessment?.status === 'manual_review_required' ? (
                 <p className="rounded-md border border-gold-200 bg-gold-50 p-3 text-sm text-ink-700" data-testid="manual-resource-notice">
-                  Automated resource planning is unavailable. Resource quantities will be calculated after the Admin manual assessment is finalized.
+                  Automated resource planning is unavailable. The Admin must enter the official resource quantities in the manual assessment before authority review can continue.
                 </p>
               ) : !effectiveResources ? <p className="text-sm text-ink-500">{legacyResources ? 'Legacy resource record detected. Recompute this event version before review.' : 'No recommendation yet.'}</p> : editingResources && resourceDraft ? (
                 <div className="space-y-4">

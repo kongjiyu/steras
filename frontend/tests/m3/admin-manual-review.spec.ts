@@ -38,6 +38,13 @@ test.describe('Admin application visibility and manual assessment', () => {
     for (let index = 0; index < await categoryRationales.count(); index += 1) {
       await categoryRationales.nth(index).fill('The submitted evidence supports this official category score.');
     }
+    const recommendedQuantities = form.getByLabel('Recommended quantity');
+    const maximumQuantities = form.getByLabel('Maximum planning quantity');
+    for (let index = 0; index < await recommendedQuantities.count(); index += 1) {
+      await recommendedQuantities.nth(index).fill(String(index + 1));
+      await maximumQuantities.nth(index).fill(String(index + 2));
+    }
+    await form.getByLabel('Resource planning rationale').fill('The quantities match the venue capacity and the documented operational response plan.');
     await form.getByLabel('Overall assessment rationale').fill('The complete submitted evidence supports this locked Admin assessment.');
     await form.getByRole('button', { name: 'Submit locked manual assessment' }).click();
     await expect(page.getByText('Manual assessment finalized as the official assessment.')).toBeVisible({ timeout: 30_000 });

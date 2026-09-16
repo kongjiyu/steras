@@ -98,6 +98,7 @@ export default defineConfig({
         'stage2-organizer-upload.spec.ts',
         'stage2-public-confirm-report.spec.ts',
         'stage2-admin-publish.spec.ts',
+        'presentation-post-final-flow.spec.ts',
       ],
       use: { ...devices['Desktop Chrome'], channel: undefined },
     },

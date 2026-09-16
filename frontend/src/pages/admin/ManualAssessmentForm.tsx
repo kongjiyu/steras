@@ -4,9 +4,12 @@ import toast from 'react-hot-toast';
 import {
   AdminManualCategoryInput,
   AdminManualHazard,
+  AdminManualResourcePlan,
   EvidenceKey,
   HazardDomain,
   ManualReviewRiskAssessment,
+  RESOURCE_KEYS,
+  ResourceKey,
   ScoreRating,
 } from '@shared/types';
 import { functions } from '../../config/firebase';
@@ -30,12 +33,27 @@ export interface ManualAssessmentFormProps {
 
 export type ManualAssessmentFieldErrors = Record<string, string>;
 
+type ManualResourceDraft = Record<ResourceKey, { quantity: string; maximum: string }>;
+type ManualResourceValidationPlan = Partial<Record<ResourceKey, { quantity?: number | string; maximum?: number | string }>>;
+
+const RESOURCE_LABELS: Record<ResourceKey, string> = {
+  police: 'Police officers',
+  security: 'Security personnel',
+  medicalTeams: 'Medical teams',
+  ambulances: 'Ambulances',
+  fireOfficers: 'Fire officers',
+  toilets: 'Toilets',
+  wasteBins: 'Waste bins',
+};
+
 /** Client-side mirror of the callable's validation rules. */
 export function validateManualAssessmentDraft(
   hazards: AdminManualHazard[],
   categories: AdminManualCategoryInput[],
   rationale: string,
   eligibleEvidence: EvidenceKey[],
+  resourcePlan?: ManualResourceValidationPlan,
+  resourceRationale = '',
 ): ManualAssessmentFieldErrors {
   const errors: ManualAssessmentFieldErrors = {};
   if (!hazards.length) errors.hazards = 'Add at least one hazard.';
@@ -55,11 +73,29 @@ export function validateManualAssessmentDraft(
     if (category.evidenceReferences.length > 0 && category.missingInformation.length > 1000) errors[`${prefix}-missing`] = 'Missing-information explanation must be at most 1000 characters.';
   });
   if (rationale.trim().length < 20) errors.rationale = 'Enter an overall assessment rationale (at least 20 characters).';
+  // The fourth-argument legacy helper remains usable by existing callers;
+  // the form itself passes the fifth argument and therefore opts into the
+  // required Admin resource-plan validation.
+  if (arguments.length >= 5) {
+    RESOURCE_KEYS.forEach((key) => {
+      const item = resourcePlan?.[key];
+      const quantity = wholeNumber(item?.quantity);
+      const maximum = wholeNumber(item?.maximum);
+      if (quantity === undefined || quantity < 0) errors[`resource-${key}-quantity`] = 'Enter a whole number of 0 or more.';
+      if (maximum === undefined || maximum < 0) errors[`resource-${key}-maximum`] = 'Enter a whole number of 0 or more.';
+      if (quantity !== undefined && maximum !== undefined && maximum >= 0 && maximum < quantity) errors[`resource-${key}-range`] = 'Maximum must be at least the recommended quantity.';
+    });
+    if (resourceRationale.trim().length < 10) errors['resource-rationale'] = 'Explain the resource planning basis (at least 10 characters).';
+  }
   return errors;
 }
 
 export function friendlyManualAssessmentError(code: string): string {
   if (code === 'assessment-rationale') return 'Enter an overall assessment rationale (at least 20 characters).';
+  if (code === 'resource-plan') return 'Enter recommended and maximum quantities for all seven resources.';
+  if (code === 'resource-rationale') return 'Explain the resource planning basis (at least 10 characters).';
+  if (code.startsWith('resource-') && code.endsWith('-range')) return 'Maximum must be at least the recommended quantity.';
+  if (code.startsWith('resource-')) return 'Enter a whole number of 0 or more.';
   if (code === 'hazard-count') return 'Add at least one hazard.';
   if (code === 'hazard') return 'Complete the hazard name, evidence, and rationale fields.';
   if (code === 'category-count' || code === 'missing-category' || code === 'category') return 'Complete all eight assessment categories.';
@@ -125,17 +161,22 @@ export default function ManualAssessmentForm({ eventId, assessment, onCompleted 
     categoryId: category.id, likelihood: 1, severity: 1, evidenceReferences: [], rationale: '', missingInformation: '',
   })));
   const [rationale, setRationale] = useState('');
+  const [resourcePlan, setResourcePlan] = useState<ManualResourceDraft>(() => Object.fromEntries(
+    RESOURCE_KEYS.map((key) => [key, { quantity: '', maximum: '' }]),
+  ) as ManualResourceDraft);
+  const [resourceRationale, setResourceRationale] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<ManualAssessmentFieldErrors>({});
   const [idempotencyKey] = useState(() => `manual-${crypto.randomUUID()}`);
   const persisted = Boolean(assessment.activeManualAssessmentId);
   const evidenceKeys = eligibleEvidence.map((item) => item.key);
-  const errors = useMemo(() => validateManualAssessmentDraft(hazards, categories, rationale, evidenceKeys), [categories, evidenceKeys, hazards, rationale]);
+  const normalizedResourcePlan = useMemo(() => toResourcePlan(resourcePlan), [resourcePlan]);
+  const errors = useMemo(() => validateManualAssessmentDraft(hazards, categories, rationale, evidenceKeys, resourcePlan, resourceRationale), [categories, evidenceKeys, hazards, rationale, resourcePlan, resourceRationale]);
   const completeCategories = categories.filter((category) => Object.keys(validateManualAssessmentDraft([hazards[0]], [category], 'a'.repeat(20), evidenceKeys)).every((key) => !key.startsWith('category-'))).length;
   const canRetryAI = assessment.aiProposal !== null && assessment.aiProposal.status !== 'success';
 
   const submit = async () => {
-    const validationErrors = validateManualAssessmentDraft(hazards, categories, rationale, evidenceKeys);
+    const validationErrors = validateManualAssessmentDraft(hazards, categories, rationale, evidenceKeys, resourcePlan, resourceRationale);
     setFieldErrors(validationErrors);
     if (Object.keys(validationErrors).length > 0) {
       window.setTimeout(() => document.querySelector<HTMLElement>('[data-manual-field-error="true"]')?.focus(), 0);
@@ -143,7 +184,7 @@ export default function ManualAssessmentForm({ eventId, assessment, onCompleted 
     }
     setSubmitting(true);
     try {
-      await httpsCallable(functions, 'submitAdminManualAssessment')({ eventId, hazards, categories, rationale, idempotencyKey });
+      await httpsCallable(functions, 'submitAdminManualAssessment')({ eventId, hazards, categories, rationale, resourcePlan: normalizedResourcePlan, resourceRationale, idempotencyKey });
       toast.success('Manual assessment finalized as the official assessment.');
       onCompleted?.();
     } catch (error) {
@@ -234,6 +275,31 @@ export default function ManualAssessmentForm({ eventId, assessment, onCompleted 
             </div>
           </div>
 
+          <div className="mt-6 rounded-md border border-[#e3dacb] bg-cream-50 p-4" data-testid="manual-resource-plan">
+            <h3 className="font-display font-semibold text-ink-800">Admin resource recommendation</h3>
+            <p className="mt-1 text-xs leading-5 text-ink-500">Set the recommended quantity and maximum planning quantity. These values are recorded as the official resource recommendation for this manual review.</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              {RESOURCE_KEYS.map((key) => (
+                <div key={key} className="rounded border border-[#e3dacb] bg-white p-3">
+                  <p className="text-sm font-semibold text-ink-800">{RESOURCE_LABELS[key]}</p>
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <label className="text-xs text-ink-600">Recommended quantity
+                      <input className="input mt-1" type="number" min="0" step="1" inputMode="numeric" value={resourcePlan[key].quantity} onChange={(event) => updateResource(setResourcePlan, key, { quantity: event.target.value })} aria-invalid={Boolean(fieldErrors[`resource-${key}-quantity`] || fieldErrors[`resource-${key}-range`])} data-manual-field-error={fieldErrors[`resource-${key}-quantity`] || fieldErrors[`resource-${key}-range`] ? 'true' : undefined} />
+                    </label>
+                    <label className="text-xs text-ink-600">Maximum planning quantity
+                      <input className="input mt-1" type="number" min="0" step="1" inputMode="numeric" value={resourcePlan[key].maximum} onChange={(event) => updateResource(setResourcePlan, key, { maximum: event.target.value })} aria-invalid={Boolean(fieldErrors[`resource-${key}-maximum`] || fieldErrors[`resource-${key}-range`])} data-manual-field-error={fieldErrors[`resource-${key}-maximum`] || fieldErrors[`resource-${key}-range`] ? 'true' : undefined} />
+                    </label>
+                  </div>
+                  {(fieldErrors[`resource-${key}-quantity`] || fieldErrors[`resource-${key}-maximum`] || fieldErrors[`resource-${key}-range`]) && <p className="mt-1 text-xs text-status-rejected">{fieldErrors[`resource-${key}-quantity`] || fieldErrors[`resource-${key}-maximum`] || fieldErrors[`resource-${key}-range`]}</p>}
+                </div>
+              ))}
+            </div>
+            <label className="mt-3 block text-xs font-medium text-ink-600">Resource planning rationale
+              <textarea className="input mt-1" rows={3} maxLength={2000} value={resourceRationale} onChange={(event) => setResourceRationale(event.target.value)} aria-invalid={Boolean(fieldErrors['resource-rationale'])} data-manual-field-error={fieldErrors['resource-rationale'] ? 'true' : undefined} placeholder="Explain the operational basis for these quantities." />
+            </label>
+            {fieldErrors['resource-rationale'] && <p className="mt-1 text-xs text-status-rejected">{fieldErrors['resource-rationale']}</p>}
+          </div>
+
           <label className="mt-5 block text-sm font-semibold text-ink-700">Overall assessment rationale<textarea className="input mt-2" rows={4} maxLength={2000} value={rationale} onChange={(event) => setRationale(event.target.value)} aria-invalid={Boolean(fieldErrors.rationale)} data-manual-field-error={fieldErrors.rationale ? 'true' : undefined} /></label>
           {fieldErrors.rationale && <p className="mt-1 text-xs text-status-rejected">{fieldErrors.rationale}</p>}
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-ink-500"><span>{Object.keys(errors).length ? 'Complete the highlighted fields before submitting.' : 'All required fields are complete.'}</span><span>{rationale.trim().length}/2000 · minimum 20</span></div>
@@ -260,6 +326,28 @@ function updateCategory(setter: React.Dispatch<React.SetStateAction<AdminManualC
   setter((values) => values.map((value, current) => current === index ? { ...value, ...patch } : value));
 }
 
+function updateResource(setter: React.Dispatch<React.SetStateAction<ManualResourceDraft>>, key: ResourceKey, patch: Partial<ManualResourceDraft[ResourceKey]>) {
+  setter((values) => ({ ...values, [key]: { ...values[key], ...patch } }));
+}
+
+function toResourcePlan(draft: ManualResourceDraft): AdminManualResourcePlan | undefined {
+  const values = Object.fromEntries(RESOURCE_KEYS.map((key) => [key, {
+    quantity: Number(draft[key].quantity),
+    maximum: Number(draft[key].maximum),
+  }])) as AdminManualResourcePlan;
+  return RESOURCE_KEYS.every((key) => draft[key].quantity.trim() !== '' && draft[key].maximum.trim() !== ''
+    && Number.isSafeInteger(values[key].quantity) && values[key].quantity >= 0
+    && Number.isSafeInteger(values[key].maximum) && values[key].maximum >= values[key].quantity)
+    ? values : undefined;
+}
+
+function wholeNumber(value: unknown): number | undefined {
+  if (typeof value === 'number') return Number.isSafeInteger(value) ? value : undefined;
+  if (typeof value !== 'string' || value.trim() === '') return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+
 function formatCategory(categoryId: string): string {
   return MANUAL_ASSESSMENT_CATEGORIES.find((category) => category.id === categoryId)?.name ?? categoryId.replaceAll('_', ' ');
 }
@@ -283,6 +371,8 @@ function mapServerErrorsToFields(codes: string[]): ManualAssessmentFieldErrors {
       mapped.hazards = message;
     } else if (code === 'assessment-rationale') {
       mapped.rationale = message;
+    } else if (code.startsWith('resource-')) {
+      mapped[code] = message;
     } else {
       mapped[code] = message;
     }

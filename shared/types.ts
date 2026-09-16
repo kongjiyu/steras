@@ -790,6 +790,16 @@ export interface AdminManualCategoryInput {
   missingInformation: string;
 }
 
+/** Admin-entered resource planning values for a manual-review application.
+ * The Admin owns both the recommended quantity and the upper planning bound;
+ * no automatic resource calculator is invoked for this path. */
+export interface AdminManualResourceInput {
+  quantity: number;
+  maximum: number;
+}
+
+export type AdminManualResourcePlan = Record<ResourceKey, AdminManualResourceInput>;
+
 export interface AdminManualAssessment {
   manualAssessmentId: string;
   schemaVersion: typeof MANUAL_ASSESSMENT_SCHEMA_VERSION;
@@ -804,6 +814,10 @@ export interface AdminManualAssessment {
   hazards: AdminManualHazard[];
   categories: AdminManualCategoryInput[];
   rationale: string;
+  /** Required for newly submitted records. Optional keeps legacy records
+   * readable while they are being replaced through the manual workflow. */
+  resourcePlan?: AdminManualResourcePlan;
+  resourceRationale?: string;
   submittedBy: string;
   idempotencyKey: string;
   createdAt: number;
