@@ -34,6 +34,7 @@ const controlLifecycle_1 = require("../utils/controlLifecycle");
 const stage2Counter_1 = require("../utils/stage2Counter");
 const notifications_1 = require("../utils/notifications");
 const eventWindow_1 = require("../utils/eventWindow");
+const stage2_1 = require("../../../shared/stage2");
 const REPORT_CATEGORIES = ['item_not_at_venue', 'wrong_venue', 'low_quality_image', 'other'];
 const DESCRIPTION_MIN = 20;
 const DESCRIPTION_MAX = 500;
@@ -71,13 +72,13 @@ async function reportStage2DocForUser(uid, data, now = Date.now()) {
     const db = (0, firebase_admin_1.firestore)();
     const eventRef = db.collection(types_1.COLLECTIONS.EVENTS).doc(eventId);
     const controlRef = eventRef.collection(types_1.COLLECTIONS.EVENT_CONTROLS).doc(controlId);
-    const docId = `${controlId}-s2`;
+    const docId = (0, stage2_1.stage2DocumentId)(controlId);
     const docRef = controlRef.collection(types_1.COLLECTIONS.STAGE2_DOCS).doc(docId);
     const counterRef = controlRef.collection(types_1.COLLECTIONS.STAGE2_REPORTS).doc(uid);
     const publicRef = db.collection(types_1.COLLECTIONS.PUBLIC_EVENT_CONTROLS)
         .doc(eventId)
         .collection(types_1.COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS)
-        .doc(`${controlId}-stage2`);
+        .doc((0, stage2_1.stage2PublicControlId)(controlId));
     const { ticketId, alreadyReported, reportedAt, controlName, authorityType, versionId, eventOrganizerUid } = await db.runTransaction(async (tx) => {
         // Reads first.
         const [docSnap, counterSnap, controlSnap, eventSnap, publicSnap, userSnap, confirmSnap] = await Promise.all([

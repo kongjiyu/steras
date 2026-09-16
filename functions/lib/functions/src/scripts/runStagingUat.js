@@ -236,6 +236,16 @@ async function runManualAssessment(context) {
         hazards: [{ hazardId: 'uat-manual-hazard-1', hazardName: 'Manually reviewed event hazard', categoryId: 'crowd', evidenceReferences: [evidenceKey], rationale: 'Admin reviewed the immutable application and identified this credible event hazard.' }],
         categories: ['crowd', 'venue_fire', 'weather_environment', 'public_health', 'food_water_sanitation', 'medical_capacity', 'security_cbrn', 'transport_accessibility'].map((categoryId) => ({ categoryId, likelihood: 2, severity: 2, evidenceReferences: [evidenceKey], rationale: `Admin reviewed the current evidence for ${categoryId}.`, missingInformation: '' })),
         rationale: 'Admin completed the full manual assessment after the injected AI failure.',
+        resourcePlan: {
+            police: { quantity: 2, maximum: 4 },
+            security: { quantity: 3, maximum: 5 },
+            medicalTeams: { quantity: 1, maximum: 2 },
+            ambulances: { quantity: 1, maximum: 2 },
+            fireOfficers: { quantity: 2, maximum: 3 },
+            toilets: { quantity: 20, maximum: 25 },
+            wasteBins: { quantity: 10, maximum: 15 },
+        },
+        resourceRationale: 'The Admin resource plan matches the venue capacity and the documented operational response requirements.',
     });
     const official = await assessmentFor(context.eventId, 'v1');
     if (official.status !== 'official_ready' || !('sourceKind' in official) || official.sourceKind !== 'admin_manual')

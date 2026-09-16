@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EventRecord } from '@shared/types';
-import { isCurrentSecondReviewEvent, isManagedRealReviewFixture, sameAuthoritySet } from './makeSecondReviewDecision';
+import { isCurrentSecondReviewEvent, isManagedFixture, isManagedPresentationFixture, isManagedRealReviewFixture, sameAuthoritySet } from './makeSecondReviewDecision';
 
 describe('managed review fixture publication guard', () => {
   it('recognises only the owned Module 3 fixture marker', () => {
@@ -10,6 +10,19 @@ describe('managed review fixture publication guard', () => {
     } } as never)).toBe(true);
     expect(isManagedRealReviewFixture({ sterasFixture: {
       datasetId: 'other-dataset', managedBy: 'seed:steras:real-review-samples',
+    } } as never)).toBe(false);
+  });
+
+  it('recognises the owned presentation portfolio marker and no other marker', () => {
+    const presentation = { presentationData: {
+      datasetId: 'steras-presentation-portfolio-2026-09-v1',
+      managedBy: 'seed:presentation-portfolio',
+    } } as never;
+    expect(isManagedPresentationFixture(presentation)).toBe(true);
+    expect(isManagedFixture(presentation)).toBe(true);
+    expect(isManagedFixture({ presentationData: {
+      datasetId: 'steras-presentation-portfolio-2026-09-v1',
+      managedBy: 'someone-else',
     } } as never)).toBe(false);
   });
 });

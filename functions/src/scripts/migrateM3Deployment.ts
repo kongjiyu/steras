@@ -19,6 +19,7 @@ import {
   Stage2Doc,
 } from '@shared/types';
 import { STERAS_TEST_EVENT_IDS, STERAS_TEST_SHARED_PROJECT_ID } from '../../../shared/sterasTestFixtures';
+import { stage2DocumentId, stage2PublicControlId } from '@shared/stage2';
 
 const DEFAULT_MIGRATION_ID = 'm3-deployment-v1';
 const DEFAULT_MANIFEST_FILENAME = 'm3-legacy-migration-manifest.json';
@@ -425,23 +426,23 @@ async function buildEventPlan(
       .collection(COLLECTIONS.EVENT_CONTROLS)
       .doc(controlId)
       .collection(COLLECTIONS.STAGE2_DOCS)
-      .doc(`${controlId}-s2`)
+      .doc(stage2DocumentId(controlId))
       .get();
     const publicRef = db
       .collection(COLLECTIONS.PUBLIC_EVENT_CONTROLS)
       .doc(eventId)
       .collection(COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS)
-      .doc(`${controlId}-stage2`);
+      .doc(stage2PublicControlId(controlId));
     const privateDoc = stage2Snapshot.exists ? stage2Snapshot.data() as Stage2Doc : undefined;
-    const existing = existingPublic.get(`${controlId}-stage2`);
+    const existing = existingPublic.get(stage2PublicControlId(controlId));
     if (privateDoc?.published) {
       if (!privateDoc.imageUrl || !privateDoc.docId) {
         blockedReasons.push(`${eventId}: published Stage 2 document ${controlId} is missing imageUrl or docId.`);
         continue;
       }
-      expectedPublicIds.add(`${controlId}-stage2`);
+      expectedPublicIds.add(stage2PublicControlId(controlId));
       const projection: PublicEventControl = {
-        publicControlId: `${controlId}-stage2`,
+        publicControlId: stage2PublicControlId(controlId),
         eventId,
         versionId: currentVersionId,
         controlId,

@@ -166,7 +166,11 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
       || currentAggregate !== aggregate) {
       throw new HttpsError('aborted', 'The second-review inputs changed or another Admin already finalized this application.');
     }
-    const managedFixture = isManagedRealReviewFixture(currentEvent);
+    // Presentation fixtures are deliberately private as well.  Keep the
+    // publication guard centralised here so a final approval made through the
+    // callable can never accidentally create a public projection for either
+    // of the managed fixture datasets.
+    const managedFixture = isManagedFixture(currentEvent);
     tx.update(eventRef, {
       status: finalDecision,
       reviewStage: finalDecision === 'Rejected' ? 'closed' : null,
@@ -305,6 +309,16 @@ export function isManagedRealReviewFixture(event: EventRecord): boolean {
   const marker = (event as EventRecord & { sterasFixture?: { datasetId?: unknown; managedBy?: unknown } }).sterasFixture;
   return marker?.datasetId === 'steras-module3-real-review-samples-v1'
     && marker?.managedBy === 'seed:steras:real-review-samples';
+}
+
+export function isManagedPresentationFixture(event: EventRecord): boolean {
+  const marker = (event as EventRecord & { presentationData?: { datasetId?: unknown; managedBy?: unknown } }).presentationData;
+  return marker?.datasetId === 'steras-presentation-portfolio-2026-09-v1'
+    && marker?.managedBy === 'seed:presentation-portfolio';
+}
+
+export function isManagedFixture(event: EventRecord): boolean {
+  return isManagedRealReviewFixture(event) || isManagedPresentationFixture(event);
 }
 
 function aggregateFromAssignments(assignments: Assignment[], required: AuthorityType[]): EventRecord['status'] {

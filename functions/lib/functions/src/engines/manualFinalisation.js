@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.validateManualResourcePlan = validateManualResourcePlan;
 exports.validateManualAssessmentInput = validateManualAssessmentInput;
 exports.buildManualAssessment = buildManualAssessment;
 exports.buildManualOfficialAssessmentResult = buildManualOfficialAssessmentResult;
@@ -13,6 +14,30 @@ const ruleBased_1 = require("./ruleBased");
 const hardRuleEvaluator_1 = require("./hardRuleEvaluator");
 const resourceCalculator_1 = require("./resourceCalculator");
 const CATEGORY_IDS = categorySchema_1.ACTIVE_CATEGORY_SCHEMA.categories.map((category) => category.id);
+/** Validate the Admin-owned resource plan separately from the eight-category
+ * risk assessment so legacy manual records remain readable. */
+function validateManualResourcePlan(input) {
+    const errors = [];
+    if (!isRecord(input.resourcePlan))
+        errors.push('resource-plan');
+    for (const key of types_1.RESOURCE_KEYS) {
+        const value = isRecord(input.resourcePlan) ? input.resourcePlan[key] : undefined;
+        if (!isRecord(value)) {
+            errors.push(`resource-${key}`);
+            continue;
+        }
+        if (!isWholeNonNegative(value.quantity))
+            errors.push(`resource-${key}-quantity`);
+        if (!isWholeNonNegative(value.maximum))
+            errors.push(`resource-${key}-maximum`);
+        if (isWholeNonNegative(value.quantity) && isWholeNonNegative(value.maximum)
+            && Number(value.maximum) < Number(value.quantity))
+            errors.push(`resource-${key}-range`);
+    }
+    if (!validText(input.resourceRationale, 10, 2000))
+        errors.push('resource-rationale');
+    return [...new Set(errors)];
+}
 function validateManualAssessmentInput(input, evidence) {
     const errors = [];
     if (!isRecord(input))
@@ -69,6 +94,13 @@ function buildManualAssessment(args) {
     const errors = validateManualAssessmentInput(args.input, args.assessment.evidence);
     if (errors.length)
         throw new Error(`invalid-manual-assessment:${errors.join(',')}`);
+    // Legacy records may omit the Admin resource plan, but once a plan is
+    // supplied it must be complete before it can be persisted or finalised.
+    if (args.input.resourcePlan !== undefined || args.input.resourceRationale !== undefined) {
+        const resourceErrors = validateManualResourcePlan(args.input);
+        if (resourceErrors.length)
+            throw new Error(`invalid-manual-resource-plan:${resourceErrors.join(',')}`);
+    }
     return {
         manualAssessmentId: args.manualAssessmentId,
         schemaVersion: types_1.MANUAL_ASSESSMENT_SCHEMA_VERSION,
@@ -83,6 +115,7 @@ function buildManualAssessment(args) {
         hazards: args.input.hazards.map((hazard) => ({ ...hazard, evidenceReferences: [...hazard.evidenceReferences], rationale: hazard.rationale.trim(), hazardName: hazard.hazardName.trim() })),
         categories: args.input.categories.map((category) => ({ ...category, evidenceReferences: [...category.evidenceReferences], rationale: category.rationale.trim(), missingInformation: category.missingInformation.trim() })),
         rationale: args.input.rationale.trim(),
+        ...(args.input.resourcePlan ? { resourcePlan: cloneResourcePlan(args.input.resourcePlan), resourceRationale: args.input.resourceRationale?.trim() } : {}),
         submittedBy: args.submittedBy,
         idempotencyKey: args.input.idempotencyKey,
         createdAt: args.createdAt,
@@ -222,6 +255,15 @@ function validText(value, min, max) {
 }
 function isScore(value) {
     return Number.isInteger(value) && Number(value) >= 1 && Number(value) <= 5;
+}
+function isWholeNonNegative(value) {
+    return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+function cloneResourcePlan(value) {
+    return Object.fromEntries(types_1.RESOURCE_KEYS.map((key) => [key, {
+            quantity: value[key].quantity,
+            maximum: value[key].maximum,
+        }]));
 }
 function isRecord(value) {
     return typeof value === 'object' && value !== null && !Array.isArray(value);

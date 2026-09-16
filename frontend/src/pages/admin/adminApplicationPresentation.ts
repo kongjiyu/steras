@@ -147,7 +147,7 @@ export interface AdminAuthorityProgressRow {
 }
 
 export function deriveAuthorityProgress(
-  event: Pick<EventRecord, 'currentVersionId' | 'requiredAuthorities'>,
+  event: Pick<EventRecord, 'currentVersionId' | 'requiredAuthorities'> & Partial<Pick<EventRecord, 'status' | 'reviewStage'>>,
   assessment: RiskAssessment | null | undefined,
   assignments: Assignment[],
   decisions: AuthorityDecision[] = [],
@@ -155,7 +155,13 @@ export function deriveAuthorityProgress(
   const currentVersionId = event.currentVersionId;
   const heads = assessment && 'authorityReviewState' in assessment ? assessment.authorityReviewState?.activeReviewHeads ?? {} : {};
   const currentAssignments = assignments.filter((assignment) => assignment.versionId === currentVersionId);
-  return (event.requiredAuthorities ?? []).map((authority) => {
+  const required = event.requiredAuthorities ?? [];
+  const finalReview = event.reviewStage === 'second'
+    || (event.status === 'UnderReview' && required.length > 0 && required.every((authority) => {
+      const assignment = currentAssignments.find((candidate) => candidate.authorityType === authority);
+      return assignment?.status === 'completed' && Boolean(assignment.decision);
+    }));
+  return required.map((authority) => {
     const assignment = currentAssignments.find((candidate) => candidate.authorityType === authority);
     const decision = assignment?.status === 'completed' && assignment.decision
       ? assignment.decision
@@ -173,7 +179,7 @@ export function deriveAuthorityProgress(
         ? 'manual_official'
         : hasCurrentAssignment && Boolean(heads[authority]?.reviewId)
           ? 'reviewed'
-          : hasCurrentAssignment && assignments.some((candidate) => candidate.versionId === currentVersionId && candidate.authorityType === authority && candidate.status === 'completed')
+          : hasCurrentAssignment && (finalReview || assignments.some((candidate) => candidate.versionId === currentVersionId && candidate.authorityType === authority && candidate.status === 'completed'))
             ? 'record_missing'
             : 'pending',
       decisionStatus: decision === 'Approved' ? 'approved' : decision === 'Rejected' ? 'rejected' : 'pending',

@@ -19,15 +19,16 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { collection, doc, onSnapshot } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { format } from 'date-fns';
 import { ChevronLeft, ClipboardList, Pencil, RefreshCcw, Save, Sparkles, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
   AuthorityType,
   COLLECTIONS,
+  ControlListProposal,
   EventRecord,
+  EventControl,
   ProposedControlItem,
 } from '@shared/types';
 import { db, functions } from '../../config/firebase';
@@ -68,13 +69,11 @@ export default function AdminControlListEditor() {
   const [proposalCached, setProposalCached] = useState(false);
   const [proposalId, setProposalId] = useState<string>();
   const [proposalRevision, setProposalRevision] = useState<number>();
+  const [currentControls, setCurrentControls] = useState<EventControl[]>([]);
+  const [currentProposal, setCurrentProposal] = useState<ControlListProposal | null>(null);
   const [generating, setGenerating] = useState(false);
   const [committing, setCommitting] = useState(false);
   const [editing, setEditing] = useState(false);
-  // Local snapshot of the items at the last commit / generate. Used
-  // to detect "has the user changed anything?" for the disabled-commit
-  // button.
-  const [committedSnapshot, setCommittedSnapshot] = useState<ProposedControlItem[]>([]);
   const autoLoadedEventRef = useRef<string>();
 
   // Live event doc.
@@ -96,19 +95,77 @@ export default function AdminControlListEditor() {
     });
   }, [eventId]);
 
+  // The event flag/snapshot alone is not proof that the current list is
+  // confirmed. Keep the current-version controls and persisted proposal live
+  // so an old or partially-written record is shown as an integrity issue
+  // instead of exposing an action that will inevitably fail.
+  useEffect(() => {
+    if (!eventId || !event?.currentVersionId) {
+      setCurrentControls([]);
+      setCurrentProposal(null);
+      return undefined;
+    }
+    const eventReference = doc(db, COLLECTIONS.EVENTS, eventId);
+    const unsubscribeControls = onSnapshot(collection(eventReference, COLLECTIONS.EVENT_CONTROLS), (snapshot) => {
+      setCurrentControls(snapshot.docs
+        .map((item) => ({ ...(item.data() as Partial<EventControl>), controlId: item.id }) as EventControl)
+        .filter((control) => control.versionId === event.currentVersionId));
+    }, () => setLoadError('The current control list could not be loaded.'));
+    const unsubscribeProposal = onSnapshot(doc(eventReference, COLLECTIONS.CONTROL_LIST_PROPOSALS, event.currentVersionId), (snapshot) => {
+      setCurrentProposal(snapshot.exists() ? snapshot.data() as ControlListProposal : null);
+    }, () => setLoadError('The control-list proposal could not be loaded.'));
+    return () => { unsubscribeControls(); unsubscribeProposal(); };
+  }, [event?.currentVersionId, eventId]);
+
   const venueName = event?.eventDetails.venueName ?? '...';
   const isApproved = event?.status === 'Approved';
   const isUnderReview = event?.status === 'UnderReview';
   const canEdit = isApproved || (isUnderReview && Boolean(event?.authorityReviewCompletedAt));
-  const generated = event?.controlListGenerated === true && Boolean(event.controlListSnapshot?.length);
+  const hasPublishedFlag = event?.controlListGenerated === true;
+  const snapshot = Array.isArray(event?.controlListSnapshot) ? event.controlListSnapshot : [];
+  const controlsById = new Map(currentControls.map((control) => [control.controlId, control]));
+  const snapshotMatchesControls = snapshot.length > 0
+    && snapshot.length === currentControls.length
+    && snapshot.every((item) => {
+      const control = controlsById.get(item.controlId);
+      return Boolean(control
+        && control.eventId === event?.eventId
+        && control.versionId === event?.currentVersionId
+        && control.authority === item.authority
+        && control.controlName === item.controlName
+        && control.stageRequirement === item.stageRequirement
+        && control.controlItemVersion === item.controlItemVersion);
+    });
+  const proposalMatchesControls = Boolean(
+    currentProposal
+      && currentProposal.status === 'confirmed'
+      && currentProposal.eventId === event?.eventId
+      && currentProposal.versionId === event?.currentVersionId
+      && Number.isSafeInteger(currentProposal.revision)
+      && currentProposal.revision > 0
+      && Array.isArray(currentProposal.items)
+      && currentProposal.items.length === currentControls.length
+      && currentProposal.items.every((item) => {
+        const control = currentControls.find((candidate) => candidate.authority === item.authority);
+        const controlStage1Requirements = control && Array.isArray(control.stage1Requirements) ? control.stage1Requirements : [];
+        return Boolean(control
+          && control.controlName === item.controlName
+          && control.stageRequirement === item.stageRequirement
+          && controlStage1Requirements.length === item.stage1Requirements.length
+          && (control.stage2Requirement?.label ?? null) === (item.stage2Requirement?.label ?? null));
+      }),
+  );
+  const confirmed = Boolean(hasPublishedFlag && snapshotMatchesControls && proposalMatchesControls);
+  // A current control, snapshot, confirmed proposal, or event flag is a
+  // published artifact. If any of those disagree, lock editing and explain
+  // the integrity issue instead of presenting an action that must fail.
+  const hasPublishedArtifacts = Boolean(hasPublishedFlag || snapshot.length > 0 || currentControls.length > 0 || currentProposal?.status === 'confirmed');
+  const inconsistentPublished = Boolean(hasPublishedArtifacts && !confirmed);
 
-  const dirty = useMemo(() => (
-    items.length > 0 && (!generated || JSON.stringify(items) !== JSON.stringify(committedSnapshot))
-  ), [generated, items, committedSnapshot]);
+  const dirty = useMemo(() => items.length > 0 && !confirmed, [confirmed, items]);
 
   const generate = useCallback(async (force = false) => {
-    if (!eventId) return;
-    const publishedBeforeGenerate = Boolean(event?.controlListGenerated && event.controlListSnapshot?.length);
+    if (!eventId || confirmed || inconsistentPublished || hasPublishedArtifacts) return;
     setGenerating(true);
     try {
       const command = httpsCallable<{ eventId: string; force?: boolean }, ProposedResponse>(
@@ -122,12 +179,11 @@ export default function AdminControlListEditor() {
       setProposalId(result.data.proposalId);
       setProposalRevision(result.data.proposalRevision);
       // A generated draft is intentionally uncommitted, even when it was
-      // recovered from Firestore without any edits. Published controls are
-      // the only state that should reset the dirty comparison.
-      setCommittedSnapshot(publishedBeforeGenerate ? result.data.items : []);
+      // recovered from Firestore without any edits. Confirmation is always
+      // available for a genuine draft.
       toast.success(
         result.data.cached
-          ? 'Loaded cached control list (no re-generation).'
+          ? 'Restored the saved control-list draft.'
           : result.data.source === 'deterministic_fallback'
             ? `Generated deterministic fallback with ${result.data.items.length} item(s).`
             : `Generated MiniMax proposal with ${result.data.items.length} item(s).`,
@@ -137,16 +193,16 @@ export default function AdminControlListEditor() {
     } finally {
       setGenerating(false);
     }
-  }, [event?.controlListGenerated, event?.controlListSnapshot?.length, eventId]);
+  }, [confirmed, eventId, hasPublishedArtifacts, inconsistentPublished]);
 
   // Entering the page after final approval restores the persisted draft (or
   // the committed list) automatically, so navigation never loses the
   // proposal and the Admin does not have to click Generate again.
   useEffect(() => {
-    if (!eventId || !event || event.status !== 'Approved' || autoLoadedEventRef.current === eventId) return;
+    if (!eventId || !event || event.status !== 'Approved' || confirmed || inconsistentPublished || hasPublishedArtifacts || autoLoadedEventRef.current === eventId) return;
     autoLoadedEventRef.current = eventId;
     void generate(false);
-  }, [event, eventId, generate]);
+  }, [confirmed, event, eventId, generate, hasPublishedArtifacts, inconsistentPublished]);
 
   const commit = async () => {
     if (!eventId) return;
@@ -167,7 +223,6 @@ export default function AdminControlListEditor() {
         ...(proposalId ? { proposalId } : {}),
         ...(proposalRevision !== undefined ? { proposalRevision } : {}),
       });
-      setCommittedSnapshot(items);
       setProposalId(undefined);
       setProposalRevision(undefined);
       setEditing(false);
@@ -245,8 +300,8 @@ export default function AdminControlListEditor() {
         <div className="flex flex-col items-end gap-1">
           <StatusBadge status={event.status} />
           {event.reviewStage && <span className="text-xs font-semibold text-ink-500">Stage: {event.reviewStage}</span>}
-          {generated && <span className="text-xs font-semibold text-status-approved">Control list: generated</span>}
-          {!generated && <span className="text-xs font-semibold text-ink-500">Control list: not generated</span>}
+          {confirmed && <span className="text-xs font-semibold text-status-approved">Control list: confirmed</span>}
+          {!confirmed && <span className="text-xs font-semibold text-ink-500">Control list: draft</span>}
         </div>
       </div>
 
@@ -256,7 +311,13 @@ export default function AdminControlListEditor() {
         </div>
       )}
 
-      {canEdit && (
+      {inconsistentPublished && (
+        <div className="mb-5 rounded-md border border-status-rejected/40 bg-red-50 p-3 text-sm text-status-rejected" role="alert" data-testid="control-list-integrity-error">
+          This application is marked as having a confirmed control list, but the current-version controls or proposal record is incomplete. Editing is locked until an Admin repairs the list.
+        </div>
+      )}
+
+      {canEdit && !confirmed && !inconsistentPublished && (
         <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <button
@@ -266,9 +327,9 @@ export default function AdminControlListEditor() {
               disabled={generating}
               data-testid="generate-proposal-button"
             >
-              <Sparkles size={16} />{generating ? 'Generating...' : (generated ? 'Load cached proposal' : 'Generate proposal')}
+              <Sparkles size={16} />{generating ? 'Generating...' : 'Generate proposal'}
             </button>
-            {!generated && items.length > 0 && (
+            {items.length > 0 && (
               <button
                 type="button"
                 className="btn-secondary"
@@ -280,7 +341,7 @@ export default function AdminControlListEditor() {
                 <RefreshCcw size={14} />Regenerate
               </button>
             )}
-            {!generated && items.length > 0 && (
+            {items.length > 0 && (
               <button
                 type="button"
                 className="btn-secondary"
@@ -318,14 +379,12 @@ export default function AdminControlListEditor() {
         </p>
       )}
 
-      {items.length === 0 ? (
+      {confirmed ? (
+        <ConfirmedControlCards controls={currentControls} />
+      ) : items.length === 0 ? (
         <div className="card">
           <div className="card-body">
-            <p className="text-sm text-ink-500">
-              {generated
-                ? 'No proposal items are available. Generate a proposal or retry the previous request.'
-                : 'No control list yet. Click "Generate proposal" to populate the table.'}
-            </p>
+            <p className="text-sm text-ink-500">No control list yet. Click &quot;Generate proposal&quot; to populate the table.</p>
           </div>
         </div>
       ) : (
@@ -452,26 +511,25 @@ export default function AdminControlListEditor() {
         </div>
       )}
 
-      {generated && event.controlListSnapshot && (
-        <section className="card mt-6">
-          <div className="card-header">
-            <h2 className="font-semibold">Committed list</h2>
-            <span className="text-xs text-ink-500">Saved to this application and shown in the organizer&apos;s Event Controls page.</span>
-          </div>
-          <div className="card-body">
-            <p className="text-xs text-ink-500">
-              Published at {event.updatedAt ? format(new Date(event.updatedAt), 'PPp') : 'unknown'}.
-            </p>
-            <ul className="mt-3 space-y-1 text-sm text-ink-700">
-              {event.controlListSnapshot.map((s) => (
-                <li key={s.controlId}>
-                  <span className="font-semibold">{s.authority}</span> — {s.controlName} · {s.stage1RequirementsCount} Stage 1 req(s)
-                </li>
-              ))}
-            </ul>
-          </div>
-        </section>
-      )}
     </div>
   );
+}
+
+function ConfirmedControlCards({ controls }: { controls: EventControl[] }) {
+  if (controls.length === 0) return <div className="card"><div className="card-body"><p className="text-sm text-status-rejected">Confirmed control data is unavailable. Contact an Admin to repair this application.</p></div></div>;
+  return <div className="space-y-4" data-testid="confirmed-control-cards">
+    {controls.map((control) => {
+      const requirements = Array.isArray(control.stage1Requirements) ? control.stage1Requirements : [];
+      return <section key={control.controlId} className="card" data-testid={`confirmed-control-${control.authority}`}>
+      <div className="card-header flex-wrap gap-3">
+        <div className="flex items-center gap-2"><ClipboardList size={16} className="text-brand-700" /><div><h2 className="font-semibold text-ink-800">{control.controlName}</h2><p className="text-xs text-ink-500">{control.authority} · Confirmed and immutable</p></div></div>
+        <span className="badge bg-green-100 text-status-approved">Confirmed</span>
+      </div>
+      <div className="card-body grid gap-4 md:grid-cols-2">
+        <div><p className="text-xs font-semibold uppercase tracking-wide text-ink-500">Stage 1 requirements</p><ul className="mt-2 space-y-2">{requirements.length ? requirements.map((requirement, index) => <li key={`${requirement.docType}-${index}`} className="rounded-md bg-cream-50 px-3 py-2 text-sm text-ink-700"><span className="font-semibold">{requirement.label}</span><span className="ml-2 text-xs text-ink-500">{requirement.docType}{requirement.required ? ' · required' : ' · optional'}</span></li>) : <li className="rounded-md bg-cream-50 px-3 py-2 text-sm text-ink-500">No Stage 1 documents required.</li>}</ul></div>
+        <div><p className="text-xs font-semibold uppercase tracking-wide text-ink-500">Stage 2 requirement</p><p className="mt-2 rounded-md bg-cream-50 px-3 py-2 text-sm text-ink-700">{control.stage2Requirement?.label ?? 'No Stage 2 image required.'}</p></div>
+      </div>
+    </section>;
+    })}
+  </div>;
 }

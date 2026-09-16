@@ -13,6 +13,7 @@ const resourceCutoverLock_1 = require("../config/resourceCutoverLock");
 const manualFinalisation_1 = require("../engines/manualFinalisation");
 const resourceCalculator_1 = require("../engines/resourceCalculator");
 const resourceContract_1 = require("../engines/resourceContract");
+const resourceRecommendationConfig_1 = require("../config/resourceRecommendationConfig");
 const onEventCreated_1 = require("../triggers/onEventCreated");
 exports.submitAdminManualAssessment = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
     if (!request.auth)
@@ -42,6 +43,8 @@ async function submitAdminManualAssessmentForUser(uid, data, now = Date.now()) {
         hazards: Array.isArray(payload.hazards) ? payload.hazards : [],
         categories: Array.isArray(payload.categories) ? payload.categories : [],
         rationale: typeof payload.rationale === 'string' ? payload.rationale : '',
+        resourcePlan: isRecord(payload.resourcePlan) ? payload.resourcePlan : undefined,
+        resourceRationale: typeof payload.resourceRationale === 'string' ? payload.resourceRationale : '',
         idempotencyKey: typeof payload.idempotencyKey === 'string' ? payload.idempotencyKey : '',
     };
     const db = (0, firebase_admin_1.firestore)();
@@ -91,7 +94,10 @@ async function submitAdminManualAssessmentForUser(uid, data, now = Date.now()) {
         if (safeIdentifier(assessment.activeManualAssessmentId) && !existingSnap.exists) {
             throw new https_1.HttpsError('failed-precondition', 'The locked manual assessment record is missing.');
         }
-        const inputErrors = (0, manualFinalisation_1.validateManualAssessmentInput)(input, assessment.evidence);
+        const inputErrors = [
+            ...(0, manualFinalisation_1.validateManualAssessmentInput)(input, assessment.evidence),
+            ...(0, manualFinalisation_1.validateManualResourcePlan)(input),
+        ];
         if (inputErrors.length) {
             throw new https_1.HttpsError('invalid-argument', 'Complete the highlighted manual-assessment fields.', {
                 fieldErrors: inputErrors,
@@ -179,20 +185,21 @@ async function finalizeStoredManualAssessment(uid, eventId, requireAdmin = true,
                 || manual.manualAssessmentId !== assessmentValue.activeManualAssessmentId) {
                 throw new https_1.HttpsError('failed-precondition', 'The locked manual assessment identity is invalid.');
             }
-            const expectedResult = (0, manualFinalisation_1.buildManualOfficialAssessmentResult)({
+            const history = historySnap.docs.map((snapshot) => snapshot.data());
+            const expectedResult = manual ? (0, manualFinalisation_1.buildManualOfficialAssessmentResult)({
                 assessment: assessmentValue,
                 manualAssessment: manual, eventDetails: version.eventDetails, eventVersionInputHash: version.inputHash,
                 finalizedAt: assessmentValue.officialResult.finalizedAt, finalizedBy: assessmentValue.officialResult.finalizedBy,
-            });
-            const expectedCalculation = (0, resourceCalculator_1.computeResources)({ eventId, versionId, assessmentId, eventDetails: version.eventDetails, assessmentResult: expectedResult });
-            const history = historySnap.docs.map((snapshot) => snapshot.data());
-            if (!expectedCalculation.ok || (0, resourceCalculator_1.stableStringify)(expectedResult) !== (0, resourceCalculator_1.stableStringify)(assessmentValue.officialResult)
+            }) : null;
+            const expectedResource = manual?.resourcePlan && resource && typeof resource === 'object'
+                ? buildAdminManualResource({ eventId, versionId, assessmentId, manual, finalizedAt: assessmentValue.officialResult.finalizedAt, finalizedBy: assessmentValue.officialResult.finalizedBy, revision: resource.revision, supersedesResourceId: resource.supersedesResourceId })
+                : null;
+            if (!manual || !expectedResult || (0, resourceCalculator_1.stableStringify)(expectedResult) !== (0, resourceCalculator_1.stableStringify)(assessmentValue.officialResult)
                 || !(0, resourceContract_1.validateResourceRecommendation)(resource).ok
                 || resource.eventId !== eventId
                 || resource.versionId !== versionId
                 || resource.assessmentId !== assessmentId
-                || resource.resourceInputHash !== expectedCalculation.resourceInputHash
-                || !(0, resourceCalculator_1.matchesDeterministicResourceItems)(resource.items, expectedCalculation.items)
+                || (expectedResource ? (0, resourceCalculator_1.stableStringify)(resource) !== (0, resourceCalculator_1.stableStringify)(expectedResource) : false)
                 || reference?.stage !== 'official'
                 || !('sourceKind' in reference) || reference.sourceKind !== 'admin_manual'
                 || reference.manualAssessmentId !== assessmentValue.activeManualAssessmentId
@@ -225,10 +232,11 @@ async function finalizeStoredManualAssessment(uid, eventId, requireAdmin = true,
             || manual.manualAssessmentId !== assessmentValue.activeManualAssessmentId) {
             throw new https_1.HttpsError('failed-precondition', 'The persisted manual assessment identity is invalid.');
         }
+        const resourcePlanErrors = (0, manualFinalisation_1.validateManualResourcePlan)(manual);
+        if (resourcePlanErrors.length) {
+            throw new https_1.HttpsError('failed-precondition', 'The Admin manual resource plan is incomplete.', { fieldErrors: resourcePlanErrors });
+        }
         const officialResult = (0, manualFinalisation_1.buildManualOfficialAssessmentResult)({ assessment: assessmentValue, manualAssessment: manual, eventDetails: version.eventDetails, eventVersionInputHash: version.inputHash, finalizedAt: now, finalizedBy: uid });
-        const calculation = (0, resourceCalculator_1.computeResources)({ eventId, versionId, assessmentId, eventDetails: version.eventDetails, assessmentResult: officialResult });
-        if (!calculation.ok)
-            throw new https_1.HttpsError('failed-precondition', `Manual official resource calculation failed: ${calculation.code}.`);
         const history = historySnap.docs.map((snapshot) => snapshot.data());
         if (historySnap.docs.some((snapshot, index) => snapshot.id !== history[index].resourceId)
             || history.some((resource) => !(0, resourceContract_1.validateResourceRecommendation)(resource).ok
@@ -238,31 +246,24 @@ async function finalizeStoredManualAssessment(uid, eventId, requireAdmin = true,
         const tip = [...history].sort((left, right) => right.revision - left.revision)[0];
         if (tip && (0, resourceContract_1.validateResourceRevisionChain)(history, tip.resourceId).length)
             throw new https_1.HttpsError('failed-precondition', 'Official resource revision chain is invalid.');
-        const resourceId = (0, onEventCreated_1.resourceDocumentId)('official', versionId, calculation.resourceInputHash);
+        const nextRevision = tip ? tip.revision + 1 : 1;
+        const resource = buildAdminManualResource({
+            eventId, versionId, assessmentId, manual, finalizedAt: now, finalizedBy: uid,
+            revision: nextRevision, supersedesResourceId: tip?.resourceId ?? null,
+        });
+        const resourceId = resource.resourceId;
         const existing = history.find((resource) => resource.resourceId === resourceId);
-        const items = Object.fromEntries(types_1.RESOURCE_KEYS.map((key) => [key, {
-                ...calculation.items[key], confidence: 'authority_validated', authorityReviewRequired: false,
-            }]));
-        const resource = existing ?? {
-            resourceId, eventId, versionId, assessmentId, schemaVersion: types_1.RESOURCE_SCHEMA_VERSION,
-            stage: 'official', revision: tip ? tip.revision + 1 : 1, supersedesResourceId: tip?.resourceId ?? null,
-            assessmentReference: { stage: 'official', assessmentId, sourceKind: 'admin_manual', manualAssessmentId: manual.manualAssessmentId, finalizedAt: now, finalizedBy: uid },
-            resourceInputHash: calculation.resourceInputHash, formulaVersion: types_1.RESOURCE_FORMULA_VERSION,
-            configVersion: types_1.RESOURCE_CONFIG_VERSION, sourceRegistryVersion: types_1.RESOURCE_SOURCE_REGISTRY_VERSION,
-            items, confidenceLevel: 'authority_validated', authorityReviewRequired: false,
-            validationScope: 'official_risk_input_only',
-            notes: 'Official deterministic planning ranges based on the locked Admin manual assessment.', computedAt: now,
-        };
+        const resourceToWrite = existing ?? resource;
         if (existing && (existing.resourceId !== resourceId || existing.eventId !== eventId
             || existing.versionId !== versionId || existing.assessmentId !== assessmentId
-            || existing.resourceInputHash !== calculation.resourceInputHash
+            || existing.resourceInputHash !== resource.resourceInputHash
             || existing.formulaVersion !== types_1.RESOURCE_FORMULA_VERSION || existing.configVersion !== types_1.RESOURCE_CONFIG_VERSION
             || existing.sourceRegistryVersion !== types_1.RESOURCE_SOURCE_REGISTRY_VERSION
             || existing.assessmentReference.stage !== 'official'
             || existing.assessmentReference.sourceKind !== 'admin_manual'
             || existing.assessmentReference.manualAssessmentId !== manual.manualAssessmentId
             || existing.assessmentReference.finalizedAt !== now || existing.assessmentReference.finalizedBy !== uid
-            || (0, resourceCalculator_1.stableStringify)(existing.items) !== (0, resourceCalculator_1.stableStringify)(items)
+            || (0, resourceCalculator_1.stableStringify)(existing.items) !== (0, resourceCalculator_1.stableStringify)(resource.items)
             || existing.resourceId !== tip?.resourceId))
             throw new https_1.HttpsError('already-exists', 'Manual official resource identity collision.');
         const officialAssessment = {
@@ -273,10 +274,10 @@ async function finalizeStoredManualAssessment(uid, eventId, requireAdmin = true,
             activeManualAssessmentId: manual.manualAssessmentId, officialResult,
         };
         if (!existing)
-            transaction.create(eventRef.collection(types_1.COLLECTIONS.RESOURCES).doc(resourceId), resource);
+            transaction.create(eventRef.collection(types_1.COLLECTIONS.RESOURCES).doc(resourceId), resourceToWrite);
         transaction.set(assessmentRef, officialAssessment);
         transaction.update(eventRef, { currentResourceId: resourceId, updatedAt: now });
-        transaction.set(eventRef.collection(types_1.COLLECTIONS.ASSESSMENT_SUMMARIES).doc(versionId), organizerSummary(officialAssessment, resource, now));
+        transaction.set(eventRef.collection(types_1.COLLECTIONS.ASSESSMENT_SUMMARIES).doc(versionId), organizerSummary(officialAssessment, resourceToWrite, now));
         const auditRef = eventRef.collection(types_1.COLLECTIONS.AUDIT_LOGS).doc(`${officialResult.officialInputHash}-manual-finalized`);
         transaction.create(auditRef, audit(auditRef.id, eventId, versionId, 'manual_official_assessment_finalized', uid, now, {
             assessmentId, manualAssessmentId: manual.manualAssessmentId, resourceId, officialInputHash: officialResult.officialInputHash,
@@ -300,6 +301,70 @@ function organizerSummary(assessment, resource, now) {
         authorityReviewRequired: false,
         resourceQuantities: Object.fromEntries(types_1.RESOURCE_KEYS.map((key) => [key, resource.items[key].baseline])),
         resourceRecommendation: projection, computedAt: now,
+    };
+}
+/** Build the official resource record from the Admin-owned manual plan. The
+ * record still uses the canonical M3 resource contract, but its provenance
+ * explicitly states that quantities were entered by an Admin rather than
+ * calculated by the automatic engine. */
+function buildAdminManualResource(args) {
+    const source = resourceRecommendationConfig_1.RESOURCE_SOURCE_REGISTRY[resourceRecommendationConfig_1.INTERNAL_RESOURCE_SOURCE_ID];
+    if (!source || !args.manual.resourcePlan || !args.manual.resourceRationale) {
+        throw new https_1.HttpsError('failed-precondition', 'The Admin manual resource plan is incomplete.');
+    }
+    const resourceInputHash = (0, node_crypto_1.createHash)('sha256').update((0, resourceCalculator_1.stableStringify)({
+        sourceKind: 'admin_manual', eventId: args.eventId, versionId: args.versionId,
+        assessmentId: args.assessmentId, manualAssessmentId: args.manual.manualAssessmentId,
+        resourcePlan: args.manual.resourcePlan, resourceRationale: args.manual.resourceRationale,
+    })).digest('hex');
+    const items = Object.fromEntries(types_1.RESOURCE_KEYS.map((key) => {
+        const value = args.manual.resourcePlan[key];
+        const quantityInputId = `manual.resource.${key}.quantity`;
+        const maximumInputId = `manual.resource.${key}.maximum`;
+        const inputReferences = [
+            { inputId: quantityInputId, kind: 'event_field', path: `manualAssessment.resourcePlan.${key}.quantity`, value: value.quantity },
+            { inputId: maximumInputId, kind: 'event_field', path: `manualAssessment.resourcePlan.${key}.maximum`, value: value.maximum },
+        ];
+        const ruleId = `manual.resource.${key}.admin-entered`;
+        const assumptionId = `manual.resource.${key}.admin-plan`;
+        return [key, {
+                status: 'ready',
+                resource: key,
+                baseline: value.quantity,
+                planningRange: { min: value.quantity, max: value.maximum },
+                inputReferences,
+                assumptions: [{ assumptionId, statement: args.manual.resourceRationale, sourceIds: [source.sourceId] }],
+                appliedRules: [{ ruleId, description: 'Admin-entered operational quantity and planning maximum.', inputReferenceIds: [quantityInputId, maximumInputId], sourceIds: [source.sourceId], contribution: value.maximum - value.quantity }],
+                sourceSnapshots: [{ ...source }],
+                authoritySource: { status: 'not_supplied', reason: 'This planning value was entered by the reviewing Admin for the manual-review recovery workflow.' },
+                confidence: 'authority_validated',
+                reviewingAuthority: resourceRecommendationConfig_1.ACTIVE_RESOURCE_CONFIG.reviewingAuthorities[key],
+                authorityReviewRequired: false,
+            }];
+    }));
+    return {
+        resourceId: (0, onEventCreated_1.resourceDocumentId)('official', args.versionId, resourceInputHash),
+        eventId: args.eventId,
+        versionId: args.versionId,
+        assessmentId: args.assessmentId,
+        schemaVersion: types_1.RESOURCE_SCHEMA_VERSION,
+        stage: 'official',
+        revision: args.revision,
+        supersedesResourceId: args.supersedesResourceId,
+        resourceInputHash,
+        formulaVersion: types_1.RESOURCE_FORMULA_VERSION,
+        configVersion: types_1.RESOURCE_CONFIG_VERSION,
+        sourceRegistryVersion: types_1.RESOURCE_SOURCE_REGISTRY_VERSION,
+        items,
+        confidenceLevel: 'authority_validated',
+        authorityReviewRequired: false,
+        validationScope: 'official_risk_input_only',
+        notes: 'Official planning values entered by the Admin during manual assessment.',
+        computedAt: args.finalizedAt,
+        assessmentReference: {
+            stage: 'official', assessmentId: args.assessmentId, sourceKind: 'admin_manual',
+            manualAssessmentId: args.manual.manualAssessmentId, finalizedAt: args.finalizedAt, finalizedBy: args.finalizedBy,
+        },
     };
 }
 function assertManualEvent(event, allowOfficial = false) {

@@ -14,6 +14,7 @@ const firebase_admin_1 = require("firebase-admin");
 const logger_1 = require("firebase-functions/logger");
 const firestore_1 = require("firebase-functions/v2/firestore");
 const types_1 = require("../../../shared/types");
+const stage2_1 = require("../../../shared/stage2");
 const m4_1 = require("../../../shared/m4");
 const runtime_1 = require("../config/runtime");
 exports.onEventStatusChanged = (0, firestore_1.onDocumentUpdated)({ document: `${types_1.COLLECTIONS.EVENTS}/{eventId}`, region: runtime_1.FUNCTION_REGION }, async (change) => {
@@ -64,7 +65,7 @@ async function cleanupWithdrawnEvent(eventId, now = Date.now()) {
             operations.push((batch) => batch.delete(db.collection(types_1.COLLECTIONS.PUBLIC_EVENT_CONTROLS)
                 .doc(eventId)
                 .collection(types_1.COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS)
-                .doc(`${controlData.controlId}-stage2`)));
+                .doc((0, stage2_1.stage2PublicControlId)(controlData.controlId))));
         }
     }
     for (const publicItem of publicItemsSnap.docs)

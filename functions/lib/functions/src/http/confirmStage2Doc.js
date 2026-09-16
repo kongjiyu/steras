@@ -29,6 +29,7 @@ const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
 const controlLifecycle_1 = require("../utils/controlLifecycle");
 const stage2Counter_1 = require("../utils/stage2Counter");
+const stage2_1 = require("../../../shared/stage2");
 exports.confirmStage2Doc = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
     if (!request.auth)
         throw new https_1.HttpsError('unauthenticated', 'Sign in before confirming.');
@@ -57,13 +58,13 @@ async function confirmStage2DocForUser(uid, data, now = Date.now()) {
     const db = (0, firebase_admin_1.firestore)();
     const eventRef = db.collection(types_1.COLLECTIONS.EVENTS).doc(eventId);
     const controlRef = eventRef.collection(types_1.COLLECTIONS.EVENT_CONTROLS).doc(controlId);
-    const docId = `${controlId}-s2`;
+    const docId = (0, stage2_1.stage2DocumentId)(controlId);
     const docRef = controlRef.collection(types_1.COLLECTIONS.STAGE2_DOCS).doc(docId);
     const counterRef = controlRef.collection(types_1.COLLECTIONS.STAGE2_CONFIRMS).doc(uid);
     const publicRef = db.collection(types_1.COLLECTIONS.PUBLIC_EVENT_CONTROLS)
         .doc(eventId)
         .collection(types_1.COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS)
-        .doc(`${controlId}-stage2`);
+        .doc((0, stage2_1.stage2PublicControlId)(controlId));
     return db.runTransaction(async (tx) => {
         // Reads first.
         const [docSnap, counterSnap, eventSnap, publicSnap, userSnap, controlSnap, reportSnap] = await Promise.all([

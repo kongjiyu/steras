@@ -252,6 +252,17 @@ export default function AuthorityEventReview() {
     setEditingScores(false);
   }, [activeAssessmentId, event?.currentVersionId]);
   useEffect(() => {
+    if (!editingScores) return undefined;
+    const focusTimer = window.setTimeout(() => {
+      const editor = document.querySelector<HTMLElement>('[data-testid="authority-score-editor"]');
+      if (!editor) return;
+      editor.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const focusTarget = editor.querySelector<HTMLElement>('button, select, textarea, input');
+      (focusTarget ?? editor).focus();
+    }, 0);
+    return () => window.clearTimeout(focusTimer);
+  }, [editingScores]);
+  useEffect(() => {
     if (!isFirebaseConfigured || !eventId || !activeAssessmentId || !activeResolutionId) { setScoreResolution(null); return; }
     return onSnapshot(doc(db, COLLECTIONS.EVENTS, eventId, COLLECTIONS.ASSESSMENTS, activeAssessmentId, COLLECTIONS.SCORE_RESOLUTIONS, activeResolutionId), (snapshot) => {
       const value = snapshot.data();
@@ -354,6 +365,7 @@ export default function AuthorityEventReview() {
     requiredAuthorities,
   });
   const decisionReadinessMessage = reviewOpen && isNamedOfficer && !decisionReadiness.ready ? decisionReadiness.message : '';
+  const scoreReviewActionRequired = decisionReadiness.reason === 'own_score_review_required';
   const requiresExtendedRejectionRationale = Boolean(!manualOfficialAssessment
     && (assessment?.assessmentReadiness === 'provisional' || assessment?.assessmentReadiness === 'insufficient_data'));
   const rejectionRationaleMinimum = requiresExtendedRejectionRationale ? 80 : 10;
@@ -549,18 +561,24 @@ export default function AuthorityEventReview() {
                         resultRiskLevel={assessmentRiskLevel(assessment)}
                         official={assessment.status === 'official_ready'}
                         canEdit={Boolean(!editingScores && isNamedOfficer && reviewOpen && (assessment.status === 'provisional_ready' || assessment.status === 'authority_review') && assessment.aiProposal?.status === 'success')}
+                        editLabel="Review AI scores"
                         onEdit={() => setEditingScores(true)}
                         reviewStatus={scoreReviewSubmitted || (profile?.authorityType && 'authorityReviewState' in assessment && assessment.authorityReviewState?.activeReviewHeads[profile.authorityType]) ? 'Scores submitted · revision allowed' : undefined}
                         reviewedCategories={ownScoreReview?.categories.map((category) => ({ categoryId: category.categoryId, likelihood: category.likelihood, severity: category.severity }))}
-                         editor={editingScores && (assessment.status === 'provisional_ready' || assessment.status === 'authority_review') ? <AuthorityScoreReviewForm
+                        editor={editingScores && (assessment.status === 'provisional_ready' || assessment.status === 'authority_review') ? <AuthorityScoreReviewForm
                            eventId={eventId!}
                            assessment={assessment}
                            authorityType={profile!.authorityType!}
                            embedded
                            onCancel={() => setEditingScores(false)}
                            onSubmitted={() => { setEditingScores(false); setScoreReviewSubmitted(true); }}
-                         /> : undefined}
+                        /> : undefined}
                       />}
+                    {assessment.status !== 'manual_review_required' && assessment.status !== 'official_ready' && (
+                      <p className="rounded-md border border-brand-200 bg-brand-50/60 p-3 text-xs leading-5 text-brand-800" data-testid="score-review-guidance">
+                        Review each category before deciding. Submitting unchanged categories confirms the AI proposal; changing a likelihood or severity value requires an override rationale.
+                      </p>
+                    )}
                   <div className="border-t border-[#e3dacb] pt-5">
                     <h3 className="mb-4 font-display text-sm font-semibold text-ink-800">Versioned context evidence</h3>
                     <ContextEvidence assessment={assessment} />
@@ -716,9 +734,15 @@ export default function AuthorityEventReview() {
           <section className="card">
             <div className="card-header"><h2 className="font-semibold">Your decision</h2></div>
             <div className="card-body space-y-3">
+              {ownDecision && <p className="rounded-md bg-cream-50 p-3 text-sm text-ink-700" data-testid="current-officer-decision">
+                Current decision: <span className="font-semibold">{formatWorkflowValue(ownDecision.decision)}</span>. You may amend it while the application remains in Authority Review.
+              </p>}
               {!reviewOpen && <p className="rounded-md bg-cream-50 p-3 text-sm text-ink-600">This review is closed with status {formatWorkflowValue(event.status)}.</p>}
               {reviewOpen && !isNamedOfficer && <p className="rounded-md bg-cream-50 p-3 text-sm text-ink-600">Read-only: this application is assigned to another officer.</p>}
-              {reviewOpen && isNamedOfficer && decisionReadinessMessage && <p className="rounded-md border border-gold-200 bg-gold-100 p-3 text-sm leading-5 text-gold-700" data-testid="authority-decision-readiness">{decisionReadinessMessage}</p>}
+              {reviewOpen && isNamedOfficer && decisionReadinessMessage && <div className="rounded-md border border-gold-200 bg-gold-100 p-3 text-sm leading-5 text-gold-700" data-testid="authority-decision-readiness">
+                <p>{decisionReadinessMessage}</p>
+                {scoreReviewActionRequired && <button type="button" className="btn-secondary mt-3 !min-h-9 !px-3 !py-1.5 text-xs" onClick={() => setEditingScores(true)} data-testid="review-ai-scores-action"><Pencil size={13} /> Review AI scores</button>}
+              </div>}
               <label className="block text-xs font-medium text-ink-600">Decision rationale <span className="font-normal text-ink-400">(optional for approval; required for rejection)</span>
                 <textarea className="input mt-1 resize-y" rows={4} maxLength={1000} disabled={!reviewOpen || !isNamedOfficer} value={rationale} onChange={(e) => setRationale(e.target.value)} placeholder="Record the evidence and reasoning behind your proposal." />
               </label>
@@ -748,8 +772,8 @@ export default function AuthorityEventReview() {
                 </span>
               </label>
               {assessment?.complianceStatus === 'blocked' && <p className="rounded-md bg-red-50 p-3 text-xs leading-5 text-status-rejected">Approval is blocked by compliance. You may record a rejection.</p>}
-              <button className="btn-success w-full" disabled={!canApprove || submittingDecision !== null} onClick={() => submitDecision('Approved')}><Check size={16} />{submittingDecision === 'Approved' ? 'Recording...' : ownDecision?.decision === 'Approved' ? 'Amend approval proposal' : 'Propose approval'}</button>
-              <button className="btn-danger w-full" disabled={!canReject || submittingDecision !== null} onClick={() => submitDecision('Rejected')}><X size={16} />{submittingDecision === 'Rejected' ? 'Recording...' : ownDecision?.decision === 'Rejected' ? 'Amend rejection proposal' : 'Propose rejection'}</button>
+              <button className="btn-success w-full" disabled={!canApprove || submittingDecision !== null} onClick={() => submitDecision('Approved')}><Check size={16} />{submittingDecision === 'Approved' ? 'Recording...' : ownDecision ? 'Amend decision' : 'Propose approval'}</button>
+              <button className="btn-danger w-full" disabled={!canReject || submittingDecision !== null} onClick={() => submitDecision('Rejected')}><X size={16} />{submittingDecision === 'Rejected' ? 'Recording...' : ownDecision ? 'Amend decision' : 'Propose rejection'}</button>
             </div>
           </section>
         </aside>

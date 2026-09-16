@@ -38,6 +38,7 @@ import { isActiveControlGeneration } from '../utils/controlLifecycle';
 import { counterMatchesStage2 } from '../utils/stage2Counter';
 import { createNotification, resolveAuthUid } from '../utils/notifications';
 import { assertEventReportableAt } from '../utils/eventWindow';
+import { stage2DocumentId, stage2PublicControlId } from '@shared/stage2';
 
 const REPORT_CATEGORIES = ['item_not_at_venue', 'wrong_venue', 'low_quality_image', 'other'] as const;
 type ReportCategory = typeof REPORT_CATEGORIES[number];
@@ -95,13 +96,13 @@ export async function reportStage2DocForUser(
   const db = firestore();
   const eventRef = db.collection(COLLECTIONS.EVENTS).doc(eventId);
   const controlRef = eventRef.collection(COLLECTIONS.EVENT_CONTROLS).doc(controlId);
-  const docId = `${controlId}-s2`;
+  const docId = stage2DocumentId(controlId);
   const docRef = controlRef.collection(COLLECTIONS.STAGE2_DOCS).doc(docId);
   const counterRef = controlRef.collection(COLLECTIONS.STAGE2_REPORTS).doc(uid);
   const publicRef = db.collection(COLLECTIONS.PUBLIC_EVENT_CONTROLS)
     .doc(eventId)
     .collection(COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS)
-    .doc(`${controlId}-stage2`);
+    .doc(stage2PublicControlId(controlId));
 
   const { ticketId, alreadyReported, reportedAt, controlName, authorityType, versionId, eventOrganizerUid } = await db.runTransaction(async (tx) => {
     // Reads first.

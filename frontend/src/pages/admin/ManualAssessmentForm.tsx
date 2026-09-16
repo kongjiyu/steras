@@ -167,6 +167,7 @@ export default function ManualAssessmentForm({ eventId, assessment, onCompleted 
   const [resourceRationale, setResourceRationale] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<ManualAssessmentFieldErrors>({});
+  const [validationAttempted, setValidationAttempted] = useState(false);
   const [idempotencyKey] = useState(() => `manual-${crypto.randomUUID()}`);
   const persisted = Boolean(assessment.activeManualAssessmentId);
   const evidenceKeys = eligibleEvidence.map((item) => item.key);
@@ -176,10 +177,15 @@ export default function ManualAssessmentForm({ eventId, assessment, onCompleted 
   const canRetryAI = assessment.aiProposal !== null && assessment.aiProposal.status !== 'success';
 
   const submit = async () => {
+    setValidationAttempted(true);
     const validationErrors = validateManualAssessmentDraft(hazards, categories, rationale, evidenceKeys, resourcePlan, resourceRationale);
     setFieldErrors(validationErrors);
     if (Object.keys(validationErrors).length > 0) {
-      window.setTimeout(() => document.querySelector<HTMLElement>('[data-manual-field-error="true"]')?.focus(), 0);
+      window.setTimeout(() => {
+        const firstInvalid = document.querySelector<HTMLElement>('[data-manual-field-error="true"]');
+        firstInvalid?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        firstInvalid?.focus();
+      }, 0);
       return;
     }
     setSubmitting(true);
@@ -194,7 +200,11 @@ export default function ManualAssessmentForm({ eventId, assessment, onCompleted 
       if (serverErrors.length) {
         const translated = mapServerErrorsToFields(serverErrors);
         setFieldErrors(translated);
-        window.setTimeout(() => document.querySelector<HTMLElement>('[data-manual-field-error="true"]')?.focus(), 0);
+        window.setTimeout(() => {
+          const firstInvalid = document.querySelector<HTMLElement>('[data-manual-field-error="true"]');
+          firstInvalid?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          firstInvalid?.focus();
+        }, 0);
         toast.error('Complete the highlighted manual-assessment fields.');
       } else toast.error(error instanceof Error ? error.message : 'Manual assessment could not be submitted.');
     } finally {
@@ -244,7 +254,7 @@ export default function ManualAssessmentForm({ eventId, assessment, onCompleted 
                 <select className="input" value={hazard.categoryId} onChange={(event) => updateHazard(setHazards, index, { categoryId: event.target.value as HazardDomain })}>
                   {MANUAL_ASSESSMENT_CATEGORIES.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
                 </select>
-                <div className="sm:col-span-2"><EvidenceSelector evidence={evidenceKeys} selected={hazard.evidenceReferences} onChange={(value) => updateHazard(setHazards, index, { evidenceReferences: value })} />{fieldErrors[`hazard-${index}-evidence`] && <p className="mt-1 text-xs text-status-rejected">{fieldErrors[`hazard-${index}-evidence`]}</p>}</div>
+                <div className="sm:col-span-2"><EvidenceSelector evidence={evidenceKeys} selected={hazard.evidenceReferences} error={fieldErrors[`hazard-${index}-evidence`]} onChange={(value) => updateHazard(setHazards, index, { evidenceReferences: value })} />{fieldErrors[`hazard-${index}-evidence`] && <p className="mt-1 text-xs text-status-rejected">{fieldErrors[`hazard-${index}-evidence`]}</p>}</div>
                 <textarea className="input sm:col-span-2" placeholder="Hazard rationale (minimum 10 characters; explain the information gap if no eligible evidence exists)" value={hazard.rationale} onChange={(event) => updateHazard(setHazards, index, { rationale: event.target.value })} aria-invalid={Boolean(fieldErrors[`hazard-${index}-rationale`])} data-manual-field-error={fieldErrors[`hazard-${index}-rationale`] ? 'true' : undefined} />
                 {(fieldErrors[`hazard-${index}-name`] || fieldErrors[`hazard-${index}-rationale`]) && <p className="text-xs text-status-rejected sm:col-span-2">{fieldErrors[`hazard-${index}-name`] || fieldErrors[`hazard-${index}-rationale`]}</p>}
                 {hazards.length > 1 && <button type="button" className="btn-secondary justify-self-start sm:col-span-2" onClick={() => setHazards((value) => value.filter((_, current) => current !== index))}>Remove hazard</button>}
@@ -264,7 +274,7 @@ export default function ManualAssessmentForm({ eventId, assessment, onCompleted 
                     <Score label="Likelihood" value={category.likelihood} error={fieldErrors[`category-${index}-likelihood`]} onChange={(value) => updateCategory(setCategories, index, { likelihood: value })} />
                     <Score label="Severity" value={category.severity} error={fieldErrors[`category-${index}-severity`]} onChange={(value) => updateCategory(setCategories, index, { severity: value })} />
                   </div>
-                  <EvidenceSelector evidence={evidenceKeys} selected={category.evidenceReferences} onChange={(value) => updateCategory(setCategories, index, { evidenceReferences: value })} />
+                  <EvidenceSelector evidence={evidenceKeys} selected={category.evidenceReferences} error={fieldErrors[`category-${index}-evidence`]} onChange={(value) => updateCategory(setCategories, index, { evidenceReferences: value })} />
                   {fieldErrors[`category-${index}-evidence`] && <p className="mt-1 text-xs text-status-rejected">{fieldErrors[`category-${index}-evidence`]}</p>}
                   <textarea className="input mt-2" placeholder="Category rationale" value={category.rationale} onChange={(event) => updateCategory(setCategories, index, { rationale: event.target.value })} aria-invalid={Boolean(fieldErrors[`category-${index}-rationale`])} data-manual-field-error={fieldErrors[`category-${index}-rationale`] ? 'true' : undefined} />
                   {fieldErrors[`category-${index}-rationale`] && <p className="mt-1 text-xs text-status-rejected">{fieldErrors[`category-${index}-rationale`]}</p>}
@@ -302,8 +312,14 @@ export default function ManualAssessmentForm({ eventId, assessment, onCompleted 
 
           <label className="mt-5 block text-sm font-semibold text-ink-700">Overall assessment rationale<textarea className="input mt-2" rows={4} maxLength={2000} value={rationale} onChange={(event) => setRationale(event.target.value)} aria-invalid={Boolean(fieldErrors.rationale)} data-manual-field-error={fieldErrors.rationale ? 'true' : undefined} /></label>
           {fieldErrors.rationale && <p className="mt-1 text-xs text-status-rejected">{fieldErrors.rationale}</p>}
+          {validationAttempted && Object.keys(errors).length > 0 && (
+            <div className="mt-4 rounded-md border border-status-rejected/40 bg-red-50 p-3 text-sm text-status-rejected" role="alert" data-testid="manual-validation-summary">
+              <p className="font-semibold">{Object.keys(errors).length} field{Object.keys(errors).length === 1 ? '' : 's'} need attention.</p>
+              <p className="mt-1 text-xs">Complete the highlighted fields, then submit again. The first incomplete field will be brought into view.</p>
+            </div>
+          )}
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-ink-500"><span>{Object.keys(errors).length ? 'Complete the highlighted fields before submitting.' : 'All required fields are complete.'}</span><span>{rationale.trim().length}/2000 · minimum 20</span></div>
-          <button className="btn-primary mt-4" disabled={submitting || Object.keys(errors).length > 0} onClick={submit} type="button">{submitting ? 'Finalizing...' : 'Submit locked manual assessment'}</button>
+          <button className="btn-primary mt-4" disabled={submitting} onClick={submit} type="button" data-testid="manual-assessment-submit">{submitting ? 'Finalizing...' : 'Submit locked manual assessment'}</button>
         </>
       )}
     </div>
@@ -314,8 +330,8 @@ function Score({ label, value, error, onChange }: { label: string; value: ScoreR
   return <label className="text-xs text-ink-600">{label}<select className="input mt-1" value={value} aria-invalid={Boolean(error)} data-manual-field-error={error ? 'true' : undefined} onChange={(event) => onChange(Number(event.target.value) as ScoreRating)}>{[1, 2, 3, 4, 5].map((score) => <option key={score}>{score}</option>)}</select>{error && <span className="mt-1 block text-[11px] text-status-rejected">{error}</span>}</label>;
 }
 
-function EvidenceSelector({ evidence, selected, onChange }: { evidence: EvidenceKey[]; selected: EvidenceKey[]; onChange: (value: EvidenceKey[]) => void }) {
-  return <fieldset className="mt-2"><legend className="text-xs font-medium text-ink-600">Eligible evidence references</legend><div className="mt-1 flex flex-wrap gap-2">{evidence.length ? evidence.map((key) => <label key={key} className="inline-flex items-center gap-1 rounded border border-[#ded5c5] px-2 py-1 text-xs"><input type="checkbox" checked={selected.includes(key)} onChange={(event) => onChange(event.target.checked ? [...selected, key] : selected.filter((value) => value !== key))} />{key}</label>) : <span className="text-xs text-status-rejected">No eligible evidence is available.</span>}</div></fieldset>;
+function EvidenceSelector({ evidence, selected, error, onChange }: { evidence: EvidenceKey[]; selected: EvidenceKey[]; error?: string; onChange: (value: EvidenceKey[]) => void }) {
+  return <fieldset className="mt-2" tabIndex={error ? -1 : undefined} data-manual-field-error={error ? 'true' : undefined} aria-invalid={Boolean(error)}><legend className="text-xs font-medium text-ink-600">Eligible evidence references</legend><div className="mt-1 flex flex-wrap gap-2">{evidence.length ? evidence.map((key) => <label key={key} className="inline-flex items-center gap-1 rounded border border-[#ded5c5] px-2 py-1 text-xs"><input type="checkbox" checked={selected.includes(key)} onChange={(event) => onChange(event.target.checked ? [...selected, key] : selected.filter((value) => value !== key))} />{key}</label>) : <span className="text-xs text-status-rejected">No eligible evidence is available.</span>}</div></fieldset>;
 }
 
 function updateHazard(setter: React.Dispatch<React.SetStateAction<AdminManualHazard[]>>, index: number, patch: Partial<AdminManualHazard>) {

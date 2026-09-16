@@ -31,6 +31,7 @@ import {
 import { FUNCTION_REGION } from '../config/runtime';
 import { isActiveControlGeneration } from '../utils/controlLifecycle';
 import { counterMatchesStage2 } from '../utils/stage2Counter';
+import { stage2DocumentId, stage2PublicControlId } from '@shared/stage2';
 
 interface ConfirmStage2DocRequest {
   confirmed?: boolean;
@@ -72,13 +73,13 @@ export async function confirmStage2DocForUser(
   const db = firestore();
   const eventRef = db.collection(COLLECTIONS.EVENTS).doc(eventId);
   const controlRef = eventRef.collection(COLLECTIONS.EVENT_CONTROLS).doc(controlId);
-  const docId = `${controlId}-s2`;
+  const docId = stage2DocumentId(controlId);
   const docRef = controlRef.collection(COLLECTIONS.STAGE2_DOCS).doc(docId);
   const counterRef = controlRef.collection(COLLECTIONS.STAGE2_CONFIRMS).doc(uid);
   const publicRef = db.collection(COLLECTIONS.PUBLIC_EVENT_CONTROLS)
     .doc(eventId)
     .collection(COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS)
-    .doc(`${controlId}-stage2`);
+    .doc(stage2PublicControlId(controlId));
 
   return db.runTransaction(async (tx) => {
     // Reads first.

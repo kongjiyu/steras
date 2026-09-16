@@ -47,6 +47,7 @@ import EmptyState from '../../components/ui/EmptyState';
 import { findPublicEventById } from '../../mock_data/public_events';
 import { useAuth } from '../../contexts/AuthContext';
 import { formatEventDateRange } from './publicEventPresentation';
+import { stage2DocumentId } from '@shared/stage2';
 
 export default function PublicEventDetail() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -153,7 +154,7 @@ function EventContent({ controlsError, retryControls, event, controls, stage2Doc
   // mirror that keeps the UI consistent.
   const visibleControls = useMemo(
     () => controls.filter((c) => {
-      const d = stage2Docs[`${c.controlId}-s2`];
+      const d = stage2Docs[c.docId || stage2DocumentId(c.controlId)];
       return !!d && d.published === true;
     }),
     [controls, stage2Docs],
@@ -212,7 +213,7 @@ function EventContent({ controlsError, retryControls, event, controls, stage2Doc
               ) : (
                 <div className="mt-4 space-y-4" data-testid="public-stage2-list">
                   {visibleControls.map((ctrl) => {
-                    const doc = stage2Docs[`${ctrl.controlId}-s2`]!;
+                    const doc = stage2Docs[ctrl.docId || stage2DocumentId(ctrl.controlId)]!;
                     return (
                       <ControlCard
                         key={ctrl.controlId}

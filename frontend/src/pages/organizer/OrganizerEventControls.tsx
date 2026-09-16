@@ -24,6 +24,7 @@ import {
   Stage2Doc,
 } from '@shared/types';
 import { resolveApplicationDisplayState } from '@shared/applicationState';
+import { stage2DocumentId } from '@shared/stage2';
 import { db } from '../../config/firebase';
 import EmptyState from '../../components/ui/EmptyState';
 import { ApplicationDisplayBadge } from '../../components/ui/StatusBadge';
@@ -125,9 +126,14 @@ export default function OrganizerEventControls() {
         (snapshot) => {
           setStage2Docs((prev) => {
             const next: Record<string, Stage2Doc | null> = { ...prev };
-            for (const d of snapshot.docs) {
-              next[d.id] = d.data() as Stage2Doc;
-            }
+            // Prefer the canonical singleton, but retain the actual
+            // Firestore id for a repaired legacy document. This avoids an
+            // arbitrary iteration order selecting a stale `-stage2` record
+            // when both ids briefly coexist during repair.
+            const preferred = snapshot.docs.find((d) => d.id === stage2DocumentId(ctrl.controlId)) ?? snapshot.docs[0];
+            next[ctrl.controlId] = preferred
+              ? { ...(preferred.data() as Stage2Doc), docId: preferred.id }
+              : null;
             return next;
           });
         },
@@ -281,7 +287,7 @@ export default function OrganizerEventControls() {
                         controlId={ctrl.controlId}
                         authority={ctrl.authority}
                         label={ctrl.stage2Requirement.label}
-                        doc={stage2Docs[`${ctrl.controlId}-s2`] ?? null}
+                        doc={stage2Docs[ctrl.controlId] ?? null}
                         onSubmitted={() => showToast('success', 'Stage 2 image published. Public verification can now begin.')}
                         onError={(m) => showToast('error', m)}
                       />

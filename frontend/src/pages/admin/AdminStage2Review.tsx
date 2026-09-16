@@ -48,6 +48,7 @@ import {
   EventRecord,
   Stage2Doc,
 } from '@shared/types';
+import { stage2DocumentId } from '@shared/stage2';
 import { db, functions } from '../../config/firebase';
 import EmptyState from '../../components/ui/EmptyState';
 import StatusBadge from '../../components/ui/StatusBadge';
@@ -126,10 +127,12 @@ export default function AdminStage2Review() {
         (snapshot) => {
           setStage2Docs((prev) => {
             const next: Record<string, Stage2Doc | null> = { ...prev };
-            // Singleton per control: docId is `${controlId}-s2`.
-            const docId = `${ctrl.controlId}-s2`;
-            next[docId] = snapshot.docs[0]
-              ? (snapshot.docs[0].data() as Stage2Doc)
+            // Prefer the canonical singleton, but retain the actual id for
+            // repaired/legacy records so publish and reject target exactly
+            // what the Admin is viewing.
+            const preferred = snapshot.docs.find((item) => item.id === stage2DocumentId(ctrl.controlId)) ?? snapshot.docs[0];
+            next[ctrl.controlId] = preferred
+              ? ({ ...(preferred.data() as Stage2Doc), docId: preferred.id })
               : null;
             return next;
           });
@@ -156,8 +159,8 @@ export default function AdminStage2Review() {
     const key = `publish:${ctrl.controlId}`;
     setBusyKey(key);
     try {
-      const fn = httpsCallable<{ eventId: string; controlId: string }, PublishResponse>(functions, 'publishStage2Doc');
-      await fn({ eventId, controlId: ctrl.controlId });
+      const fn = httpsCallable<{ eventId: string; controlId: string; docId?: string }, PublishResponse>(functions, 'publishStage2Doc');
+      await fn({ eventId, controlId: ctrl.controlId, ...(stage2Docs[ctrl.controlId]?.docId ? { docId: stage2Docs[ctrl.controlId]!.docId } : {}) });
       toast.success(`Published ${ctrl.authority} image.`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unable to publish.';
@@ -172,8 +175,8 @@ export default function AdminStage2Review() {
     const key = `unpublish:${ctrl.controlId}`;
     setBusyKey(key);
     try {
-      const fn = httpsCallable<{ eventId: string; controlId: string; reason?: string }, UnpublishResponse>(functions, 'unpublishStage2Doc');
-      await fn({ eventId, controlId: ctrl.controlId });
+      const fn = httpsCallable<{ eventId: string; controlId: string; docId?: string; reason?: string }, UnpublishResponse>(functions, 'unpublishStage2Doc');
+      await fn({ eventId, controlId: ctrl.controlId, ...(stage2Docs[ctrl.controlId]?.docId ? { docId: stage2Docs[ctrl.controlId]!.docId } : {}) });
       toast.success(`Unpublished ${ctrl.authority} image.`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unable to unpublish.';
@@ -188,8 +191,8 @@ export default function AdminStage2Review() {
     const key = `reject:${ctrl.controlId}`;
     setBusyKey(key);
     try {
-      const fn = httpsCallable<{ eventId: string; controlId: string; reason?: string }, UnpublishResponse>(functions, 'unpublishStage2Doc');
-      await fn({ eventId, controlId: ctrl.controlId, reason });
+      const fn = httpsCallable<{ eventId: string; controlId: string; docId?: string; reason?: string }, UnpublishResponse>(functions, 'unpublishStage2Doc');
+      await fn({ eventId, controlId: ctrl.controlId, ...(stage2Docs[ctrl.controlId]?.docId ? { docId: stage2Docs[ctrl.controlId]!.docId } : {}), reason });
       toast.success(`Rejected ${ctrl.authority} image. Organiser will see the reason in their notification.`);
       setRejectingControl(null);
     } catch (err) {
@@ -208,12 +211,12 @@ export default function AdminStage2Review() {
   const venueName = details.venueName;
   const generated = event.controlListGenerated === true;
   const totalStage2 = reviewable.length;
-  const publishedCount = reviewable.filter((c) => stage2Docs[`${c.controlId}-s2`]?.published === true).length;
+  const publishedCount = reviewable.filter((c) => stage2Docs[c.controlId]?.published === true).length;
   const pendingCount = reviewable.filter((c) => {
-    const d = stage2Docs[`${c.controlId}-s2`];
+    const d = stage2Docs[c.controlId];
     return d && d.published !== true && !d.m4TicketId;
   }).length;
-  const reportedCount = reviewable.filter((c) => !!stage2Docs[`${c.controlId}-s2`]?.m4TicketId).length;
+  const reportedCount = reviewable.filter((c) => !!stage2Docs[c.controlId]?.m4TicketId).length;
 
   return (
     <div className="p-5 sm:p-8">
@@ -264,8 +267,7 @@ export default function AdminStage2Review() {
       {generated && totalStage2 > 0 && (
         <div className="space-y-4" data-testid="admin-stage2-review-list">
           {reviewable.map((ctrl) => {
-            const docId = `${ctrl.controlId}-s2`;
-            const doc = stage2Docs[docId] ?? null;
+            const doc = stage2Docs[ctrl.controlId] ?? null;
             const reported = !!doc?.m4TicketId;
             const published = doc?.published === true;
             const rejected = !published && !!doc?.rejectionReason;

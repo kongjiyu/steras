@@ -87,29 +87,12 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
   if (!versionId) throw new HttpsError('failed-precondition', 'The application has no submitted version.');
   const assessmentId = event.currentAssessmentId;
   const resourceId = event.currentResourceId;
-  if (!assessmentId || !resourceId || !safeDocumentId(assessmentId) || !safeDocumentId(resourceId)) {
-    throw new HttpsError('failed-precondition', 'Risk assessment and resources must point to the current application assessment.');
-  }
-  const assessmentRef = eventRef.collection(COLLECTIONS.ASSESSMENTS).doc(assessmentId);
-  const resourceRef = eventRef.collection(COLLECTIONS.RESOURCES).doc(resourceId);
-  const [assessmentSnap, resourceSnap] = await Promise.all([assessmentRef.get(), resourceRef.get()]);
   if (event.status !== 'UnderReview' || event.reviewStage !== 'authority') {
     throw new HttpsError('failed-precondition', 'This application version is no longer open for officer review.');
   }
   if (event.initialReview?.decision !== 'Approved') {
     throw new HttpsError('failed-precondition', 'The admin initial review has not released this application for officer review.');
   }
-  const resource = resourceSnap.data() as ResourceRecommendation | undefined;
-  const assessment = assessmentSnap.data() as RiskAssessment | undefined;
-  assertOfficerDecisionArtifacts(assessment, resource, eventId, versionId, assessmentId, resourceId, authorityType);
-  const readyAssessment = assessment as RiskAssessment;
-  if (readyAssessment.complianceStatus === 'blocked' && decision === 'Approved') {
-    throw new HttpsError('failed-precondition', 'This application cannot be approved while compliance checks are blocked.');
-  }
-  const readiness = readyAssessment.assessmentReadiness;
-  const finalizedAdminManual = readyAssessment.status === 'official_ready'
-    && 'sourceKind' in readyAssessment && readyAssessment.sourceKind === 'admin_manual';
-  validateOfficerRejectionRationale(decision, readiness, finalizedAdminManual, reason);
 
   // Find this officer's assignment.
   const assignmentId = `${versionId}_${profile.authorityType}`;
@@ -125,12 +108,34 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
   if (assignment.status === 'revoked') {
     throw new HttpsError('failed-precondition', 'This assignment was revoked.');
   }
-  const decisionReadiness = resolveOfficerDecisionReadiness({
+  // Load only safe pointer targets. The readiness resolver intentionally runs
+  // before the defensive artifact fence so an actionable score-review blocker
+  // is never hidden by a stale or missing resource pointer.
+  const assessmentRef = safeDocumentId(assessmentId)
+    ? eventRef.collection(COLLECTIONS.ASSESSMENTS).doc(assessmentId)
+    : null;
+  const resourceRef = safeDocumentId(resourceId)
+    ? eventRef.collection(COLLECTIONS.RESOURCES).doc(resourceId)
+    : null;
+  const [assessmentSnap, resourceSnap] = await Promise.all([
+    assessmentRef ? assessmentRef.get() : Promise.resolve(null),
+    resourceRef ? resourceRef.get() : Promise.resolve(null),
+  ]);
+  const resource = resourceSnap?.data() as ResourceRecommendation | undefined;
+  const assessment = assessmentSnap?.data() as RiskAssessment | undefined;
+  const assignmentReadiness = resolveOfficerDecisionReadiness({
     eventId, versionId, assessmentId, resourceId, authorityType,
     officerUid: callerUid, eventStatus: event.status, reviewStage: event.reviewStage,
     assignment, assessment, resource, requiredAuthorities: event.requiredAuthorities ?? [],
   });
-  if (!decisionReadiness.ready) throw new HttpsError('failed-precondition', decisionReadiness.message);
+  if (!assignmentReadiness.ready) throw new HttpsError('failed-precondition', assignmentReadiness.message);
+  const finalizedAdminManual = assessment?.status === 'official_ready'
+    && Boolean(assessment && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual');
+  validateOfficerRejectionRationale(decision, assessment?.assessmentReadiness, finalizedAdminManual, reason);
+  if (!assessmentId || !resourceId || !assessmentRef || !resourceRef || !assessmentSnap || !resourceSnap) {
+    throw new HttpsError('failed-precondition', 'Risk assessment and resources must point to the current application assessment.');
+  }
+  assertOfficerDecisionArtifacts(assessment, resource, eventId, versionId, assessmentId, resourceId, authorityType);
 
   const now = Date.now();
   return db.runTransaction(async (tx) => {
@@ -150,15 +155,6 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
       || currentEvent.assignedOfficerByAuthority?.[authorityType] !== callerUid) {
       throw new HttpsError('aborted', 'The application generation changed before the proposal was recorded.');
     }
-    assertOfficerDecisionArtifacts(
-      currentAssessmentSnap.data() as RiskAssessment | undefined,
-      currentResourceSnap.data() as ResourceRecommendation | undefined,
-      eventId,
-      versionId,
-      assessmentId,
-      resourceId,
-      authorityType,
-    );
     const all = allAssignmentsSnap.docs
       .map((d) => ({ ...(d.data() as Assignment), assignmentId: d.id }))
       .filter((candidate) => candidate.versionId === versionId);
@@ -177,6 +173,15 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
       requiredAuthorities: currentEvent.requiredAuthorities ?? [],
     });
     if (!transactionReadiness.ready) throw new HttpsError('aborted', transactionReadiness.message);
+    assertOfficerDecisionArtifacts(
+      currentAssessmentSnap.data() as RiskAssessment | undefined,
+      currentResourceSnap.data() as ResourceRecommendation | undefined,
+      eventId,
+      versionId,
+      assessmentId,
+      resourceId,
+      authorityType,
+    );
     const isAmendment = currentAssignment.status === 'completed';
     const previousReason = currentAssignment.reason ?? '';
     const previousSuggestion = currentAssignment.suggestion ?? '';

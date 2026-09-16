@@ -19,6 +19,7 @@ const firestore_2 = require("firebase-functions/v2/firestore");
 const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
 const publishStage2Doc_1 = require("../http/publishStage2Doc");
+const stage2_1 = require("../../../shared/stage2");
 const notifications_1 = require("../utils/notifications");
 function isM4TerminalOutcome(value) {
     return value === 'confirmed_true' || value === 'dismissed_fake';
@@ -47,7 +48,7 @@ async function applyM4ReportOutcome(report, outcome, now = Date.now()) {
     const publicRef = db.collection(types_1.COLLECTIONS.PUBLIC_EVENT_CONTROLS)
         .doc(report.eventId)
         .collection(types_1.COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS)
-        .doc(`${report.controlId}-stage2`);
+        .doc((0, stage2_1.stage2PublicControlId)(report.controlId));
     const result = await db.runTransaction(async (tx) => {
         const [eventSnap, controlSnap, stage2Snap, publicSnap] = await Promise.all([
             tx.get(eventRef),
@@ -115,7 +116,7 @@ async function applyM4ReportOutcome(report, outcome, now = Date.now()) {
                 updatedAt: now,
             });
             tx.set(publicRef, (0, publishStage2Doc_1.buildPublicEventControl)({
-                publicControlId: `${report.controlId}-stage2`,
+                publicControlId: (0, stage2_1.stage2PublicControlId)(report.controlId),
                 eventId: report.eventId,
                 versionId,
                 controlId: report.controlId,

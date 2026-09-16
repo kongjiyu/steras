@@ -15,6 +15,7 @@ import { MINIMAX_API_KEY } from '../config/secrets';
 import { recommendAuthoritiesWithMiniMax } from '../engines/incidentAuthorityRecommender';
 import { createNotification, resolveAuthUid, type NotificationInput } from '../utils/notifications';
 import { assertEventReportableAt } from '../utils/eventWindow';
+import { stage2DocumentId } from '@shared/stage2';
 
 const DAY = 86_400_000;
 const HISTORY = 'history';
@@ -37,7 +38,7 @@ export const submitIncident = onCall({ region: FUNCTION_REGION, timeoutSeconds: 
   assertOccurrenceWithinEventDay(event, input.occurredAt);
   if (input.linkedControlId) {
     const controlRef = db.collection(COLLECTIONS.EVENTS).doc(input.eventId).collection(COLLECTIONS.EVENT_CONTROLS).doc(input.linkedControlId);
-    const stage2Id = input.linkedStage2DocId ?? `${input.linkedControlId}-s2`;
+    const stage2Id = input.linkedStage2DocId ?? stage2DocumentId(input.linkedControlId);
     const [control, stage2] = await Promise.all([controlRef.get(), controlRef.collection(COLLECTIONS.STAGE2_DOCS).doc(stage2Id).get()]);
     if (!control.exists || !stage2.exists || stage2.data()?.published !== true) throw new HttpsError('failed-precondition', 'Linked Event Control evidence is not published.');
   }
@@ -103,7 +104,7 @@ export const submitIncident = onCall({ region: FUNCTION_REGION, timeoutSeconds: 
     if (input.linkedControlId) {
       const controlRef = db.collection(COLLECTIONS.EVENTS).doc(input.eventId)
         .collection(COLLECTIONS.EVENT_CONTROLS).doc(input.linkedControlId);
-      const stage2Id = input.linkedStage2DocId ?? `${input.linkedControlId}-s2`;
+      const stage2Id = input.linkedStage2DocId ?? stage2DocumentId(input.linkedControlId);
       const [currentControl, currentStage2] = await Promise.all([
         tx.get(controlRef),
         tx.get(controlRef.collection(COLLECTIONS.STAGE2_DOCS).doc(stage2Id)),

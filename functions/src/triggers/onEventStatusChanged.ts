@@ -10,6 +10,7 @@ import { firestore } from 'firebase-admin';
 import { logger } from 'firebase-functions/logger';
 import { onDocumentUpdated } from 'firebase-functions/v2/firestore';
 import { COLLECTIONS, EventControl, EventRecord, Stage2Doc } from '@shared/types';
+import { stage2PublicControlId } from '@shared/stage2';
 import { M4_SCHEMA_VERSION, type M4IncidentHistoryEntry, type M4IncidentRecord } from '@shared/m4';
 import { FUNCTION_REGION } from '../config/runtime';
 
@@ -64,7 +65,7 @@ export async function cleanupWithdrawnEvent(eventId: string, now = Date.now()): 
         db.collection(COLLECTIONS.PUBLIC_EVENT_CONTROLS)
           .doc(eventId)
           .collection(COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS)
-          .doc(`${controlData.controlId}-stage2`),
+          .doc(stage2PublicControlId(controlData.controlId)),
       ));
     }
   }

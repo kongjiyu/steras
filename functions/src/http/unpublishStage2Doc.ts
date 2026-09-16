@@ -42,10 +42,13 @@ import {
 } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
 import { createNotification, resolveAuthUid } from '../utils/notifications';
+import { stage2DocumentId, stage2PublicControlId } from '@shared/stage2';
 
 interface UnpublishStage2DocRequest {
   eventId?: string;
   controlId?: string;
+  /** Optional document id for compatibility with repaired legacy records. */
+  docId?: string;
   /** Optional. If present, the action is treated as a reject (not an unpublish)
    *  and the reason is persisted on the doc + shown in the organizer notification.
    *  Max 500 chars. */
@@ -82,6 +85,7 @@ export async function unpublishStage2DocForUser(
 ): Promise<UnpublishStage2DocResponse> {
   const eventId = (data.eventId ?? '').trim();
   const controlId = (data.controlId ?? '').trim();
+  const requestedDocId = (data.docId ?? '').trim();
   const reason = (data.reason ?? '').trim();
   if (!eventId) throw new HttpsError('invalid-argument', 'eventId is required.');
   if (!controlId) throw new HttpsError('invalid-argument', 'controlId is required.');
@@ -93,12 +97,15 @@ export async function unpublishStage2DocForUser(
   const db = firestore();
   const eventRef = db.collection(COLLECTIONS.EVENTS).doc(eventId);
   const controlRef = eventRef.collection(COLLECTIONS.EVENT_CONTROLS).doc(controlId);
-  const docId = `${controlId}-s2`;
+  const docId = requestedDocId || stage2DocumentId(controlId);
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(docId)) {
+    throw new HttpsError('invalid-argument', 'docId must be a safe Stage 2 document id.');
+  }
   const docRef = controlRef.collection(COLLECTIONS.STAGE2_DOCS).doc(docId);
   const publicRef = db.collection(COLLECTIONS.PUBLIC_EVENT_CONTROLS)
     .doc(eventId)
     .collection(COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS)
-    .doc(`${controlId}-stage2`);
+    .doc(stage2PublicControlId(controlId));
   const userRef = db.collection(COLLECTIONS.USERS).doc(uid);
 
   const result = await db.runTransaction(async (tx) => {

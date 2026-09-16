@@ -73,11 +73,16 @@ describe('resolveOfficerDecisionReadiness', () => {
   });
 
   it('explains own and other score-review blockers for AI-assisted assessment', () => {
-    const ai = { ...input, assessment: { ...input.assessment, sourceKind: undefined, authorityReviewRequired: false, authorityReviewState: { activeReviewHeads: {} }, officialResult: { reviewIds: [] } } };
+    const ai = { ...input, assessment: { ...input.assessment, status: 'authority_review' as const, sourceKind: undefined, authorityReviewRequired: true, authorityReviewState: { activeReviewHeads: {} }, officialResult: null } };
     expect(resolveOfficerDecisionReadiness(ai).reason).toBe('own_score_review_required');
     const completeHeads = { PDRM: { reviewId: 'pdrm-review' }, BOMBA: { reviewId: 'bomba-review' } };
     expect(resolveOfficerDecisionReadiness({ ...ai, requiredAuthorities: ['PDRM', 'BOMBA'], assessment: { ...ai.assessment, authorityReviewState: { activeReviewHeads: completeHeads } } }).reason).toBe('officialisation_pending');
     expect(resolveOfficerDecisionReadiness({ ...ai, requiredAuthorities: ['PDRM', 'BOMBA'], assessment: { ...ai.assessment, authorityReviewState: { activeReviewHeads: { PDRM: { reviewId: 'pdrm-review' } } } } }).reason).toBe('other_score_reviews_pending');
+  });
+
+  it('reports an integrity blocker for an AI assessment marked official without review provenance', () => {
+    const incompleteOfficial = { ...input, assessment: { ...input.assessment, sourceKind: undefined, authorityReviewRequired: false, authorityReviewState: { activeReviewHeads: {} }, officialResult: { reviewIds: [] } } };
+    expect(resolveOfficerDecisionReadiness(incompleteOfficial).reason).toBe('score_review_record_missing');
   });
 
   it('keeps score-review guidance visible while M2 still has provisional resources', () => {
