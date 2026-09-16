@@ -1,30 +1,31 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { httpsCallable } from 'firebase/functions';
 import { getMetadata, ref, uploadBytesResumable } from 'firebase/storage';
-import { Activity, CheckCircle2, FileWarning, ShieldCheck, Siren, Upload } from 'lucide-react';
+import { Activity, CalendarDays, CheckCircle2, Clock3, FileWarning, History, MapPin, Search, ShieldCheck, Siren, SlidersHorizontal, Upload, X, type LucideIcon } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { functions, storage } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { WorkspaceTopBar } from '../../components/layout/Sidebar';
 import {
-  INCIDENT_CATEGORIES, INCIDENT_CATEGORY_LABELS, M4_EVIDENCE_MAX_BYTES, type M4AuthorityDirectoryEntry,
-  type M4IncidentHistoryEntry, type M4IncidentRecord, type M4IncidentSeverity,
+  INCIDENT_CATEGORIES, INCIDENT_CATEGORY_LABELS, M4_EVIDENCE_MAX_BYTES, m4EventDayBounds, m4EventDayDate, participantIncidentProgress,
+  m4EventDayTimestamp, m4MalaysiaTimeValue, type M4AuthorityDirectoryEntry, type M4IncidentCategory,
+  type M4IncidentHistoryEntry, type M4IncidentRecord, type M4ParticipantProgressStep, type M4IncidentSeverity,
 } from '@shared/m4';
 import { IncidentEvidenceGallery } from './IncidentEvidenceGallery';
 import PublicHeader from '../../components/layout/PublicHeader';
 
 type ReportableEvent = { eventId: string; name: string; startDatetime: number; endDatetime: number };
+type ParticipantHistoryStatus = 'all' | 'in_progress' | 'resolved';
 type IncidentView = Pick<M4IncidentRecord, 'incidentId' | 'eventId' | 'eventName' | 'status' | 'category' | 'location' | 'occurredAt' | 'description' | 'evidence'>
   & Partial<Omit<M4IncidentRecord, 'incidentId' | 'eventId' | 'eventName' | 'status' | 'category' | 'location' | 'occurredAt' | 'description' | 'evidence'>>
-  & { history?: M4IncidentHistoryEntry[] };
+  & { history?: M4IncidentHistoryEntry[]; progress?: M4ParticipantProgressStep[] };
 const EVIDENCE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
 const ORGANIZER_ASSIGNMENT_STATUSES = new Set<M4IncidentRecord['status']>(['submitted', 'manual_review_required', 'organizer_review']);
-function datetimeLocalValue(timestamp: number) {
-  const date = new Date(timestamp - new Date(timestamp).getTimezoneOffset() * 60_000);
-  return date.toISOString().slice(0, 16);
-}
 
 export default function Incidents() {
   const { user, profile } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [incidents, setIncidents] = useState<IncidentView[]>([]);
   const [events, setEvents] = useState<ReportableEvent[]>([]);
   const [directory, setDirectory] = useState<M4AuthorityDirectoryEntry[]>([]);
@@ -33,6 +34,12 @@ export default function Incidents() {
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const submissionPage = profile?.role === 'public' && location.pathname === '/incidents/submit';
+  const submissionNotice = (location.state as { submissionNotice?: string } | null)?.submissionNotice ?? '';
+  const standalonePublic = profile?.role === 'public';
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyCategory, setHistoryCategory] = useState<M4IncidentCategory | 'all'>('all');
+  const [historyStatus, setHistoryStatus] = useState<ParticipantHistoryStatus>('all');
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -40,10 +47,11 @@ export default function Incidents() {
     try {
       const list = httpsCallable<undefined, { incidents: IncidentView[]; reportableEvents: ReportableEvent[] }>(functions, 'listIncidents');
       const authorities = httpsCallable<undefined, { authorities: M4AuthorityDirectoryEntry[] }>(functions, 'listAuthorityDirectory');
-      const [result, authorityResult] = await Promise.all([list(), authorities()]);
+      const result = await list();
+      const authorityResult = profile?.role === 'public' ? undefined : await authorities();
       setIncidents(result.data.incidents);
       setEvents(result.data.reportableEvents ?? []);
-      setDirectory(authorityResult.data.authorities);
+      setDirectory(authorityResult?.data.authorities ?? []);
       setSelected((current) => {
         if (result.data.incidents.some((item) => item.incidentId === current)) return current;
         if (profile?.role === 'organizer') {
@@ -59,9 +67,29 @@ export default function Incidents() {
     }
   }, [profile?.role]);
   useEffect(() => { void reload(); }, [reload]);
+  const participantCounts = useMemo(() => ({
+    resolved: incidents.filter((item) => item.status === 'resolved').length,
+    inProgress: incidents.filter((item) => item.status !== 'resolved').length,
+    total: incidents.length,
+  }), [incidents]);
+  const filteredParticipantIncidents = useMemo(() => {
+    if (!standalonePublic || submissionPage) return [];
+    const query = historySearch.trim().toLocaleLowerCase();
+    return incidents.filter((item) => {
+      const matchesSearch = !query || [item.incidentId, item.eventName, INCIDENT_CATEGORY_LABELS[item.category], item.location, item.description]
+        .some((value) => value.toLocaleLowerCase().includes(query));
+      const matchesCategory = historyCategory === 'all' || item.category === historyCategory;
+      const matchesStatus = historyStatus === 'all' || (historyStatus === 'resolved' ? item.status === 'resolved' : item.status !== 'resolved');
+      return matchesSearch && matchesCategory && matchesStatus;
+    });
+  }, [historyCategory, historySearch, historyStatus, incidents, standalonePublic, submissionPage]);
   const active = useMemo(() => incidents.find((item) => item.incidentId === selected), [incidents, selected]);
   const civicWorkspace = profile?.role === 'authority' || profile?.role === 'admin';
-  const standalonePublic = profile?.role === 'public';
+  useEffect(() => {
+    if (!standalonePublic || submissionPage) return;
+    setSelected((current) => filteredParticipantIncidents.some((item) => item.incidentId === current)
+      ? current : filteredParticipantIncidents[0]?.incidentId ?? '');
+  }, [filteredParticipantIncidents, standalonePublic, submissionPage]);
   const initials = profile?.name
     ? profile.name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()
     : profile?.role === 'admin' ? 'AD' : 'AO';
@@ -69,18 +97,20 @@ export default function Incidents() {
   return <>
     {standalonePublic && <PublicHeader />}
     {civicWorkspace && <WorkspaceTopBar title="Incident command" subtitle="Reports, response actions and final resolution" userInitials={initials} workspaceEyebrow="Live incident operations" workspaceEyebrowIcon={Siren} />}
-    <main className={civicWorkspace ? 'page-shell page-enter' : standalonePublic ? 'min-h-screen bg-cream-50 px-5 py-8 sm:px-8' : ''}>
-      <div className="mx-auto max-w-7xl">
-      <header className="flex flex-wrap items-end justify-between gap-4"><div><p className="page-eyebrow">Incident response</p><h1 className="font-display text-3xl font-bold text-ink-900">{profile?.role === 'public' ? 'Participant incident reporting' : 'Incident review'}</h1><p className="mt-2 text-sm text-ink-500">{profile?.role === 'public' ? 'Submit a report for an eligible event and follow its resolution.' : 'Review accessible reports, record response actions and complete the resolution.'}</p></div><span className="badge bg-brand-50 text-brand-700"><ShieldCheck size={13} /> {profile?.role === 'public' ? 'participant' : profile?.role}</span></header>
+    <main className={`${civicWorkspace ? 'page-shell page-enter' : standalonePublic ? 'min-h-screen bg-cream-50 px-5 py-8 sm:px-8' : ''} ${standalonePublic && !submissionPage ? 'incident-history-compact' : ''}`}>
+      <div className="mx-auto max-w-6xl">
+      <header className="flex flex-wrap items-end justify-between gap-4"><div><p className="page-eyebrow">Incident response</p><h1 className="font-display text-3xl font-bold text-ink-900">{standalonePublic ? submissionPage ? 'Submit Incident Report' : 'My reports' : 'Incident review'}</h1><p className="mt-2 text-sm text-ink-500">{standalonePublic ? submissionPage ? 'Provide the incident details for an eligible event.' : 'View the incident reports you submitted and follow their resolution.' : 'Review accessible reports, record response actions and complete the resolution.'}</p></div>{standalonePublic ? submissionPage ? null : <button type="button" className="btn-primary" onClick={() => navigate('/incidents/submit')}> <Upload size={15} /> Submit Incident Report</button> : <span className="badge bg-brand-50 text-brand-700"><ShieldCheck size={13} /> {profile?.role}</span>}</header>
       {loadError && <div role="alert" className="mt-5 rounded-md border border-red-200 bg-red-50 p-3 text-sm">{loadError}<button type="button" className="btn-secondary ml-3" onClick={() => void reload()}>Try again</button></div>}
       {loading && <p role="status" className="mt-5 text-sm text-ink-600">Loading incident records...</p>}
       {error && <div role="alert" className="mt-5 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-risk-high-text">{error}</div>}
+      {submissionNotice && <p role="status" className="mt-5 rounded-md border border-brand-200 bg-brand-50 p-3 text-sm text-brand-800">{submissionNotice}</p>}
       <fieldset disabled={loading || Boolean(loadError)} className="min-w-0">
+      {standalonePublic && !submissionPage && <ParticipantSummary resolved={participantCounts.resolved} inProgress={participantCounts.inProgress} total={participantCounts.total} />}
       {profile?.role === 'admin' && <DirectoryAdmin directory={directory} busy={busy} setBusy={setBusy} setError={setError} onDone={reload} />}
-      {profile?.role === 'public' && <Submission events={events} uid={user!.uid} busy={busy} setBusy={setBusy} onDone={reload} setError={setError} />}
+      {standalonePublic && submissionPage && <Submission events={events} uid={user!.uid} busy={busy} setBusy={setBusy} onCancel={() => navigate('/incidents')} onSubmitted={async () => { await reload(); navigate('/incidents', { replace: true, state: { submissionNotice: 'Incident report submitted. It is now available in My reports.' } }); }} setError={setError} />}
       {(profile?.role === 'organizer' || profile?.role === 'authority') && <p className="mt-5 rounded-md border border-brand-200 bg-brand-50 p-4 text-sm text-ink-700">Organizer and authority accounts can review and act on accessible incident reports. Incident submission is available only in the participant workspace.</p>}
-      {profile?.role !== 'admin' && <div className="mt-7 grid gap-5 lg:grid-cols-[360px_minmax(0,1fr)]">
-        <section className="card h-fit"><div className="card-header"><div><h2 className="section-title">Incident queue</h2><p className="text-xs text-ink-500">{loading ? 'Loading records...' : loadError ? 'Record count unavailable' : `${incidents.length} accessible records`}</p></div><Activity size={18} /></div><div className="divide-y divide-[#eee8dc]">{incidents.map((item) => <button key={item.incidentId} onClick={() => setSelected(item.incidentId)} className={`block w-full p-4 text-left ${selected === item.incidentId ? 'bg-brand-50' : 'hover:bg-cream-50'}`}><div className="flex justify-between gap-2"><strong className="text-sm text-ink-800">{item.eventName}</strong><Status value={item.status} /></div><p className="mt-1 text-xs text-ink-500">{INCIDENT_CATEGORY_LABELS[item.category]} · {new Date(item.occurredAt).toLocaleString()}</p></button>)}</div></section>
+      {profile?.role !== 'admin' && !submissionPage && <div className={`mt-7 grid gap-5 ${standalonePublic ? 'lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]' : 'lg:grid-cols-[360px_minmax(0,1fr)]'}`}>
+        {standalonePublic ? <ParticipantIncidentHistory incidents={filteredParticipantIncidents} selected={selected} counts={participantCounts} search={historySearch} category={historyCategory} status={historyStatus} setSearch={setHistorySearch} setCategory={setHistoryCategory} setStatus={setHistoryStatus} onSelect={setSelected} loading={loading} loadError={loadError} /> : <section className="card h-fit"><div className="card-header"><div><h2 className="section-title">Incident queue</h2><p className="text-xs text-ink-500">{loading ? 'Loading records...' : loadError ? 'Record count unavailable' : `${incidents.length} accessible records`}</p></div><Activity size={18} /></div><div className="divide-y divide-[#eee8dc]">{incidents.map((item) => <button key={item.incidentId} onClick={() => setSelected(item.incidentId)} className={`block w-full p-4 text-left ${selected === item.incidentId ? 'bg-brand-50' : 'hover:bg-cream-50'}`}><div className="flex justify-between gap-2"><strong className="text-sm text-ink-800">{item.eventName}</strong><Status value={item.status} /></div><p className="mt-1 text-xs text-ink-500">{INCIDENT_CATEGORY_LABELS[item.category]} · {new Date(item.occurredAt).toLocaleString()}</p></button>)}</div></section>}
         {active ? <IncidentDetail key={active.incidentId} record={active} profile={profile!} directory={directory} busy={busy} setBusy={setBusy} onDone={reload} setError={setError} /> : <section className="card p-8 text-center text-sm text-ink-500">{loading ? 'Loading incident details...' : loadError ? 'Incident data unavailable.' : 'No incident selected.'}</section>}
       </div>}
       </fieldset>
@@ -89,20 +119,67 @@ export default function Incidents() {
   </>;
 }
 
-function Submission({ events, uid, busy, setBusy, onDone, setError }: { events: ReportableEvent[]; uid: string; busy: boolean; setBusy: (v: boolean) => void; onDone: () => Promise<void>; setError: (v: string) => void }) {
-  const [eventId, setEventId] = useState(''); const [category, setCategory] = useState(''); const [occurredAt, setOccurredAt] = useState(() => datetimeLocalValue(Date.now())); const [location, setLocation] = useState(''); const [description, setDescription] = useState(''); const [files, setFiles] = useState<File[]>([]);
+function ParticipantSummary({ resolved, inProgress, total }: { resolved: number; inProgress: number; total: number }) {
+  return <div className="mt-7 grid gap-3 sm:grid-cols-3">
+    <SummaryCard label="Resolved" value={resolved} icon={CheckCircle2} tone="bg-green-50 text-status-approved" />
+    <SummaryCard label="In Progress" value={inProgress} icon={Clock3} tone="bg-gold-50 text-gold-700" />
+    <SummaryCard label="Total Report" value={total} icon={FileWarning} tone="bg-brand-50 text-brand-700" />
+  </div>;
+}
+
+function SummaryCard({ label, value, icon: Icon, tone }: { label: string; value: number; icon: LucideIcon; tone: string }) {
+  return <article className="card flex items-center gap-3 p-4 sm:p-5"><div className={`grid h-10 w-10 shrink-0 place-items-center rounded-md ${tone}`}><Icon size={19} /></div><div><p className="text-xs font-semibold uppercase tracking-[0.08em] text-ink-500">{label}</p><p className="mt-1 font-display text-2xl font-bold text-ink-900">{value}</p></div></article>;
+}
+
+function ParticipantIncidentHistory({ incidents, selected, counts, search, category, status, setSearch, setCategory, setStatus, onSelect, loading, loadError }: {
+  incidents: IncidentView[]; selected: string; counts: { resolved: number; inProgress: number; total: number }; search: string; category: M4IncidentCategory | 'all'; status: ParticipantHistoryStatus;
+  setSearch: (value: string) => void; setCategory: (value: M4IncidentCategory | 'all') => void; setStatus: (value: ParticipantHistoryStatus) => void; onSelect: (incidentId: string) => void; loading: boolean; loadError: string;
+}) {
+  return <section className="card h-fit overflow-hidden">
+    <div className="border-b border-[#e3dacb] p-4 sm:p-6">
+      <div className="flex items-center justify-between"><h2 className="section-title">Incident history</h2><History size={22} className="text-brand-700" /></div>
+      <div className="mt-5 grid gap-3 md:grid-cols-[minmax(0,1.4fr)_minmax(190px,.8fr)]">
+        <label className="relative"><span className="sr-only">Search incident history</span><Search size={19} aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-400" /><input aria-label="Search incident history" className="input !bg-white !pl-10" placeholder="Search incident history" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+        <label className="relative"><SlidersHorizontal size={18} aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-500" /><span className="sr-only">Incident category filter</span><select aria-label="Incident category filter" className="input !bg-white !pl-10" value={category} onChange={(event) => setCategory(event.target.value as M4IncidentCategory | 'all')}><option value="all">All categories</option>{INCIDENT_CATEGORIES.map((item) => <option key={item} value={item}>{INCIDENT_CATEGORY_LABELS[item]}</option>)}</select></label>
+      </div>
+      <div role="tablist" aria-label="Incident status filter" className="mt-5 flex flex-wrap gap-2">
+        {([['all', `All (${counts.total})`], ['in_progress', `In progress (${counts.inProgress})`], ['resolved', `Resolved (${counts.resolved})`]] as const).map(([value, label]) => <button key={value} type="button" role="tab" aria-selected={status === value} className={`rounded-full border px-5 py-2.5 text-sm font-semibold transition ${status === value ? 'border-brand-700 bg-brand-700 text-white' : 'border-ink-200 bg-white text-ink-700 hover:border-brand-300 hover:bg-brand-50'}`} onClick={() => setStatus(value)}>{label}</button>)}
+      </div>
+    </div>
+    <div className="divide-y divide-[#eee8dc]">
+      {incidents.map((item) => <button key={item.incidentId} type="button" onClick={() => onSelect(item.incidentId)} className={`block w-full p-5 text-left transition sm:p-6 ${selected === item.incidentId ? 'bg-brand-50/60' : 'hover:bg-cream-50'}`}>
+        <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-bold tracking-[0.06em] text-ink-500">{incidentReference(item.incidentId)}</p><h3 className="mt-4 font-display text-xl font-bold text-ink-900">{INCIDENT_CATEGORY_LABELS[item.category]}</h3><p className="mt-2 text-base font-semibold text-ink-800">{item.eventName}</p></div><span className={`shrink-0 rounded-md px-3 py-2 text-sm font-semibold ${item.status === 'resolved' ? 'bg-green-50 text-status-approved' : 'bg-gold-50 text-gold-700'}`}>{item.status === 'resolved' ? 'Resolved' : 'In progress'}</span></div>
+        <div className="mt-6 grid gap-3 text-sm text-ink-600"><span className="inline-flex items-center gap-2"><Clock3 size={18} className="text-ink-500" />{formatIncidentDate(item.occurredAt)}</span><span className="inline-flex items-center gap-2"><MapPin size={18} className="text-ink-500" />{item.location}</span></div>
+      </button>)}
+      {!loading && !loadError && incidents.length === 0 && <p className="p-8 text-center text-sm text-ink-500">{search || category !== 'all' || status !== 'all' ? 'No incident reports match the selected filters.' : 'You have not submitted any incident reports yet.'}</p>}
+      {loading && <p className="p-8 text-center text-sm text-ink-500">Loading incident history...</p>}
+      {loadError && <p className="p-8 text-center text-sm text-ink-500">Incident history is unavailable.</p>}
+    </div>
+  </section>;
+}
+
+function Submission({ events, uid, busy, setBusy, onCancel, onSubmitted, setError }: { events: ReportableEvent[]; uid: string; busy: boolean; setBusy: (v: boolean) => void; onCancel: () => void; onSubmitted: () => Promise<void>; setError: (v: string) => void }) {
+  const [eventId, setEventId] = useState(''); const [category, setCategory] = useState(''); const [occurrenceTime, setOccurrenceTime] = useState(() => m4MalaysiaTimeValue()); const [location, setLocation] = useState(''); const [description, setDescription] = useState(''); const [files, setFiles] = useState<File[]>([]);
   const retryKey = useRef<{ signature: string; key: string }>();
   const inFlight = useRef(false);
   const selectedEvent = events.find((event) => event.eventId === eventId);
-  const occurrence = new Date(occurredAt).getTime();
-  const dateValid = Boolean(selectedEvent && Number.isFinite(occurrence)
-    && occurrence >= selectedEvent.startDatetime && occurrence <= selectedEvent.endDatetime && occurrence <= Date.now());
-  const valid = Boolean(selectedEvent && category && dateValid && location.trim().length >= 3 && description.trim());
+  const eventDay = selectedEvent ? m4EventDayBounds(selectedEvent.startDatetime) : undefined;
+  const occurrence = eventDay ? m4EventDayTimestamp(eventDay.date, occurrenceTime) : Number.NaN;
+  const eventDayIsToday = eventDay?.date === m4EventDayDate(Date.now());
+  const latestOccurrenceTime = eventDayIsToday ? m4MalaysiaTimeValue() : '23:59';
+  const occurrenceValid = Boolean(eventDay && Number.isFinite(occurrence)
+    && occurrence >= eventDay.start && occurrence < eventDay.end && occurrence <= Date.now());
+  const valid = Boolean(selectedEvent && category && occurrenceValid && location.trim().length >= 3 && description.trim());
+  const chooseEvent = (nextEventId: string) => {
+    setEventId(nextEventId);
+    const nextEvent = events.find((event) => event.eventId === nextEventId);
+    if (nextEvent) setOccurrenceTime(m4MalaysiaTimeValue());
+  };
   const submit = async () => {
     if (inFlight.current || !valid) return;
     inFlight.current = true;
     setBusy(true); setError('');
-    const signature = JSON.stringify({ eventId, category, occurredAt, location, description, files: files.map((file) => [file.name, file.type, file.size, file.lastModified]) });
+    const signature = JSON.stringify({ eventId, category, occurredAt: occurrence, location, description, files: files.map((file) => [file.name, file.type, file.size, file.lastModified]) });
     const stamp = retryKey.current?.signature === signature ? retryKey.current.key : crypto.randomUUID();
     retryKey.current = { signature, key: stamp };
     try {
@@ -110,8 +187,8 @@ function Submission({ events, uid, busy, setBusy, onDone, setError }: { events: 
       const fn = httpsCallable(functions, 'submitIncident');
       await fn({ eventId, category, occurredAt: occurrence, location, description, evidencePaths: paths, idempotencyKey: stamp });
       retryKey.current = undefined;
-      setEventId(''); setCategory(''); setOccurredAt(datetimeLocalValue(Date.now())); setLocation(''); setDescription(''); setFiles([]);
-      await onDone();
+      setEventId(''); setCategory(''); setOccurrenceTime(m4MalaysiaTimeValue()); setLocation(''); setDescription(''); setFiles([]);
+      await onSubmitted();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Submission failed. Retry the unchanged report to safely reuse the same request.');
     } finally {
@@ -119,7 +196,31 @@ function Submission({ events, uid, busy, setBusy, onDone, setError }: { events: 
       setBusy(false);
     }
   };
-  return <section className="card mt-7"><div className="card-header"><div><h2 className="section-title">Submit Incident Report</h2><p className="text-xs text-ink-500">Participant submission is limited to ongoing events and events completed within the past seven days.</p></div><FileWarning size={18} /></div><div className="card-body grid gap-3 sm:grid-cols-2"><label><span className="field-label">Eligible event *</span><select className="input" value={eventId} onChange={(e) => setEventId(e.target.value)}><option value="">Select an ongoing or recent event</option>{events.map((event) => <option value={event.eventId} key={event.eventId}>{event.name}</option>)}</select></label><label><span className="field-label">Incident category *</span><select className="input" value={category} onChange={(e) => setCategory(e.target.value)}><option value="">Select category</option>{INCIDENT_CATEGORIES.map((item) => <option key={item} value={item}>{INCIDENT_CATEGORY_LABELS[item]}</option>)}</select></label><label><span className="field-label">Occurrence date and time *</span><input className="input" type="datetime-local" value={occurredAt} onChange={(e) => setOccurredAt(e.target.value)} /></label><label><span className="field-label">Location *</span><input className="input" value={location} onChange={(e) => setLocation(e.target.value)} /></label><label className="sm:col-span-2"><span className="field-label">Description *</span><textarea className="input min-h-24" value={description} onChange={(e) => setDescription(e.target.value)} /></label><label className="sm:col-span-2"><span className="field-label">Supporting evidence</span><input type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf" onChange={(e) => setFiles(Array.from(e.target.files ?? []))} className="input" /></label>{!events.length ? <p role="status" className="sm:col-span-2 text-sm text-ink-600">No ongoing or recently completed events are currently eligible.</p> : selectedEvent && occurredAt && !dateValid ? <p role="status" className="sm:col-span-2 text-sm text-ink-600">Choose a time during the selected event, no later than now.</p> : null}<div className="sm:col-span-2 flex justify-end"><button className="btn-primary" disabled={!valid || busy} onClick={() => void submit()}><Upload size={15} /> Submit Incident Report</button></div></div></section>;
+  return <section id="submit-incident" className="card mt-7 scroll-mt-24">
+    <div className="card-header"><div><h2 className="section-title">Report details</h2><p className="text-xs text-ink-500">Participant submission is limited to ongoing events and events completed within the past seven days.</p></div><FileWarning size={18} /></div>
+    <div className="card-body grid gap-3 sm:grid-cols-2">
+      <label><span className="field-label">Eligible event *</span><select className="input" value={eventId} onChange={(e) => chooseEvent(e.target.value)}><option value="">Select an ongoing or recent event</option>{events.map((event) => <option value={event.eventId} key={event.eventId}>{event.name}</option>)}</select></label>
+      <label><span className="field-label">Incident category *</span><select className="input" value={category} onChange={(e) => setCategory(e.target.value)}><option value="">Select category</option>{INCIDENT_CATEGORIES.map((item) => <option key={item} value={item}>{INCIDENT_CATEGORY_LABELS[item]}</option>)}</select></label>
+      <div className="sm:col-span-2 grid gap-3 sm:grid-cols-4">
+        <label className="sm:col-span-1"><span className="field-label">Occurrence date (D-Day)</span><input aria-label="Occurrence date (D-Day)" className={`input ${eventDay ? '!border-brand-300 !bg-brand-50 !text-brand-900' : '!bg-white'}`} type="date" value={eventDay?.date ?? ''} readOnly /></label>
+        <label className="sm:col-span-1"><span className="field-label">Occurrence time *</span><input aria-label="Occurrence time *" className="input !bg-white" type="time" min="00:00" max={latestOccurrenceTime} value={occurrenceTime} onChange={(e) => setOccurrenceTime(e.target.value)} /></label>
+        <label className="sm:col-span-2"><span className="field-label">Location *</span><div className="relative"><MapPin size={16} aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-brand-600" /><input aria-label="Location *" className="input !bg-white !pl-10" value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Venue, zone or nearby landmark" /></div></label>
+        {selectedEvent && <p className="sm:col-span-4 -mt-1 text-xs text-ink-500">The date is fixed to the selected event’s D-Day. Choose a time within that 24-hour day.</p>}
+      </div>
+      <label className="sm:col-span-2"><span className="field-label">Description *</span><textarea aria-label="Description *" className="input min-h-24 !bg-white" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Describe what happened, who may be affected and what is known so far." /></label>
+      <div className="sm:col-span-2">
+        <span className="field-label">Supporting evidence (optional)</span>
+        <div className="mt-1 flex flex-wrap items-center gap-3 rounded-md border border-ink-200 bg-white p-2">
+          <label htmlFor="incident-evidence-files" className="btn-secondary inline-flex min-h-10 cursor-pointer items-center gap-2 px-3"><Upload size={15} /> Choose files</label>
+          {files.length > 0 && <span className="text-xs text-ink-500">{files.length} file{files.length === 1 ? '' : 's'} selected</span>}
+        </div>
+        <input id="incident-evidence-files" aria-label="Supporting evidence (optional)" className="sr-only" type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf" onChange={(e) => { const selected = Array.from(e.target.files ?? []); setFiles((current) => [...current, ...selected].slice(0, 10)); e.currentTarget.value = ''; }} />
+        {files.length > 0 && <ul aria-label="Selected evidence files" className="mt-2 grid gap-2 sm:grid-cols-2">{files.map((file, index) => <li key={`${file.name}-${file.size}-${file.lastModified}-${index}`} className="flex min-w-0 items-center gap-2 rounded-md border border-ink-100 bg-cream-50 px-3 py-2 text-sm text-ink-700"><span className="min-w-0 flex-1 truncate" title={file.name}>{file.name}</span><button type="button" aria-label={`Remove ${file.name}`} className="grid h-7 w-7 shrink-0 place-items-center rounded text-ink-500 hover:bg-red-50 hover:text-risk-high-text" onClick={() => setFiles((current) => current.filter((_, fileIndex) => fileIndex !== index))}><X size={15} /></button></li>)}</ul>}
+      </div>
+      {!events.length ? <p role="status" className="sm:col-span-2 text-sm text-ink-600">No ongoing or recently completed events are currently eligible.</p> : selectedEvent && occurrenceTime && !occurrenceValid ? <p role="status" className="sm:col-span-2 text-sm text-ink-600">Choose a time on the selected event’s D-Day, no later than now.</p> : valid ? <p role="status" className="sm:col-span-2 text-sm text-brand-800">All required information is complete. Supporting evidence is optional.</p> : <p role="status" className="sm:col-span-2 text-sm text-ink-600">Complete the event, category, occurrence time, location, and description to submit. Supporting evidence is optional.</p>}
+      <div className="sm:col-span-2 flex justify-end gap-3"><button type="button" className="btn-secondary" disabled={busy} onClick={onCancel}>Cancel</button><button className="btn-primary" disabled={!valid || busy} onClick={() => void submit()}><Upload size={15} /> Submit Incident Report</button></div>
+    </div>
+  </section>;
 }
 
 function IncidentDetail({ record, profile, directory, busy, setBusy, onDone, setError }: { record: IncidentView; profile: NonNullable<ReturnType<typeof useAuth>['profile']>; directory: M4AuthorityDirectoryEntry[]; busy: boolean; setBusy: (v: boolean) => void; onDone: () => Promise<void>; setError: (v: string) => void }) {
@@ -134,8 +235,8 @@ function IncidentDetail({ record, profile, directory, busy, setBusy, onDone, set
   useEffect(() => { if (!authorityId && matching[0]) setAuthorityId(matching[0].authorityId); }, [authorityId, matching]);
   const act = async (action: string, extra: Record<string, unknown> = {}) => { setBusy(true); setError(''); const signature = JSON.stringify({ incidentId: record.incidentId, action, note, extra, files: actionFiles.map((file) => [file.name, file.type, file.size, file.lastModified]) }); const idempotencyKey = retryKey.current?.signature === signature ? retryKey.current.key : crypto.randomUUID(); retryKey.current = { signature, key: idempotencyKey }; try { const paths = await uploadEvidence(profile.uid, actionFiles, idempotencyKey); const fn = httpsCallable(functions, 'manageIncident'); await fn({ incidentId: record.incidentId, action, note, evidencePaths: paths, idempotencyKey, ...extra }); retryKey.current = undefined; setNote(''); setActionFiles([]); await onDone(); } catch (e) { setError(e instanceof Error ? e.message : 'Action failed. Retry the unchanged action to safely reuse the same request.'); } finally { setBusy(false); } };
   return <section className="space-y-4">{profile.role === 'public'
-    ? <ParticipantIncidentDetails record={record} setError={setError} />
-    : <StaffIncidentDetails record={record} setError={setError} />}
+    ? <><ParticipantIncidentDetails record={record} setError={setError} /><ParticipantIncidentProgress steps={record.progress ?? participantProgressForRecord(record)} /></>
+    : <StaffIncidentDetails record={record} directory={directory} setError={setError} />}
     {profile.role === 'organizer' && record.status !== 'resolved' && !record.activityClosed && <OrganizerActions record={record} matching={matching} note={note} setNote={setNote} team={team} setTeam={setTeam} authorityId={authorityId} setAuthorityId={setAuthorityId} severity={severity} setSeverity={setSeverity} outcome={outcome} setOutcome={setOutcome} actionFiles={actionFiles} setActionFiles={setActionFiles} busy={busy} noteValid={noteValid} canAssignOrRefer={canAssignOrRefer} canRecordResponse={canRecordResponse} canResolve={canResolve} act={act} />}
     {profile.role === 'authority' && record.status !== 'resolved' && !record.activityClosed && <article className="card"><div className="card-header"><h3 className="section-title">Authority investigation</h3></div><div className="card-body"><textarea aria-label="Investigation findings" className="input min-h-28" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Investigation actions, evidence reviewed, findings and outcome" /><ActionEvidence files={actionFiles} setFiles={setActionFiles} /><button className="btn-primary mt-3" disabled={busy || note.trim().length < 10} onClick={() => void act('record_investigation')}>Submit finding to organizer</button></div></article>}
     {profile.role !== 'public' && <article className="card"><div className="card-header"><h3 className="section-title">Append-only history</h3></div><div className="divide-y divide-[#eee8dc]">{(record.history ?? []).map((entry) => <div key={entry.historyId} className="p-4 text-sm"><div className="flex flex-wrap justify-between gap-2"><strong>{entry.action.replaceAll('_', ' ')}</strong><time className="text-xs text-ink-500">{new Date(entry.timestamp).toLocaleString()}</time></div><p className="mt-1 text-ink-600">{entry.summary}</p><IncidentEvidenceGallery incidentId={record.incidentId} evidence={entry.evidence} setError={setError} /></div>)}{!record.history?.length && <p className="p-4 text-sm text-ink-500">No history entries available.</p>}</div></article>}
@@ -143,15 +244,29 @@ function IncidentDetail({ record, profile, directory, busy, setBusy, onDone, set
 }
 
 function ParticipantIncidentDetails({ record, setError }: { record: IncidentView; setError: (value: string) => void }) {
-  return <article className="card"><div className="card-header"><h2 className="section-title">Incident details</h2><Status value={record.status} /></div><div className="card-body space-y-5 text-sm"><dl className="grid gap-4 sm:grid-cols-2"><Detail label="Event name" value={record.eventName} /><Detail label="Incident ID" value={record.incidentId} /><Detail label="Status" value={record.status.replaceAll('_', ' ')} /><Detail label="Category" value={INCIDENT_CATEGORY_LABELS[record.category]} /><Detail label="Location" value={record.location} /><Detail label="Occurrence time" value={new Date(record.occurredAt).toLocaleString()} />{record.category === 'event_control_discrepancy' && <Detail label="Event discrepancy control" value={record.linkedControlId ?? 'No published control linked'} />}</dl><div><h3 className="field-label">Description</h3><p className="mt-1 text-ink-700">{record.description}</p></div><div><h3 className="field-label">Evidence</h3><p className="mt-1 text-ink-600">{record.evidence.length ? `${record.evidence.length} uploaded file(s)` : 'No evidence supplied'}</p><IncidentEvidenceGallery incidentId={record.incidentId} evidence={record.evidence} setError={setError} /></div></div></article>;
+  return <article className="card overflow-hidden"><div className="border-b border-[#e3dacb] p-6 sm:p-8"><div className="flex flex-wrap items-center gap-3"><p className="text-sm font-bold tracking-[0.06em] text-ink-500">{record.incidentId}</p><span className={`rounded-md px-3 py-2 text-sm font-semibold ${record.status === 'resolved' ? 'bg-green-50 text-status-approved' : 'bg-gold-50 text-gold-700'}`}>{record.status === 'resolved' ? 'Resolved' : 'In progress'}</span></div><h2 className="mt-6 font-display text-3xl font-bold leading-tight text-ink-900">{INCIDENT_CATEGORY_LABELS[record.category]}</h2><p className="mt-3 text-base text-ink-500">{record.eventName}{record.eventType ? ` · ${record.eventType.replaceAll('_', ' ')}` : ''}</p></div><div className="card-body space-y-7 text-sm"><dl className="grid gap-5 border-b border-[#eee8dc] pb-7 sm:grid-cols-2"><IconDetail icon={MapPin} label="Location" value={record.location} /><IconDetail icon={CalendarDays} label="Occurred" value={formatIncidentDate(record.occurredAt)} /></dl><div><h3 className="field-label">Description</h3><p className="mt-2 whitespace-pre-wrap leading-7 text-ink-700">{record.description}</p></div>{record.category === 'event_control_discrepancy' && <div><h3 className="field-label">Event discrepancy control</h3><p className="mt-2 text-ink-700">{record.linkedControlId ?? 'No published control linked'}</p></div>}{record.evidence.length > 0 && <div><h3 className="field-label">Evidence</h3><p className="mt-2 text-ink-600">{record.evidence.length} uploaded file(s)</p><IncidentEvidenceGallery incidentId={record.incidentId} evidence={record.evidence} setError={setError} /></div>}</div></article>;
 }
 
-function StaffIncidentDetails({ record, setError }: { record: IncidentView; setError: (value: string) => void }) {
-  return <article className="card"><div className="card-header"><div><h2 className="section-title">{record.eventName}</h2><p className="text-xs text-ink-500">Incident reference · {incidentReference(record.incidentId)}</p></div><Status value={record.status} /></div><div className="card-body space-y-4 text-sm">{record.reportWithdrawnAt && <p className="rounded bg-gold-50 p-3">The reporter withdrew this report. Investigation history is retained.</p>}{record.activityClosed && <div className="rounded-md bg-warning-50 p-3 text-warning-900"><strong>Activity closed</strong><p className="mt-1">This incident is retained for history, but further action is disabled because the event was withdrawn.</p></div>}<p>{record.description}</p><dl className="grid gap-3 sm:grid-cols-2"><Detail label="Location" value={record.location} /><Detail label="Severity" value={record.severity ?? 'Manual review required'} /><Detail label="AI assessment" value={record.aiAssessment?.status === 'success' ? `${record.aiAssessment.rationale} · ${record.aiAssessment.immediateActionRequired ? 'Immediate action required' : 'No immediate action indicated'}` : `Unavailable: ${record.aiAssessment?.reason ?? 'Assessment data unavailable'}`} /><Detail label="Evidence" value={record.evidence.length ? `${record.evidence.length} verified upload(s)` : 'None supplied'} /></dl><IncidentEvidenceGallery incidentId={record.incidentId} evidence={record.evidence} setError={setError} />{record.finalResolution && <div className="rounded-md bg-brand-50 p-3"><strong>Final resolution</strong><p className="mt-1">{record.finalResolution}</p></div>}</div></article>;
+function ParticipantIncidentProgress({ steps }: { steps: M4ParticipantProgressStep[] }) {
+  return <article className="card"><div className="card-header"><h2 className="section-title">Incident Progress</h2><Activity size={21} className="text-brand-700" /></div><div className="card-body"><ol className="relative space-y-7 before:absolute before:bottom-5 before:left-[13px] before:top-5 before:w-px before:bg-[#d8d0c1]">{steps.map((step) => { const Icon = step.state === 'complete' ? CheckCircle2 : step.state === 'current' ? Activity : Clock3; const iconTone = step.state === 'complete' ? 'border-green-500 bg-green-50 text-status-approved' : step.state === 'current' ? 'border-brand-700 bg-brand-50 text-brand-700' : 'border-ink-200 bg-white text-ink-400'; return <li key={step.key} className="relative flex gap-4"><div className={`grid h-7 w-7 shrink-0 place-items-center rounded-full border-2 ${iconTone}`}><Icon size={15} /></div><div className="min-w-0 flex-1 pt-0.5"><div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1"><h3 className={`font-display text-lg font-bold ${step.state === 'upcoming' ? 'text-ink-500' : 'text-ink-900'}`}>{step.title}</h3><span className={`text-sm ${step.state === 'upcoming' ? 'text-ink-500' : 'text-ink-500'}`}>{step.timestamp ? formatIncidentDate(step.timestamp) : step.state === 'current' ? 'In progress' : 'Not started'}</span></div><p className="mt-1 text-sm leading-6 text-ink-600">{step.description}</p>{step.note && <p className="mt-2 rounded-md bg-brand-50 p-3 text-sm leading-6 text-ink-800"><strong>Resolution notes:</strong> {step.note}</p>}</div></li>; })}</ol></div></article>;
+}
+
+function participantProgressForRecord(record: IncidentView) {
+  return participantIncidentProgress({ status: record.status, createdAt: record.createdAt ?? record.occurredAt, updatedAt: record.updatedAt ?? record.occurredAt, reviewedAt: record.reviewedAt, actionStartedAt: record.actionStartedAt, resolvedAt: record.resolvedAt, finalResolution: record.finalResolution });
+}
+
+function StaffIncidentDetails({ record, directory, setError }: { record: IncidentView; directory: M4AuthorityDirectoryEntry[]; setError: (value: string) => void }) {
+  const recommendation = record.aiAuthorityRecommendation;
+  const recommendedNames = (record.recommendedAuthorityIds ?? []).map((id) => directory.find((entry) => entry.authorityId === id)?.name ?? id);
+  return <article className="card"><div className="card-header"><div><h2 className="section-title">{record.eventName}</h2><p className="text-xs text-ink-500">Incident reference · {incidentReference(record.incidentId)}</p></div><Status value={record.status} /></div><div className="card-body space-y-4 text-sm">{record.reportWithdrawnAt && <p className="rounded bg-gold-50 p-3">The reporter withdrew this report. Investigation history is retained.</p>}{record.activityClosed && <div className="rounded-md bg-warning-50 p-3 text-warning-900"><strong>Activity closed</strong><p className="mt-1">This incident is retained for history, but further action is disabled because the event was withdrawn.</p></div>}<p>{record.description}</p><dl className="grid gap-3 sm:grid-cols-2"><Detail label="Location" value={record.location} /><Detail label="Severity" value={record.severity ?? 'Manual review required'} /><Detail label="AI assessment" value={record.aiAssessment?.status === 'success' ? `${record.aiAssessment.rationale} · ${record.aiAssessment.immediateActionRequired ? 'Immediate action required' : 'No immediate action indicated'}` : `Unavailable: ${record.aiAssessment?.reason ?? 'Assessment data unavailable'}`} /><Detail label="Evidence" value={record.evidence.length ? `${record.evidence.length} verified upload(s)` : 'None supplied'} /></dl>{recommendation && <div className="rounded-md border border-brand-200 bg-brand-50 p-3"><strong>Authority recommendation</strong>{recommendation.status === 'success' ? <><p className="mt-1">MiniMax M3 suggested the maintained directory entries below. The organizer must still choose whether to refer the incident.</p>{recommendedNames.length > 0 && <p className="mt-1 font-medium">{recommendedNames.join(' · ')}</p>}<p className="mt-1 text-xs text-ink-600">{recommendation.rationale}</p></> : <><p className="mt-1">No AI authority was selected ({recommendation.status.replace('_', ' ')}). Referral remains a human decision.</p>{recommendedNames.length > 0 && <p className="mt-1 text-xs text-ink-600">Deterministic directory matches retained for organizer choice: {recommendedNames.join(' · ')}</p>}<p className="mt-1 text-xs text-ink-600">{recommendation.reason}</p></>}</div>}<IncidentEvidenceGallery incidentId={record.incidentId} evidence={record.evidence} setError={setError} />{record.finalResolution && <div className="rounded-md bg-brand-50 p-3"><strong>Final resolution</strong><p className="mt-1">{record.finalResolution}</p></div>}</div></article>;
 }
 
 function Detail({ label, value }: { label: string; value: string }) {
   return <div><dt className="field-label">{label}</dt><dd className="mt-1 break-words text-ink-700">{value}</dd></div>;
+}
+
+function IconDetail({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {
+  return <div className="flex items-start gap-3"><Icon size={24} className="mt-0.5 shrink-0 text-brand-700" /><div><dt className="text-base font-bold text-ink-800">{label}</dt><dd className="mt-1 text-base text-ink-600">{value}</dd></div></div>;
 }
 
 function OrganizerActions({ record, matching, note, setNote, team, setTeam, authorityId, setAuthorityId, severity, setSeverity, outcome, setOutcome, actionFiles, setActionFiles, busy, noteValid, canAssignOrRefer, canRecordResponse, canResolve, act }: {
@@ -171,7 +286,7 @@ function OrganizerActions({ record, matching, note, setNote, team, setTeam, auth
     </> : <p role="status" className="rounded-md border border-brand-200 bg-brand-50 p-3 text-sm text-ink-700">The external authority is investigating this incident. Organizer actions will become available after the authority submits its finding.</p>}
     {canAssignOrRefer && <div className="grid gap-4 border-t border-[#eee8dc] pt-4 lg:grid-cols-2">
       <section className="rounded-md border border-[#e4ddcf] bg-cream-50 p-4"><h4 className="font-semibold text-ink-800">Assign internally</h4><p className="mt-1 text-xs text-ink-500">Send this incident to an organizer team for action.</p><label className="mt-3 block"><span className="field-label">Internal team *</span><input aria-label="Internal team" className="input mt-1" value={team} onChange={(e) => setTeam(e.target.value)} /></label><button className="btn-secondary mt-3 w-full justify-center" disabled={busy || !noteValid || team.trim().length < 2} onClick={() => void act('assign_internal', { team })}>Assign internal team</button></section>
-      <section className="rounded-md border border-[#e4ddcf] bg-cream-50 p-4"><h4 className="font-semibold text-ink-800">Request external authority</h4><p className="mt-1 text-xs text-ink-500">Refer this incident to an active authority for its category.</p><label className="mt-3 block"><span className="field-label">External authority *</span><select aria-label="External authority" className="input mt-1" value={authorityId} onChange={(e) => setAuthorityId(e.target.value)}><option value="">Select an authority</option>{matching.map((item) => <option key={item.authorityId} value={item.authorityId}>{item.name} · {item.coverageAreas.join(', ')} · {item.contactPhone}</option>)}</select></label><button className="btn-secondary mt-3 w-full justify-center" disabled={busy || !authorityId || !noteValid} onClick={() => void act('refer_authority', { authorityId })}>Request external authority</button>{matching.length === 0 && <p role="status" className="mt-2 text-xs text-risk-high-text">No active authority supports this incident category. Ask an administrator to update the authority directory.</p>}</section>
+     <section className="rounded-md border border-[#e4ddcf] bg-cream-50 p-4"><h4 className="font-semibold text-ink-800">Request external authority</h4><p className="mt-1 text-xs text-ink-500">{record.aiAuthorityRecommendation?.status === 'success' ? 'MiniMax M3 ordering is advisory; choose the maintained directory entry before referral.' : 'MiniMax did not return a usable authority recommendation; choose only from maintained directory matches.'}</p><label className="mt-3 block"><span className="field-label">External authority *</span><select aria-label="External authority" className="input mt-1" value={authorityId} onChange={(e) => setAuthorityId(e.target.value)}><option value="">Select an authority</option>{matching.map((item) => <option key={item.authorityId} value={item.authorityId}>{item.name} · {item.coverageAreas.join(', ')} · {item.contactPhone}</option>)}</select></label><button className="btn-secondary mt-3 w-full justify-center" disabled={busy || !authorityId || !noteValid} onClick={() => void act('refer_authority', { authorityId })}>Request external authority</button>{matching.length === 0 && <p role="status" className="mt-2 text-xs text-risk-high-text">No active authority supports this incident category. Ask an administrator to update the authority directory.</p>}</section>
     </div>}
     {canRecordResponse && <div className={canAssignOrRefer ? 'border-t border-[#eee8dc] pt-4' : ''}><button className="btn-secondary" disabled={busy || !noteValid} onClick={() => void act('record_response')}>Record completed response</button><p className="mt-2 text-xs text-ink-500">Use this after the internal response has been completed.</p></div>}
     {canResolve && <div className="border-t border-[#eee8dc] pt-4"><div className="grid gap-3 sm:grid-cols-2">{!record.severity && <select aria-label="Manual severity" className="input" value={severity} onChange={(e) => setSeverity(e.target.value as M4IncidentSeverity)}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select>}{record.linkedControlId && <select aria-label="Discrepancy outcome" className="input" value={outcome} onChange={(e) => setOutcome(e.target.value)}><option value="">Discrepancy outcome</option><option value="confirmed_true">Confirmed true</option><option value="dismissed_fake">Dismissed as false</option></select>}</div><button className="btn-primary mt-3" disabled={busy || !noteValid || Boolean(record.linkedControlId && !outcome)} onClick={() => void act('resolve', { resolution: note, manualSeverity: severity, discrepancyOutcome: outcome })}><CheckCircle2 size={15} /> Final resolution and close</button></div>}
@@ -187,7 +302,8 @@ function organizerStageGuidance(status: M4IncidentRecord['status']) {
 }
 
 function Status({ value }: { value: string }) { return <span className="badge bg-cream-100 text-ink-700">{value.replaceAll('_', ' ')}</span>; }
-function incidentReference(incidentId: string) { return incidentId.slice(-8).toUpperCase(); }
+function incidentReference(incidentId: string) { return incidentId; }
+function formatIncidentDate(timestamp: number) { return new Date(timestamp).toLocaleString(undefined, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }
 function authorityRank(record: { recommendedAuthorityIds?: string[] }, authorityId: string) { const rank = record.recommendedAuthorityIds?.indexOf(authorityId) ?? -1; return rank < 0 ? 999 : rank; }
 
 function ActionEvidence({ files, setFiles }: { files: File[]; setFiles: (files: File[]) => void }) {

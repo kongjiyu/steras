@@ -1,10 +1,14 @@
 import { firestore } from 'firebase-admin';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { COLLECTIONS, type EventRecord, type EventVersion, type PublicReport, type UserProfile } from '@shared/types';
-import { M4_SCHEMA_VERSION, type M4IncidentHistoryEntry, type M4IncidentRecord } from '@shared/m4';
+import {
+  M4_SCHEMA_VERSION, type M4AIAssessment, type M4AuthorityDirectoryEntry,
+  type M4AuthorityRecommendation, type M4IncidentHistoryEntry, type M4IncidentRecord,
+} from '@shared/m4';
 import { FUNCTION_REGION } from '../config/runtime';
 import { MINIMAX_API_KEY } from '../config/secrets';
-import { assessIncident, assertReportableEvent } from '../http/m4Incidents';
+import { recommendAuthoritiesWithMiniMax } from '../engines/incidentAuthorityRecommender';
+import { assessIncident, assertReportableEvent, rankRecommendedAuthorities } from '../http/m4Incidents';
 
 /** Bridges the existing M3 public Stage-2 report into the real M4 queue. */
 export const onPublicReportCreated = onDocumentCreated(
@@ -13,10 +17,11 @@ export const onPublicReportCreated = onDocumentCreated(
     const report = event.data?.data() as PublicReport | undefined;
     if (!report) return;
     const db = firestore();
-    const [eventSnap, versionSnap, reporterSnap] = await Promise.all([
+    const [eventSnap, versionSnap, reporterSnap, authoritySnapshot] = await Promise.all([
       db.collection(COLLECTIONS.EVENTS).doc(report.eventId).get(),
       db.collection(COLLECTIONS.EVENTS).doc(report.eventId).collection(COLLECTIONS.VERSIONS).doc(report.versionId).get(),
       db.collection(COLLECTIONS.USERS).doc(report.reporterUid).get(),
+      db.collection('authority_directory').where('active', '==', true).limit(100).get(),
     ]);
     if (!eventSnap.exists || !versionSnap.exists || !reporterSnap.exists) throw new Error('M4 bridge source event, immutable version, or reporter is missing.');
     const source = eventSnap.data() as EventRecord;
@@ -32,6 +37,16 @@ export const onPublicReportCreated = onDocumentCreated(
       category: 'event_control_discrepancy', description: report.description,
       location: version.eventDetails.venueName, occurredAt: now, evidence: [],
     }, immutableSource);
+    const authorityEntries = authoritySnapshot.docs.map((doc) => doc.data() as M4AuthorityDirectoryEntry);
+    const deterministicAuthorityMatches = rankRecommendedAuthorities(authorityEntries, 'event_control_discrepancy', aiAssessment, immutableSource);
+    const aiAuthorityRecommendation = await recommendAuthoritiesWithMiniMax(process.env.MINIMAX_API_KEY ?? '', {
+      category: 'event_control_discrepancy', description: report.description,
+      location: version.eventDetails.venueName, occurredAt: now, evidence: [],
+      event: immutableSource, assessment: aiAssessment, authorities: authorityEntries,
+    });
+    const recommendedAuthorityIds = aiAuthorityRecommendation.status === 'success'
+      ? aiAuthorityRecommendation.authorityIds
+      : deterministicAuthorityMatches.slice(0, 5).map((entry) => entry.authorityId);
     const record: M4IncidentRecord = {
       schemaVersion: M4_SCHEMA_VERSION, incidentId, eventId: report.eventId,
       eventVersionId: report.versionId,
@@ -40,7 +55,7 @@ export const onPublicReportCreated = onDocumentCreated(
       reporterUid: report.reporterUid, reporterRole: reporter.role, category: 'event_control_discrepancy',
       incidentType: 'event_control_discrepancy', description: report.description,
       location: version.eventDetails.venueName, occurredAt: now, evidence: [],
-      aiAssessment,
+      aiAssessment, aiAuthorityRecommendation, recommendedAuthorityIds,
       ...(aiAssessment.status === 'success' ? { severity: aiAssessment.severity, immediateActionRequired: aiAssessment.immediateActionRequired } : {}),
       status: aiAssessment.status === 'success' ? 'submitted' : 'manual_review_required', linkedControlId: report.controlId, linkedStage2DocId: report.docId,
       publicReportTicketId: report.ticketId, assessmentEligible: false, synthetic: false,
@@ -64,8 +79,29 @@ export const onPublicReportCreated = onDocumentCreated(
         historyId: `${incidentId}_submitted`, incidentId, action: 'incident_submitted', actorUid: report.reporterUid,
         actorRole: reporter.role, timestamp: now, summary: 'Event Control discrepancy report submitted.', evidence: [],
       };
+      const aiAssessmentHistory: M4IncidentHistoryEntry = {
+        historyId: `${incidentId}_ai_assessment`, incidentId, action: 'ai_incident_assessment', actorUid: 'system',
+        actorRole: 'system', timestamp: now, summary: summarizeAssessment(aiAssessment), evidence: [],
+      };
+      const authorityRecommendationHistory: M4IncidentHistoryEntry = {
+        historyId: `${incidentId}_ai_authority_recommendation`, incidentId, action: 'ai_authority_recommendation', actorUid: 'system',
+        actorRole: 'system', timestamp: now, summary: summarizeRecommendation(aiAuthorityRecommendation, recommendedAuthorityIds), evidence: [],
+      };
       tx.create(incidentRef, { ...record, ...(currentReportSnap.data()?.withdrawnAt ? { reportWithdrawnAt: currentReportSnap.data()!.withdrawnAt } : {}) });
       tx.create(incidentRef.collection('history').doc(history.historyId), history);
+      tx.create(incidentRef.collection('history').doc(aiAssessmentHistory.historyId), aiAssessmentHistory);
+      tx.create(incidentRef.collection('history').doc(authorityRecommendationHistory.historyId), authorityRecommendationHistory);
     });
   },
 );
+
+function summarizeAssessment(assessment: M4AIAssessment) {
+  return assessment.status === 'success'
+    ? `MiniMax assessed ${assessment.severity} severity. ${assessment.immediateActionRequired ? 'Immediate action is required.' : 'No immediate action was indicated.'} ${assessment.rationale}`
+    : `MiniMax incident assessment ${assessment.status}: ${assessment.reason}`;
+}
+
+function summarizeRecommendation(recommendation: M4AuthorityRecommendation, fallbackIds: string[]) {
+  if (recommendation.status === 'success') return `MiniMax returned ${recommendation.authorityIds.length} validated authority recommendation(s). ${recommendation.rationale}`;
+  return `MiniMax authority recommendation ${recommendation.status}; deterministic directory matches retained for organizer choice (${fallbackIds.length}). ${recommendation.reason}`;
+}
