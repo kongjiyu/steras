@@ -9,23 +9,20 @@
  *   - Edit the proposal in place: rename a control, edit its Stage 1
  *     requirements, add/remove controls (limited to the event's
  *     `requiredAuthorities`).
- *   - Click "Commit changes" to call `editEventControlList` and write
+ *   - Click "Confirm control list" to call `editEventControlList` and write
  *     the per-control docs to Firestore. After commit, the snapshot
  *     lives on `event.controlListSnapshot` and the organizer can see
  *     the list in `OrganizerEventControls` (UC-34).
  *
- * Per the M3 owner decision (2026-08-18): there is no auto-trigger.
- * The admin must explicitly click "Generate" and "Commit". Re-clicking
- * "Generate" with `force: false` returns the cached snapshot (A23:
- * don't regenerate without explicit reason). The "Regenerate" button
- * forces a fresh call.
+ * Generated proposals are persisted as recoverable drafts. The admin must
+ * explicitly confirm the draft before controls are published.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { format } from 'date-fns';
-import { ChevronLeft, ClipboardList, RefreshCcw, Save, Sparkles, Trash2 } from 'lucide-react';
+import { ChevronLeft, ClipboardList, Pencil, RefreshCcw, Save, Sparkles, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
   AuthorityType,
@@ -46,6 +43,8 @@ interface ProposedResponse {
   promptVersion?: string;
   generatedAt?: number;
   fallbackReason?: string;
+  proposalId?: string;
+  proposalRevision?: number;
 }
 
 interface CommittedResponse {
@@ -53,6 +52,8 @@ interface CommittedResponse {
   versionId: string;
   written: number;
   controlIds: string[];
+  proposalId?: string;
+  proposalRevision?: number;
 }
 
 const ALL_AUTHORITIES: AuthorityType[] = ['PDRM', 'BOMBA', 'KKM', 'DBKL', 'MOTAC'];
@@ -65,12 +66,16 @@ export default function AdminControlListEditor() {
   const [items, setItems] = useState<ProposedControlItem[]>([]);
   const [proposalSource, setProposalSource] = useState<'cache' | 'minimax' | 'deterministic_fallback' | null>(null);
   const [proposalCached, setProposalCached] = useState(false);
+  const [proposalId, setProposalId] = useState<string>();
+  const [proposalRevision, setProposalRevision] = useState<number>();
   const [generating, setGenerating] = useState(false);
   const [committing, setCommitting] = useState(false);
+  const [editing, setEditing] = useState(false);
   // Local snapshot of the items at the last commit / generate. Used
   // to detect "has the user changed anything?" for the disabled-commit
   // button.
   const [committedSnapshot, setCommittedSnapshot] = useState<ProposedControlItem[]>([]);
+  const autoLoadedEventRef = useRef<string>();
 
   // Live event doc.
   useEffect(() => {
@@ -97,10 +102,13 @@ export default function AdminControlListEditor() {
   const canEdit = isApproved || (isUnderReview && Boolean(event?.authorityReviewCompletedAt));
   const generated = event?.controlListGenerated === true && Boolean(event.controlListSnapshot?.length);
 
-  const dirty = useMemo(() => JSON.stringify(items) !== JSON.stringify(committedSnapshot), [items, committedSnapshot]);
+  const dirty = useMemo(() => (
+    items.length > 0 && (!generated || JSON.stringify(items) !== JSON.stringify(committedSnapshot))
+  ), [generated, items, committedSnapshot]);
 
-  const generate = async (force = false) => {
+  const generate = useCallback(async (force = false) => {
     if (!eventId) return;
+    const publishedBeforeGenerate = Boolean(event?.controlListGenerated && event.controlListSnapshot?.length);
     setGenerating(true);
     try {
       const command = httpsCallable<{ eventId: string; force?: boolean }, ProposedResponse>(
@@ -111,7 +119,12 @@ export default function AdminControlListEditor() {
       setItems(result.data.items);
       setProposalSource(result.data.source);
       setProposalCached(result.data.cached);
-      setCommittedSnapshot(result.data.items);
+      setProposalId(result.data.proposalId);
+      setProposalRevision(result.data.proposalRevision);
+      // A generated draft is intentionally uncommitted, even when it was
+      // recovered from Firestore without any edits. Published controls are
+      // the only state that should reset the dirty comparison.
+      setCommittedSnapshot(publishedBeforeGenerate ? result.data.items : []);
       toast.success(
         result.data.cached
           ? 'Loaded cached control list (no re-generation).'
@@ -124,18 +137,40 @@ export default function AdminControlListEditor() {
     } finally {
       setGenerating(false);
     }
-  };
+  }, [event?.controlListGenerated, event?.controlListSnapshot?.length, eventId]);
+
+  // Entering the page after final approval restores the persisted draft (or
+  // the committed list) automatically, so navigation never loses the
+  // proposal and the Admin does not have to click Generate again.
+  useEffect(() => {
+    if (!eventId || !event || event.status !== 'Approved' || autoLoadedEventRef.current === eventId) return;
+    autoLoadedEventRef.current = eventId;
+    void generate(false);
+  }, [event, eventId, generate]);
 
   const commit = async () => {
     if (!eventId) return;
     setCommitting(true);
     try {
-      const command = httpsCallable<{ eventId: string; items: ProposedControlItem[] }, CommittedResponse>(
+      const command = httpsCallable<{
+        eventId: string;
+        items: ProposedControlItem[];
+        proposalId?: string;
+        proposalRevision?: number;
+      }, CommittedResponse>(
         functions,
         'editEventControlList',
       );
-      const result = await command({ eventId, items });
+      const result = await command({
+        eventId,
+        items,
+        ...(proposalId ? { proposalId } : {}),
+        ...(proposalRevision !== undefined ? { proposalRevision } : {}),
+      });
       setCommittedSnapshot(items);
+      setProposalId(undefined);
+      setProposalRevision(undefined);
+      setEditing(false);
       toast.success(`Committed ${result.data.written} control(s).`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Unable to commit.');
@@ -233,7 +268,7 @@ export default function AdminControlListEditor() {
             >
               <Sparkles size={16} />{generating ? 'Generating...' : (generated ? 'Load cached proposal' : 'Generate proposal')}
             </button>
-            {generated && (
+            {!generated && items.length > 0 && (
               <button
                 type="button"
                 className="btn-secondary"
@@ -245,6 +280,17 @@ export default function AdminControlListEditor() {
                 <RefreshCcw size={14} />Regenerate
               </button>
             )}
+            {!generated && items.length > 0 && (
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setEditing((value) => !value)}
+                disabled={generating || committing || !canEdit}
+                data-testid="edit-proposal-button"
+              >
+                <Pencil size={14} />{editing ? 'Finish editing' : 'Edit proposal'}
+              </button>
+            )}
           </div>
           {items.length > 0 && (
             <button
@@ -252,10 +298,10 @@ export default function AdminControlListEditor() {
               className="btn-success"
               onClick={commit}
               disabled={committing || !dirty}
-              title={dirty ? 'Commit your changes' : 'No changes to commit'}
+              title={dirty ? 'Confirm this generated control list' : 'No control proposal to confirm'}
               data-testid="commit-changes-button"
             >
-              <Save size={16} />{committing ? 'Committing...' : (dirty ? 'Commit changes' : 'No changes')}
+              <Save size={16} />{committing ? 'Confirming...' : (dirty ? 'Confirm control list' : 'No proposal')}
             </button>
           )}
         </div>
@@ -293,7 +339,7 @@ export default function AdminControlListEditor() {
                     type="text"
                     value={item.controlName}
                     onChange={(e) => updateItem(i, { controlName: e.target.value })}
-                    disabled={!canEdit}
+                    disabled={!canEdit || !editing}
                     className="input !h-9 !w-72"
                     aria-label={`Control name for ${item.authority}`}
                     data-testid={`control-name-${item.authority}`}
@@ -306,7 +352,7 @@ export default function AdminControlListEditor() {
                     type="button"
                     className="btn-secondary !px-2 !py-1 text-xs"
                     onClick={() => removeItem(i)}
-                    disabled={!canEdit}
+                    disabled={!canEdit || !editing}
                     aria-label={`Remove ${item.authority}`}
                     data-testid={`remove-${item.authority}`}
                   >
@@ -323,7 +369,7 @@ export default function AdminControlListEditor() {
                         <select
                           value={r.docType}
                           onChange={(e) => updateStage1Req(i, ri, { docType: e.target.value as ProposedControlItem['stage1Requirements'][number]['docType'] })}
-                          disabled={!canEdit}
+                          disabled={!canEdit || !editing}
                           className="input !h-8 !w-32 !text-xs"
                           aria-label={`Stage 1 doc type for ${item.authority} #${ri + 1}`}
                         >
@@ -335,7 +381,7 @@ export default function AdminControlListEditor() {
                           type="text"
                           value={r.label}
                           onChange={(e) => updateStage1Req(i, ri, { label: e.target.value })}
-                          disabled={!canEdit}
+                          disabled={!canEdit || !editing}
                           className="input !h-8 flex-1 !text-xs"
                           aria-label={`Stage 1 label for ${item.authority} #${ri + 1}`}
                         />
@@ -344,7 +390,7 @@ export default function AdminControlListEditor() {
                             type="checkbox"
                             checked={r.required}
                             onChange={(e) => updateStage1Req(i, ri, { required: e.target.checked })}
-                            disabled={!canEdit}
+                            disabled={!canEdit || !editing}
                             className="h-3.5 w-3.5 accent-brand-600"
                           />
                           required
@@ -353,7 +399,7 @@ export default function AdminControlListEditor() {
                           type="button"
                           className="btn-secondary !px-2 !py-1 text-xs"
                           onClick={() => removeStage1Req(i, ri)}
-                          disabled={!canEdit}
+                          disabled={!canEdit || !editing}
                           aria-label={`Remove Stage 1 requirement #${ri + 1} from ${item.authority}`}
                         >
                           <Trash2 size={12} />
@@ -365,7 +411,7 @@ export default function AdminControlListEditor() {
                     type="button"
                     className="btn-secondary mt-2 !px-2 !py-1 text-xs"
                     onClick={() => addStage1Req(i)}
-                    disabled={!canEdit}
+                    disabled={!canEdit || !editing}
                   >
                     + Add Stage 1 requirement
                   </button>
@@ -376,7 +422,7 @@ export default function AdminControlListEditor() {
                     type="text"
                     value={item.stage2Requirement?.label ?? ''}
                     onChange={(e) => updateItem(i, { stage2Requirement: { kind: 'image', label: e.target.value } })}
-                    disabled={!canEdit}
+                    disabled={!canEdit || !editing}
                     className="input !h-8 !text-xs"
                     placeholder="Photo of authority at venue"
                     aria-label={`Stage 2 label for ${item.authority}`}

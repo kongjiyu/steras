@@ -46,6 +46,7 @@ import { ApplicationDisplayBadge } from '../../components/ui/StatusBadge';
 import { resolveApplicationDisplayState, resolveInitialReviewReadiness } from '@shared/applicationState';
 import { useAuth } from '../../contexts/AuthContext';
 import ManualAssessmentForm, { AdminAiRetryPanel } from './ManualAssessmentForm';
+import ControlProposalDialog from './ControlProposalDialog';
 import { isAdminManualEligible } from './manualAssessmentEligibility';
 import { isAdminVisibleEvent } from './adminApplicationVisibility';
 import { isCurrentAssessmentJob, isCurrentResourceRecommendation, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
@@ -265,7 +266,7 @@ function AdminAuthorityProgressCard({
           <div key={row.authority} className="authority-progress-row px-3 py-3" data-testid={`authority-progress-${row.authority}`}>
             <span className="min-w-0 text-sm font-semibold text-ink-800">{row.authority}</span>
             {row.assignmentStatus === 'not_assigned' ? (
-              <span className="admin-badge admin-badge--default justify-self-start">Not assigned</span>
+              <span className="admin-badge admin-badge--default col-span-2 justify-self-end">Not assigned</span>
             ) : (
               <span className={`admin-badge justify-self-start ${row.scoreStatus === 'reviewed' || row.scoreStatus === 'manual_official' ? 'admin-badge--good' : row.scoreStatus === 'record_missing' ? 'admin-badge--warn' : 'admin-badge--default'}`}>
                 {row.scoreStatus === 'reviewed' ? 'Scores reviewed' : row.scoreStatus === 'manual_official' ? 'Admin assessed' : row.scoreStatus === 'record_missing' ? 'Review record missing' : 'Scores pending'}
@@ -312,8 +313,10 @@ export default function AdminApplicationReview() {
   const [finalDecision, setFinalDecision] = useState<DecisionValue | ''>('');
   const [finalReason, setFinalReason] = useState('');
   const [finalSuggestion, setFinalSuggestion] = useState('');
+  const [finalRejectionReasonCategory, setFinalRejectionReasonCategory] = useState<RejectionReasonCategory | ''>('');
   const [finalAdminNote, setFinalAdminNote] = useState('');
   const [submittingFinalDecision, setSubmittingFinalDecision] = useState(false);
+  const [showControlProposal, setShowControlProposal] = useState(false);
   const manualAssessmentSectionRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -531,20 +534,23 @@ export default function AdminApplicationReview() {
         reason?: string;
         suggestion?: string;
         adminNote?: string;
+        rejectionReasonCategory?: RejectionReasonCategory;
       }, { status: DecisionValue }>(functions, 'makeSecondReviewDecision');
       const result = await command({
         eventId,
         finalDecision,
         ...(finalDecision === 'Rejected'
-          ? { reason: finalReason.trim(), suggestion: finalSuggestion.trim() }
+          ? { reason: finalReason.trim(), suggestion: finalSuggestion.trim(), rejectionReasonCategory: finalRejectionReasonCategory as RejectionReasonCategory }
           : { adminNote: finalAdminNote.trim() || undefined }),
       });
       toast.success(`Final decision recorded: ${result.data.status}.`);
       setFinalReason('');
       setFinalSuggestion('');
+      setFinalRejectionReasonCategory('');
       setFinalAdminNote('');
       setFinalDecision('');
       setReloadToken((value) => value + 1);
+      if (finalDecision === 'Approved') setShowControlProposal(true);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Unable to record the final decision.');
     } finally {
@@ -997,13 +1003,19 @@ export default function AdminApplicationReview() {
                           <label className="block text-xs font-medium text-ink-600">Corrective suggestion (required)
                             <textarea className="input mt-1 resize-y" rows={3} maxLength={1000} value={finalSuggestion} onChange={(e) => setFinalSuggestion(e.target.value)} placeholder="Provide the required corrective direction." />
                           </label>
+                          <label className="block text-xs font-medium text-ink-600">Rejection category (required)
+                            <select className="input mt-1" value={finalRejectionReasonCategory} onChange={(e) => setFinalRejectionReasonCategory(e.target.value as RejectionReasonCategory)}>
+                              <option value="">Select a category</option>
+                              {REJECTION_REASON_CATEGORIES.map((category) => <option key={category} value={category}>{category.replaceAll('_', ' ')}</option>)}
+                            </select>
+                          </label>
                         </>
                       ) : (
                         <label className="block text-xs font-medium text-ink-600">Admin note (optional)
                           <textarea className="input mt-1 resize-y" rows={3} maxLength={1000} value={finalAdminNote} onChange={(e) => setFinalAdminNote(e.target.value)} placeholder="Any context for the final audit record." />
                         </label>
                       )}
-                      <button type="submit" className={finalDecision === 'Rejected' ? 'btn-danger w-full' : 'btn-success w-full'} disabled={submittingFinalDecision || !finalDecision || (finalDecision === 'Rejected' && (finalReason.trim().length < minRationaleLen || finalSuggestion.trim().length === 0))}>
+                      <button type="submit" className={finalDecision === 'Rejected' ? 'btn-danger w-full' : 'btn-success w-full'} disabled={submittingFinalDecision || !finalDecision || (finalDecision === 'Rejected' && (finalReason.trim().length < minRationaleLen || finalSuggestion.trim().length === 0 || !finalRejectionReasonCategory))}>
                         {submittingFinalDecision ? <><Loader2 size={14} className="animate-spin" /> Recording…</> : `Record final ${finalDecision || 'decision'}`}
                       </button>
                     </form>
@@ -1025,6 +1037,14 @@ export default function AdminApplicationReview() {
           </>
         )}
       </main>
+      {showControlProposal && event && eventId && (
+        <ControlProposalDialog
+          eventId={eventId}
+          eventName={event.eventDetails.name}
+          onClose={() => setShowControlProposal(false)}
+          onPublished={() => { setShowControlProposal(false); setReloadToken((value) => value + 1); }}
+        />
+      )}
     </div>
   );
 }
