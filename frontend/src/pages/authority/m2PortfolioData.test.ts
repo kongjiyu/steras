@@ -213,6 +213,7 @@ describe('M2 portfolio data', () => {
       reviewerId: 'pdrm-1', decidedAt: 1, current: true,
     } as const;
     expect(isCurrentAuthorityDecision(decision, 'event-1', 'v1_PDRM')).toBe(true);
+    expect(isCurrentAuthorityDecision({ ...decision, decision: 'Approved', rationale: '', suggestion: undefined }, 'event-1', 'v1_PDRM')).toBe(true);
     expect(isCurrentAuthorityDecision({ ...decision, decidedAt: Number.NaN }, 'event-1', 'v1_PDRM')).toBe(false);
   });
 

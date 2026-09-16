@@ -6,8 +6,8 @@
  *   - Override the default by picking a different officer
  *   - Click "Assign" to commit (calls `assignAuthorityOfficers`)
  *   - See each officer's current decision (if they've submitted one)
- *   - Click "Confirm aggregate" once all officers are done (calls
- *     `makeSecondReviewDecision`)
+ *   - Open application details once all officers are done; the canonical
+ *     final-decision card lives on that page.
  *
  * Reuses the existing `AdminLayout` shell (Q2 decision).
  */
@@ -22,16 +22,12 @@ import {
   Assignment,
   AuthorityType,
   COLLECTIONS,
-  DecisionValue,
   EventRecord,
-  REJECTION_REASON_CATEGORIES,
-  RejectionReasonCategory,
 } from '@shared/types';
 import { db, functions, isFirebaseConfigured } from '../../config/firebase';
 import EmptyState from '../../components/ui/EmptyState';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { displayIdentityName, useDisplayIdentities } from '../../hooks/useDisplayIdentities';
-import ControlProposalDialog from './ControlProposalDialog';
 import { useAppDialog } from '../../contexts/AppDialogContext';
 
 interface ProposedChecklistItem {
@@ -39,12 +35,10 @@ interface ProposedChecklistItem {
   defaultOfficerUid: string;
   candidates: Array<{ officerUid: string; state: string; scopeType: 'state' | 'federal'; workloadCount: number; lastAssignedAt?: number }>;
 }
-
 interface ProposedChecklistResponse {
   checklist: ProposedChecklistItem[];
   venueState: string;
 }
-
 export default function AdminAssignment() {
   const dialog = useAppDialog();
   const { eventId } = useParams<{ eventId: string }>();
@@ -58,15 +52,8 @@ export default function AdminAssignment() {
   const [selected, setSelected] = useState<Record<AuthorityType, string>>({} as Record<AuthorityType, string>);
   const [loadingChecklist, setLoadingChecklist] = useState(true);
   const [committing, setCommitting] = useState(false);
-  const [confirming, setConfirming] = useState(false);
   const [unassigning, setUnassigning] = useState<AuthorityType | null>(null);
   const [unassigningAll, setUnassigningAll] = useState(false);
-  const [adminNote, setAdminNote] = useState('');
-  const [adminReason, setAdminReason] = useState('');
-  const [adminSuggestion, setAdminSuggestion] = useState('');
-  const [rejectionReasonCategory, setRejectionReasonCategory] = useState<RejectionReasonCategory | ''>('');
-  const [finalDecision, setFinalDecision] = useState<DecisionValue | ''>('');
-  const [controlProposalOpen, setControlProposalOpen] = useState(false);
 
   // Live event doc.
   useEffect(() => {
@@ -133,14 +120,10 @@ export default function AdminAssignment() {
   }
   const assignmentsByAuthority = new Map<AuthorityType, Assignment>();
   for (const a of currentAssignments) assignmentsByAuthority.set(a.authorityType, a);
-  const aggregateDecision = computeAggregate(Array.from(assignmentsByAuthority.values()), required);
   const identityNames = useDisplayIdentities([
     ...assignments.flatMap((assignment) => [assignment.officerUid, assignment.assignedBy, assignment.revokedBy]),
     ...checklist.flatMap((item) => item.candidates.map((candidate) => candidate.officerUid)),
   ]);
-  useEffect(() => {
-    if (aggregateDecision && !finalDecision) setFinalDecision(aggregateDecision);
-  }, [aggregateDecision, finalDecision]);
 
   if (!isFirebaseConfigured) {
     return <div className="p-8 text-ink-500">Firebase is not configured.</div>;
@@ -182,37 +165,6 @@ export default function AdminAssignment() {
     }
   };
 
-  const confirmSecondReview = async () => {
-    if (!eventId || !finalDecision) return;
-    setConfirming(true);
-    try {
-      const command = httpsCallable<{
-        eventId: string;
-        finalDecision: DecisionValue;
-        reason?: string;
-        suggestion?: string;
-        adminNote?: string;
-        rejectionReasonCategory?: RejectionReasonCategory;
-      }, { status: DecisionValue; aggregate?: EventRecord['status'] }>(
-        functions,
-        'makeSecondReviewDecision',
-      );
-      await command({
-        eventId,
-        finalDecision,
-        ...(finalDecision === 'Rejected'
-          ? { reason: adminReason.trim(), suggestion: adminSuggestion.trim(), rejectionReasonCategory: rejectionReasonCategory as RejectionReasonCategory }
-          : { adminNote: adminNote.trim() || undefined }),
-      });
-      toast.success(`Final decision recorded: ${finalDecision}.`);
-      if (finalDecision === 'Approved') setControlProposalOpen(true);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Unable to confirm second review.');
-    } finally {
-      setConfirming(false);
-    }
-  };
-
   const unassign = async (authorityType: AuthorityType | null) => {
     if (!eventId) return;
     if (!await dialog.confirm(authorityType
@@ -248,14 +200,6 @@ export default function AdminAssignment() {
 
   return (
     <div className="p-5 sm:p-8">
-      {controlProposalOpen && eventId && (
-        <ControlProposalDialog
-          eventId={eventId}
-          eventName={details.name}
-          onClose={() => setControlProposalOpen(false)}
-          onPublished={() => setControlProposalOpen(false)}
-        />
-      )}
       <Link to={`/admin/applications/${eventId}`} className="mb-4 inline-flex min-h-11 items-center gap-1 text-sm font-medium text-brand-700 hover:text-brand-800">
         <ChevronLeft size={16} /> Back to application
       </Link>
@@ -387,50 +331,17 @@ export default function AdminAssignment() {
             )}
           </section>
 
-          {allComplete && aggregateDecision && (
+          {allComplete && (
             <section className="card">
               <div className="card-header">
                 <div>
-                  <h2 className="font-semibold">Second review</h2>
-                  <p className="mt-0.5 text-xs text-ink-500">All officers have recorded proposals. The admin records the final application outcome.</p>
+                  <h2 className="font-semibold">Final review</h2>
+                  <p className="mt-0.5 text-xs text-ink-500">All officers have recorded proposals. Record the final application outcome on the application details page.</p>
                 </div>
                 <ShieldCheck size={18} className="text-status-approved" />
               </div>
-              <div className="card-body space-y-3">
-                <p className="rounded-md bg-cream-50 p-3 text-sm text-ink-700">
-                  Officer aggregate recommendation: <span className="font-semibold">{aggregateDecision}</span>
-                </p>
-                <label className="block text-xs font-medium text-ink-600">
-                  Admin final decision
-                  <select className="input mt-1" value={finalDecision} onChange={(e) => setFinalDecision(e.target.value as DecisionValue)}>
-                    <option value="">Select final decision</option>
-                    <option value="Approved">Approved</option>
-                    <option value="Rejected">Rejected</option>
-                  </select>
-                </label>
-                {finalDecision === 'Rejected' ? <>
-                  <label className="block text-xs font-medium text-ink-600">
-                    Rejection category
-                    <select className="input mt-1" value={rejectionReasonCategory} onChange={(event) => setRejectionReasonCategory(event.target.value as RejectionReasonCategory)}>
-                      <option value="">Select a category</option>
-                      {REJECTION_REASON_CATEGORIES.map((category) => <option key={category} value={category}>{category.replaceAll('_', ' ')}</option>)}
-                    </select>
-                  </label>
-                  <label className="block text-xs font-medium text-ink-600">
-                    Rejection reason
-                    <textarea className="input mt-1 resize-y" rows={2} maxLength={1000} value={adminReason} onChange={(e) => setAdminReason(e.target.value)} placeholder="Explain why the application cannot proceed." />
-                  </label>
-                  <label className="block text-xs font-medium text-ink-600">
-                    Suggestion for the organiser
-                    <textarea className="input mt-1 resize-y" rows={2} maxLength={1000} value={adminSuggestion} onChange={(e) => setAdminSuggestion(e.target.value)} placeholder="Provide the required corrective direction." />
-                  </label>
-                </> : <label className="block text-xs font-medium text-ink-600">
-                  Admin note (optional, for audit)
-                  <textarea className="input mt-1 resize-y" rows={2} maxLength={1000} value={adminNote} onChange={(e) => setAdminNote(e.target.value)} placeholder="Any context for the audit log." />
-                </label>}
-                <button type="button" className="btn-success w-full" disabled={confirming || !finalDecision || (finalDecision === 'Rejected' && (!rejectionReasonCategory || adminReason.trim().length < 10 || adminSuggestion.trim().length === 0))} onClick={confirmSecondReview}>
-                  {confirming ? 'Recording...' : `Record final decision${finalDecision ? ` (${finalDecision})` : ''}`}
-                </button>
+              <div className="card-body">
+                <Link to={`/admin/applications/${eventId}`} className="btn-primary w-full">Open application details</Link>
               </div>
             </section>
           )}
@@ -438,19 +349,6 @@ export default function AdminAssignment() {
       )}
     </div>
   );
-}
-
-function computeAggregate(assignments: Assignment[], required: AuthorityType[]): DecisionValue | null {
-  if (assignments.length === 0 || required.length === 0) return null;
-  const byAuthority = new Map<AuthorityType, Assignment['decision']>();
-  for (const a of assignments) {
-    if (a.status === 'completed' && a.decision) byAuthority.set(a.authorityType, a.decision);
-  }
-  for (const auth of required) {
-    if (byAuthority.get(auth) === 'Rejected') return 'Rejected';
-  }
-  if (required.every((auth) => byAuthority.get(auth) === 'Approved')) return 'Approved';
-  return null;
 }
 
 export function hasCompleteOfficerSelection(

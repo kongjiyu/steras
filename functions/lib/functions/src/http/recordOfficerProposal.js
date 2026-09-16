@@ -1,6 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.recordOfficerProposal = void 0;
+exports.validateOfficerRejectionRationale = validateOfficerRejectionRationale;
+exports.validateOfficerProposalRequest = validateOfficerProposalRequest;
 exports.assertOfficerDecisionArtifacts = assertOfficerDecisionArtifacts;
 exports.assertCurrentOfficerAssignment = assertCurrentOfficerAssignment;
 exports.allRequiredAssignmentsCompleted = allRequiredAssignmentsCompleted;
@@ -16,7 +18,8 @@ exports.allRequiredAssignmentsCompleted = allRequiredAssignmentsCompleted;
  * Behaviour:
  *   - Officer must have an `assignments/{versionId}_{authorityType}` doc
  *     for this event+version where `officerUid === request.auth.uid` and
- *     `status` is `pending` or `in_progress`.
+  *     `status` is `pending` or `in_progress`; a completed assignment may
+  *     be amended while the event remains in Authority Review.
  *   - Writes `decision`, `reason`, `suggestion`, `decidedAt`, sets
  *     `status: 'completed'` on the assignment.
  *   - Does NOT change `events.status`. (The old `makeAuthorityDecision`
@@ -31,6 +34,7 @@ exports.allRequiredAssignmentsCompleted = allRequiredAssignmentsCompleted;
  * (officer approve) are realised here.
  */
 const firebase_admin_1 = require("firebase-admin");
+const firestore_1 = require("firebase-admin/firestore");
 const https_1 = require("firebase-functions/v2/https");
 const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
@@ -42,34 +46,7 @@ const SUGGESTION_MAX = 1000;
 exports.recordOfficerProposal = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
     if (!request.auth)
         throw new https_1.HttpsError('unauthenticated', 'Sign in before recording a proposal.');
-    const eventId = (request.data?.eventId ?? '').trim();
-    const decision = request.data?.decision;
-    const reason = (request.data?.reason ?? '').trim();
-    const suggestion = (request.data?.suggestion ?? '').trim();
-    const confirmedReview = request.data?.confirmedReview === true;
-    const rejectionReasonCategory = request.data?.rejectionReasonCategory;
-    if (!eventId)
-        throw new https_1.HttpsError('invalid-argument', 'eventId is required.');
-    if (!isDecision(decision))
-        throw new https_1.HttpsError('invalid-argument', 'A valid decision is required.');
-    if (reason.length < REASON_MIN || reason.length > REASON_MAX) {
-        throw new https_1.HttpsError('invalid-argument', `reason must be ${REASON_MIN}-${REASON_MAX} characters.`);
-    }
-    if (suggestion.length > SUGGESTION_MAX) {
-        throw new https_1.HttpsError('invalid-argument', `suggestion must be at most ${SUGGESTION_MAX} characters.`);
-    }
-    if (decision === 'Rejected' && suggestion.length === 0) {
-        throw new https_1.HttpsError('invalid-argument', 'A suggestion is required when rejecting.');
-    }
-    if (decision === 'Rejected' && !types_1.REJECTION_REASON_CATEGORIES.includes(rejectionReasonCategory)) {
-        throw new https_1.HttpsError('invalid-argument', 'A valid rejectionReasonCategory is required when rejecting.');
-    }
-    // FR-M3-16: officer must confirm review of all listed materials
-    // before approving. The UI checkbox drives this — server-side gate
-    // is the source of truth.
-    if (decision === 'Approved' && !confirmedReview) {
-        throw new https_1.HttpsError('failed-precondition', 'You must confirm that you have reviewed the assessment, advisory, evidence, and resource recommendation before approving.');
-    }
+    const { eventId, decision, reason, suggestion, confirmedReview, rejectionReasonCategory } = validateOfficerProposalRequest(request.data);
     const db = (0, firebase_admin_1.firestore)();
     const userSnap = await db.collection(types_1.COLLECTIONS.USERS).doc(request.auth.uid).get();
     const profile = userSnap.data();
@@ -94,7 +71,7 @@ exports.recordOfficerProposal = (0, https_1.onCall)({ region: runtime_1.FUNCTION
     const assessmentRef = eventRef.collection(types_1.COLLECTIONS.ASSESSMENTS).doc(assessmentId);
     const resourceRef = eventRef.collection(types_1.COLLECTIONS.RESOURCES).doc(resourceId);
     const [assessmentSnap, resourceSnap] = await Promise.all([assessmentRef.get(), resourceRef.get()]);
-    if (!['Pending', 'UnderReview'].includes(event.status)) {
+    if (event.status !== 'UnderReview' || event.reviewStage !== 'authority') {
         throw new https_1.HttpsError('failed-precondition', 'This application version is no longer open for officer review.');
     }
     if (event.initialReview?.decision !== 'Approved') {
@@ -110,9 +87,7 @@ exports.recordOfficerProposal = (0, https_1.onCall)({ region: runtime_1.FUNCTION
     const readiness = readyAssessment.assessmentReadiness;
     const finalizedAdminManual = readyAssessment.status === 'official_ready'
         && 'sourceKind' in readyAssessment && readyAssessment.sourceKind === 'admin_manual';
-    if (!finalizedAdminManual && (readiness === 'provisional' || readiness === 'insufficient_data') && reason.length < 80) {
-        throw new https_1.HttpsError('invalid-argument', `When the assessment is ${readiness}, the proposal reason must be at least 80 characters.`);
-    }
+    validateOfficerRejectionRationale(decision, readiness, finalizedAdminManual, reason);
     // Find this officer's assignment.
     const assignmentId = `${versionId}_${profile.authorityType}`;
     const assignmentRef = eventRef.collection(types_1.COLLECTIONS.ASSIGNMENTS).doc(assignmentId);
@@ -124,18 +99,17 @@ exports.recordOfficerProposal = (0, https_1.onCall)({ region: runtime_1.FUNCTION
     if (assignment.officerUid !== request.auth.uid) {
         throw new https_1.HttpsError('permission-denied', 'This assignment belongs to another officer.');
     }
-    if (assignment.status === 'completed') {
-        throw new https_1.HttpsError('failed-precondition', 'You have already recorded a decision for this assignment.');
-    }
     if (assignment.status === 'revoked') {
         throw new https_1.HttpsError('failed-precondition', 'This assignment was revoked.');
     }
     const now = Date.now();
     return db.runTransaction(async (tx) => {
         // Reads first (Firestore requires all reads before all writes).
-        const [currentEventSnap, allAssignmentsSnap, currentAssessmentSnap, currentResourceSnap] = await Promise.all([
+        const currentDecisionRef = eventRef.collection(types_1.COLLECTIONS.DECISIONS).doc(assignmentId);
+        const [currentEventSnap, allAssignmentsSnap, currentDecisionSnap, currentAssessmentSnap, currentResourceSnap] = await Promise.all([
             tx.get(eventRef),
             tx.get(eventRef.collection(types_1.COLLECTIONS.ASSIGNMENTS)),
+            tx.get(currentDecisionRef),
             tx.get(assessmentRef),
             tx.get(resourceRef),
         ]);
@@ -148,11 +122,22 @@ exports.recordOfficerProposal = (0, https_1.onCall)({ region: runtime_1.FUNCTION
         }
         assertOfficerDecisionArtifacts(currentAssessmentSnap.data(), currentResourceSnap.data(), eventId, versionId, assessmentId, resourceId, authorityType);
         const all = allAssignmentsSnap.docs
-            .map((d) => d.data())
+            .map((d) => ({ ...d.data(), assignmentId: d.id }))
             .filter((candidate) => candidate.versionId === versionId);
-        const transactionalAssignment = allAssignmentsSnap.docs
-            .find((document) => document.id === assignmentId);
-        assertCurrentOfficerAssignment(transactionalAssignment?.data(), assignmentId, eventId, versionId, authorityType, callerUid);
+        const currentAssignment = all.find((candidate) => candidate.assignmentId === assignmentId);
+        if (!currentAssignment || currentAssignment.officerUid !== request.auth.uid
+            || currentAssignment.authorityType !== profile.authorityType
+            || currentAssignment.status === 'revoked') {
+            throw new https_1.HttpsError('permission-denied', 'This assignment is no longer yours to review.');
+        }
+        const isAmendment = currentAssignment.status === 'completed';
+        const previousReason = currentAssignment.reason ?? '';
+        const previousSuggestion = currentAssignment.suggestion ?? '';
+        const previousDecisionRecord = currentDecisionSnap.data();
+        if (isAmendment && currentAssignment.decision === decision
+            && previousReason === reason && previousSuggestion === suggestion) {
+            return { assignmentId, decision, allCompleted: false, amended: false, idempotent: true };
+        }
         // Treat the current assignment as if it's about to be completed
         // (so the last officer's proposal correctly triggers reviewStage='second').
         const afterCurrentProposal = all
@@ -166,19 +151,87 @@ exports.recordOfficerProposal = (0, https_1.onCall)({ region: runtime_1.FUNCTION
         tx.update(assignmentRef, {
             status: 'completed',
             decision,
-            reason,
+            ...(reason ? { reason } : { reason: firestore_1.FieldValue.delete() }),
+            ...(suggestion ? { suggestion } : { suggestion: firestore_1.FieldValue.delete() }),
             reviewStage: 'authority',
-            ...(decision === 'Rejected' ? { rejectionReasonCategory } : {}),
-            suggestion: suggestion || null,
+            ...(decision === 'Rejected' ? { rejectionReasonCategory } : { rejectionReasonCategory: firestore_1.FieldValue.delete() }),
             decidedAt: now,
+            ...(decision === 'Approved' ? { confirmedReview: true } : { confirmedReview: firestore_1.FieldValue.delete() }),
         });
-        if (allCompleted) {
+        // Older clients wrote a current decision document in addition to the
+        // assignment. Keep that legacy projection in sync when amending, while
+        // leaving the new assignment-first schema unchanged for fresh proposals.
+        if (isAmendment && currentDecisionSnap.exists && previousDecisionRecord?.current === true) {
+            tx.set(currentDecisionRef, {
+                ...previousDecisionRecord,
+                decisionId: assignmentId,
+                eventId,
+                versionId,
+                authorityType: currentAssignment.authorityType,
+                decision,
+                rationale: reason,
+                ...(suggestion ? { suggestion } : { suggestion: firestore_1.FieldValue.delete() }),
+                ...(decision === 'Approved' ? { materialsReviewed: true } : { materialsReviewed: firestore_1.FieldValue.delete() }),
+                reviewerId: request.auth.uid,
+                decidedAt: now,
+                current: true,
+            }, { merge: true });
+        }
+        if (allCompleted && !isAmendment) {
             tx.update(eventRef, {
                 reviewStage: 'second',
                 updatedAt: now,
             });
         }
-        return { assignmentId, decision, allCompleted };
+        if (isAmendment && currentAssignment.decision && currentAssignment.decidedAt) {
+            const archivedDecision = previousDecisionRecord?.decision ?? currentAssignment.decision;
+            const archivedReason = previousDecisionRecord?.rationale ?? previousReason;
+            const archivedSuggestion = previousDecisionRecord?.suggestion ?? previousSuggestion;
+            const archivedReviewer = previousDecisionRecord?.reviewerId ?? currentAssignment.officerUid;
+            const archivedAt = previousDecisionRecord?.decidedAt ?? currentAssignment.decidedAt;
+            const historyId = `${assignmentId}_amended_${now}_${historySuffix({
+                decision: archivedDecision,
+                reason: archivedReason,
+                suggestion: archivedSuggestion,
+            })}`;
+            const historyReference = eventRef.collection(types_1.COLLECTIONS.DECISION_HISTORY).doc(historyId);
+            tx.create(historyReference, {
+                decisionId: historyId,
+                eventId,
+                versionId,
+                authorityType: currentAssignment.authorityType,
+                decision: archivedDecision,
+                rationale: archivedReason,
+                ...(archivedSuggestion ? { suggestion: archivedSuggestion } : {}),
+                reviewerId: archivedReviewer,
+                decidedAt: archivedAt,
+                current: false,
+                amendedAt: now,
+                amendedBy: request.auth.uid,
+            });
+            const auditReference = eventRef.collection(types_1.COLLECTIONS.AUDIT_LOGS).doc(`${historyId}_audit`);
+            tx.create(auditReference, {
+                id: auditReference.id,
+                eventId,
+                versionId,
+                action: 'decision_amended',
+                actorId: request.auth.uid,
+                actorRole: 'authority',
+                timestamp: now,
+                notes: reason || 'Approval rationale omitted after reviewed-material confirmation.',
+                metadata: {
+                    authorityType: currentAssignment.authorityType,
+                    previousDecision: archivedDecision,
+                    previousReason: archivedReason,
+                    previousSuggestion: archivedSuggestion || null,
+                    decision,
+                    reason: reason || null,
+                    suggestion: suggestion || null,
+                    confirmedReview,
+                },
+            });
+        }
+        return { assignmentId, decision, allCompleted, amended: isAmendment, idempotent: false };
     }).then(async (result) => {
         // Fire-and-forget notification to the admin when all officers are done.
         if (result.allCompleted) {
@@ -209,11 +262,67 @@ exports.recordOfficerProposal = (0, https_1.onCall)({ region: runtime_1.FUNCTION
             assignmentId: result.assignmentId,
             decision: result.decision,
             allCompleted: result.allCompleted,
+            amended: result.amended,
+            ...(result.idempotent ? { idempotent: true } : {}),
         };
     });
 });
+function historySuffix(value) {
+    return Buffer.from(JSON.stringify(value)).toString('base64url').slice(0, 16);
+}
+/** Apply the longer rationale rule only to adverse officer proposals while
+ * the assessment is provisional or lacks sufficient data. */
+function validateOfficerRejectionRationale(decision, readiness, finalizedAdminManual, reason) {
+    if (decision === 'Rejected' && !finalizedAdminManual
+        && (readiness === 'provisional' || readiness === 'insufficient_data') && reason.trim().length < 80) {
+        throw new https_1.HttpsError('invalid-argument', `When the assessment is ${readiness}, the proposal reason must be at least 80 characters.`);
+    }
+}
 function isDecision(v) {
     return v === 'Approved' || v === 'Rejected';
+}
+/** Validate and normalise the officer-facing proposal contract. */
+function validateOfficerProposalRequest(request) {
+    const value = typeof request === 'object' && request !== null ? request : {};
+    const eventId = typeof value.eventId === 'string' ? value.eventId.trim() : '';
+    const decision = value.decision;
+    const reason = typeof value.reason === 'string' ? value.reason.trim() : '';
+    const suggestion = typeof value.suggestion === 'string' ? value.suggestion.trim() : '';
+    const confirmedReview = value.confirmedReview === true;
+    const rejectionReasonCategory = value.rejectionReasonCategory;
+    if (!eventId)
+        throw new https_1.HttpsError('invalid-argument', 'eventId is required.');
+    if (!isDecision(decision))
+        throw new https_1.HttpsError('invalid-argument', 'A valid decision is required.');
+    // Approval rationale is optional after the officer confirms that all
+    // required review materials were considered. Rejections still need a
+    // meaningful reason.
+    if (decision === 'Rejected' && (reason.length < REASON_MIN || reason.length > REASON_MAX)) {
+        throw new https_1.HttpsError('invalid-argument', `reason must be ${REASON_MIN}-${REASON_MAX} characters when rejecting.`);
+    }
+    if (decision === 'Approved' && reason.length > REASON_MAX) {
+        throw new https_1.HttpsError('invalid-argument', `reason must be at most ${REASON_MAX} characters.`);
+    }
+    if (suggestion.length > SUGGESTION_MAX) {
+        throw new https_1.HttpsError('invalid-argument', `suggestion must be at most ${SUGGESTION_MAX} characters.`);
+    }
+    if (decision === 'Rejected' && (suggestion.length < REASON_MIN || suggestion.length > SUGGESTION_MAX)) {
+        throw new https_1.HttpsError('invalid-argument', `suggestion must be ${REASON_MIN}-${SUGGESTION_MAX} characters when rejecting.`);
+    }
+    if (decision === 'Rejected' && !types_1.REJECTION_REASON_CATEGORIES.includes(rejectionReasonCategory)) {
+        throw new https_1.HttpsError('invalid-argument', 'A valid rejectionReasonCategory is required when rejecting.');
+    }
+    if (decision === 'Approved' && !confirmedReview) {
+        throw new https_1.HttpsError('failed-precondition', 'You must confirm that you have reviewed the assessment, advisory, evidence, and resource recommendation before approving.');
+    }
+    return {
+        eventId,
+        decision,
+        reason,
+        suggestion,
+        confirmedReview,
+        ...(decision === 'Rejected' ? { rejectionReasonCategory: rejectionReasonCategory } : {}),
+    };
 }
 function safeDocumentId(value) {
     return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
@@ -256,7 +365,7 @@ function assertCurrentOfficerAssignment(value, assignmentId, eventId, versionId,
         || assignment.versionId !== versionId
         || assignment.authorityType !== authorityType
         || assignment.officerUid !== officerUid
-        || (assignment.status !== 'pending' && assignment.status !== 'in_progress')) {
+        || !['pending', 'in_progress', 'completed'].includes(assignment.status ?? '')) {
         throw new https_1.HttpsError('aborted', 'The officer assignment changed before the proposal was recorded.');
     }
 }

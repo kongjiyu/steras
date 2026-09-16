@@ -5,9 +5,8 @@ import {
   COLLECTIONS,
   EventRecord,
   RESOURCE_KEYS,
-  RESOURCE_OVERRIDE_REASON_CATEGORIES,
-  ResourceOverrideReasonCategory,
   ResourceOverrideRecord,
+  ResourceOverrideRequest,
   ResourceQuantities,
   ResourceRecommendation,
   UserProfile,
@@ -15,22 +14,26 @@ import {
 import { FUNCTION_REGION } from '../config/runtime';
 import { validateResourceRecommendation } from '../engines/resourceContract';
 
-interface OverrideResourcesRequest {
-  eventId?: string;
-  quantities?: ResourceQuantities;
-  rationale?: string;
-  /** Stable client key used to make retries return the same append-only record. */
-  idempotencyKey?: string;
-  overrideReasonCategory?: ResourceOverrideReasonCategory;
-}
+type OverrideResourcesRequest = Partial<ResourceOverrideRequest>;
 
 export const overrideResources = onCall<OverrideResourcesRequest>({ region: FUNCTION_REGION }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in before overriding resources.');
-  return overrideResourcesForUser(request.auth.uid, request.data);
+  try {
+    return await overrideResourcesForUser(request.auth.uid, request.data);
+  } catch (error) {
+    const value = error as { code?: unknown; message?: unknown };
+    console.warn('[overrideResources] rejected request', {
+      uid: request.auth.uid,
+      eventId: typeof request.data?.eventId === 'string' ? request.data.eventId : undefined,
+      code: value?.code,
+      message: value?.message,
+    });
+    throw error;
+  }
 });
 
 export async function overrideResourcesForUser(uid: string, request: OverrideResourcesRequest, now = Date.now()) {
-  const { eventId, quantities, rationale, idempotencyKey, overrideReasonCategory } = validateResourceOverrideRequest(request);
+  const { eventId, quantities, rationale, idempotencyKey } = validateResourceOverrideRequest(request);
 
   const db = firestore();
   const eventReference = db.collection(COLLECTIONS.EVENTS).doc(eventId);
@@ -58,14 +61,15 @@ export async function overrideResourcesForUser(uid: string, request: OverrideRes
     }
 
     const assignment = assignmentsSnapshot.docs
-      .map((snapshot) => snapshot.data() as { versionId?: string; authorityType?: string; officerUid?: string; status?: string })
+      .map((snapshot) => ({ id: snapshot.id, ...snapshot.data() as { versionId?: string; authorityType?: string; officerUid?: string; status?: string } }))
       .find((candidate) => candidate.versionId === event.currentVersionId
         && candidate.authorityType === profile.authorityType
         && candidate.officerUid === uid
-        && (candidate.status === 'pending' || candidate.status === 'in_progress'));
+        && candidate.id === `${event.currentVersionId}_${profile.authorityType}`);
     if (!assignment) throw new HttpsError('permission-denied', 'You are not the named officer assigned to this application.');
-    if (!['Pending', 'UnderReview'].includes(event.status)) {
-      throw new HttpsError('failed-precondition', 'Resources can only be changed during active review.');
+    const authorityReviewOpen = event.reviewStage === 'authority' && ['Pending', 'UnderReview'].includes(event.status);
+    if (!authorityReviewOpen || !['pending', 'in_progress', 'completed'].includes(assignment.status ?? '')) {
+      throw new HttpsError('failed-precondition', 'Resources can only be changed during Authority Review.');
     }
 
     const resourceReference = eventReference.collection(COLLECTIONS.RESOURCES).doc(event.currentResourceId);
@@ -93,8 +97,7 @@ export async function overrideResourcesForUser(uid: string, request: OverrideRes
       const existing = existingOverride.data() as ResourceOverrideRecord;
       if (existing.eventId !== eventId || existing.versionId !== event.currentVersionId
         || existing.baseResourceId !== event.currentResourceId || existing.reviewerId !== uid
-        || !sameQuantities(existing.quantities, quantities) || existing.rationale !== rationale
-        || existing.overrideReasonCategory !== overrideReasonCategory) {
+        || !sameQuantities(existing.quantities, quantities) || existing.rationale !== rationale) {
         throw new HttpsError('already-exists', 'The idempotency key is already bound to different override content.');
       }
       return {
@@ -136,7 +139,6 @@ export async function overrideResourcesForUser(uid: string, request: OverrideRes
       authorityType: profile.authorityType,
       reviewerId: uid,
       rationale,
-      overrideReasonCategory,
       previousQuantities,
       quantities,
       idempotencyKey,
@@ -160,7 +162,6 @@ export async function overrideResourcesForUser(uid: string, request: OverrideRes
         previousQuantities,
         quantities,
         overrideId,
-        overrideReasonCategory,
       },
     });
     return {
@@ -182,21 +183,16 @@ export function validateResourceOverrideRequest(request: unknown): {
   quantities: ResourceQuantities;
   rationale: string;
   idempotencyKey: string;
-  overrideReasonCategory: ResourceOverrideReasonCategory;
 } {
   const value = typeof request === 'object' && request !== null ? request as Record<string, unknown> : {};
   const eventId = typeof value.eventId === 'string' ? value.eventId.trim() : '';
   const rationale = typeof value.rationale === 'string' ? value.rationale.trim() : '';
   const idempotencyKey = typeof value.idempotencyKey === 'string' ? value.idempotencyKey.trim() : '';
-  const overrideReasonCategory = value.overrideReasonCategory;
   if (!eventId) throw new HttpsError('invalid-argument', 'eventId is required.');
   if (!isResourceQuantities(value.quantities)) throw new HttpsError('invalid-argument', 'Every resource quantity must be a non-negative integer.');
   if (rationale.length < 10 || rationale.length > 1_000) throw new HttpsError('invalid-argument', 'Rationale must be between 10 and 1,000 characters.');
   if (!safeIdempotencyKey(idempotencyKey)) throw new HttpsError('invalid-argument', 'idempotencyKey must be 8-128 characters.');
-  if (!RESOURCE_OVERRIDE_REASON_CATEGORIES.includes(overrideReasonCategory as ResourceOverrideReasonCategory)) {
-    throw new HttpsError('invalid-argument', 'A valid overrideReasonCategory is required.');
-  }
-  return { eventId, quantities: value.quantities, rationale, idempotencyKey, overrideReasonCategory: overrideReasonCategory as ResourceOverrideReasonCategory };
+  return { eventId, quantities: value.quantities, rationale, idempotencyKey };
 }
 
 function isResourceQuantities(value: unknown): value is ResourceQuantities {

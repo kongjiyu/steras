@@ -12,10 +12,22 @@ const resourceContract_1 = require("../engines/resourceContract");
 exports.overrideResources = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
     if (!request.auth)
         throw new https_1.HttpsError('unauthenticated', 'Sign in before overriding resources.');
-    return overrideResourcesForUser(request.auth.uid, request.data);
+    try {
+        return await overrideResourcesForUser(request.auth.uid, request.data);
+    }
+    catch (error) {
+        const value = error;
+        console.warn('[overrideResources] rejected request', {
+            uid: request.auth.uid,
+            eventId: typeof request.data?.eventId === 'string' ? request.data.eventId : undefined,
+            code: value?.code,
+            message: value?.message,
+        });
+        throw error;
+    }
 });
 async function overrideResourcesForUser(uid, request, now = Date.now()) {
-    const { eventId, quantities, rationale, idempotencyKey, overrideReasonCategory } = validateResourceOverrideRequest(request);
+    const { eventId, quantities, rationale, idempotencyKey } = validateResourceOverrideRequest(request);
     const db = (0, firebase_admin_1.firestore)();
     const eventReference = db.collection(types_1.COLLECTIONS.EVENTS).doc(eventId);
     const userReference = db.collection(types_1.COLLECTIONS.USERS).doc(uid);
@@ -41,15 +53,16 @@ async function overrideResourcesForUser(uid, request, now = Date.now()) {
             throw new https_1.HttpsError('failed-precondition', 'The application current-generation pointers are invalid.');
         }
         const assignment = assignmentsSnapshot.docs
-            .map((snapshot) => snapshot.data())
+            .map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }))
             .find((candidate) => candidate.versionId === event.currentVersionId
             && candidate.authorityType === profile.authorityType
             && candidate.officerUid === uid
-            && (candidate.status === 'pending' || candidate.status === 'in_progress'));
+            && candidate.id === `${event.currentVersionId}_${profile.authorityType}`);
         if (!assignment)
             throw new https_1.HttpsError('permission-denied', 'You are not the named officer assigned to this application.');
-        if (!['Pending', 'UnderReview'].includes(event.status)) {
-            throw new https_1.HttpsError('failed-precondition', 'Resources can only be changed during active review.');
+        const authorityReviewOpen = event.reviewStage === 'authority' && ['Pending', 'UnderReview'].includes(event.status);
+        if (!authorityReviewOpen || !['pending', 'in_progress', 'completed'].includes(assignment.status ?? '')) {
+            throw new https_1.HttpsError('failed-precondition', 'Resources can only be changed during Authority Review.');
         }
         const resourceReference = eventReference.collection(types_1.COLLECTIONS.RESOURCES).doc(event.currentResourceId);
         const assessmentReference = eventReference.collection(types_1.COLLECTIONS.ASSESSMENTS).doc(event.currentAssessmentId);
@@ -75,8 +88,7 @@ async function overrideResourcesForUser(uid, request, now = Date.now()) {
             const existing = existingOverride.data();
             if (existing.eventId !== eventId || existing.versionId !== event.currentVersionId
                 || existing.baseResourceId !== event.currentResourceId || existing.reviewerId !== uid
-                || !sameQuantities(existing.quantities, quantities) || existing.rationale !== rationale
-                || existing.overrideReasonCategory !== overrideReasonCategory) {
+                || !sameQuantities(existing.quantities, quantities) || existing.rationale !== rationale) {
                 throw new https_1.HttpsError('already-exists', 'The idempotency key is already bound to different override content.');
             }
             return {
@@ -115,7 +127,6 @@ async function overrideResourcesForUser(uid, request, now = Date.now()) {
             authorityType: profile.authorityType,
             reviewerId: uid,
             rationale,
-            overrideReasonCategory,
             previousQuantities,
             quantities,
             idempotencyKey,
@@ -139,7 +150,6 @@ async function overrideResourcesForUser(uid, request, now = Date.now()) {
                 previousQuantities,
                 quantities,
                 overrideId,
-                overrideReasonCategory,
             },
         });
         return {
@@ -160,7 +170,6 @@ function validateResourceOverrideRequest(request) {
     const eventId = typeof value.eventId === 'string' ? value.eventId.trim() : '';
     const rationale = typeof value.rationale === 'string' ? value.rationale.trim() : '';
     const idempotencyKey = typeof value.idempotencyKey === 'string' ? value.idempotencyKey.trim() : '';
-    const overrideReasonCategory = value.overrideReasonCategory;
     if (!eventId)
         throw new https_1.HttpsError('invalid-argument', 'eventId is required.');
     if (!isResourceQuantities(value.quantities))
@@ -169,10 +178,7 @@ function validateResourceOverrideRequest(request) {
         throw new https_1.HttpsError('invalid-argument', 'Rationale must be between 10 and 1,000 characters.');
     if (!safeIdempotencyKey(idempotencyKey))
         throw new https_1.HttpsError('invalid-argument', 'idempotencyKey must be 8-128 characters.');
-    if (!types_1.RESOURCE_OVERRIDE_REASON_CATEGORIES.includes(overrideReasonCategory)) {
-        throw new https_1.HttpsError('invalid-argument', 'A valid overrideReasonCategory is required.');
-    }
-    return { eventId, quantities: value.quantities, rationale, idempotencyKey, overrideReasonCategory: overrideReasonCategory };
+    return { eventId, quantities: value.quantities, rationale, idempotencyKey };
 }
 function isResourceQuantities(value) {
     if (typeof value !== 'object' || value === null || Array.isArray(value))

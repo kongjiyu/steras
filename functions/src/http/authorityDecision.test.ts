@@ -18,6 +18,7 @@ import {
 import { ACTIVE_CATEGORY_SCHEMA } from '../config/categorySchema';
 import { computeResources } from '../engines/resourceCalculator';
 import { aggregateDecisionStatus, assertLegacyAuthorityDecisionEndpointAvailable, assertOfficialAssessmentReady, validateDecisionRequest } from './authorityDecision';
+import { validateOfficerProposalRequest, validateOfficerRejectionRationale } from './recordOfficerProposal';
 import { buildAuthorityReviewState, buildOfficialAssessmentResult } from '../engines/authorityFinalisation';
 
 describe('assertOfficialAssessmentReady', () => {
@@ -193,6 +194,13 @@ describe('assertOfficialAssessmentReady', () => {
 });
 
 describe('officer decision boundary', () => {
+  it('allows an approval with no rationale when reviewed-material confirmation is present', () => {
+    expect(validateDecisionRequest({ eventId: 'event-1', decision: 'Approved', confirmedReview: true }))
+      .toMatchObject({ eventId: 'event-1', decision: 'Approved', rationale: '', materialsReviewed: true });
+    expect(validateOfficerProposalRequest({ eventId: 'event-1', decision: 'Approved', confirmedReview: true }))
+      .toMatchObject({ eventId: 'event-1', decision: 'Approved', reason: '', confirmedReview: true });
+  });
+
   it('retires the legacy callable so initial-review events cannot bypass assignment or Admin second review', () => {
     expect(() => assertLegacyAuthorityDecisionEndpointAvailable()).toThrow(/legacy decision endpoint is retired/i);
   });
@@ -201,6 +209,16 @@ describe('officer decision boundary', () => {
     expect(validateDecisionRequest({ eventId: 'event-1', decision: 'Approved', rationale: 'Reviewed all required materials.', materialsReviewed: true })).toMatchObject({ materialsReviewed: true });
     expect(() => validateDecisionRequest({ eventId: 'event-1', decision: 'Rejected', rationale: 'Evidence is not sufficient.' })).toThrow(HttpsError);
     expect(validateDecisionRequest({ eventId: 'event-1', decision: 'Rejected', rationale: 'Evidence is not sufficient.', suggestion: 'Provide verified evidence and submit the application again.', rejectionReasonCategory: 'insufficient_evidence' })).toMatchObject({ decision: 'Rejected', rejectionReasonCategory: 'insufficient_evidence' });
+    expect(() => validateOfficerProposalRequest({ eventId: 'event-1', decision: 'Rejected', reason: 'Evidence is not sufficient.' })).toThrow(HttpsError);
+    expect(() => validateOfficerProposalRequest({ eventId: 'event-1', decision: 'Rejected', reason: 'Evidence is not sufficient.', suggestion: 'Fix it.' })).toThrow(HttpsError);
+  });
+
+  it('retains the stronger rationale rule for provisional or insufficient assessments on rejection', () => {
+    const provisional = 'a'.repeat(79);
+    const valid = 'a'.repeat(80);
+    expect(() => validateOfficerRejectionRationale('Rejected', 'provisional', false, provisional)).toThrow(HttpsError);
+    expect(() => validateOfficerRejectionRationale('Rejected', 'insufficient_data', false, valid)).not.toThrow();
+    expect(() => validateOfficerRejectionRationale('Rejected', 'provisional', true, provisional)).not.toThrow();
   });
 
   it('rejects event IDs that could escape the event document path', () => {

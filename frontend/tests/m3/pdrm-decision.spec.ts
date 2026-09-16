@@ -35,15 +35,10 @@ test.describe('@M3 PDRM decision flow', () => {
     await page.goto(`/authority/events/${EVENTS.foodFair}`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: /your decision/i })).toBeVisible();
 
-    // Fill the rationale and submit an approval proposal.
-    const rationale = 'PDRM E2E test — crowd ingress plan accepted, traffic management plan acceptable.';
+    // Approval only needs the reviewed-materials confirmation. The rationale
+    // field remains available for context but is intentionally optional.
     // Scope to the "Your decision" section (Stage-1 section also has textareas/buttons).
     const decisionSection = page.locator('section', { has: page.getByRole('heading', { name: /your decision/i }) });
-    const rationaleTa = decisionSection.getByLabel(/decision rationale/i);
-    await rationaleTa.scrollIntoViewIfNeeded();
-    await rationaleTa.fill(rationale);
-    await expect(rationaleTa).toHaveValue(rationale);
-
     // FR-M3-16: tick the "I have reviewed" checkbox before Approve.
     await decisionSection.getByTestId('confirmed-review-checkbox').check();
 
@@ -65,7 +60,7 @@ test.describe('@M3 PDRM decision flow', () => {
     expect(assignment!.decision).toBe('Approved');
     expect(assignment!.officerUid).toBe(pdrmUid);
     expect(assignment!.status).toBe('completed');
-    expect(assignment!.reason).toBe(rationale);
+    expect(assignment!.reason).toBeUndefined();
 
     const eventAfter = await api.getDoc(`events/${EVENTS.foodFair}`);
     expect(eventAfter!.status).toBe('UnderReview');

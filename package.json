@@ -29,6 +29,7 @@
     "seed:staging": "npm --workspace functions run seed:venues:staging",
     "seed:demo": "npm --workspace functions run seed:demo",
     "seed:steras:test": "npm --workspace functions run seed:steras:test --",
+    "seed:steras:samples": "npm --workspace functions run seed:steras:samples --",
     "uat:staging": "npm --workspace functions run uat:staging",
     "uat:fallback": "npm --workspace functions run uat:fallback",
     "cutover:resource-v3": "npm --workspace functions run cutover:resource-v3",

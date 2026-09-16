@@ -102,19 +102,21 @@ const STATE_EVENT_TYPES: Array<[SterasTestState, EventType, EventType]> = [
 const workflowOverrides: Record<string, Partial<Scenario>> = {
   [STERAS_TEST_EVENTS.draftPrimary]: { status: 'Draft', requiredAuthorities: [], reviewStage: null, assignments: 'none' },
   [STERAS_TEST_EVENTS.draftSecondary]: { status: 'Draft', requiredAuthorities: [], reviewStage: null, assignments: 'none' },
-  [STERAS_TEST_EVENTS.complianceBlocked]: { status: 'UnderReview', complianceStatus: 'blocked', reviewStage: 'authority', assignments: 'pending' },
-  [STERAS_TEST_EVENTS.provisionalReview]: { requiredAuthorities: ['PDRM', 'BOMBA'], assessmentReadiness: 'provisional', reviewStage: 'manual' },
-  [STERAS_TEST_EVENTS.awaitingAssignment]: { reviewStage: 'initial' },
-  [STERAS_TEST_EVENTS.authorityPartial]: { reviewStage: 'authority', assignments: 'partial' },
-  [STERAS_TEST_EVENTS.secondReview]: { reviewStage: 'second', assignments: 'complete' },
-  [STERAS_TEST_EVENTS.rejected]: { reviewStage: 'closed', assignments: 'complete', finalDecision: 'Rejected' },
-  [STERAS_TEST_EVENTS.secondReviewRejected]: { reviewStage: 'closed', assignments: 'complete', finalDecision: 'Rejected' },
+  [STERAS_TEST_EVENTS.complianceBlocked]: { status: 'UnderReview', complianceStatus: 'blocked', reviewStage: 'authority', assignments: 'pending', recordKind: 'initial' },
+  // This is the provisional-readiness officer-gate fixture. Keep it a valid
+  // provisional generation so Playwright can release it to authorities.
+  [STERAS_TEST_EVENTS.provisionalReview]: { recordKind: 'initial', status: 'Pending', requiredAuthorities: ['PDRM', 'BOMBA'], assessmentReadiness: 'provisional', reviewStage: 'initial' },
+  [STERAS_TEST_EVENTS.awaitingAssignment]: { status: 'UnderReview', reviewStage: 'initial', recordKind: 'initial' },
+  [STERAS_TEST_EVENTS.authorityPartial]: { status: 'UnderReview', reviewStage: 'authority', assignments: 'partial', recordKind: 'initial' },
+  [STERAS_TEST_EVENTS.secondReview]: { status: 'UnderReview', reviewStage: 'second', assignments: 'complete', recordKind: 'initial' },
+  [STERAS_TEST_EVENTS.rejected]: { status: 'Rejected', reviewStage: 'closed', assignments: 'complete', finalDecision: 'Rejected', recordKind: 'initial' },
+  [STERAS_TEST_EVENTS.secondReviewRejected]: { status: 'Rejected', reviewStage: 'closed', assignments: 'complete', finalDecision: 'Rejected', recordKind: 'initial' },
   // These two fixtures are already approved so manual testers can open the
   // control and public Stage 2 workflows immediately after seeding.
-  [STERAS_TEST_EVENTS.controlVerification]: { status: 'Approved', reviewStage: null, assignments: 'complete', controls: 'stage1' },
-  [STERAS_TEST_EVENTS.controlVerificationSecondary]: { status: 'Approved', reviewStage: null, assignments: 'complete', controls: 'stage1' },
-  [STERAS_TEST_EVENTS.publicStage2Secondary]: { status: 'Approved', reviewStage: null, assignments: 'complete', controls: 'stage2' },
-  [STERAS_TEST_EVENTS.publicStage2]: { status: 'Approved', reviewStage: null, assignments: 'complete', controls: 'stage2' },
+  [STERAS_TEST_EVENTS.controlVerification]: { status: 'Approved', reviewStage: null, assignments: 'complete', controls: 'stage1', recordKind: 'initial' },
+  [STERAS_TEST_EVENTS.controlVerificationSecondary]: { status: 'Approved', reviewStage: null, assignments: 'complete', controls: 'stage1', recordKind: 'initial' },
+  [STERAS_TEST_EVENTS.publicStage2Secondary]: { status: 'Approved', reviewStage: null, assignments: 'complete', controls: 'stage2', recordKind: 'initial' },
+  [STERAS_TEST_EVENTS.publicStage2]: { status: 'Approved', reviewStage: null, assignments: 'complete', controls: 'stage2', recordKind: 'initial' },
 };
 
 const SCENARIOS: Scenario[] = STATE_EVENT_TYPES.flatMap(([state, firstType, secondType]) => [firstType, secondType].map((eventType, index) => {
@@ -136,7 +138,16 @@ const SCENARIOS: Scenario[] = STATE_EVENT_TYPES.flatMap(([state, firstType, seco
     reviewStage: recordKind === 'initial' ? 'initial' : 'manual',
     assessmentReadiness: recordKind === 'initial' ? 'complete' : 'insufficient_data',
   };
-  return { ...base, ...(workflowOverrides[id] ?? {}) };
+  const override = workflowOverrides[id] ?? {};
+  return {
+    ...base,
+    ...override,
+    // Any fixture that has progressed beyond the manual gate must carry a
+    // provisional/official M2 artifact rather than a failed manual record.
+    recordKind: override.recordKind
+      ?? (override.status === 'Approved' || override.status === 'Rejected'
+        || (override.reviewStage && override.reviewStage !== 'manual') ? 'initial' : recordKind),
+  };
 }));
 
 const IDENTITIES: Identity[] = [
@@ -490,7 +501,7 @@ function buildAssessmentArtifacts(
   uids: IdentityUids,
   now: number,
   evidenceGeneration: string,
-): { assessment: RiskAssessment; resource: ResourceRecommendation; reviews: AuthorityScoreReview[] } {
+): { assessment: RiskAssessment; resource?: ResourceRecommendation; reviews: AuthorityScoreReview[] } {
   const assessmentId = `assessment-${VERSION_ID}-${scenario.id}`;
   const context = assessmentContext(scenario, now);
   const baseline = computeCategoryBasedAssessment(event, context, now);
@@ -526,12 +537,10 @@ function buildAssessmentArtifacts(
       assessmentReadiness: 'insufficient_data' as const,
       sterasTest: marker(scenario.id),
     } as unknown as RiskAssessment;
-    const calculation = computeResources({ eventId: scenario.id, versionId: VERSION_ID, assessmentId, eventDetails: event.eventDetails, assessmentResult: validation.result });
-    if (!calculation.ok) throw new Error(calculation.message);
-    return { assessment: manualAssessment, resource: provisionalResource(scenario, assessmentId, calculation, now), reviews: [] };
+    return { assessment: manualAssessment, reviews: [] };
   }
 
-  const reviews = scenario.requiredAuthorities.map((authority) => ({
+  const allReviews = scenario.requiredAuthorities.map((authority) => ({
     reviewId: `${assessmentId}-${authority}-review`,
     schemaVersion: SCORE_REVIEW_SCHEMA_VERSION,
     eventId: scenario.id,
@@ -548,6 +557,12 @@ function buildAssessmentArtifacts(
     idempotencyKey: `${assessmentId}-${authority}-review-key`,
     createdAt: now,
   })) as AuthorityScoreReview[];
+  const finalStage = scenario.reviewStage === 'second' || scenario.reviewStage === 'closed' || scenario.status === 'Approved' || scenario.status === 'Rejected';
+  const reviews = finalStage
+    ? allReviews
+    : scenario.assignments === 'partial'
+      ? allReviews.filter((review) => assignmentDecision(review.authorityType, scenario) !== undefined)
+      : [];
   const provisional = {
     ...common,
     status: 'authority_review' as const,
@@ -556,6 +571,17 @@ function buildAssessmentArtifacts(
     authorityReviewRequired: true as const,
     provisionalResult: validation.result,
   } as unknown as ProvisionalRiskAssessment;
+  if (!finalStage) {
+    const calculation = computeResources({ eventId: scenario.id, versionId: VERSION_ID, assessmentId, eventDetails: event.eventDetails, assessmentResult: validation.result });
+    if (!calculation.ok) throw new Error(calculation.message);
+    const assessment = {
+      ...provisional,
+      status: scenario.reviewStage === 'authority' ? 'authority_review' as const : 'provisional_ready' as const,
+      ...(reviews.length ? { authorityReviewState: buildAuthorityReviewState(scenario.requiredAuthorities, reviews, now) } : {}),
+      sterasTest: marker(scenario.id),
+    } as unknown as RiskAssessment;
+    return { assessment, resource: provisionalResource(scenario, assessmentId, calculation, now), reviews };
+  }
   const officialResult = buildOfficialAssessmentResult({
     assessment: provisional,
     eventDetails: event.eventDetails,
@@ -716,7 +742,7 @@ async function writeScenario(ctx: SterasTestContext, scenario: Scenario, uids: I
   const event: Record<string, unknown> = {
     ...eventBase,
     currentAssessmentId: artifacts.assessment.assessmentId,
-    currentResourceId: artifacts.resource.resourceId,
+    ...(artifacts.resource ? { currentResourceId: artifacts.resource.resourceId } : {}),
   };
   if (scenario.status === 'Approved' || (scenario.reviewStage && ['authority', 'second', 'closed'].includes(scenario.reviewStage))) {
     event.initialReview = { decision: 'Approved', reason: 'STERAS test initial review approved.', reviewerUid: uids.admin, reviewedAt: now, manualAssessmentRecorded: scenario.assessmentReadiness === 'provisional' };
@@ -728,7 +754,7 @@ async function writeScenario(ctx: SterasTestContext, scenario: Scenario, uids: I
   batch.set(eventRef, event);
   batch.set(eventRef.collection('versions').doc(VERSION_ID), { versionId: VERSION_ID, eventId: scenario.id, versionNumber: 1, eventDetails: details, documentPaths: [evidencePath], submittedBy: uids.organizer, submittedAt: now, inputHash: processingHash(`${STERAS_TEST_DATASET_ID}:${scenario.id}:version`), sterasTest: marker(scenario.id) });
   batch.set(eventRef.collection('assessments').doc(artifacts.assessment.assessmentId), artifacts.assessment);
-  batch.set(eventRef.collection('resources').doc(artifacts.resource.resourceId), { ...artifacts.resource, sterasTest: marker(scenario.id) });
+  if (artifacts.resource) batch.set(eventRef.collection('resources').doc(artifacts.resource.resourceId), { ...artifacts.resource, sterasTest: marker(scenario.id) });
   for (const review of artifacts.reviews) {
     batch.set(eventRef.collection('assessments').doc(artifacts.assessment.assessmentId).collection('score_reviews').doc(review.reviewId), { ...review, sterasTest: marker(scenario.id) });
   }
@@ -918,6 +944,8 @@ async function writeVenues(ctx: SterasTestContext): Promise<void> {
       coverage: 'partially_covered',
       seating: 'mixed',
       jurisdiction: venue.jurisdiction,
+      verificationStatus: 'verified',
+      verificationRevision: 1,
       fireCertificateStatus: 'valid',
       fireCertificateExpiresAt: now + 31_536_000_000,
       emergencyAccessVerified: true,
@@ -949,11 +977,12 @@ export async function verifySterasTestDataset(ctx: SterasTestContext): Promise<v
     const eventData = event.data() as Partial<EventRecord> | undefined;
     const assessmentId = eventData?.currentAssessmentId;
     const resourceId = eventData?.currentResourceId;
-    const [version, assessmentSnap, resourceSnap, audits] = await Promise.all([
+    const [version, assessmentSnap, resourceSnap, audits, assignmentsSnap] = await Promise.all([
       eventRef.collection('versions').doc(VERSION_ID).get(),
       assessmentId ? eventRef.collection('assessments').doc(assessmentId).get() : Promise.resolve(undefined),
       resourceId ? eventRef.collection('resources').doc(resourceId).get() : Promise.resolve(undefined),
       eventRef.collection('audit_logs').limit(1).get(),
+      eventRef.collection('assignments').where('versionId', '==', VERSION_ID).get(),
     ]);
     if (!event.exists || !isManaged(event.data(), scenario.id)) failures.push(`${scenario.id}: event missing or marker invalid`);
     const assessmentData = assessmentSnap?.data() as Partial<RiskAssessment> | undefined;
@@ -974,7 +1003,7 @@ export async function verifySterasTestDataset(ctx: SterasTestContext): Promise<v
       }
       continue;
     }
-    if (!version.exists || !assessmentSnap?.exists || !resourceSnap?.exists || audits.empty) failures.push(`${scenario.id}: core subdocuments incomplete`);
+    if (!version.exists || !assessmentSnap?.exists || audits.empty) failures.push(`${scenario.id}: core subdocuments incomplete`);
     if (!evidenceExists
       || evidenceMetadata?.metadata?.datasetId !== STERAS_TEST_DATASET_ID
       || evidenceMetadata?.metadata?.managedBy !== MANAGED_BY
@@ -982,12 +1011,30 @@ export async function verifySterasTestDataset(ctx: SterasTestContext): Promise<v
       || contextEvidence?.sourceVersion !== `storage-generation:${evidenceMetadata?.generation}`) {
       failures.push(`${scenario.id}: submitted evidence file or Storage generation provenance invalid`);
     }
+    const manualWithoutOutput = scenario.recordKind === 'manual';
     if (eventData?.organizerId === undefined || eventData?.currentVersionId !== VERSION_ID
-      || !assessmentId || !resourceId || assessmentData?.assessmentId !== assessmentId
+      || !assessmentId || assessmentData?.assessmentId !== assessmentId
       || assessmentData?.eventId !== scenario.id || assessmentData?.versionId !== VERSION_ID
-      || resourceData?.resourceId !== resourceId || resourceData?.eventId !== scenario.id
-      || resourceData?.versionId !== VERSION_ID || resourceData?.assessmentId !== assessmentId
-      || !resourceData || !validateResourceRecommendation(resourceData).ok) failures.push(`${scenario.id}: event references invalid current M2 pointers`);
+      || (manualWithoutOutput
+        ? Boolean(eventData.currentResourceId) || Boolean(resourceSnap?.exists)
+        : !resourceId || !resourceData?.resourceId || resourceData.resourceId !== resourceId
+          || resourceData.eventId !== scenario.id || resourceData.versionId !== VERSION_ID
+          || resourceData.assessmentId !== assessmentId || !validateResourceRecommendation(resourceData).ok)) {
+      failures.push(`${scenario.id}: event references invalid current M2 pointers`);
+    }
+    if (manualWithoutOutput && (assessmentData?.status !== 'manual_review_required' || scenario.reviewStage !== 'manual')) failures.push(`${scenario.id}: manual fixture stage/output is invalid`);
+    if (scenario.reviewStage === 'initial' && (assessmentData?.status !== 'provisional_ready' || !resourceData || resourceData.stage !== 'provisional')) failures.push(`${scenario.id}: Initial Review fixture must have provisional M2 output only`);
+    if (scenario.reviewStage === 'authority' && (!resourceData || resourceData.stage !== 'provisional')) failures.push(`${scenario.id}: Under Review fixture must have provisional resources`);
+    if (scenario.reviewStage === 'second' && (!resourceData || resourceData.stage !== 'official')) failures.push(`${scenario.id}: Final Review fixture must have official resources`);
+    const expectedAssignments = scenario.assignments && scenario.assignments !== 'none' ? scenario.requiredAuthorities.length : 0;
+    if (assignmentsSnap.size !== expectedAssignments) failures.push(`${scenario.id}: assignment count does not match the declared stage`);
+    const scoreReviews = assessmentSnap?.exists ? await assessmentSnap.ref.collection('score_reviews').get() : undefined;
+    const expectedReviews = scenario.recordKind === 'manual' || scenario.reviewStage === 'initial'
+      ? 0
+      : scenario.reviewStage === 'authority'
+        ? scenario.requiredAuthorities.filter((authority) => assignmentDecision(authority, scenario) !== undefined).length
+        : scenario.requiredAuthorities.length;
+    if (scoreReviews && scoreReviews.size !== expectedReviews) failures.push(`${scenario.id}: score-review heads do not match the declared stage`);
     if (scenario.controls) {
       const controls = await eventRef.collection('event_controls').get();
       if (controls.size !== scenario.requiredAuthorities.length) failures.push(`${scenario.id}: expected ${scenario.requiredAuthorities.length} controls, found ${controls.size}`);

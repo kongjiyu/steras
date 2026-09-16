@@ -1460,6 +1460,8 @@ describe('Firestore security rules', () => {
     await seedReviewableEvent(['PDRM', 'BOMBA']);
     const adminDb = getFirestore(adminApp);
     await adminDb.doc('events/review-1').update({
+      status: 'UnderReview',
+      reviewStage: 'authority',
       assignedOfficerUids: ['pdrm-1', 'bomba-1'],
       initialReview: { decision: 'Approved', reason: 'Initial review complete.', reviewerUid: 'admin-1', reviewedAt: 1 },
     });
@@ -1473,7 +1475,6 @@ describe('Firestore security rules', () => {
       eventId: 'review-1', quantities,
       rationale: 'Increased staffing for controlled entry and traffic management.',
       idempotencyKey: 'resource-override-test-1',
-      overrideReasonCategory: 'authority_operational_requirement',
     }, 4_000);
     expect(override).toMatchObject({ eventId: 'review-1', baseResourceId: before?.resourceId, quantities, idempotent: false });
     expect((await baselineReference.get()).data()).toEqual(before);
@@ -1481,7 +1482,6 @@ describe('Firestore security rules', () => {
       eventId: 'review-1', quantities,
       rationale: 'Increased staffing for controlled entry and traffic management.',
       idempotencyKey: 'resource-override-test-1',
-      overrideReasonCategory: 'authority_operational_requirement',
     }, 4_001);
     expect(replay).toMatchObject({ overrideId: override.overrideId, idempotent: true });
     expect((await adminDb.collection('events/review-1/resource_overrides').get()).size).toBe(1);

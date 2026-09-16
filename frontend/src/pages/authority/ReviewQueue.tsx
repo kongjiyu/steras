@@ -1,25 +1,25 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
 import { format } from 'date-fns';
 import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
-import { COLLECTIONS, EventRecord, EventStatus } from '@shared/types';
+import { Assignment, COLLECTIONS, EventRecord } from '@shared/types';
+import { resolveApplicationDisplayState } from '@shared/applicationState';
 import { db, isFirebaseConfigured } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import EmptyState from '../../components/ui/EmptyState';
 import PageHeader from '../../components/ui/PageHeader';
-import StatusBadge from '../../components/ui/StatusBadge';
-import { filterAndSortQueue, pageCount, QueueSort } from './reviewQueueData';
+import { ApplicationDisplayBadge } from '../../components/ui/StatusBadge';
+import { authorityQueueAction, AuthorityQueueRow, filterAndSortAuthorityQueue, pageCount, QueueFilter, QueueSort } from './reviewQueueData';
 
 const PAGE_SIZE = 10;
-const ACTIVE_STATUSES = ['Pending', 'UnderReview'] as const;
 
 export default function ReviewQueue() {
   const { profile } = useAuth();
-  const [events, setEvents] = useState<EventRecord[]>([]);
+  const [rows, setRows] = useState<AuthorityQueueRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [filter, setFilter] = useState<EventStatus | 'all'>('all');
+  const [filter, setFilter] = useState<QueueFilter>('all');
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<QueueSort>('newest');
   const [page, setPage] = useState(1);
@@ -34,24 +34,51 @@ export default function ReviewQueue() {
       collection(db, COLLECTIONS.EVENTS),
       where('assignedOfficerUids', 'array-contains', profile.uid),
     );
-    return onSnapshot(eventsQuery, (snapshot) => {
-      setEvents(snapshot.docs
-        .map((document) => ({ eventId: document.id, ...document.data() }) as EventRecord)
-        .filter((event) => (ACTIVE_STATUSES as readonly EventStatus[]).includes(event.status)));
-      setError('');
-      setLoading(false);
-    }, (snapshotError) => {
-      console.error('[ReviewQueue] load failed', snapshotError);
+    let active = true;
+    let hydrationToken = 0;
+    const unsubscribe = onSnapshot(eventsQuery, (snapshot) => {
+      const token = ++hydrationToken;
+      const events = snapshot.docs.map((document) => ({ eventId: document.id, ...document.data() }) as EventRecord);
+      void Promise.all(events.map(async (event): Promise<AuthorityQueueRow> => {
+        const versionId = event.currentVersionId;
+        let assignment: Assignment | undefined;
+        if (versionId && profile.authorityType) {
+          const assignmentId = `${versionId}_${profile.authorityType}`;
+          const assignmentSnapshot = await getDoc(doc(db, COLLECTIONS.EVENTS, event.eventId, COLLECTIONS.ASSIGNMENTS, assignmentId));
+          if (assignmentSnapshot.exists()) {
+            assignment = { ...(assignmentSnapshot.data() as Assignment), assignmentId: assignmentSnapshot.id };
+          } else {
+            const legacy = await getDocs(query(
+              collection(db, COLLECTIONS.EVENTS, event.eventId, COLLECTIONS.ASSIGNMENTS),
+              where('versionId', '==', versionId),
+              where('authorityType', '==', profile.authorityType),
+            ));
+            assignment = legacy.docs[0] ? { ...(legacy.docs[0].data() as Assignment), assignmentId: legacy.docs[0].id } : undefined;
+          }
+        }
+        return { event, assignment, decision: assignment?.decision, action: authorityQueueAction({ event, assignment }) };
+      })).then((nextRows) => {
+        if (!active || token !== hydrationToken) return;
+        setRows(nextRows);
+        setError('');
+        setLoading(false);
+      }).catch(() => {
+        if (!active || token !== hydrationToken) return;
+        setError('The review queue could not be loaded.');
+        setLoading(false);
+      });
+    }, () => {
       setError('The review queue could not be loaded.');
       setLoading(false);
     });
+    return () => { active = false; unsubscribe(); };
   }, [profile?.uid, profile?.authorityType, retryKey]);
 
-  const filtered = useMemo(() => filterAndSortQueue(events, filter, search, sort), [events, filter, search, sort]);
+  const filtered = useMemo(() => filterAndSortAuthorityQueue(rows, filter, search, sort), [rows, filter, search, sort]);
   const totalPages = pageCount(filtered.length, PAGE_SIZE);
   const currentPage = Math.min(page, totalPages);
   const visible = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
-  const statusCount = (status: EventStatus | 'all') => loading ? '…' : error ? '—' : status === 'all' ? events.length : events.filter((event) => event.status === status).length;
+  const statusCount = (status: QueueFilter) => status === 'all' ? rows.length : rows.filter((row) => status === 'decided' ? row.assignment?.status === 'completed' : row.assignment?.status !== 'completed').length;
   const updateFilters = (action: () => void) => { action(); setPage(1); };
 
   return (
@@ -75,7 +102,7 @@ export default function ReviewQueue() {
 
       <p className="mb-3 text-sm text-ink-500">Pending: awaiting the initial review. Under Review: the application is in the authority review workflow.</p>
       <div className="mb-5 flex flex-wrap gap-2" aria-label="Filter queue by status">
-        {(['all', ...ACTIVE_STATUSES] as const).map((status) => (
+        {(['all', 'pending', 'decided'] as const).map((status) => (
           <button
             type="button"
             key={status}
@@ -83,7 +110,7 @@ export default function ReviewQueue() {
             onClick={() => updateFilters(() => setFilter(status))}
             className={`min-h-11 rounded-md border px-3 text-sm font-semibold transition-colors ${filter === status ? 'border-brand-600 bg-brand-600 text-white' : 'border-ink-200 bg-white text-ink-700 hover:bg-cream-50'}`}
           >
-            {labelStatus(status)} <span className="ml-1 opacity-75">{statusCount(status)}</span>
+            {labelFilter(status)} <span className="ml-1 opacity-75">{statusCount(status)}</span>
           </button>
         ))}
       </div>
@@ -91,13 +118,14 @@ export default function ReviewQueue() {
       {loading ? <div className="py-20 text-center text-ink-500">Loading assigned applications...</div> : error ? (
         <EmptyState title="Queue unavailable" description={error}><button type="button" className="btn-secondary" onClick={() => { setLoading(true); setRetryKey((value) => value + 1); }}>Try again</button></EmptyState>
       ) : filtered.length === 0 ? (
-        <EmptyState title={events.length === 0 ? 'Queue is clear' : 'No matching applications'} description={events.length === 0 ? 'There are no active applications assigned to your agency.' : 'Try another status, search term, or sort order.'} />
+        <EmptyState title={rows.length === 0 ? 'Queue is clear' : 'No matching applications'} description={rows.length === 0 ? 'There are no active applications assigned to your agency.' : 'Try another status, search term, or sort order.'} />
       ) : (
         <>
           <p className="mb-3 text-sm text-ink-500">Showing {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, filtered.length)} of {filtered.length}</p>
           <ul className="space-y-2">
-            {visible.map((event) => (
-              <li key={event.eventId}>
+            {visible.map((row) => {
+              const event = row.event;
+              return <li key={event.eventId}>
                 <Link to={`/authority/events/${event.eventId}`} className="block rounded-lg border border-ink-100 bg-white p-5 shadow-card transition hover:border-[#b5bd98] hover:shadow-card-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600">
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
@@ -105,11 +133,25 @@ export default function ReviewQueue() {
                       <p className="mt-1 text-sm text-ink-600">{event.eventDetails.venueName} · {format(new Date(event.eventDetails.startDatetime), 'PPp')}</p>
                       <p className="mt-2 text-xs text-ink-500">{event.eventDetails.expectedAttendance.toLocaleString()} attendees · {event.eventDetails.type}</p>
                     </div>
-                    <StatusBadge status={event.status} />
+                    <div className="flex shrink-0 flex-col items-end gap-2">
+                      <ApplicationDisplayBadge state={resolveApplicationDisplayState({
+                      status: event.status,
+                      reviewStage: event.reviewStage,
+                      submittedAt: event.submittedAt,
+                      currentVersionId: event.currentVersionId,
+                      currentAssessmentId: event.currentAssessmentId,
+                      currentResourceId: event.currentResourceId,
+                      initialReview: event.initialReview,
+                      requiredAuthorities: event.requiredAuthorities,
+                      assignedOfficerUids: event.assignedOfficerUids,
+                      })} />
+                      {row.action === 'amend' && <span className="badge bg-brand-50 text-brand-700">Decision submitted · Amend decision{row.decision ? ` · ${row.decision}` : ''}</span>}
+                      {row.action === 'view' && <span className="badge bg-ink-100 text-ink-600">View only</span>}
+                    </div>
                   </div>
                 </Link>
               </li>
-            ))}
+            })}
           </ul>
           {totalPages > 1 && (
             <nav className="mt-6 flex items-center justify-between border-t border-[#ded4c1] pt-4" aria-label="Review queue pages">
@@ -124,7 +166,7 @@ export default function ReviewQueue() {
   );
 }
 
-function labelStatus(status: EventStatus | 'all'): string {
+function labelFilter(status: QueueFilter): string {
   if (status === 'all') return 'All';
-  return status.replace(/([A-Z])/g, ' $1').trim();
+  return status === 'decided' ? 'Decided' : 'Pending review';
 }

@@ -19,6 +19,7 @@
     "seed:demo": "npm run build && node lib/functions/src/seed/seedDemo.js",
     "seed:presentation-portfolio": "npm run build && node lib/functions/src/scripts/seedPresentationPortfolio.js",
     "seed:steras:test": "npm run build && node lib/functions/src/seed/seedSterasTest.js",
+    "seed:steras:samples": "npm run build && node lib/functions/src/seed/seedRealReviewSamples.js",
     "seed:venues:staging": "npm run build && node lib/functions/src/seed/seedVenues.js",
     "migrate:m3": "npm run build && node lib/functions/src/scripts/migrateM3Deployment.js",
     "migrate:m3:decision-contract": "npm run build && node lib/functions/src/scripts/migrateM3DecisionContract.js",

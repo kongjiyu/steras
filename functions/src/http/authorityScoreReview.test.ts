@@ -1,6 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import type { Assignment, EventRecord } from '@shared/types';
-import { assertActiveScoreReviewAssignment, assertReviewableEvent } from './authorityScoreReview';
+import { assertActiveScoreReviewAssignment, assertReviewableEvent, shouldReopenDecisionAfterScoreRevision } from './authorityScoreReview';
+
+describe('authority score revision decision handling', () => {
+  it('reopens a completed assignment that already has a decision', () => {
+    expect(shouldReopenDecisionAfterScoreRevision({ status: 'completed', decision: 'Approved' })).toBe(true);
+    expect(shouldReopenDecisionAfterScoreRevision({ status: 'completed', decision: 'Rejected' })).toBe(true);
+  });
+
+  it('leaves undecided work in its existing assignment state', () => {
+    expect(shouldReopenDecisionAfterScoreRevision({ status: 'pending' })).toBe(false);
+    expect(shouldReopenDecisionAfterScoreRevision({ status: 'in_progress' })).toBe(false);
+    expect(shouldReopenDecisionAfterScoreRevision({ status: 'completed' })).toBe(false);
+    expect(shouldReopenDecisionAfterScoreRevision({ status: 'revoked', decision: 'Approved' })).toBe(false);
+  });
+});
 
 const event = {
   eventId: 'event-1', status: 'UnderReview', reviewStage: 'authority', currentVersionId: 'v1',
@@ -28,7 +42,11 @@ describe('authority score-review assignment gate', () => {
     expect(() => assertReviewableEvent(candidate as EventRecord, 'PDRM', 'officer-1')).toThrow();
   });
 
-  it.each(['revoked', 'completed'] as const)('rejects a %s assignment at transaction time', (status) => {
-    expect(() => assertActiveScoreReviewAssignment({ ...assignment, status }, 'v1_PDRM', 'event-1', 'v1', 'PDRM', 'officer-1')).toThrow(/missing, revoked, completed, or stale/i);
+  it('allows a completed assignment for an in-stage score revision', () => {
+    expect(() => assertActiveScoreReviewAssignment({ ...assignment, status: 'completed' }, 'v1_PDRM', 'event-1', 'v1', 'PDRM', 'officer-1')).not.toThrow();
+  });
+
+  it('rejects a revoked assignment at transaction time', () => {
+    expect(() => assertActiveScoreReviewAssignment({ ...assignment, status: 'revoked' }, 'v1_PDRM', 'event-1', 'v1', 'PDRM', 'officer-1')).toThrow(/missing, revoked, completed, or stale/i);
   });
 });

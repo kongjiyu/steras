@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EventRecord } from '@shared/types';
-import { filterAndSortQueue, pageCount } from './reviewQueueData';
+import { authorityQueueAction, filterAndSortAuthorityQueue, filterAndSortQueue, pageCount } from './reviewQueueData';
 
 function event(eventId: string, name: string, status: EventRecord['status'], createdAt: number, attendance: number): EventRecord {
   return {
@@ -31,5 +31,19 @@ describe('reviewQueueData', () => {
     expect(pageCount(-10, 10)).toBe(1);
     expect(pageCount(10, 0)).toBe(1);
     expect(pageCount(Number.NaN, 10)).toBe(1);
+  });
+
+  it('keeps a decided officer row visible until the authority stage closes', () => {
+    const decidedEvent = event('3', 'Decided forum', 'UnderReview', 30, 900);
+    decidedEvent.reviewStage = 'authority';
+    const decided = { event: decidedEvent, assignment: { versionId: 'v1', authorityType: 'PDRM' as const, status: 'completed' as const, decision: 'Approved' as const }, action: 'amend' as const, decision: 'Approved' as const };
+    expect(authorityQueueAction(decided)).toBe('amend');
+    expect(filterAndSortAuthorityQueue([decided], 'decided', '', 'newest')).toHaveLength(1);
+  });
+
+  it('makes second-review rows view-only', () => {
+    const row = { event: event('4', 'Final forum', 'UnderReview', 40, 900, ), assignment: { versionId: 'v1', authorityType: 'PDRM' as const, status: 'completed' as const, decision: 'Approved' as const }, action: 'view' as const };
+    row.event.reviewStage = 'second';
+    expect(authorityQueueAction(row)).toBe('view');
   });
 });

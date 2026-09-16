@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.makeInitialReviewDecision = void 0;
 exports.makeInitialReviewDecisionForUser = makeInitialReviewDecisionForUser;
+exports.validateInitialReviewRequest = validateInitialReviewRequest;
 exports.isReviewableProvisionalAssessment = isReviewableProvisionalAssessment;
 /**
  * Admin initial-review gate (M3 FR-M3-02..08).
@@ -21,8 +22,9 @@ const https_1 = require("firebase-functions/v2/https");
 const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
 const resourceContract_1 = require("../engines/resourceContract");
-const resourceCalculator_1 = require("../engines/resourceCalculator");
 const notifications_1 = require("../utils/notifications");
+const applicationState_1 = require("../../../shared/applicationState");
+const resourceCalculator_1 = require("../engines/resourceCalculator");
 const REASON_MIN = 10;
 const REASON_MAX = 1_000;
 const SUGGESTION_MAX = 1_000;
@@ -32,29 +34,7 @@ exports.makeInitialReviewDecision = (0, https_1.onCall)({ region: runtime_1.FUNC
     return makeInitialReviewDecisionForUser(request.auth.uid, request.data);
 });
 async function makeInitialReviewDecisionForUser(uid, data, now = Date.now()) {
-    const eventId = (data.eventId ?? '').trim();
-    const decision = data.decision;
-    const reason = (data.reason ?? '').trim();
-    const suggestion = (data.suggestion ?? '').trim();
-    const attachOfficerFeedback = data.attachOfficerFeedback === true;
-    const rejectionReasonCategory = data.rejectionReasonCategory;
-    if (!eventId)
-        throw new https_1.HttpsError('invalid-argument', 'eventId is required.');
-    if (decision !== 'Approved' && decision !== 'Rejected') {
-        throw new https_1.HttpsError('invalid-argument', 'decision must be Approved or Rejected.');
-    }
-    if ((decision === 'Rejected' && reason.length < REASON_MIN) || reason.length > REASON_MAX || (reason.length > 0 && reason.length < REASON_MIN)) {
-        throw new https_1.HttpsError('invalid-argument', `reason must be ${REASON_MIN}-${REASON_MAX} characters.`);
-    }
-    if (suggestion.length > SUGGESTION_MAX) {
-        throw new https_1.HttpsError('invalid-argument', `suggestion must be at most ${SUGGESTION_MAX} characters.`);
-    }
-    if (decision === 'Rejected' && suggestion.length === 0) {
-        throw new https_1.HttpsError('invalid-argument', 'A suggestion is required when rejecting.');
-    }
-    if (decision === 'Rejected' && !types_1.REJECTION_REASON_CATEGORIES.includes(rejectionReasonCategory)) {
-        throw new https_1.HttpsError('invalid-argument', 'A valid rejectionReasonCategory is required when rejecting.');
-    }
+    const { eventId, decision, reason, suggestion, attachOfficerFeedback, rejectionReasonCategory } = validateInitialReviewRequest(data);
     if (Object.prototype.hasOwnProperty.call(data, 'manualAssessment')) {
         throw new https_1.HttpsError('failed-precondition', 'Manual Review Required applications must be completed in the Admin manual assessment queue before initial review.');
     }
@@ -116,23 +96,28 @@ async function makeInitialReviewDecisionForUser(uid, data, now = Date.now()) {
             ...(assignment.decidedAt ? { decidedAt: assignment.decidedAt } : {}),
         }));
     }
-    if (decision === 'Approved' && (!(manualOfficial || provisionalReady)
-        || !resourceSnap?.exists || !resource || !resourceId
-        || !(0, resourceContract_1.validateResourceRecommendation)(resource).ok
-        || resource.resourceId !== resourceId
-        || resource.eventId !== eventId
-        || resource.versionId !== versionId
-        || resource.assessmentId !== assessmentId
-        || (provisionalReady ? resource.stage !== 'provisional' : resource.stage !== 'official'))) {
+    const readiness = (0, applicationState_1.resolveInitialReviewReadiness)({
+        eventId,
+        versionId,
+        assessmentId,
+        resourceId,
+        assessment,
+        resource,
+    });
+    if (decision === 'Approved' && (!readiness.ready || !(manualOfficial || provisionalReady)
+        || !resourceSnap?.exists || !resource || !(0, resourceContract_1.validateResourceRecommendation)(resource).ok)) {
         if (event.status === 'Manual Review Required' || assessment?.status === 'manual_review_required') {
             throw new https_1.HttpsError('failed-precondition', 'Complete the Admin manual assessment queue before initial approval.');
         }
-        throw new https_1.HttpsError('failed-precondition', 'Smart Risk Assessment and Safety Resource Recommendation must be ready before initial approval.');
+        throw new https_1.HttpsError('failed-precondition', readiness.message);
     }
     const nextStatus = decision === 'Approved' ? 'UnderReview' : 'Rejected';
     const initialReview = {
         decision,
-        reason,
+        // Approval rationale is optional. Do not persist an empty field so new
+        // records remain semantically distinct from legacy records that carried
+        // a rationale, while readers continue to handle both shapes safely.
+        ...(reason ? { reason } : {}),
         reviewStage: 'initial',
         ...(decision === 'Rejected' ? { rejectionReasonCategory } : {}),
         ...(suggestion ? { suggestion } : {}),
@@ -164,11 +149,16 @@ async function makeInitialReviewDecisionForUser(uid, data, now = Date.now()) {
             const currentResource = currentResourceSnap?.data();
             const currentManualOfficial = isManualOfficialAssessment(currentAssessment, eventId, versionId, assessmentId);
             const currentProvisional = isReviewableProvisionalAssessment(currentAssessment, eventId, versionId, assessmentId);
-            if (!(currentManualOfficial || currentProvisional)
-                || !currentResource || !resourceId || !(0, resourceContract_1.validateResourceRecommendation)(currentResource).ok
-                || currentResource.resourceId !== resourceId || currentResource.eventId !== eventId
-                || currentResource.versionId !== versionId || currentResource.assessmentId !== assessmentId
-                || (currentProvisional ? currentResource.stage !== 'provisional' : currentResource.stage !== 'official')) {
+            const currentReadiness = (0, applicationState_1.resolveInitialReviewReadiness)({
+                eventId,
+                versionId,
+                assessmentId,
+                resourceId,
+                assessment: currentAssessment,
+                resource: currentResource,
+            });
+            if (!currentReadiness.ready || !(currentManualOfficial || currentProvisional)
+                || !currentResource || !(0, resourceContract_1.validateResourceRecommendation)(currentResource).ok) {
                 throw new https_1.HttpsError('aborted', 'Assessment or resource artifacts changed before initial approval. Reload and retry.');
             }
         }
@@ -225,6 +215,43 @@ async function makeInitialReviewDecisionForUser(uid, data, now = Date.now()) {
         return { eventId, versionId, status: nextStatus, organizerId: event.organizerId };
     });
     return { eventId, versionId, assessmentId, status: result.status, decision, manualAssessmentRecorded: manualOfficial };
+}
+function validateInitialReviewRequest(request) {
+    const value = typeof request === 'object' && request !== null ? request : {};
+    const eventId = typeof value.eventId === 'string' ? value.eventId.trim() : '';
+    const decision = value.decision;
+    const reason = typeof value.reason === 'string' ? value.reason.trim() : '';
+    const suggestion = typeof value.suggestion === 'string' ? value.suggestion.trim() : '';
+    const attachOfficerFeedback = value.attachOfficerFeedback === true;
+    const rejectionReasonCategory = value.rejectionReasonCategory;
+    if (!eventId)
+        throw new https_1.HttpsError('invalid-argument', 'eventId is required.');
+    if (decision !== 'Approved' && decision !== 'Rejected') {
+        throw new https_1.HttpsError('invalid-argument', 'decision must be Approved or Rejected.');
+    }
+    if (reason.length > REASON_MAX) {
+        throw new https_1.HttpsError('invalid-argument', `reason must be at most ${REASON_MAX} characters.`);
+    }
+    if (decision === 'Rejected' && reason.length < REASON_MIN) {
+        throw new https_1.HttpsError('invalid-argument', `reason must be ${REASON_MIN}-${REASON_MAX} characters when rejecting.`);
+    }
+    if (suggestion.length > SUGGESTION_MAX) {
+        throw new https_1.HttpsError('invalid-argument', `suggestion must be at most ${SUGGESTION_MAX} characters.`);
+    }
+    if (decision === 'Rejected' && suggestion.length < REASON_MIN) {
+        throw new https_1.HttpsError('invalid-argument', `suggestion must be ${REASON_MIN}-${SUGGESTION_MAX} characters when rejecting.`);
+    }
+    if (decision === 'Rejected' && !types_1.REJECTION_REASON_CATEGORIES.includes(rejectionReasonCategory)) {
+        throw new https_1.HttpsError('invalid-argument', 'A valid rejectionReasonCategory is required when rejecting.');
+    }
+    return {
+        eventId,
+        decision,
+        reason,
+        suggestion,
+        attachOfficerFeedback,
+        ...(decision === 'Rejected' ? { rejectionReasonCategory: rejectionReasonCategory } : {}),
+    };
 }
 function isReviewableProvisionalAssessment(value, eventId, versionId, assessmentId) {
     if (!value || typeof value !== 'object')

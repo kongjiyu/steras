@@ -6,7 +6,8 @@ import ResourceRecommendation from '../../components/m2/ResourceRecommendation';
 import { AuthorityTopBar } from '../../components/layout/Sidebar';
 import EmptyState from '../../components/ui/EmptyState';
 import RiskMeter from '../../components/ui/RiskMeter';
-import StatusBadge from '../../components/ui/StatusBadge';
+import { ApplicationDisplayBadge } from '../../components/ui/StatusBadge';
+import { resolveApplicationDisplayState } from '@shared/applicationState';
 import { assessmentRiskLevel } from '../../components/m2/m2Contract';
 import { useAuth } from '../../contexts/AuthContext';
 import {
@@ -117,7 +118,8 @@ export default function ResourceRecommendations({ previewRecords, previewAgency 
 }
 
 function ResourceRecord({ record }: { record: M2PortfolioRecord }) {
-  const { event, assessment, resources } = record;
+  const { event, assessment } = record;
+  const resources = record.assessmentStatus === 'manual_review_required' ? undefined : record.resources;
   const level = assessmentRiskLevel(assessment) ?? 'Unassessed';
   const people = resources ? resources.items.police.baseline + resources.items.security.baseline + resources.items.fireOfficers.baseline : 0;
 
@@ -127,7 +129,7 @@ function ResourceRecord({ record }: { record: M2PortfolioRecord }) {
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="truncate font-display text-base font-semibold text-ink-800">{event.eventDetails.name}</h3>
-            <StatusBadge status={event.status} />
+            <ApplicationDisplayBadge state={resolveApplicationDisplayState({ ...event, assessmentStatus: assessment?.status, assessmentReadiness: assessment?.assessmentReadiness })} />
           </div>
           <p className="mt-1 text-sm text-ink-600">{event.eventDetails.venueName} · {format(new Date(event.eventDetails.startDatetime), 'PPp')}</p>
           <p className="mt-1 text-xs text-ink-500">{event.eventDetails.expectedAttendance.toLocaleString()} attendees · version {event.currentVersionNumber}</p>
@@ -175,6 +177,7 @@ function SummaryStat({ icon, value, label }: { icon: ReactNode; value: number; l
 
 function resourceState(record: M2PortfolioRecord): string {
   if (record.legacyResources) return 'Requires recompute';
+  if (record.assessmentStatus === 'manual_review_required') return 'Manual assessment required';
   if (record.assessmentStatus === 'processing') return 'Waiting for assessment';
   if (record.assessmentStatus === 'failed') return 'Assessment failed';
   return 'No recommendation yet';

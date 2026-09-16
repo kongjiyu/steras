@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getDoc } from 'firebase/firestore';
 import { AuthorityScoreReview, ProvisionalRiskAssessment, SCORE_REVIEW_SCHEMA_VERSION } from '@shared/types';
 import { mockAssessments } from '../../mock_data/assessments';
@@ -13,18 +13,27 @@ vi.mock('firebase/firestore', async (importOriginal) => {
 const assessment = mockAssessments.find((item): item is ProvisionalRiskAssessment => item.status === 'provisional_ready')!;
 
 describe('AuthorityScoreReviewForm', () => {
-  it('requires a decision for all eight categories and reveals override controls intentionally', () => {
+  beforeEach(() => vi.mocked(getDoc).mockReset());
+
+  it('keeps the proposal read-only until a category is selected, then reveals inline override fields', () => {
     render(<AuthorityScoreReviewForm eventId="event-1" assessment={assessment} authorityType="PDRM" />);
-    expect(screen.getAllByRole('combobox')).toHaveLength(8);
-    expect(screen.getByRole('button', { name: 'Submit score review' })).toBeDisabled();
-    fireEvent.change(screen.getByLabelText('Crowd safety review decision'), { target: { value: 'overridden' } });
+    expect(screen.queryByLabelText('Likelihood')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Submit score review/i })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Crowd safety score category' }));
+    expect(screen.getByLabelText('Likelihood')).toBeInTheDocument();
+    expect(screen.getByLabelText('Severity')).toBeInTheDocument();
     expect(screen.getByLabelText('Override reason')).toBeInTheDocument();
-    expect(screen.getByText(/Deterministic safety floors are reapplied/i)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Likelihood'), { target: { value: '4' } });
+    fireEvent.change(screen.getByLabelText('Override reason'), { target: { value: 'Locally verified crowd evidence supports this score.' } });
+    fireEvent.change(screen.getByLabelText('Review rationale'), { target: { value: 'I reviewed the complete evidence package and AI proposal.' } });
+    expect(screen.getByRole('button', { name: /Submit score review/i })).not.toBeDisabled();
   });
 
-  it('preserves an unsaved draft when another authority updates review progress', () => {
-    const { rerender } = render(<AuthorityScoreReviewForm eventId="event-1" assessment={assessment} authorityType="PDRM" />);
-    fireEvent.change(screen.getByLabelText('Crowd safety review decision'), { target: { value: 'overridden' } });
+  it('preserves an unsaved draft when another authority updates review progress and supports cancellation', () => {
+    const onCancel = vi.fn();
+    const { rerender } = render(<AuthorityScoreReviewForm eventId="event-1" assessment={assessment} authorityType="PDRM" onCancel={onCancel} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Crowd safety score category' }));
     fireEvent.change(screen.getByLabelText('Override reason'), { target: { value: 'Locally verified crowd evidence requires a different score.' } });
     fireEvent.change(screen.getByLabelText('Review rationale'), { target: { value: 'I am still reviewing the complete evidence package.' } });
     const refreshed = {
@@ -37,9 +46,11 @@ describe('AuthorityScoreReviewForm', () => {
         updatedAt: 10,
       },
     };
-    rerender(<AuthorityScoreReviewForm eventId="event-1" assessment={refreshed} authorityType="PDRM" />);
+    rerender(<AuthorityScoreReviewForm eventId="event-1" assessment={refreshed} authorityType="PDRM" onCancel={onCancel} />);
     expect(screen.getByLabelText('Override reason')).toHaveValue('Locally verified crowd evidence requires a different score.');
     expect(screen.getByLabelText('Review rationale')).toHaveValue('I am still reviewing the complete evidence package.');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onCancel).toHaveBeenCalledOnce();
   });
 
   it('does not let delayed own-head hydration overwrite a draft edited while loading', async () => {
@@ -56,7 +67,7 @@ describe('AuthorityScoreReviewForm', () => {
       },
     };
     render(<AuthorityScoreReviewForm eventId="event-1" assessment={withOwnHead} authorityType="PDRM" />);
-    fireEvent.change(screen.getByLabelText('Crowd safety review decision'), { target: { value: 'overridden' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Crowd safety score category' }));
     fireEvent.change(screen.getByLabelText('Override reason'), { target: { value: 'My new verified crowd evidence supports this change.' } });
     fireEvent.change(screen.getByLabelText('Review rationale'), { target: { value: 'My new unsaved rationale must survive delayed hydration.' } });
     const stored: AuthorityScoreReview = {
@@ -76,9 +87,8 @@ describe('AuthorityScoreReviewForm', () => {
   });
 
   it('does not start own-head hydration when a cross-tab revision arrives after the draft is dirty', () => {
-    vi.mocked(getDoc).mockClear();
     const { rerender } = render(<AuthorityScoreReviewForm eventId="event-1" assessment={assessment} authorityType="PDRM" />);
-    fireEvent.change(screen.getByLabelText('Crowd safety review decision'), { target: { value: 'overridden' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Crowd safety score category' }));
     fireEvent.change(screen.getByLabelText('Override reason'), { target: { value: 'This local draft must survive a cross-tab head update.' } });
     fireEvent.change(screen.getByLabelText('Review rationale'), { target: { value: 'This local unsaved rationale remains authoritative for this tab.' } });
     const crossTabUpdate = {

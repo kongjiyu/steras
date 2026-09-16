@@ -32,6 +32,16 @@ describe('M2 presentation components', () => {
     expect(screen.getByText(/Validated provisional result/)).toHaveTextContent(String(assessmentRiskLevel(assessment)));
   });
 
+  it('shows the current officer score while preserving the AI proposal provenance', () => {
+    const proposal = assessment.aiProposal?.status === 'success'
+      ? assessment.aiProposal.categories[0]
+      : undefined;
+    if (!proposal) throw new Error('The provisional fixture must contain a successful AI proposal.');
+    render(<AIAdvisory advisory={assessment.aiProposal} reviewedCategories={[{ categoryId: proposal.categoryId, likelihood: 3, severity: 1 }]} />);
+    expect(screen.getByText('L3 × S1')).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`AI proposal L${proposal.likelihood} × S${proposal.severity}`))).toBeInTheDocument();
+  });
+
   it('shows versioned indicative resource quantities and their safety boundary', () => {
     render(<ResourceRecommendationView recommendation={recommendation} />);
     expect(screen.getAllByText('Police officers').length).toBeGreaterThan(0);

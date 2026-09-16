@@ -103,7 +103,11 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
   const event = eventSnap.data() as EventRecord;
   const versionId = event.currentVersionId;
   if (!versionId) throw new HttpsError('failed-precondition', 'The application has no submitted version.');
-  if (event.reviewStage !== 'second') {
+  // `second` is the canonical stage after the last officer decision.  Accept
+  // `authority` as a defensive compatibility path when legacy data contains
+  // a fully completed assignment set but the stage projection was not
+  // advanced; the required-assignment check below remains authoritative.
+  if (event.reviewStage !== 'second' && event.reviewStage !== 'authority') {
     throw new HttpsError('failed-precondition', 'All officers have not yet completed their review.');
   }
 
@@ -162,6 +166,7 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
       || currentAggregate !== aggregate) {
       throw new HttpsError('aborted', 'The second-review inputs changed or another Admin already finalized this application.');
     }
+    const managedFixture = isManagedRealReviewFixture(currentEvent);
     tx.update(eventRef, {
       status: finalDecision,
       reviewStage: finalDecision === 'Rejected' ? 'closed' : null,
@@ -177,6 +182,7 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
         rejectionReasonCategory: finalDecision === 'Rejected' ? rejectionReasonCategory : null,
         reason: reason || (finalDecision === 'Rejected' ? currentReasonOfficer?.reason : undefined) || null,
         suggestion: suggestion || (finalDecision === 'Rejected' ? currentReasonOfficer?.suggestion : undefined) || null,
+        managedFixture,
         adminNote: adminNote || null,
         featuredOfficerUid: currentReasonOfficer?.officerUid ?? null,
         officerFeedback: completeRequiredAssignments
@@ -220,7 +226,7 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
     });
 
     const publicRef = db.collection(COLLECTIONS.PUBLIC_EVENTS).doc(eventId);
-    if (finalDecision === 'Approved') {
+    if (finalDecision === 'Approved' && !managedFixture) {
       const details = currentVersion.eventDetails;
       const publicEvent: PublicEvent = {
         eventId,
@@ -270,7 +276,7 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
     }
 
     if (organizerRecipientUid) {
-      const notificationId = `second_review_${versionId}`;
+      const notificationId = `second_review_${eventId}_${versionId}`;
       const notificationReason = reason || currentReasonOfficer?.reason || adminNote || undefined;
       const notificationSuggestion = suggestion || currentReasonOfficer?.suggestion || undefined;
       tx.set(db.collection(COLLECTIONS.NOTIFICATIONS).doc(notificationId), {
@@ -294,6 +300,12 @@ export const makeSecondReviewDecision = onCall<MakeSecondReviewDecisionRequest>(
     return { eventId, status: result.finalDecision, aggregate: result.aggregate };
   });
 });
+
+export function isManagedRealReviewFixture(event: EventRecord): boolean {
+  const marker = (event as EventRecord & { sterasFixture?: { datasetId?: unknown; managedBy?: unknown } }).sterasFixture;
+  return marker?.datasetId === 'steras-module3-real-review-samples-v1'
+    && marker?.managedBy === 'seed:steras:real-review-samples';
+}
 
 function aggregateFromAssignments(assignments: Assignment[], required: AuthorityType[]): EventRecord['status'] {
   const byAuthority = new Map<AuthorityType, DecisionValue>();
@@ -324,7 +336,7 @@ export function isCurrentSecondReviewEvent(
   return Boolean(event
     && event.currentVersionId === versionId
     && event.status === 'UnderReview'
-    && event.reviewStage === 'second'
+    && (event.reviewStage === 'second' || event.reviewStage === 'authority')
     && !(event as EventRecord & { secondReview?: unknown }).secondReview
     && expectedAuthorities.length > 0
     && sameAuthoritySet(event.requiredAuthorities ?? [], expectedAuthorities));

@@ -77,12 +77,12 @@ const TONE_CLASSES: Record<StatCard['tone'], string> = {
 const STATUS_LABELS: Record<EventRecord['status'], string> = {
   Draft: 'Draft',
   Pending: 'Pending',
-  UnderReview: 'Under review',
+  UnderReview: 'Under Review',
   Approved: 'Approved',
   Rejected: 'Rejected',
   Cancelled: 'Cancelled',
   Withdrawn: 'Withdrawn',
-  'Manual Review Required': 'Manual review required',
+  'Manual Review Required': 'Manual Review Required',
 };
 
 const STATUS_TONE: Record<EventRecord['status'], StatCard['tone']> = {

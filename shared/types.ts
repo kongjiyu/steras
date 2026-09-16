@@ -294,7 +294,8 @@ export interface EventRecord {
   /** Admin's initial-gate decision, including rejection feedback. */
   initialReview?: {
     decision: 'Approved' | 'Rejected';
-    reason: string;
+    /** Optional for an approval made after the reviewed-materials gate. */
+    reason?: string;
     reviewStage?: 'initial';
     rejectionReasonCategory?: RejectionReasonCategory;
     suggestion?: string;
@@ -1194,6 +1195,15 @@ export interface ResourceOverrideRecord {
   supersedesOverrideId?: string;
   overriddenAt: number;
 }
+
+/** Officer request for an append-only resource quantity adjustment. */
+export interface ResourceOverrideRequest {
+  eventId: string;
+  /** Complete effective quantity set; unchanged resources must be echoed. */
+  quantities: ResourceQuantities;
+  rationale: string;
+  idempotencyKey: string;
+}
 /** Authority-owned confirmation/override of deterministic hazard scores.
  * The official M2 assessment remains immutable; this record is the M3 human
  * review artifact that can be consumed by a later M2 recomputation. */
@@ -1257,6 +1267,7 @@ export type AuditAction =
   | 'authority_reviewed'
   | 'authority_score_reviewed'
   | 'authority_score_review_superseded'
+  | 'decision_reopened_after_score_revision'
   | 'score_conflict_detected'
   | 'score_conflict_resolved'
   | 'official_assessment_finalized'

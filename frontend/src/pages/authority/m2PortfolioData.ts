@@ -54,9 +54,10 @@ export function filterResourcePortfolio(
   const normalizedSearch = search.trim().toLocaleLowerCase();
   return records
     .filter((record) => {
+      const resources = record.assessmentStatus === 'manual_review_required' ? undefined : record.resources;
       if (filter === 'all') return true;
-      if (filter === 'missing') return !record.resources;
-      return record.resources?.confidenceLevel === filter;
+      if (filter === 'missing') return !resources;
+      return resources?.confidenceLevel === filter;
     })
     .filter((record) => !normalizedSearch || [
       record.event.eventDetails.name,
@@ -83,10 +84,11 @@ export function resourcePortfolioSummary(records: M2PortfolioRecord[]) {
   let requiresRecompute = 0;
   records.forEach((record) => {
     if (record.legacyResources) requiresRecompute += 1;
-    if (!record.resources) return;
+    const resources = record.assessmentStatus === 'manual_review_required' ? undefined : record.resources;
+    if (!resources) return;
     recommended += 1;
-    if (record.resources.confidenceLevel === 'authority_validated') authorityValidated += 1;
-    RESOURCE_FIELDS.forEach(({ key }) => { totals[key] += record.resources?.items[key].baseline ?? 0; });
+    if (resources.confidenceLevel === 'authority_validated') authorityValidated += 1;
+    RESOURCE_FIELDS.forEach(({ key }) => { totals[key] += resources.items[key].baseline ?? 0; });
   });
   return { totals, recommended, authorityValidated, missing: records.length - recommended, requiresRecompute };
 }

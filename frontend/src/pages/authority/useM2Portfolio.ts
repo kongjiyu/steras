@@ -54,7 +54,8 @@ export function useM2Portfolio(previewRecords?: M2PortfolioRecord[]) {
             ]);
             const rawAssessment = assessmentDocument?.data() as AssessmentRecord | undefined;
             const rawResources = resourceDocument?.data();
-            const validResources = isCurrentResourceRecommendation(rawResources)
+            const validResources = rawAssessment?.status !== 'manual_review_required'
+              && isCurrentResourceRecommendation(rawResources)
               && rawResources.resourceId === resourceId
               && rawResources.eventId === event.eventId
               && rawResources.versionId === event.currentVersionId;

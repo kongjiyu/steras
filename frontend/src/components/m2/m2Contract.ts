@@ -124,7 +124,8 @@ export function isCurrentAuthorityDecision(value: unknown, expectedEventId?: str
     && isSafeDocumentId(value.versionId)
     && AUTHORITY_TYPES.has(String(value.authorityType))
     && ['Approved', 'Rejected'].includes(String(value.decision))
-    && typeof value.rationale === 'string' && value.rationale.trim().length >= 10
+    && typeof value.rationale === 'string'
+    && (value.decision === 'Approved' ? value.rationale.trim().length <= 1_000 : value.rationale.trim().length >= 10)
     && (value.suggestion === undefined || (typeof value.suggestion === 'string' && value.suggestion.trim().length >= 10))
     && (value.materialsReviewed === undefined || typeof value.materialsReviewed === 'boolean')
     && typeof value.reviewerId === 'string' && value.reviewerId.trim().length > 0

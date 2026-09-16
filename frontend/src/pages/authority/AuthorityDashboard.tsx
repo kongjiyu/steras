@@ -18,7 +18,8 @@ import { COLLECTIONS, EventRecord, RiskAssessment, RiskLevel } from '@shared/typ
 import { AuthorityTopBar } from '../../components/layout/Sidebar';
 import EmptyState from '../../components/ui/EmptyState';
 import RiskMeter from '../../components/ui/RiskMeter';
-import StatusBadge from '../../components/ui/StatusBadge';
+import { ApplicationDisplayBadge } from '../../components/ui/StatusBadge';
+import { resolveApplicationDisplayState } from '@shared/applicationState';
 import { assessmentRiskLevel, assessmentScore, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
 import { db, isFirebaseConfigured } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -421,7 +422,7 @@ function PriorityRow({ record: { event, assessment }, index }: { record: Dashboa
           <div>
             <h3>{event.eventDetails.name}</h3>
             {index === 0 && <span className="priority-row__first-label">Review first</span>}
-            <StatusBadge status={event.status} />
+            <ApplicationDisplayBadge state={resolveApplicationDisplayState({ ...event, assessmentStatus: assessment?.status, assessmentReadiness: assessment?.assessmentReadiness })} />
           </div>
           <p><MapPin size={12} aria-hidden="true" />{event.eventDetails.venueName}</p>
         </div>

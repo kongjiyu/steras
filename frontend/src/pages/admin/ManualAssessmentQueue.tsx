@@ -6,6 +6,7 @@ import { AssessmentJob, COLLECTIONS, EventRecord, ManualReviewRiskAssessment } f
 import { db, isFirebaseConfigured } from '../../config/firebase';
 import { isCurrentAssessmentJob, isCurrentEventRecord, isCurrentRiskAssessment } from '../../components/m2/m2Contract';
 import { isAdminManualEligible } from './manualAssessmentEligibility';
+import { friendlyAdminStatus } from './adminApplicationPresentation';
 
 export type ManualQueueEvent = EventRecord & {
   currentVersionId: string;
@@ -14,7 +15,7 @@ export type ManualQueueEvent = EventRecord & {
 };
 
 export type ManualQueueCase =
-  | { event: ManualQueueEvent; assessment: ManualReviewRiskAssessment; mode: 'manual' }
+  | { event: ManualQueueEvent; assessment: ManualReviewRiskAssessment; mode: 'manual'; eligible: boolean }
   | { event: ManualQueueEvent; assessment: AssessmentJob; mode: 'failed' };
 
 const CANDIDATE_STATUSES = ['Pending', 'UnderReview', 'Manual Review Required'] as const;
@@ -44,13 +45,14 @@ export default function ManualAssessmentQueue() {
             && assessment.eventId === event.eventId
             && assessment.versionId === event.currentVersionId
             && assessment.assessmentId === event.currentAssessmentId
-            && isAdminManualEligible(assessment);
+            ? { event, assessment, mode: 'manual' as const, eligible: isAdminManualEligible(assessment) }
+            : null;
           const failedRetry = isCurrentAssessmentJob(assessment)
             && assessment.status === 'failed'
             && assessment.eventId === event.eventId
             && assessment.versionId === event.currentVersionId
             && assessment.assessmentId === event.currentAssessmentId;
-          if (manualReview) return { event, assessment, mode: 'manual' };
+          if (manualReview) return manualReview;
           if (failedRetry) return { event, assessment, mode: 'failed' };
           return null;
         }));
@@ -101,10 +103,10 @@ export default function ManualAssessmentQueue() {
                 <span className="block truncate font-semibold text-ink-700">{entry.event.eventDetails.organizerName}</span>
                 <span className="block truncate" title={entry.event.eventDetails.venueAddress}>{entry.event.eventDetails.venueName}</span>
               </span>
-              <span className="text-xs"><span className="badge badge-amber">{entry.event.status}</span></span>
+              <span className="text-xs"><span className="badge badge-amber">{friendlyAdminStatus(entry.event.status)}</span></span>
               <span className="text-xs text-ink-600" title={entry.mode === 'failed' ? entry.assessment.error : entry.assessment.manualReviewReason}>
-                <span className="block font-semibold capitalize text-ink-700">{entry.mode === 'failed' ? 'Pipeline failed' : entry.assessment.assessmentReadiness.replaceAll('_', ' ')}</span>
-                <span className="block capitalize">{entry.mode === 'failed' ? 'AI retry available' : `${entry.assessment.complianceStatus.replaceAll('_', ' ')} · ${entry.assessment.warnings.length} warning${entry.assessment.warnings.length === 1 ? '' : 's'}`}</span>
+                <span className="block font-semibold capitalize text-ink-700">{entry.mode === 'failed' ? 'Pipeline failed' : entry.eligible ? entry.assessment.assessmentReadiness.replaceAll('_', ' ') : 'Data integrity check required'}</span>
+                <span className="block capitalize">{entry.mode === 'failed' ? 'AI retry available' : entry.eligible ? `${entry.assessment.complianceStatus.replaceAll('_', ' ')} · ${entry.assessment.warnings.length} warning${entry.assessment.warnings.length === 1 ? '' : 's'}` : 'Evidence storage generation is missing or malformed'}</span>
               </span>
               <span className="flex items-center justify-end gap-1 text-xs font-semibold text-brand-700">Review <ArrowRight size={14} /></span>
             </Link>

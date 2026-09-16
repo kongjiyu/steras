@@ -8,7 +8,8 @@ import ContextEvidence from '../../components/m2/ContextEvidence';
 import { AuthorityTopBar } from '../../components/layout/Sidebar';
 import EmptyState from '../../components/ui/EmptyState';
 import RiskMeter from '../../components/ui/RiskMeter';
-import StatusBadge from '../../components/ui/StatusBadge';
+import { ApplicationDisplayBadge } from '../../components/ui/StatusBadge';
+import { resolveApplicationDisplayState } from '@shared/applicationState';
 import { assessmentRiskLevel, assessmentScore } from '../../components/m2/m2Contract';
 import { useAuth } from '../../contexts/AuthContext';
 import {
@@ -125,6 +126,7 @@ export default function RiskAssessments({ previewRecords, previewAgency }: RiskA
 
 function RiskRecord({ record }: { record: M2PortfolioRecord }) {
   const { event, assessment } = record;
+  const manualReviewRequired = record.assessmentStatus === 'manual_review_required';
   const topCategory = highestCategory(assessment);
   const freshness = assessmentFreshness(assessment);
   const level = assessmentRiskLevel(assessment) ?? 'Unassessed';
@@ -135,14 +137,14 @@ function RiskRecord({ record }: { record: M2PortfolioRecord }) {
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="truncate font-display text-base font-semibold text-ink-800">{event.eventDetails.name}</h3>
-            <StatusBadge status={event.status} />
+            <ApplicationDisplayBadge state={resolveApplicationDisplayState({ ...event, assessmentStatus: assessment?.status, assessmentReadiness: assessment?.assessmentReadiness })} />
           </div>
           <p className="mt-1 text-sm text-ink-600">{event.eventDetails.venueName} · {format(new Date(event.eventDetails.startDatetime), 'PPp')}</p>
           <p className="mt-1 text-xs text-ink-500">{event.eventDetails.expectedAttendance.toLocaleString()} attendees · version {event.currentVersionNumber}</p>
         </div>
 
         <div className="text-xs text-ink-600">
-          <p className="font-semibold text-ink-800">{topCategory ? `${topCategory.categoryName}: ${topCategory.normalizedScore}/100` : assessmentState(record)}</p>
+          <p className="font-semibold text-ink-800">{manualReviewRequired ? 'Manual assessment required' : topCategory ? `${topCategory.categoryName}: ${topCategory.normalizedScore}/100` : assessmentState(record)}</p>
           <p className="mt-1 capitalize">Context: {freshness} · AI proposal: {assessment?.aiProposal?.status ?? 'pending'}</p>
         </div>
 
@@ -152,7 +154,12 @@ function RiskRecord({ record }: { record: M2PortfolioRecord }) {
         </div>
       </div>
 
-      {assessment ? (
+      {manualReviewRequired ? (
+        <div className="border-t border-[#e3dacb] bg-gold-50 px-4 py-4 text-sm text-ink-700">
+          <p className="font-semibold text-gold-700">Automated risk generation is unavailable</p>
+          <p className="mt-1 text-xs leading-5">No risk badge or category table is shown until an Admin completes the eight-category manual assessment.</p>
+        </div>
+      ) : assessment ? (
         <details className="m2-disclosure">
           <summary>Inspect categories, AI advisory and evidence</summary>
           <div className="m2-disclosure__body">
@@ -188,6 +195,7 @@ function SummaryStat({ value, label }: { value: number; label: string }) {
 
 function assessmentState(record: M2PortfolioRecord): string {
   if (record.legacyAssessment) return 'Requires recompute';
+  if (record.assessmentStatus === 'manual_review_required') return 'Manual assessment required';
   if (record.assessmentStatus === 'failed') return 'Assessment failed';
   if (record.assessmentStatus === 'processing') return 'Assessment processing';
   return 'No assessment yet';

@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { makeInitialReviewDecisionForUser, validateInitialReviewRequest } from './initialReview';
+import { resolveInitialReviewReadiness } from '@shared/applicationState';
 import { ASSESSMENT_SCHEMA_VERSION, AISuccessfulProposal, EventRecord, ProvisionalRiskAssessment } from '@shared/types';
 import { ACTIVE_CATEGORY_SCHEMA } from '../config/categorySchema';
 import { computeCategoryBasedAssessment } from '../engines/ruleBased';
 import { validateAndCalculateProvisional } from '../engines/assessmentValidator';
-import { isReviewableProvisionalAssessment, makeInitialReviewDecisionForUser } from './initialReview';
+import { isReviewableProvisionalAssessment } from './initialReview';
 
 describe('makeInitialReviewDecisionForUser', () => {
   it('keeps inline legacy manual assessments out of the initial-review command', async () => {
@@ -20,6 +22,32 @@ describe('makeInitialReviewDecisionForUser', () => {
     expect(isReviewableProvisionalAssessment(assessment, 'event-1', 'v1', 'assessment-1')).toBe(true);
     expect(isReviewableProvisionalAssessment({ ...assessment, status: 'authority_review' }, 'event-1', 'v1', 'assessment-1')).toBe(false);
     expect(isReviewableProvisionalAssessment({ ...assessment, assessmentId: 'stale' }, 'event-1', 'v1', 'assessment-1')).toBe(false);
+  });
+});
+
+describe('validateInitialReviewRequest', () => {
+  it('allows an approval without a reason', () => {
+    expect(validateInitialReviewRequest({ eventId: 'event-1', decision: 'Approved' })).toMatchObject({
+      eventId: 'event-1', decision: 'Approved', reason: '', suggestion: '',
+    });
+  });
+
+  it('requires a reason and constructive suggestion for rejection', () => {
+    expect(() => validateInitialReviewRequest({ eventId: 'event-1', decision: 'Rejected' })).toThrow(/reason must be/i);
+    expect(() => validateInitialReviewRequest({ eventId: 'event-1', decision: 'Rejected', reason: 'Sufficient rejection reason.', rejectionReasonCategory: 'insufficient_evidence' })).toThrow(/suggestion/i);
+  });
+});
+
+describe('shared initial-review readiness', () => {
+  const generation = {
+    eventId: 'event-1', versionId: 'v1', assessmentId: 'a1', resourceId: 'r1',
+    assessment: { eventId: 'event-1', versionId: 'v1', assessmentId: 'a1', status: 'provisional_ready' as const, assessmentReadiness: 'provisional' as const, authorityReviewRequired: true, complianceStatus: 'pass' as const },
+    resource: { resourceId: 'r1', eventId: 'event-1', versionId: 'v1', assessmentId: 'a1', stage: 'provisional' as const },
+  };
+
+  it('accepts a valid provisional generation and rejects an authority-finalized AI record', () => {
+    expect(resolveInitialReviewReadiness(generation).ready).toBe(true);
+    expect(resolveInitialReviewReadiness({ ...generation, assessment: { ...generation.assessment, status: 'official_ready' } }).reason).toBe('official_ai_not_allowed');
   });
 });
 

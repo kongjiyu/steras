@@ -13,14 +13,14 @@ const assignment = {
 } as const;
 
 describe('recordOfficerProposal transactional assignment fence', () => {
-  it('accepts only the current canonical pending or in-progress assignment', () => {
+  it('accepts the current canonical pending, in-progress, or completed assignment', () => {
     expect(() => assertCurrentOfficerAssignment(assignment, 'v1_PDRM', 'event-1', 'v1', 'PDRM', 'officer-1')).not.toThrow();
     expect(() => assertCurrentOfficerAssignment({ ...assignment, status: 'in_progress' }, 'v1_PDRM', 'event-1', 'v1', 'PDRM', 'officer-1')).not.toThrow();
+    expect(() => assertCurrentOfficerAssignment({ ...assignment, status: 'completed' }, 'v1_PDRM', 'event-1', 'v1', 'PDRM', 'officer-1')).not.toThrow();
   });
 
   it.each([
     [{ ...assignment, status: 'revoked' }, 'revoked concurrently'],
-    [{ ...assignment, status: 'completed' }, 'completed concurrently'],
     [{ ...assignment, officerUid: 'replacement-officer' }, 'reassigned concurrently'],
     [{ ...assignment, authorityType: 'BOMBA' }, 'authority changed'],
     [{ ...assignment, versionId: 'v2' }, 'version changed'],

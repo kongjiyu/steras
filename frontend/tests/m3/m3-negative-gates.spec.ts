@@ -2,8 +2,8 @@
  * M3 negative gates — compliance + readiness (FR-M3-14, handoff item 1+2)
  *
  *   compliance-blocked:   Approve on complianceStatus=blocked must fail
- *   provisional-rationale: Approve on readiness=provisional requires ≥80
- *                          char rationale; short rationale must fail
+ *   provisional-rationale: rejection on readiness=provisional still requires
+ *                          the stronger ≥80 character rationale
  *   non-assigned:         PDRM tries to act on an event that only requires
  *                          BOMBA → permission-denied
  */
@@ -41,15 +41,15 @@ test.describe('@M3 negative decision gates', () => {
     expect(dec?.decision).toBeUndefined();
   });
 
-  test('provisional-readiness: short rationale is rejected by Cloud Function', async ({ api, loginAs }) => {
+  test('provisional-readiness: short rejection rationale is rejected by Cloud Function', async ({ api, loginAs }) => {
     await loginAs('bombaKedah');
     let callError: string | null = null;
     try {
       await api.callFunction('recordOfficerProposal', {
         eventId: EVENTS.provisionalReview,
-        decision: 'Approved',
+        decision: 'Rejected',
         reason: 'Short rationale that fails.',
-        confirmedReview: true,
+        suggestion: 'Please provide the missing evidence before resubmission.',
       });
     } catch (err) {
       callError = err instanceof Error ? err.message : String(err);
@@ -59,29 +59,17 @@ test.describe('@M3 negative decision gates', () => {
     expect(assignment?.decision).toBeUndefined();
   });
 
-  test('provisional-readiness: ≥80 char rationale is accepted', async ({ page, api, loginAs }) => {
+  test('provisional-readiness: approval succeeds with confirmation and no rationale', async ({ api, loginAs }) => {
     await loginAs('bombaKedah');
-    await page.goto(`/authority/events/${EVENTS.provisionalReview}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByRole('heading', { name: /your decision/i })).toBeVisible();
-    // Scope to the "Your decision" section (Stage-1 section also has textareas).
-    const decisionSection = page.locator('section', { has: page.getByRole('heading', { name: /your decision/i }) });
-    const rationaleTa = decisionSection.getByLabel(/decision rationale/i);
-    await rationaleTa.scrollIntoViewIfNeeded();
-    rationaleTa.fill(
-      'Bomba approval: provisional M2 readiness acknowledged. ' +
-      'KKM mass-gathering guideline and venue fire cert verified on site. ' +
-      'No outstanding safety concerns. The provisional status is acceptable for this event size and risk profile.',
-    );
-    // FR-M3-16: tick the checkbox.
-    await decisionSection.getByTestId('confirmed-review-checkbox').check();
-    const approveBtn = decisionSection.getByRole('button', { name: /propose approval/i });
-    await approveBtn.scrollIntoViewIfNeeded();
-    await expect(approveBtn).toBeEnabled({ timeout: 10_000 });
-    await approveBtn.click();
-    await expect.poll(async () => {
-      const d = await api.getDoc(`events/${EVENTS.provisionalReview}/assignments/v1_BOMBA`);
-      return d?.decision === 'Approved' ? true : null;
-    }, { timeout: 15_000, intervals: [500, 1_000, 1_500] }).toBe(true);
+    const result = await api.callFunction<{ eventId: string; decision: string; confirmedReview: boolean }, { allCompleted: boolean }>('recordOfficerProposal', {
+      eventId: EVENTS.provisionalReview,
+      decision: 'Approved',
+      confirmedReview: true,
+    });
+    expect(result).toBeTruthy();
+    const assignment = await api.getDoc(`events/${EVENTS.provisionalReview}/assignments/v1_BOMBA`);
+    expect(assignment?.decision).toBe('Approved');
+    expect(assignment?.reason).toBeUndefined();
   });
 
   test('non-assigned authority cannot act on an event that does not require them', async ({ api, loginAs }) => {

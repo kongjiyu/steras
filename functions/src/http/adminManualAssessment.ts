@@ -116,7 +116,11 @@ export async function submitAdminManualAssessmentForUser(uid: string, data: Subm
       throw new HttpsError('failed-precondition', 'The locked manual assessment record is missing.');
     }
     const inputErrors = validateManualAssessmentInput(input, assessment.evidence);
-    if (inputErrors.length) throw new HttpsError('invalid-argument', `Invalid manual assessment: ${inputErrors.join(', ')}.`);
+    if (inputErrors.length) {
+      throw new HttpsError('invalid-argument', 'Complete the highlighted manual-assessment fields.', {
+        fieldErrors: inputErrors,
+      });
+    }
     const proposed = buildManualAssessment({
       assessment: assessment as unknown as ManualReviewRiskAssessment, eventVersionInputHash: version.inputHash, submittedBy: uid,
       manualAssessmentId, input, createdAt: existing?.createdAt ?? now,
