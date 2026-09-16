@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { EventRecord } from '@shared/types';
-import { M4_AI_PROMPT_VERSION } from '@shared/m4';
+import { M4_AI_PROMPT_VERSION, m4EventDayBounds, m4IncidentIdForSequence, participantIncidentProgress } from '@shared/m4';
 import {
-  assertEvidencePath, assertReportableEvent, assertResolutionReady, assertSubmissionGeneration, buildIncidentAiPayload,
+  assertEvidencePath, assertOccurrenceWithinEventDay, assertReportableEvent, assertResolutionReady, assertSubmissionGeneration, buildIncidentAiPayload,
   actionRequestHash, canPerformIncidentAction, canSubmitIncident, rankRecommendedAuthorities, safeIncident, sameSubmission, validateSubmission,
   parseIncidentAiResponse,
 } from './m4Incidents';
@@ -14,6 +14,23 @@ const event = (start: number, end: number, status: EventRecord['status'] = 'Appr
 }) as EventRecord;
 
 describe('M4 incident input boundary', () => {
+  it('formats incident IDs from the Malaysia creation date and daily sequence', () => {
+    expect(m4IncidentIdForSequence(Date.parse('2026-09-18T23:30:00+08:00'), 1)).toBe('INC-260918-0001');
+    expect(m4IncidentIdForSequence(Date.parse('2026-09-18T23:30:00+08:00'), 42)).toBe('INC-260918-0042');
+    expect(() => m4IncidentIdForSequence(Date.now(), 10000)).toThrow();
+  });
+
+  it('keeps participant progress limited to the public workflow', () => {
+    const base = { createdAt: now, updatedAt: now, resolvedAt: undefined, finalResolution: undefined };
+    expect(participantIncidentProgress({ ...base, status: 'submitted' }).map((step) => [step.key, step.state])).toEqual([
+      ['submitted', 'complete'], ['review', 'current'],
+    ]);
+    expect(participantIncidentProgress({ ...base, status: 'responding' }).map((step) => [step.key, step.state])).toEqual([
+      ['submitted', 'complete'], ['review', 'complete'], ['action', 'current'],
+    ]);
+    expect(participantIncidentProgress({ ...base, status: 'resolved', resolvedAt: now + 1, finalResolution: 'Resolved by the organiser.' }).at(-1)).toMatchObject({ state: 'complete', note: 'Resolved by the organiser.' });
+  });
+
   it('defines participant submission as public-role only', () => {
     expect(canSubmitIncident('public')).toBe(true);
     expect(canSubmitIncident('organizer')).toBe(false);
@@ -30,6 +47,16 @@ describe('M4 incident input boundary', () => {
     expect(() => assertReportableEvent(event(now - 9 * 86_400_000, now - 7 * 86_400_000 - 1), now)).toThrow();
     expect(() => assertReportableEvent(event(now - 1, now + 1, 'Withdrawn'), now)).toThrow();
     expect(() => assertReportableEvent(event(now - 1, now + 1, 'Cancelled'), now)).toThrow();
+  });
+
+  it('allows an occurrence anywhere within the selected event D-Day, not only within its scheduled hours', () => {
+    const start = Date.parse('2026-09-03T14:00:00+08:00');
+    const selectedEvent = event(start, start + 60 * 60_000);
+    const day = m4EventDayBounds(start);
+    expect(() => assertOccurrenceWithinEventDay(selectedEvent, day.start)).not.toThrow();
+    expect(() => assertOccurrenceWithinEventDay(selectedEvent, day.end - 1)).not.toThrow();
+    expect(() => assertOccurrenceWithinEventDay(selectedEvent, day.start - 1)).toThrow();
+    expect(() => assertOccurrenceWithinEventDay(selectedEvent, day.end)).toThrow();
   });
 
   it('requires canonical category, occurrence, non-empty description and idempotency key', () => {
@@ -62,10 +89,11 @@ describe('M4 incident input boundary', () => {
       linkedControlId: 'control-1', linkedStage2DocId: 'stage2-1', publicReportTicketId: 'ticket-1',
     } as unknown as Parameters<typeof safeIncident>[0];
     const result = safeIncident(record, 'public', 'reporter-1');
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       incidentId: 'incident-1', eventId: 'event-1', eventName: 'Public Event', status: 'submitted', category: 'crowd',
       location: 'Gate A', occurredAt: now, description: 'Crowd reported.', evidence: [],
     });
+    expect((result as { progress: unknown[] }).progress).toHaveLength(2);
     expect(result).not.toHaveProperty('aiAssessment');
     expect(result).not.toHaveProperty('severity');
   });

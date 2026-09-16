@@ -157,6 +157,10 @@
     @apply mx-auto w-full max-w-[1440px] px-5 py-7 sm:px-8 sm:py-10;
   }
 
+  .incident-history-compact {
+    zoom: 0.9;
+  }
+
   .page-eyebrow {
     @apply mb-2 text-xs font-bold uppercase tracking-[0.08em] text-gold-600;
   }
