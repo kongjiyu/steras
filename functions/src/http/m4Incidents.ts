@@ -5,19 +5,22 @@ import { getStorage } from 'firebase-admin/storage';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { COLLECTIONS, type EventRecord, type OfficerProfile, type PublicReport, type UserProfile } from '@shared/types';
 import {
-  INCIDENT_CATEGORIES, M4_AI_PROMPT_VERSION, M4_EVIDENCE_MAX_BYTES, M4_SCHEMA_VERSION,
+  INCIDENT_CATEGORIES, M4_AI_PROMPT_VERSION, M4_EVIDENCE_MAX_BYTES, M4_SCHEMA_VERSION, m4EventDayBounds, m4IncidentCreationDate, m4IncidentIdForSequence,
   type M4AIAssessment, type M4AuthorityDirectoryEntry, type M4EvidenceRef,
-  type M4IncidentCategory, type M4IncidentHistoryEntry, type M4IncidentRecord, type M4IncidentSeverity,
+  participantIncidentProgress, type M4IncidentCategory, type M4IncidentHistoryEntry, type M4IncidentRecord, type M4IncidentSeverity,
 } from '@shared/m4';
 import { FUNCTION_REGION } from '../config/runtime';
 import { DEFAULT_MINIMAX_BASE_URL, DEFAULT_MINIMAX_MODEL } from '../config/minimax';
 import { MINIMAX_API_KEY } from '../config/secrets';
+import { recommendAuthoritiesWithMiniMax } from '../engines/incidentAuthorityRecommender';
 import { createNotification, resolveAuthUid, type NotificationInput } from '../utils/notifications';
 import { assertEventReportableAt } from '../utils/eventWindow';
 
 const DAY = 86_400_000;
 const HISTORY = 'history';
 const DIRECTORY = 'authority_directory';
+const INCIDENT_REQUESTS = 'incident_submission_keys';
+const INCIDENT_COUNTERS = 'incident_counters';
 const ALLOWED_EVIDENCE = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
 
 export const submitIncident = onCall({ region: FUNCTION_REGION, timeoutSeconds: 60, memory: '512MiB', secrets: [MINIMAX_API_KEY] }, async (request) => {
@@ -31,58 +34,68 @@ export const submitIncident = onCall({ region: FUNCTION_REGION, timeoutSeconds: 
   if (!eventSnap.exists) throw new HttpsError('not-found', 'Event not found.');
   const event = eventSnap.data() as EventRecord;
   assertReportableEvent(event, Date.now());
-  if (input.occurredAt < event.eventDetails.startDatetime || input.occurredAt > event.eventDetails.endDatetime) {
-    throw new HttpsError('invalid-argument', 'Occurrence time must fall within the selected event.');
-  }
+  assertOccurrenceWithinEventDay(event, input.occurredAt);
   if (input.linkedControlId) {
     const controlRef = db.collection(COLLECTIONS.EVENTS).doc(input.eventId).collection(COLLECTIONS.EVENT_CONTROLS).doc(input.linkedControlId);
     const stage2Id = input.linkedStage2DocId ?? `${input.linkedControlId}-s2`;
     const [control, stage2] = await Promise.all([controlRef.get(), controlRef.collection(COLLECTIONS.STAGE2_DOCS).doc(stage2Id).get()]);
     if (!control.exists || !stage2.exists || stage2.data()?.published !== true) throw new HttpsError('failed-precondition', 'Linked Event Control evidence is not published.');
   }
-  const incidentId = createHash('sha256').update(`${uid}:${input.idempotencyKey}`).digest('hex').slice(0, 28);
-  const ref = db.collection(COLLECTIONS.INCIDENTS).doc(incidentId);
+  const submissionKey = createHash('sha256').update(`${uid}:${input.idempotencyKey}`).digest('hex');
+  const requestRef = db.collection(INCIDENT_REQUESTS).doc(submissionKey);
+  const legacyRef = db.collection(COLLECTIONS.INCIDENTS).doc(submissionKey.slice(0, 28));
   const capturedVersionId = event.currentVersionId ?? `v${event.currentVersionNumber}`;
-  const existing = await ref.get();
-  if (existing.exists) {
-    const prior = existing.data() as M4IncidentRecord;
+  const requestSnap = await requestRef.get();
+  if (requestSnap.exists) {
+    const priorId = String(requestSnap.data()?.incidentId ?? '');
+    const priorSnap = priorId ? await db.collection(COLLECTIONS.INCIDENTS).doc(priorId).get() : undefined;
+    if (!priorSnap?.exists) throw new HttpsError('internal', 'Incident idempotency record is incomplete.');
+    const prior = priorSnap.data() as M4IncidentRecord;
     if (!sameSubmission(prior, uid, input)) throw new HttpsError('already-exists', 'Idempotency key was already used for another report.');
     await reconcileSubmitNotification(prior);
-    return { incidentId, status: prior.status, aiAssessment: prior.aiAssessment };
+    return { incidentId: prior.incidentId, status: prior.status, aiAssessment: prior.aiAssessment };
+  }
+  const legacySnap = await legacyRef.get();
+  if (legacySnap.exists) {
+    const prior = legacySnap.data() as M4IncidentRecord;
+    if (!sameSubmission(prior, uid, input)) throw new HttpsError('already-exists', 'Idempotency key was already used for another report.');
+    await reconcileSubmitNotification(prior);
+    return { incidentId: prior.incidentId, status: prior.status, aiAssessment: prior.aiAssessment };
   }
   const evidence = await validateEvidence(uid, input.evidencePaths);
   const authoritySnapshot = await db.collection(DIRECTORY).where('active', '==', true).limit(100).get();
+  const authorityEntries = authoritySnapshot.docs.map((doc) => doc.data() as M4AuthorityDirectoryEntry);
   const aiAssessment = await assessIncident({ ...input, evidence }, event);
-  const recommendedAuthorityIds = rankRecommendedAuthorities(
-    authoritySnapshot.docs.map((doc) => doc.data() as M4AuthorityDirectoryEntry),
-    input.category,
-    aiAssessment,
-    event,
-  ).slice(0, 5).map((entry) => entry.authorityId);
+  const deterministicAuthorityMatches = rankRecommendedAuthorities(authorityEntries, input.category, aiAssessment, event);
+  const aiAuthorityRecommendation = await recommendAuthoritiesWithMiniMax(process.env.MINIMAX_API_KEY ?? '', {
+    category: input.category, description: input.description, location: input.location, occurredAt: input.occurredAt,
+    evidence, event, assessment: aiAssessment, authorities: authorityEntries,
+  });
+  const recommendedAuthorityIds = aiAuthorityRecommendation.status === 'success'
+    ? aiAuthorityRecommendation.authorityIds
+    : deterministicAuthorityMatches.slice(0, 5).map((entry) => entry.authorityId);
   const now = Date.now();
-  const record: M4IncidentRecord = {
-    schemaVersion: M4_SCHEMA_VERSION, incidentId, eventId: input.eventId,
-    eventVersionId: capturedVersionId,
-    venueId: event.eventDetails.venueId ?? `custom:${event.eventId}`,
-    eventType: event.eventDetails.type, eventName: event.eventDetails.name, organizerId: event.organizerId,
-    reporterUid: uid, reporterRole: profile.role, category: input.category, incidentType: input.category,
-    description: input.description, location: input.location, occurredAt: input.occurredAt, evidence,
-    aiAssessment, ...(aiAssessment.status === 'success' ? { severity: aiAssessment.severity, immediateActionRequired: aiAssessment.immediateActionRequired } : {}),
-    status: aiAssessment.status === 'success' ? 'submitted' : 'manual_review_required',
-    ...(input.linkedControlId ? { linkedControlId: input.linkedControlId } : {}),
-    ...(input.linkedStage2DocId ? { linkedStage2DocId: input.linkedStage2DocId } : {}),
-    recommendedAuthorityIds,
-    assessmentEligible: false, synthetic: false, date: input.occurredAt, createdAt: now, updatedAt: now,
-  };
   const organizerUid = await resolveAuthUid(event.organizerId);
-  const submitNotification = organizerUid ? incidentNotification({ recipientUid: organizerUid, eventId: event.eventId, versionId: record.eventVersionId, type: 'incident_reported', title: 'New incident report', message: `${event.eventDetails.name}: ${aiAssessment.status === 'success' && aiAssessment.immediateActionRequired ? 'immediate action recommended' : 'organizer review required'}.`, sourceActionId: incidentId, notificationId: `${incidentId}_organizer` }) : undefined;
+  let incidentId = '';
+  let record!: M4IncidentRecord;
+  let submitNotification: NotificationInput | undefined;
+  let replayed = false;
   await db.runTransaction(async (tx) => {
-    const [existing, currentEventSnap] = await Promise.all([tx.get(ref), tx.get(db.collection(COLLECTIONS.EVENTS).doc(input.eventId))]);
-    if (existing.exists) {
-      const prior = existing.data() as M4IncidentRecord;
+    const [request, currentEventSnap, counterSnap] = await Promise.all([
+      tx.get(requestRef),
+      tx.get(db.collection(COLLECTIONS.EVENTS).doc(input.eventId)),
+      tx.get(db.collection(INCIDENT_COUNTERS).doc(m4IncidentCreationDate(now))),
+    ]);
+    if (request.exists) {
+      incidentId = String(request.data()?.incidentId ?? '');
+      const priorSnap = incidentId ? await tx.get(db.collection(COLLECTIONS.INCIDENTS).doc(incidentId)) : undefined;
+      if (!priorSnap?.exists) throw new HttpsError('internal', 'Incident idempotency record is incomplete.');
+      const prior = priorSnap.data() as M4IncidentRecord;
       if (!sameSubmission(prior, uid, input)) {
         throw new HttpsError('already-exists', 'Idempotency key was already used for another report.');
       }
+      record = prior;
+      replayed = true;
       return;
     }
     if (!currentEventSnap.exists) throw new HttpsError('failed-precondition', 'Event is no longer available.');
@@ -99,10 +112,43 @@ export const submitIncident = onCall({ region: FUNCTION_REGION, timeoutSeconds: 
         throw new HttpsError('failed-precondition', 'Linked Event Control evidence is no longer published.');
       }
     }
+    const nextSequence = Number(counterSnap.data()?.nextSequence ?? 0) + 1;
+    try {
+      incidentId = m4IncidentIdForSequence(now, nextSequence);
+    } catch {
+      throw new HttpsError('failed-precondition', 'The daily incident number limit has been reached.');
+    }
+    const ref = db.collection(COLLECTIONS.INCIDENTS).doc(incidentId);
+    const existingIncident = await tx.get(ref);
+    if (existingIncident.exists) throw new HttpsError('aborted', 'The incident number was already assigned. Please retry.');
+    record = {
+      schemaVersion: M4_SCHEMA_VERSION, incidentId, eventId: input.eventId,
+      eventVersionId: capturedVersionId,
+      venueId: event.eventDetails.venueId ?? `custom:${event.eventId}`,
+      eventType: event.eventDetails.type, eventName: event.eventDetails.name, organizerId: event.organizerId,
+      reporterUid: uid, reporterRole: profile.role, category: input.category, incidentType: input.category,
+      description: input.description, location: input.location, occurredAt: input.occurredAt, evidence,
+      aiAssessment, aiAuthorityRecommendation,
+      ...(aiAssessment.status === 'success' ? { severity: aiAssessment.severity, immediateActionRequired: aiAssessment.immediateActionRequired } : {}),
+      status: aiAssessment.status === 'success' ? 'submitted' : 'manual_review_required',
+      ...(input.linkedControlId ? { linkedControlId: input.linkedControlId } : {}),
+      ...(input.linkedStage2DocId ? { linkedStage2DocId: input.linkedStage2DocId } : {}),
+      recommendedAuthorityIds,
+      assessmentEligible: false, synthetic: false, date: input.occurredAt, createdAt: now, updatedAt: now,
+    };
+    submitNotification = organizerUid ? incidentNotification({ recipientUid: organizerUid, eventId: event.eventId, versionId: record.eventVersionId, type: 'incident_reported', title: 'New incident report', message: `${event.eventDetails.name}: ${aiAssessment.status === 'success' && aiAssessment.immediateActionRequired ? 'immediate action recommended' : 'organizer review required'}.`, sourceActionId: incidentId, notificationId: `${incidentId}_organizer` }) : undefined;
     tx.create(ref, record);
+    tx.create(requestRef, { incidentId, reporterUid: uid, createdAt: now });
+    tx.set(db.collection(INCIDENT_COUNTERS).doc(m4IncidentCreationDate(now)), { nextSequence, updatedAt: now }, { merge: true });
     appendHistory(tx, ref, incidentId, uid, profile.role, 'incident_submitted', 'Incident report submitted.', evidence, now);
+    appendHistory(tx, ref, incidentId, 'system', 'system', 'ai_incident_assessment', incidentAssessmentSummary(aiAssessment), [], now);
+    appendHistory(tx, ref, incidentId, 'system', 'system', 'ai_authority_recommendation', authorityRecommendationSummary(aiAuthorityRecommendation, recommendedAuthorityIds), [], now);
     if (submitNotification) queueIncidentNotification(tx, submitNotification, now);
   });
+  if (replayed) {
+    await reconcileSubmitNotification(record);
+    return { incidentId: record.incidentId, status: record.status, aiAssessment: record.aiAssessment };
+  }
   if (submitNotification) await deliverIncidentNotification(submitNotification.notificationId!);
   return { incidentId, status: record.status, aiAssessment };
 });
@@ -174,17 +220,17 @@ export const manageIncident = onCall({ region: FUNCTION_REGION }, async (request
     if (action === 'assign_internal') {
       if (!canPerformIncidentAction(record, profile, uid, action)) deny();
       const team = text(input.team, 'team', 2, 100); const note = text(input.note, 'note', 10, 1000);
-      patch = { ...patch, assignedInternalTeam: team, status: 'responding' }; summary = `Assigned ${team}: ${note}`;
+      patch = { ...patch, assignedInternalTeam: team, status: 'responding', reviewedAt: record.reviewedAt ?? now, actionStartedAt: record.actionStartedAt ?? now }; summary = `Assigned ${team}: ${note}`;
     } else if (action === 'record_response') {
       if (!canPerformIncidentAction(record, profile, uid, action)) deny();
-      summary = text(input.note, 'note', 10, 2000); patch = { ...patch, status: 'awaiting_resolution' };
+      summary = text(input.note, 'note', 10, 2000); patch = { ...patch, status: 'awaiting_resolution', reviewedAt: record.reviewedAt ?? now, actionStartedAt: record.actionStartedAt ?? now };
     } else if (action === 'refer_authority') {
       if (!canPerformIncidentAction(record, profile, uid, action)) deny();
       const authorityId = identifier(input.authorityId, 'authorityId');
       const directory = await tx.get(db.collection(DIRECTORY).doc(authorityId));
       const entry = directory.data() as M4AuthorityDirectoryEntry | undefined;
       if (!entry?.active || !entry.serviceCategories.includes(record.category)) throw new HttpsError('failed-precondition', 'Authority is not active for this incident category.');
-      patch = { ...patch, referredAuthorityId: entry.authorityId, referredAuthorityType: entry.authorityType, status: 'authority_investigation' };
+      patch = { ...patch, referredAuthorityId: entry.authorityId, referredAuthorityType: entry.authorityType, status: 'authority_investigation', reviewedAt: record.reviewedAt ?? now, actionStartedAt: record.actionStartedAt ?? now };
       summary = `Referred to ${entry.name}: ${text(input.note, 'note', 10, 1000)}`;
       const officerRegistry = await tx.get(db.collection(COLLECTIONS.OFFICERS)
         .where('active', '==', true).where('authorityType', '==', entry.authorityType).limit(100));
@@ -200,7 +246,7 @@ export const manageIncident = onCall({ region: FUNCTION_REGION }, async (request
       notify = { uid: officerUid, record, summary };
     } else if (action === 'record_investigation') {
       if (!canPerformIncidentAction(record, profile, uid, action)) deny();
-      summary = text(input.note, 'note', 10, 2000); patch = { ...patch, status: 'awaiting_resolution' };
+      summary = text(input.note, 'note', 10, 2000); patch = { ...patch, status: 'awaiting_resolution', reviewedAt: record.reviewedAt ?? now, actionStartedAt: record.actionStartedAt ?? now };
       notify = { uid: await resolveAuthUid(record.organizerId) ?? undefined, record, summary: 'Authority investigation finding is ready.' };
     } else if (action === 'resolve') {
       if (!canPerformIncidentAction(record, profile, uid, action)) deny();
@@ -284,9 +330,40 @@ async function requireProfile(uid?: string) { if (!uid) throw new HttpsError('un
 export function canSubmitIncident(role: UserProfile['role']) { return role === 'public'; }
 export function validateSubmission(value: unknown) { const v = value as Record<string, unknown>; const category = String(v?.category ?? '') as M4IncidentCategory; if (!INCIDENT_CATEGORIES.includes(category)) throw new HttpsError('invalid-argument', 'Invalid incident category.'); const occurredAt = Number(v.occurredAt); if (!Number.isFinite(occurredAt) || occurredAt <= 0 || occurredAt > Date.now() + 300_000) throw new HttpsError('invalid-argument', 'Invalid occurrence time.'); return { eventId: identifier(v.eventId, 'eventId'), category, description: text(v.description, 'description', 1, 2000), location: text(v.location, 'location', 3, 300), occurredAt, idempotencyKey: identifier(v.idempotencyKey, 'idempotencyKey'), evidencePaths: Array.isArray(v.evidencePaths) ? v.evidencePaths.map(String) : [], linkedControlId: v.linkedControlId ? identifier(v.linkedControlId, 'linkedControlId') : undefined, linkedStage2DocId: v.linkedStage2DocId ? identifier(v.linkedStage2DocId, 'linkedStage2DocId') : undefined }; }
 export function assertReportableEvent(event: EventRecord, now: number) { assertEventReportableAt(event, now); }
-export function assertSubmissionGeneration(event: EventRecord, capturedVersionId: string, input: Pick<ReturnType<typeof validateSubmission>, 'occurredAt'>, now: number) { assertReportableEvent(event, now); if ((event.currentVersionId ?? `v${event.currentVersionNumber}`) !== capturedVersionId) throw new HttpsError('aborted', 'Event generation changed while the incident was being assessed.'); if (input.occurredAt < event.eventDetails.startDatetime || input.occurredAt > event.eventDetails.endDatetime) throw new HttpsError('failed-precondition', 'Occurrence is no longer valid for the current event generation.'); }
+export function assertOccurrenceWithinEventDay(event: EventRecord, occurredAt: number, code: 'invalid-argument' | 'failed-precondition' = 'invalid-argument') {
+  const { start, end } = m4EventDayBounds(event.eventDetails.startDatetime);
+  if (occurredAt < start || occurredAt >= end) {
+    throw new HttpsError(code, 'Occurrence time must fall within the selected event D-Day.');
+  }
+}
+export function assertSubmissionGeneration(event: EventRecord, capturedVersionId: string, input: Pick<ReturnType<typeof validateSubmission>, 'occurredAt'>, now: number) { assertReportableEvent(event, now); if ((event.currentVersionId ?? `v${event.currentVersionNumber}`) !== capturedVersionId) throw new HttpsError('aborted', 'Event generation changed while the incident was being assessed.'); assertOccurrenceWithinEventDay(event, input.occurredAt, 'failed-precondition'); }
 async function validateEvidence(uid: string, paths: string[]): Promise<M4EvidenceRef[]> { if (paths.length > 10 || new Set(paths).size !== paths.length) throw new HttpsError('invalid-argument', 'Up to 10 unique evidence files are allowed.'); return Promise.all(paths.map(async (path) => { assertEvidencePath(uid, path); const [metadata] = await getStorage().bucket().file(path).getMetadata(); const size = Number(metadata.size); const mimeType = metadata.contentType ?? ''; if (!Number.isFinite(size) || size <= 0 || size > M4_EVIDENCE_MAX_BYTES || !ALLOWED_EVIDENCE.has(mimeType)) throw new HttpsError('failed-precondition', 'Evidence metadata is invalid.'); return { path, name: path.split('/').pop()!, mimeType, size, uploadedBy: uid, uploadedAt: Date.parse(metadata.timeCreated ?? '') || Date.now() }; })); }
-export async function assessIncident(input: Pick<ReturnType<typeof validateSubmission>, 'category' | 'description' | 'location' | 'occurredAt'> & { evidence: M4EvidenceRef[] }, event: EventRecord): Promise<M4AIAssessment> { const now = Date.now(); const key = process.env.MINIMAX_API_KEY ?? ''; if (!key) return { status: 'unavailable', promptVersion: M4_AI_PROMPT_VERSION, reason: 'MiniMax is not configured.', assessedAt: now }; try { const client = new Anthropic({ apiKey: key, baseURL: process.env.MINIMAX_BASE_URL ?? DEFAULT_MINIMAX_BASE_URL, timeout: 20_000, maxRetries: 0 }); const response = await client.messages.create({ model: process.env.MINIMAX_MODEL ?? DEFAULT_MINIMAX_MODEL, max_tokens: 300, temperature: 0, system: 'Return strict JSON only: {"severity":"low|medium|high","immediateActionRequired":boolean,"rationale":string}. Do not invent facts.', messages: [{ role: 'user', content: JSON.stringify(buildIncidentAiPayload(input, event)) }] }); const raw = response.content.filter((block): block is Anthropic.TextBlock => block.type === 'text').map((block) => block.text).join(''); const parsed = parseIncidentAiResponse(raw); return { status: 'success', model: process.env.MINIMAX_MODEL ?? DEFAULT_MINIMAX_MODEL, promptVersion: M4_AI_PROMPT_VERSION, ...parsed, assessedAt: now }; } catch (error) { return { status: 'invalid', promptVersion: M4_AI_PROMPT_VERSION, reason: error instanceof Error ? error.message.slice(0, 300) : 'Invalid AI response.', assessedAt: now }; } }
+export async function assessIncident(input: Pick<ReturnType<typeof validateSubmission>, 'category' | 'description' | 'location' | 'occurredAt'> & { evidence: M4EvidenceRef[] }, event: EventRecord): Promise<M4AIAssessment> {
+  const now = Date.now();
+  const key = process.env.MINIMAX_API_KEY ?? '';
+  const model = process.env.MINIMAX_MODEL ?? DEFAULT_MINIMAX_MODEL;
+  if (!key) return { status: 'unavailable', promptVersion: M4_AI_PROMPT_VERSION, reason: 'MiniMax is not configured.', assessedAt: now };
+
+  let raw: string;
+  try {
+    const client = new Anthropic({ apiKey: key, baseURL: process.env.MINIMAX_BASE_URL ?? DEFAULT_MINIMAX_BASE_URL, timeout: 20_000, maxRetries: 0 });
+    const response = await client.messages.create({
+      model, max_tokens: 300, temperature: 0,
+      system: 'Return strict JSON only: {"severity":"low|medium|high","immediateActionRequired":boolean,"rationale":string}. Do not invent facts.',
+      messages: [{ role: 'user', content: JSON.stringify(buildIncidentAiPayload(input, event)) }],
+    });
+    raw = response.content.filter((block): block is Anthropic.TextBlock => block.type === 'text').map((block) => block.text).join('');
+  } catch (error) {
+    return { status: 'unavailable', promptVersion: M4_AI_PROMPT_VERSION, reason: aiErrorReason(error, 'MiniMax incident assessment was unavailable.'), assessedAt: now };
+  }
+
+  try {
+    const parsed = parseIncidentAiResponse(raw);
+    return { status: 'success', model, promptVersion: M4_AI_PROMPT_VERSION, ...parsed, assessedAt: now };
+  } catch (error) {
+    return { status: 'invalid', promptVersion: M4_AI_PROMPT_VERSION, reason: aiErrorReason(error, 'MiniMax returned an invalid incident assessment.'), assessedAt: now };
+  }
+}
 
 export function parseIncidentAiResponse(raw: string): Pick<Extract<M4AIAssessment, { status: 'success' }>, 'severity' | 'immediateActionRequired' | 'rationale'> {
   const parsed = JSON.parse(raw) as unknown;
@@ -305,10 +382,12 @@ function appendHistory(tx: FirebaseFirestore.Transaction, ref: FirebaseFirestore
 export function safeIncident(record: M4IncidentRecord, role: UserProfile['role'], uid: string) {
   if (role !== 'public' && !(role === 'organizer' && record.organizerId !== uid)) return record;
   const {
-    incidentId, eventId, eventName, category, description, location, occurredAt, evidence, status, linkedControlId,
+    incidentId, eventId, eventName, eventType, category, description, location, occurredAt, evidence, status, linkedControlId,
   } = record;
   return {
     incidentId, eventId, eventName, status, category, location, occurredAt, description, evidence,
+    ...(eventType ? { eventType } : {}),
+    progress: participantIncidentProgress(record),
     ...(category === 'event_control_discrepancy' && linkedControlId ? { linkedControlId } : {}),
   };
 }
@@ -333,7 +412,7 @@ export function canPerformIncidentAction(record: M4IncidentRecord, profile: User
   return false;
 }
 export function assertResolutionReady(record: M4IncidentRecord) { if (record.status !== 'awaiting_resolution') throw new HttpsError('failed-precondition', 'Record a completed response or authority finding before resolution.'); }
-export function buildIncidentAiPayload(input: Pick<ReturnType<typeof validateSubmission>, 'category' | 'description' | 'location' | 'occurredAt'> & { evidence: M4EvidenceRef[] }, event: EventRecord) { return { category: input.category, description: input.description, location: input.location, occurredAt: input.occurredAt, evidence: input.evidence.map(({ name, mimeType, size }) => ({ name, mimeType, size })), event: { type: event.eventDetails.type, venueName: event.eventDetails.venueName, attendance: event.eventDetails.expectedAttendance } }; }
+export function buildIncidentAiPayload(input: Pick<ReturnType<typeof validateSubmission>, 'category' | 'description' | 'location' | 'occurredAt'> & { evidence: M4EvidenceRef[] }, event: EventRecord) { return { category: input.category, description: input.description, location: input.location, occurredAt: input.occurredAt, evidence: input.evidence.map(({ name, mimeType, size }) => ({ name, mimeType, size })), event: { name: event.eventDetails.name, type: event.eventDetails.type, venueName: event.eventDetails.venueName, venueAddress: event.eventDetails.venueAddress, venueState: event.eventDetails.venueState ?? null, venueCapacity: event.eventDetails.venueCapacity, attendance: event.eventDetails.expectedAttendance, startDatetime: event.eventDetails.startDatetime, endDatetime: event.eventDetails.endDatetime } }; }
 export function rankRecommendedAuthorities(entries: M4AuthorityDirectoryEntry[], category: M4IncidentCategory, assessment: M4AIAssessment, event: EventRecord) {
   const locationText = `${event.eventDetails.venueName} ${event.eventDetails.venueAddress} ${event.eventDetails.venueState}`.toLocaleLowerCase();
   const emergencyTypes = new Set(['PDRM', 'BOMBA', 'KKM']);
@@ -352,3 +431,19 @@ function queueIncidentNotification(tx: FirebaseFirestore.Transaction, input: Not
 async function deliverIncidentNotification(outboxId: string) { const ref = firestore().collection(OUTBOX).doc(outboxId); const snap = await ref.get(); if (!snap.exists || snap.data()?.deliveredAt) return; const input = snap.data()?.input as NotificationInput | undefined; if (!input) throw new Error('Incident notification outbox payload is missing.'); await createNotification(input, snap.data()?.createdAt ?? Date.now()); await ref.update({ deliveredAt: Date.now() }); }
 async function reconcileSubmitNotification(record: M4IncidentRecord) { const organizerUid = await resolveAuthUid(record.organizerId); if (!organizerUid) return; const input = incidentNotification({ recipientUid: organizerUid, eventId: record.eventId, versionId: record.eventVersionId, type: 'incident_reported', title: 'New incident report', message: `${record.eventName}: ${record.aiAssessment.status === 'success' && record.aiAssessment.immediateActionRequired ? 'immediate action recommended' : 'organizer review required'}.`, sourceActionId: record.incidentId, notificationId: `${record.incidentId}_organizer` }); const outboxId = input.notificationId!; const ref = firestore().collection(OUTBOX).doc(outboxId); await firestore().runTransaction(async (tx) => { if (!(await tx.get(ref)).exists) queueIncidentNotification(tx, input, record.createdAt); }); await deliverIncidentNotification(outboxId); }
 function deny(): never { throw new HttpsError('permission-denied', 'This action is not permitted.'); }
+
+function aiErrorReason(error: unknown, fallback: string) {
+  const message = error instanceof Error ? error.message : fallback;
+  return message.replace(/(api[-_ ]?key|authorization|bearer)\s*[:=]\s*\S+/gi, '$1 [redacted]').slice(0, 300);
+}
+
+function incidentAssessmentSummary(assessment: M4AIAssessment) {
+  return assessment.status === 'success'
+    ? `MiniMax assessed ${assessment.severity} severity. ${assessment.immediateActionRequired ? 'Immediate action is required.' : 'No immediate action was indicated.'} ${assessment.rationale}`
+    : `MiniMax incident assessment ${assessment.status}: ${assessment.reason}`;
+}
+
+function authorityRecommendationSummary(recommendation: import('@shared/m4').M4AuthorityRecommendation, fallbackIds: string[]) {
+  if (recommendation.status === 'success') return `MiniMax returned ${recommendation.authorityIds.length} validated authority recommendation(s). ${recommendation.rationale}`;
+  return `MiniMax authority recommendation ${recommendation.status}; deterministic directory matches retained for organizer choice (${fallbackIds.length}). ${recommendation.reason}`;
+}

@@ -1,5 +1,7 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render as renderScreen, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { m4EventDayDate, type M4IncidentCategory, type M4IncidentStatus } from '@shared/m4';
 import Incidents from './Incidents';
 
 const mocks = vi.hoisted(() => ({ list: vi.fn(), directory: vi.fn(), submit: vi.fn(), manage: vi.fn(), role: 'public' }));
@@ -12,10 +14,17 @@ vi.mock('./IncidentEvidenceGallery', () => ({ IncidentEvidenceGallery: () => nul
 
 const event = { eventId: 'event-1', name: 'QA Event', startDatetime: new Date('2020-01-01').getTime(), endDatetime: Date.now() + 86400000 };
 const result = { data: { incidents: [], reportableEvents: [event] } };
+async function openSubmissionForm() {
+  fireEvent.click(await screen.findByRole('button', { name: 'Submit Incident Report' }));
+  await screen.findByLabelText('Eligible event *');
+}
+function renderIncidents(initialEntry = '/incidents') {
+  return renderScreen(<MemoryRouter initialEntries={[initialEntry]}><Incidents /></MemoryRouter>);
+}
+const render = (ui: Parameters<typeof renderScreen>[0]) => renderScreen(<MemoryRouter initialEntries={['/incidents']}>{ui}</MemoryRouter>);
 function fillReport() {
   fireEvent.change(screen.getByLabelText('Eligible event *'), { target: { value: 'event-1' } });
   fireEvent.change(screen.getByLabelText('Incident category *'), { target: { value: 'crowd' } });
-  fireEvent.change(screen.getByLabelText('Occurrence date and time *'), { target: { value: '2026-01-01T12:00' } });
   fireEvent.change(screen.getByLabelText('Location *'), { target: { value: 'Main entrance' } });
   fireEvent.change(screen.getByLabelText('Description *'), { target: { value: 'A temporary barrier is blocking the main entrance.' } });
 }
@@ -30,28 +39,90 @@ beforeEach(() => {
 });
 
 describe('live incident workspace resilience', () => {
-  it('starts with empty selections, the current time, and no instruction line', async () => {
-    const beforeRender = Date.now();
-    render(<Incidents />);
+  it('opens on My reports and redirects to a separate submission page only when requested', async () => {
+    renderIncidents();
+    expect(await screen.findByRole('heading', { name: 'My reports' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Eligible event *')).not.toBeInTheDocument();
+    await openSubmissionForm();
+    expect(await screen.findByRole('heading', { name: 'Submit Incident Report' })).toBeInTheDocument();
+    expect(screen.queryByText('Submitted reports')).not.toBeInTheDocument();
     await screen.findByRole('option', { name: 'QA Event' });
 
     expect(screen.getByLabelText('Eligible event *')).toHaveValue('');
     expect((screen.getByRole('option', { name: 'Select an ongoing or recent event' }) as HTMLOptionElement).selected).toBe(true);
     expect(screen.getByLabelText('Incident category *')).toHaveValue('');
     expect((screen.getByRole('option', { name: 'Select category' }) as HTMLOptionElement).selected).toBe(true);
-    const occurrence = screen.getByLabelText('Occurrence date and time *') as HTMLInputElement;
-    expect(new Date(occurrence.value).getTime()).toBeGreaterThanOrEqual(beforeRender - 60_000);
-    expect(new Date(occurrence.value).getTime()).toBeLessThanOrEqual(Date.now() + 60_000);
+    const occurrenceDate = screen.getByLabelText('Occurrence date (D-Day)') as HTMLInputElement;
+    expect(occurrenceDate).toHaveValue('');
+    expect(occurrenceDate).toHaveAttribute('readonly');
+    expect(screen.getByLabelText('Occurrence time *')).toBeEnabled();
     expect(screen.queryByText(/eligible events available/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/description of at least 20 characters/i)).not.toBeInTheDocument();
   });
 
+  it('shows participant summary counts and filters incident history by search, category and status', async () => {
+    mocks.list.mockResolvedValue({ data: { incidents: [
+      incident('resolved', 'Resolved medical event', 'medical_safety'),
+      incident('responding', 'Open crowd event', 'crowd'),
+    ], reportableEvents: [event] } });
+    renderIncidents();
+    expect(await screen.findByRole('heading', { name: 'Incident history' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'All (2)' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'In progress (1)' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Resolved (1)' })).toBeInTheDocument();
+    expect(screen.getByText('Resolved medical event')).toBeInTheDocument();
+    expect(screen.getByText('Open crowd event')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Search incident history'), { target: { value: 'Open crowd' } });
+    expect(screen.queryByText('Resolved medical event')).not.toBeInTheDocument();
+    expect(screen.getByText('Open crowd event')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Search incident history'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('Incident category filter'), { target: { value: 'medical_safety' } });
+    expect(screen.getByText('Resolved medical event')).toBeInTheDocument();
+    expect(screen.queryByText('Open crowd event')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'Resolved (1)' }));
+    expect(screen.getByText('Resolved medical event')).toBeInTheDocument();
+  });
+
+  it('renders the submission form directly at its own URL and returns to My reports', async () => {
+    renderIncidents('/incidents/submit');
+
+    expect(await screen.findByRole('heading', { name: 'Submit Incident Report' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Eligible event *')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'My reports' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Submitted reports')).not.toBeInTheDocument();
+  });
+
   it('accepts a required description without imposing a 20-character minimum', async () => {
     render(<Incidents />);
+    await openSubmissionForm();
     await screen.findByRole('option', { name: 'QA Event' });
     fillReport();
     fireEvent.change(screen.getByLabelText('Description *'), { target: { value: 'X' } });
     expect(screen.getByRole('button', { name: 'Submit Incident Report' })).toBeEnabled();
+  });
+
+  it('fixes a recently completed event to its D-Day and keeps evidence optional', async () => {
+    const endDatetime = Date.now() - 24 * 60 * 60_000;
+    const startDatetime = endDatetime - 2 * 60 * 60_000;
+    mocks.list.mockResolvedValue({ data: { incidents: [], reportableEvents: [{
+      eventId: 'recent-event', name: 'Recently completed event', startDatetime, endDatetime,
+    }] } });
+    render(<Incidents />);
+    await openSubmissionForm();
+    await screen.findByRole('option', { name: 'Recently completed event' });
+
+    fireEvent.change(screen.getByLabelText('Eligible event *'), { target: { value: 'recent-event' } });
+    expect(screen.getByLabelText('Occurrence date (D-Day)')).toHaveValue(m4EventDayDate(startDatetime));
+    const occurrence = screen.getByLabelText('Occurrence time *') as HTMLInputElement;
+    expect(occurrence).toHaveAttribute('max', '23:59');
+    fireEvent.change(occurrence, { target: { value: '23:59' } });
+    fireEvent.change(screen.getByLabelText('Incident category *'), { target: { value: 'crowd' } });
+    fireEvent.change(screen.getByLabelText('Location *'), { target: { value: 'Main entrance' } });
+    fireEvent.change(screen.getByLabelText('Description *'), { target: { value: 'Crowd movement slowed near the entrance.' } });
+
+    expect(screen.getByRole('button', { name: 'Submit Incident Report' })).toBeEnabled();
+    expect(screen.getByText('All required information is complete. Supporting evidence is optional.')).toBeInTheDocument();
   });
 
   it('shows loading rather than a false zero and recovers from a failed read', async () => {
@@ -59,18 +130,20 @@ describe('live incident workspace resilience', () => {
     mocks.list.mockImplementationOnce(() => new Promise((_, reject) => { fail = reject; }));
     render(<Incidents />);
     expect(screen.getByText('Loading incident records...')).toBeInTheDocument();
-    expect(screen.queryByText('0 accessible records')).not.toBeInTheDocument();
+    expect(screen.queryByText('0 submitted reports')).not.toBeInTheDocument();
+    await openSubmissionForm();
     await act(async () => fail(new Error('offline')));
     expect(await screen.findByText('Record count unavailable')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Submit Incident Report' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
-    expect(await screen.findByText('0 accessible records')).toBeInTheDocument();
+    expect(await screen.findByText('0 submitted reports')).toBeInTheDocument();
     expect(screen.queryByText(/could not be refreshed/)).not.toBeInTheDocument();
   });
 
   it('retains the same request key after a lost response and changes it after an edit', async () => {
     mocks.submit.mockRejectedValue(new Error('Response lost'));
     render(<Incidents />);
+    await openSubmissionForm();
     await screen.findByRole('option', { name: 'QA Event' });
     fillReport();
     const button = screen.getByRole('button', { name: 'Submit Incident Report' });
@@ -88,26 +161,47 @@ describe('live incident workspace resilience', () => {
 
   it('does not turn a successful submission into a failed submission when refresh fails', async () => {
     render(<Incidents />);
+    await openSubmissionForm();
     await screen.findByRole('option', { name: 'QA Event' });
     fillReport();
     mocks.list.mockRejectedValue(new Error('refresh offline'));
     fireEvent.click(screen.getByRole('button', { name: 'Submit Incident Report' }));
     await screen.findByText(/could not be refreshed/);
     expect(mocks.submit).toHaveBeenCalledOnce();
-    expect(screen.getByLabelText('Description *')).toHaveValue('');
+    expect(screen.queryByRole('heading', { name: 'Submit Incident Report' })).not.toBeInTheDocument();
+    expect(screen.getByText('Incident report submitted. It is now available in My reports.')).toBeInTheDocument();
     expect(screen.queryByText('Submission failed.')).not.toBeInTheDocument();
   });
 
-  it('blocks future and pre-event dates before uploading or calling the backend', async () => {
+  it('locks the occurrence date to D-Day and sends the selected time to the backend', async () => {
     render(<Incidents />);
+    await openSubmissionForm();
     await screen.findByRole('option', { name: 'QA Event' });
     fillReport();
-    for (const date of ['2999-01-01T12:00', '2019-01-01T12:00']) {
-      fireEvent.change(screen.getByLabelText('Occurrence date and time *'), { target: { value: date } });
-      expect(screen.getByRole('button', { name: 'Submit Incident Report' })).toBeDisabled();
-      expect(screen.getByText(/Choose a time during/)).toBeInTheDocument();
-    }
-    expect(mocks.submit).not.toHaveBeenCalled();
+    const occurrenceDate = screen.getByLabelText('Occurrence date (D-Day)') as HTMLInputElement;
+    const occurrenceTime = screen.getByLabelText('Occurrence time *') as HTMLInputElement;
+    expect(occurrenceDate).toHaveValue(m4EventDayDate(event.startDatetime));
+    expect(occurrenceDate).toHaveAttribute('readonly');
+    expect(occurrenceTime).toHaveAttribute('type', 'time');
+    expect(occurrenceTime).toHaveAttribute('min', '00:00');
+    expect(occurrenceTime).toHaveAttribute('max', '23:59');
+    fireEvent.change(occurrenceTime, { target: { value: '10:15' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit Incident Report' }));
+    await waitFor(() => expect(mocks.submit).toHaveBeenCalledOnce());
+    expect(mocks.submit.mock.calls[0][0].occurredAt).toBe(Date.parse('2020-01-01T10:15:00+08:00'));
+  });
+
+  it('lists uploaded evidence names and removes only the selected file', async () => {
+    render(<Incidents />);
+    await openSubmissionForm();
+    const first = new File(['first'], 'crowd-photo.jpg', { type: 'image/jpeg' });
+    const second = new File(['second'], 'access-map.pdf', { type: 'application/pdf' });
+    fireEvent.change(screen.getByLabelText('Supporting evidence (optional)'), { target: { files: [first, second] } });
+    expect(screen.getByText('crowd-photo.jpg')).toBeInTheDocument();
+    expect(screen.getByText('access-map.pdf')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove crowd-photo.jpg' }));
+    expect(screen.queryByText('crowd-photo.jpg')).not.toBeInTheDocument();
+    expect(screen.getByText('access-map.pdf')).toBeInTheDocument();
   });
 
   it.each(['organizer', 'authority'])('does not expose submission to %s accounts', async (role) => {
@@ -128,6 +222,7 @@ describe('live incident workspace resilience', () => {
 
   it('shows the exact ten participant incident category labels', async () => {
     render(<Incidents />);
+    await openSubmissionForm();
     await screen.findByRole('option', { name: 'QA Event' });
     expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(expect.arrayContaining([
       'Crowd Congestion or Overcrowding', 'Missing Person', 'Lost and Found',
@@ -140,10 +235,12 @@ describe('live incident workspace resilience', () => {
   it('shows only the approved participant incident detail fields and no AI result', async () => {
     mocks.list.mockResolvedValue({ data: { incidents: [incident('submitted', 'Participant Event')], reportableEvents: [event] } });
     render(<Incidents />);
-    await screen.findByRole('heading', { name: 'Incident details' });
-    for (const label of ['Event name', 'Incident ID', 'Status', 'Category', 'Location', 'Occurrence time', 'Description', 'Evidence']) {
+    await screen.findByRole('heading', { name: 'Crowd Congestion or Overcrowding' });
+    expect(screen.getByText('submitted-incident')).toBeInTheDocument();
+    for (const label of ['Location', 'Occurred', 'Description']) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
+    expect(screen.queryByText('Evidence')).not.toBeInTheDocument();
     expect(screen.queryByText('AI assessment')).not.toBeInTheDocument();
     expect(screen.queryByText('Severity')).not.toBeInTheDocument();
     expect(screen.queryByText('Progress')).not.toBeInTheDocument();
@@ -153,7 +250,7 @@ describe('live incident workspace resilience', () => {
   it('shows the Event discrepancy control only for that category', async () => {
     mocks.list.mockResolvedValue({ data: { incidents: [incident('submitted', 'Discrepancy Event', 'event_control_discrepancy', 'control-123')], reportableEvents: [event] } });
     render(<Incidents />);
-    await screen.findByRole('heading', { name: 'Incident details' });
+    await screen.findByRole('heading', { name: 'Published Event Control Discrepancy' });
     expect(screen.getByText('Event discrepancy control')).toBeInTheDocument();
     expect(screen.getByText('control-123')).toBeInTheDocument();
   });
@@ -192,7 +289,7 @@ describe('live incident workspace resilience', () => {
   });
 });
 
-function incident(status: 'submitted' | 'awaiting_resolution', eventName: string, category: 'crowd' | 'event_control_discrepancy' = 'crowd', linkedControlId?: string) {
+function incident(status: M4IncidentStatus, eventName: string, category: M4IncidentCategory = 'crowd', linkedControlId?: string) {
   return {
     schemaVersion: '2026-09-03-m4-v1', incidentId: `${status}-incident`, eventId: 'event-1', eventVersionId: 'v1',
     venueId: 'venue-1', eventType: 'festival', eventName, organizerId: 'owner', reporterUid: 'participant', reporterRole: 'public',

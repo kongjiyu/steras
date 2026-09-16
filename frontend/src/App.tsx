@@ -77,6 +77,7 @@ export default function App() {
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/dashboard-preview" element={import.meta.env.DEV ? <DashboardPreview /> : <Navigate to="/" replace />} />
       <Route path="/incidents" element={<ProtectedRoute><IncidentRouteEntry /></ProtectedRoute>} />
+      <Route path="/incidents/submit" element={<ProtectedRoute><IncidentRouteEntry /></ProtectedRoute>} />
 
       {/* Organizer routes (auth + role=organizer) */}
       <Route
