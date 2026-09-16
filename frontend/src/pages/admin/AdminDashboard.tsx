@@ -20,7 +20,6 @@ import { WorkspaceTopBar } from '../../components/layout/Sidebar';
 import { useAuth } from '../../contexts/AuthContext';
 import logoMark from '../../assets/brand/steras-mark.svg';
 import '../authority/authority-dashboard.css';
-import './admin.css';
 
 type MotionStyle = CSSProperties & {
   '--motion-order'?: number;

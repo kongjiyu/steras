@@ -329,13 +329,6 @@ export default function AuthorityEventReview() {
 
   const details = event.eventDetails;
   const reviewOpen = ['Pending', 'UnderReview'].includes(event.status) && event.reviewStage === 'authority';
-  const evidenceReady = Boolean(
-    assessment
-    && resources
-    && resources.versionId === event.currentVersionId
-    && (resources.stage !== 'official' || assessment.status === 'official_ready')
-    && (event.currentResourceId === undefined || event.currentResourceId === resources.resourceId),
-  );
   const ownAssignment = profile?.uid && profile.authorityType
     ? assignments.find((assignment) => assignment.versionId === event.currentVersionId
       && assignment.authorityType === profile.authorityType
@@ -345,13 +338,37 @@ export default function AuthorityEventReview() {
   const isNamedOfficer = Boolean(ownAssignment);
   const manualOfficialAssessment = assessment?.status === 'official_ready'
     && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual';
+  const activeReviewHeads = assessment && 'authorityReviewState' in assessment
+    ? assessment.authorityReviewState?.activeReviewHeads ?? {}
+    : {};
+  const requiredAuthorities = event.requiredAuthorities ?? [];
+  const hasOwnScoreHead = Boolean(profile?.authorityType && activeReviewHeads[profile.authorityType]?.reviewId);
+  const allScoreHeadsPresent = requiredAuthorities.length > 0
+    && requiredAuthorities.every((authority) => Boolean(activeReviewHeads[authority]?.reviewId));
+  const officialArtifactsReady = Boolean(
+    assessment?.status === 'official_ready'
+    && resources?.stage === 'official'
+    && resources.assessmentId === assessment.assessmentId
+    && resources.versionId === event.currentVersionId
+    && resources.eventId === event.eventId
+    && event.currentResourceId === resources.resourceId,
+  );
+  const decisionReadinessMessage = (() => {
+    if (!reviewOpen || !isNamedOfficer || manualOfficialAssessment && officialArtifactsReady) return '';
+    if (manualOfficialAssessment && !officialArtifactsReady) return 'The Admin manual assessment is not paired with a current official resource yet. Wait for finalisation to complete.';
+    if (!assessment || assessment.status === 'manual_review_required') return 'An Admin manual assessment is required before an authority decision can be recorded.';
+    if (!hasOwnScoreHead) return 'Submit your score review first. Approval and rejection become available after your category scores are recorded.';
+    if (!allScoreHeadsPresent) return 'Waiting for the other required authority score reviews. Decisions unlock after every required score review is submitted.';
+    if (!officialArtifactsReady) return 'The authority score reviews are complete, but M2 official assessment finalisation is incomplete. Ask Admin to retry finalisation.';
+    return '';
+  })();
   const requiresExtendedRejectionRationale = Boolean(!manualOfficialAssessment
     && (assessment?.assessmentReadiness === 'provisional' || assessment?.assessmentReadiness === 'insufficient_data'));
   const rejectionRationaleMinimum = requiresExtendedRejectionRationale ? 80 : 10;
   // FR-M3-16: approval requires an explicit materials-review confirmation.
-  const canApprove = isNamedOfficer && reviewOpen && evidenceReady
+  const canApprove = isNamedOfficer && reviewOpen && officialArtifactsReady
     && confirmedReview && assessment?.complianceStatus !== 'blocked';
-  const canReject = isNamedOfficer && reviewOpen && evidenceReady && rationale.trim().length >= rejectionRationaleMinimum && suggestion.trim().length >= 10 && Boolean(rejectionReasonCategory);
+  const canReject = isNamedOfficer && reviewOpen && officialArtifactsReady && rationale.trim().length >= rejectionRationaleMinimum && suggestion.trim().length >= 10 && Boolean(rejectionReasonCategory);
   const ownDecision = myAuthorityType ? currentDecisions.get(myAuthorityType) : undefined;
   const displayState = resolveApplicationDisplayState({
     status: event.status,
@@ -710,7 +727,7 @@ export default function AuthorityEventReview() {
             <div className="card-body space-y-3">
               {!reviewOpen && <p className="rounded-md bg-cream-50 p-3 text-sm text-ink-600">This review is closed with status {formatWorkflowValue(event.status)}.</p>}
               {reviewOpen && !isNamedOfficer && <p className="rounded-md bg-cream-50 p-3 text-sm text-ink-600">Read-only: this application is assigned to another officer.</p>}
-              {reviewOpen && isNamedOfficer && !evidenceReady && <p className="rounded-md bg-gold-100 p-3 text-sm text-gold-600">Wait for the assessment and resource recommendation before deciding.</p>}
+              {reviewOpen && isNamedOfficer && decisionReadinessMessage && <p className="rounded-md border border-gold-200 bg-gold-100 p-3 text-sm leading-5 text-gold-700" data-testid="authority-decision-readiness">{decisionReadinessMessage}</p>}
               <label className="block text-xs font-medium text-ink-600">Decision rationale <span className="font-normal text-ink-400">(optional for approval; required for rejection)</span>
                 <textarea className="input mt-1 resize-y" rows={4} maxLength={1000} disabled={!reviewOpen || !isNamedOfficer} value={rationale} onChange={(e) => setRationale(e.target.value)} placeholder="Record the evidence and reasoning behind your proposal." />
               </label>
@@ -836,7 +853,7 @@ function AuthorityProgress({ authority, decision, assigned, scoreStatus }: { aut
   const color = decision?.decision === 'Approved' ? 'bg-green-100 text-status-approved' : decision?.decision === 'Rejected' ? 'bg-red-100 text-status-rejected' : 'bg-ink-100 text-ink-500';
   const scoreLabel = scoreStatus === 'manual_official' ? 'Admin assessed' : scoreStatus === 'reviewed' ? 'Scores reviewed' : scoreStatus === 'record_missing' ? 'Review record missing' : 'Scores pending';
   const scoreTone = scoreStatus === 'manual_official' || scoreStatus === 'reviewed' ? 'bg-green-100 text-status-approved' : scoreStatus === 'record_missing' ? 'bg-gold-100 text-gold-700' : 'bg-ink-100 text-ink-500';
-  return <div className="authority-progress-row"><span className="min-w-0 text-sm font-semibold text-ink-700">{authority}</span>{!assigned ? <><span className="badge justify-self-start bg-ink-100 text-ink-500">Not assigned</span><span aria-hidden="true" className="text-xs text-ink-300">—</span></> : <><span className={`badge justify-self-start ${scoreTone}`}>{scoreLabel}</span><span className={`badge justify-self-start ${color}`}>{decision ? formatWorkflowValue(decision.decision) : 'Decision pending'}</span></>}</div>;
+  return <div className="authority-progress-row"><span className="min-w-0 text-sm font-semibold text-ink-700">{authority}</span>{!assigned ? <span className="badge col-span-2 justify-self-end bg-ink-100 text-ink-500">Not assigned</span> : <><span className={`badge justify-self-start ${scoreTone}`}>{scoreLabel}</span><span className={`badge justify-self-start ${color}`}>{decision ? formatWorkflowValue(decision.decision) : 'Decision pending'}</span></>}</div>;
 }
 
 function formatWorkflowValue(value: string): string {

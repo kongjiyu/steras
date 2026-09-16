@@ -695,6 +695,7 @@ export type AIProposalAttempt = AISuccessfulProposal | AIFailedProposal;
 
 export type ValidationWarningCode =
   | 'missing_evidence'
+  | 'provider_unavailable'
   | 'unsupported_evidence_reference'
   | 'invalid_calculation'
   | 'rubric_conflict'
@@ -1526,6 +1527,7 @@ export const COLLECTIONS = {
   PUBLIC_REPORTS: 'public_reports',
   ADMIN_OPERATIONS: 'admin_operations',
   ADMIN_AUDIT_LOGS: 'admin_audit_logs',
+  CONTROL_LIST_PROPOSALS: 'control_list_proposals',
 } as const;
 
 export const CATEGORY_SCHEMA_VERSION = '2026-07-24-all-hazards-v2';
@@ -1742,4 +1744,25 @@ export interface ProposedControlItem {
   stageRequirement: 'stage1_only' | 'stage1_and_stage2';
   stage1Requirements: Array<{ docType: Stage1Doc['docType']; label: string; required: boolean }>;
   stage2Requirement: { kind: 'image'; label: string } | null;
+}
+
+/** Server-owned proposal retained between final approval and Admin
+ * confirmation. The draft is version-bound and is never public until the
+ * edit/confirm callable commits its controls. */
+export interface ControlListProposal {
+  proposalId: string;
+  eventId: string;
+  versionId: string;
+  revision: number;
+  status: 'draft' | 'confirmed';
+  items: ProposedControlItem[];
+  source: 'minimax' | 'deterministic_fallback';
+  model: string;
+  promptVersion: string;
+  generatedAt: number;
+  generatedBy: string;
+  updatedAt: number;
+  fallbackReason?: string;
+  confirmedAt?: number;
+  confirmedBy?: string;
 }

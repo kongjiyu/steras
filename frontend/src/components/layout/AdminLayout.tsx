@@ -3,6 +3,7 @@ import { Outlet, useNavigate } from 'react-router-dom';
 import Sidebar, { ADMIN_NAV } from './Sidebar';
 import { useAuth } from '../../contexts/AuthContext';
 import { useAppDialog } from '../../contexts/AppDialogContext';
+import '../../pages/admin/admin.css';
 
 interface AdminLayoutProps {
   children?: ReactNode;

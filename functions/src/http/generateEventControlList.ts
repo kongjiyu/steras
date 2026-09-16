@@ -20,6 +20,7 @@ import { firestore } from 'firebase-admin';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import {
   COLLECTIONS,
+  ControlListProposal,
   EventControl,
   EventRecord,
   ProposedControlItem,
@@ -46,6 +47,8 @@ export interface GenerateEventControlListResponse {
   promptVersion?: string;
   generatedAt?: number;
   fallbackReason?: string;
+  proposalId?: string;
+  proposalRevision?: number;
 }
 
 export const generateEventControlList = onCall<GenerateEventControlListRequest>({ region: FUNCTION_REGION, secrets: [MINIMAX_API_KEY] }, async (request) => {
@@ -68,12 +71,17 @@ export const generateEventControlList = onCall<GenerateEventControlListRequest>(
   }
   const event = eventSnap.data() as EventRecord;
   const versionId = (request.data?.versionId ?? event.currentVersionId ?? '').trim();
+  const force = request.data?.force === true;
   if (!versionId) {
     throw new HttpsError('failed-precondition', 'The event has no submitted version.');
   }
   if (event.status !== 'Approved') {
     throw new HttpsError('failed-precondition', `Control list can only be generated after Admin final approval (current: ${event.status}).`);
   }
+
+  const proposalRef = eventRef.collection(COLLECTIONS.CONTROL_LIST_PROPOSALS).doc(versionId);
+  const existingProposalSnap = await proposalRef.get();
+  const existingProposal = existingProposalSnap.data() as ControlListProposal | undefined;
 
   // Cache hit: controlListGenerated is true AND the snapshot is for the
   // current version. The snapshot was written by editEventControlList.
@@ -94,7 +102,12 @@ export const generateEventControlList = onCall<GenerateEventControlListRequest>(
         stage1Requirements: control.stage1Requirements,
         stage2Requirement: control.stage2Requirement,
       }));
-      return { items, cached: true, source: 'cache' } satisfies GenerateEventControlListResponse;
+      return {
+        items,
+        cached: true,
+        source: 'cache',
+        ...(existingProposal?.proposalId ? { proposalId: existingProposal.proposalId, proposalRevision: existingProposal.revision } : {}),
+      } satisfies GenerateEventControlListResponse;
     }
     const items: ProposedControlItem[] = event.controlListSnapshot.map((s) => ({
       controlName: s.controlName,
@@ -107,7 +120,31 @@ export const generateEventControlList = onCall<GenerateEventControlListRequest>(
       })),
       stage2Requirement: s.stage2Label ? { kind: 'image' as const, label: s.stage2Label } : null,
     }));
-    return { items, cached: true, source: 'cache' } satisfies GenerateEventControlListResponse;
+    return {
+      items,
+      cached: true,
+      source: 'cache',
+      ...(existingProposal?.proposalId ? { proposalId: existingProposal.proposalId, proposalRevision: existingProposal.revision } : {}),
+    } satisfies GenerateEventControlListResponse;
+  }
+
+  // A generated proposal is a recoverable draft, not a published control
+  // list. Reuse it on navigation/reload unless the Admin explicitly asks to
+  // regenerate it.
+  if (!force && existingProposalSnap.exists && existingProposal?.status === 'draft'
+    && existingProposal.eventId === eventId && existingProposal.versionId === versionId
+    && Array.isArray(existingProposal.items) && existingProposal.items.length > 0) {
+    return {
+      items: existingProposal.items,
+      cached: true,
+      source: existingProposal.source,
+      model: existingProposal.model,
+      promptVersion: existingProposal.promptVersion,
+      generatedAt: existingProposal.generatedAt,
+      ...(existingProposal.fallbackReason ? { fallbackReason: existingProposal.fallbackReason } : {}),
+      proposalId: existingProposal.proposalId,
+      proposalRevision: existingProposal.revision,
+    } satisfies GenerateEventControlListResponse;
   }
 
   // Cache miss: call the shared proposal helper directly. This avoids a
@@ -118,5 +155,48 @@ export const generateEventControlList = onCall<GenerateEventControlListRequest>(
   if (!proposal.items.length) {
     throw new HttpsError('failed-precondition', 'The proposal function returned no items. Check the event has required authorities.');
   }
-  return { ...proposal, cached: false } satisfies GenerateEventControlListResponse;
+  const now = Date.now();
+  const persisted = await db.runTransaction(async (tx) => {
+    const [currentEventSnap, currentProposalSnap] = await Promise.all([tx.get(eventRef), tx.get(proposalRef)]);
+    const currentEvent = currentEventSnap.data() as EventRecord | undefined;
+    if (!currentEventSnap.exists || currentEvent?.currentVersionId !== versionId || currentEvent.status !== 'Approved') {
+      throw new HttpsError('aborted', 'The application changed while the control proposal was being generated. Reload and try again.');
+    }
+    const currentProposal = currentProposalSnap.data() as ControlListProposal | undefined;
+    if (!force && currentProposalSnap.exists && currentProposal?.status === 'draft'
+      && currentProposal.eventId === eventId && currentProposal.versionId === versionId
+      && Array.isArray(currentProposal.items) && currentProposal.items.length > 0) {
+      return { record: currentProposal, cached: true };
+    }
+    const revision = Number.isSafeInteger(currentProposal?.revision) && (currentProposal?.revision ?? 0) > 0
+      ? (currentProposal!.revision + 1) : 1;
+    const record: ControlListProposal = {
+      proposalId: `${eventId}_${versionId}`,
+      eventId,
+      versionId,
+      revision,
+      status: 'draft',
+      items: proposal.items,
+      source: proposal.source,
+      model: proposal.model,
+      promptVersion: proposal.promptVersion,
+      generatedAt: proposal.generatedAt,
+      generatedBy: request.auth!.uid,
+      updatedAt: now,
+      ...(proposal.fallbackReason ? { fallbackReason: proposal.fallbackReason } : {}),
+    };
+    tx.set(proposalRef, record);
+    return { record, cached: false };
+  });
+  return {
+    items: persisted.record.items,
+    cached: persisted.cached,
+    source: persisted.record.source,
+    model: persisted.record.model,
+    promptVersion: persisted.record.promptVersion,
+    generatedAt: persisted.record.generatedAt,
+    ...(persisted.record.fallbackReason ? { fallbackReason: persisted.record.fallbackReason } : {}),
+    proposalId: persisted.record.proposalId,
+    proposalRevision: persisted.record.revision,
+  } satisfies GenerateEventControlListResponse;
 });

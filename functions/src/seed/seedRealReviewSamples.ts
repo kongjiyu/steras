@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { getStorage } from 'firebase-admin/storage';
 import {
   ASSESSMENT_SCHEMA_VERSION,
+  AIFailedProposal,
   Assignment,
   AuthorityScoreReview,
   AuthorityType,
@@ -47,6 +48,7 @@ const CONFIRM_DATASET_ENV = 'STERAS_REAL_SAMPLES_CONFIRM_DATASET';
 const STORAGE_PREFIX = 'event_documents';
 
 type Action = 'dry-run' | 'apply' | 'verify';
+interface SeedSelection { action: Action; sampleIds: RealReviewSampleId[]; }
 
 interface ManagedMarker {
   datasetId: typeof REAL_REVIEW_SAMPLE_DATASET_ID;
@@ -116,10 +118,15 @@ const SHOWCASE_ACCOUNT_EMAILS: Partial<Record<'admin' | 'organizer' | AuthorityT
   MOTAC: 'motac.showcase@steras.test',
 };
 
-function parseAction(argv: string[]): Action {
+function parseAction(argv: string[]): SeedSelection {
   const flags = argv.filter((value): value is Action => value === '--dry-run' || value === '--apply' || value === '--verify');
   if (flags.length !== 1) throw new Error('Choose exactly one action: --dry-run, --apply, or --verify.');
-  return flags[0].slice(2) as Action;
+  const onlyIndex = argv.indexOf('--only');
+  const onlyValue = onlyIndex >= 0 ? argv[onlyIndex + 1] : undefined;
+  if (onlyIndex >= 0 && (!onlyValue || !REAL_REVIEW_SAMPLE_EVENT_IDS.includes(onlyValue as RealReviewSampleId))) {
+    throw new Error(`--only must name one managed fixture: ${REAL_REVIEW_SAMPLE_EVENT_IDS.join(', ')}.`);
+  }
+  return { action: flags[0].slice(2) as Action, sampleIds: onlyValue ? [onlyValue as RealReviewSampleId] : [...REAL_REVIEW_SAMPLE_EVENT_IDS] };
 }
 
 function assertProductionGuard(projectId: string, action: Action): void {
@@ -208,8 +215,8 @@ async function resolveRequiredUsers(ctx: SterasTestContext): Promise<UserIds> {
   return userIds;
 }
 
-async function assertNoCollisions(ctx: SterasTestContext): Promise<void> {
-  for (const sampleId of REAL_REVIEW_SAMPLE_EVENT_IDS) {
+async function assertNoCollisions(ctx: SterasTestContext, sampleIds: readonly RealReviewSampleId[] = REAL_REVIEW_SAMPLE_EVENT_IDS): Promise<void> {
+  for (const sampleId of sampleIds) {
     const event = await ctx.db.collection('events').doc(sampleId).get();
     if (event.exists && !isManaged(event.data(), sampleId)) {
       throw new Error(`Collision at events/${sampleId}: existing document is not owned by ${REAL_REVIEW_SAMPLE_DATASET_ID}.`);
@@ -353,11 +360,18 @@ function buildArtifacts(sample: RealReviewSampleDefinition, event: EventRecord, 
     inputHash: hash(`${REAL_REVIEW_SAMPLE_DATASET_ID}:${sample.id}:${VERSION_ID}`), createdAt: now,
   };
   if (sample.workflow === 'manual_review_required') {
+    const failedProposal: AIFailedProposal = {
+      status: 'unavailable', model: 'steras-real-review-fixture',
+      promptVersion: `${REAL_REVIEW_SAMPLE_DATASET_ID}:public-facts`, responseSchemaVersion: 'fixture-v1',
+      retryable: true,
+      errorSummary: 'Synthetic fixture: the automated assessment provider is unavailable; no risk result was produced.',
+      cacheStatus: 'not-applicable', generatedAt: now,
+    };
     const assessment = {
       ...common,
-      status: 'manual_review_required' as const, aiProposal: null, warnings: [{
-        warningId: `manual-${sample.id}`, code: 'missing_evidence' as const,
-        message: 'Official automated assessment is unavailable in this guarded fixture; Admin manual review is required.', evidenceReferences: [],
+      status: 'manual_review_required' as const, aiProposal: failedProposal, warnings: [{
+        warningId: `manual-${sample.id}`, code: 'provider_unavailable' as const,
+        message: 'The automated assessment provider is unavailable in this guarded fixture; Admin manual review is required.', evidenceReferences: [],
       }],
       authorityReviewRequired: true as const,
       manualReviewReason: `Synthetic manual-review gate for ${sample.name}; replace with a human assessment before approval.`,
@@ -556,7 +570,7 @@ async function verifySample(ctx: SterasTestContext, sample: RealReviewSampleDefi
   const requiredAuthorities = event?.requiredAuthorities ?? [];
   const expectedAuthorities = [...sample.requiredAuthorities].sort().join(',');
   if ([...requiredAuthorities].sort().join(',') !== expectedAuthorities) failures.push(`${sample.id}: required authority set is invalid`);
-  const [version, assessment, resource, assignments, venue, publicEvent, decisions] = await Promise.all([
+  const [version, assessment, resource, assignments, venue, publicEvent, decisions, controls, proposals] = await Promise.all([
     eventReference.collection('versions').doc(VERSION_ID).get(),
     event?.currentAssessmentId ? eventReference.collection('assessments').doc(event.currentAssessmentId).get() : Promise.resolve(undefined),
     event?.currentResourceId ? eventReference.collection('resources').doc(event.currentResourceId).get() : Promise.resolve(undefined),
@@ -564,6 +578,8 @@ async function verifySample(ctx: SterasTestContext, sample: RealReviewSampleDefi
     ctx.db.collection('venues').doc(`fixture-venue-${sample.id}`).get(),
     ctx.db.collection('public_events').doc(sample.id).get(),
     eventReference.collection('decisions').get(),
+    eventReference.collection('event_controls').get(),
+    eventReference.collection('control_list_proposals').get(),
   ]);
   if (!version?.exists || !assessment?.exists) failures.push(`${sample.id}: current version or assessment is missing`);
   const venueData = venue.data() as (Partial<Venue> & { sterasFixture?: ManagedMarker }) | undefined;
@@ -577,6 +593,9 @@ async function verifySample(ctx: SterasTestContext, sample: RealReviewSampleDefi
     failures.push(`${sample.id}: verified fixture venue registry record is missing or invalid`);
   }
   if (publicEvent.exists) failures.push(`${sample.id}: managed fixture must not be present in public_events`);
+  if (sample.workflow !== 'final_review' && (!controls.empty || !proposals.empty || event?.controlListGenerated === true || Boolean(event?.controlListSnapshot?.length))) {
+    failures.push(`${sample.id}: pre-final fixture unexpectedly contains a control list`);
+  }
   if (sample.workflow !== 'manual_review_required' && !resource?.exists) failures.push(`${sample.id}: current resource is missing`);
   if (sample.workflow === 'manual_review_required' && event?.currentResourceId) failures.push(`${sample.id}: manual-review fixture unexpectedly has a resource pointer`);
   const assessmentData = assessment?.data() as Partial<RiskAssessment> | undefined;
@@ -615,12 +634,16 @@ async function verifySample(ctx: SterasTestContext, sample: RealReviewSampleDefi
     if (assessmentData?.status !== 'provisional_ready') failures.push(`${sample.id}: initial fixture assessment is not provisional_ready`);
     if (assessmentData && 'authorityReviewState' in assessmentData && assessmentData.authorityReviewState) failures.push(`${sample.id}: initial fixture contains authority review state`);
     if (scoreReviews && !scoreReviews.empty) failures.push(`${sample.id}: initial fixture contains score reviews`);
+    if (!decisions.empty) failures.push(`${sample.id}: initial fixture contains officer decisions`);
   }
   if (sample.workflow === 'manual_review_required') {
     const scoreReviews = assessment?.exists ? await assessment.ref.collection('score_reviews').get() : undefined;
     const resources = await eventReference.collection('resources').get();
     if (scoreReviews && !scoreReviews.empty) failures.push(`${sample.id}: manual-review fixture contains premature score reviews`);
     if (!resources.empty) failures.push(`${sample.id}: manual-review fixture contains a resource document`);
+    if (!decisions.empty) failures.push(`${sample.id}: manual-review fixture contains officer decisions`);
+    if (assessmentData && ('provisionalResult' in assessmentData || 'officialResult' in assessmentData)) failures.push(`${sample.id}: manual-review fixture contains a fabricated risk result`);
+    if (assessmentData?.aiProposal && assessmentData.aiProposal.status !== 'unavailable') failures.push(`${sample.id}: manual-review fixture provider result is not unavailable`);
   }
   const displayState = resolveApplicationDisplayState({
     status: event?.status ?? 'Pending', reviewStage: event?.reviewStage, currentVersionId: event?.currentVersionId,
@@ -635,20 +658,21 @@ async function verifySample(ctx: SterasTestContext, sample: RealReviewSampleDefi
   return failures;
 }
 
-export async function runRealReviewSampleSeed(action: Action, ctx = initializeSterasTestContext()): Promise<void> {
-  assertProductionGuard(ctx.projectId, action);
-  await assertNoCollisions(ctx);
-  if (action === 'dry-run') {
-    console.info(JSON.stringify({ projectId: ctx.projectId, datasetId: REAL_REVIEW_SAMPLE_DATASET_ID, asOf: REAL_REVIEW_SAMPLE_AS_OF, events: REAL_REVIEW_SAMPLE_EVENT_IDS.map((id) => ({ ...REAL_REVIEW_SAMPLES[id], startIso: REAL_REVIEW_SAMPLES[id].startIso, endIso: REAL_REVIEW_SAMPLES[id].endIso })), guardedWrites: `requires ${ALLOW_PRODUCTION_ENV}=true`, requiredAccounts: [STERAS_TEST_ACCOUNT_EMAILS.admin, STERAS_TEST_ACCOUNT_EMAILS.organizer, STERAS_TEST_ACCOUNT_EMAILS.PDRM, STERAS_TEST_ACCOUNT_EMAILS.BOMBA, STERAS_TEST_ACCOUNT_EMAILS.KKM, STERAS_TEST_ACCOUNT_EMAILS.DBKL, STERAS_TEST_ACCOUNT_EMAILS.MOTAC] }, null, 2));
+export async function runRealReviewSampleSeed(selection: SeedSelection | Action, ctx = initializeSterasTestContext()): Promise<void> {
+  const normalized = typeof selection === 'string' ? { action: selection, sampleIds: [...REAL_REVIEW_SAMPLE_EVENT_IDS] } : selection;
+  assertProductionGuard(ctx.projectId, normalized.action);
+  await assertNoCollisions(ctx, normalized.sampleIds);
+  if (normalized.action === 'dry-run') {
+    console.info(JSON.stringify({ projectId: ctx.projectId, datasetId: REAL_REVIEW_SAMPLE_DATASET_ID, asOf: REAL_REVIEW_SAMPLE_AS_OF, events: normalized.sampleIds.map((id) => ({ ...REAL_REVIEW_SAMPLES[id], startIso: REAL_REVIEW_SAMPLES[id].startIso, endIso: REAL_REVIEW_SAMPLES[id].endIso })), guardedWrites: `requires ${ALLOW_PRODUCTION_ENV}=true`, requiredAccounts: [STERAS_TEST_ACCOUNT_EMAILS.admin, STERAS_TEST_ACCOUNT_EMAILS.organizer, STERAS_TEST_ACCOUNT_EMAILS.PDRM, STERAS_TEST_ACCOUNT_EMAILS.BOMBA, STERAS_TEST_ACCOUNT_EMAILS.KKM, STERAS_TEST_ACCOUNT_EMAILS.DBKL, STERAS_TEST_ACCOUNT_EMAILS.MOTAC] }, null, 2));
     return;
   }
   const userIds = await resolveRequiredUsers(ctx);
-  if (action === 'apply') {
-    for (const sampleId of REAL_REVIEW_SAMPLE_EVENT_IDS) await writeSample(ctx, REAL_REVIEW_SAMPLES[sampleId], userIds);
-    console.info(`[${MANAGED_BY}] applied ${REAL_REVIEW_SAMPLE_EVENT_IDS.length} samples to ${ctx.projectId}.`);
+  if (normalized.action === 'apply') {
+    for (const sampleId of normalized.sampleIds) await writeSample(ctx, REAL_REVIEW_SAMPLES[sampleId], userIds);
+    console.info(`[${MANAGED_BY}] applied ${normalized.sampleIds.length} sample(s) to ${ctx.projectId}.`);
     return;
   }
-  const failures = (await Promise.all(REAL_REVIEW_SAMPLE_EVENT_IDS.map((sampleId) => verifySample(ctx, REAL_REVIEW_SAMPLES[sampleId])))).flat();
+  const failures = (await Promise.all(normalized.sampleIds.map((sampleId) => verifySample(ctx, REAL_REVIEW_SAMPLES[sampleId])))).flat();
   if (failures.length > 0) throw new Error(`Real review sample verification failed:\n- ${failures.join('\n- ')}`);
   console.info(`[${MANAGED_BY}] verification complete for ${ctx.projectId}.`);
 }
