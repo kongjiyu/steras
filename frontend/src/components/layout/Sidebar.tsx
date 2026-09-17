@@ -204,12 +204,6 @@ export const ADMIN_NAV: SidebarNavSection[] = [
     ],
   },
   {
-    label: 'M4 — Incident Reporting',
-    items: [
-      { to: '/admin/incidents', label: 'Incident Module', mobileLabel: 'Incidents', icon: ShieldAlert },
-    ],
-  },
-  {
     label: 'System',
     items: [
       { to: '/admin/audit', label: 'Audit log', mobileLabel: 'Audit', icon: ShieldCheck },

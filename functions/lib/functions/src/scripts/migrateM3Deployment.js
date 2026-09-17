@@ -19,6 +19,7 @@ const app_1 = require("firebase-admin/app");
 const firestore_1 = require("firebase-admin/firestore");
 const types_1 = require("../../../shared/types");
 const sterasTestFixtures_1 = require("../../../shared/sterasTestFixtures");
+const stage2_1 = require("../../../shared/stage2");
 const DEFAULT_MIGRATION_ID = 'm3-deployment-v1';
 const DEFAULT_MANIFEST_FILENAME = 'm3-legacy-migration-manifest.json';
 const DEFAULT_ARTIFACT_DIR = 'artifacts/m3-migration';
@@ -309,23 +310,23 @@ async function buildEventPlan(db, eventDoc, manifest, now) {
             .collection(types_1.COLLECTIONS.EVENT_CONTROLS)
             .doc(controlId)
             .collection(types_1.COLLECTIONS.STAGE2_DOCS)
-            .doc(`${controlId}-s2`)
+            .doc((0, stage2_1.stage2DocumentId)(controlId))
             .get();
         const publicRef = db
             .collection(types_1.COLLECTIONS.PUBLIC_EVENT_CONTROLS)
             .doc(eventId)
             .collection(types_1.COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS)
-            .doc(`${controlId}-stage2`);
+            .doc((0, stage2_1.stage2PublicControlId)(controlId));
         const privateDoc = stage2Snapshot.exists ? stage2Snapshot.data() : undefined;
-        const existing = existingPublic.get(`${controlId}-stage2`);
+        const existing = existingPublic.get((0, stage2_1.stage2PublicControlId)(controlId));
         if (privateDoc?.published) {
             if (!privateDoc.imageUrl || !privateDoc.docId) {
                 blockedReasons.push(`${eventId}: published Stage 2 document ${controlId} is missing imageUrl or docId.`);
                 continue;
             }
-            expectedPublicIds.add(`${controlId}-stage2`);
+            expectedPublicIds.add((0, stage2_1.stage2PublicControlId)(controlId));
             const projection = {
-                publicControlId: `${controlId}-stage2`,
+                publicControlId: (0, stage2_1.stage2PublicControlId)(controlId),
                 eventId,
                 versionId: currentVersionId,
                 controlId,

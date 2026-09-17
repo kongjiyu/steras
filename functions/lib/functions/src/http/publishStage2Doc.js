@@ -33,6 +33,7 @@ const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
 const notifications_1 = require("../utils/notifications");
 const controlLifecycle_1 = require("../utils/controlLifecycle");
+const stage2_1 = require("../../../shared/stage2");
 exports.publishStage2Doc = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
     if (!request.auth)
         throw new https_1.HttpsError('unauthenticated', 'Sign in before publishing.');
@@ -52,6 +53,7 @@ exports.publishStage2Doc = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGI
 async function publishStage2DocForUser(uid, data, now = Date.now()) {
     const eventId = (data.eventId ?? '').trim();
     const controlId = (data.controlId ?? '').trim();
+    const requestedDocId = (data.docId ?? '').trim();
     if (!eventId)
         throw new https_1.HttpsError('invalid-argument', 'eventId is required.');
     if (!controlId)
@@ -59,9 +61,12 @@ async function publishStage2DocForUser(uid, data, now = Date.now()) {
     const db = (0, firebase_admin_1.firestore)();
     const eventRef = db.collection(types_1.COLLECTIONS.EVENTS).doc(eventId);
     const controlRef = eventRef.collection(types_1.COLLECTIONS.EVENT_CONTROLS).doc(controlId);
-    const docId = `${controlId}-s2`;
+    const docId = requestedDocId || (0, stage2_1.stage2DocumentId)(controlId);
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(docId)) {
+        throw new https_1.HttpsError('invalid-argument', 'docId must be a safe Stage 2 document id.');
+    }
     const docRef = controlRef.collection(types_1.COLLECTIONS.STAGE2_DOCS).doc(docId);
-    const publicControlId = `${controlId}-stage2`;
+    const publicControlId = (0, stage2_1.stage2PublicControlId)(controlId);
     const publicRef = db.collection(types_1.COLLECTIONS.PUBLIC_EVENT_CONTROLS)
         .doc(eventId)
         .collection(types_1.COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS)

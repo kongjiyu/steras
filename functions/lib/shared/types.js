@@ -108,6 +108,7 @@ exports.COLLECTIONS = {
     PUBLIC_REPORTS: 'public_reports',
     ADMIN_OPERATIONS: 'admin_operations',
     ADMIN_AUDIT_LOGS: 'admin_audit_logs',
+    CONTROL_LIST_PROPOSALS: 'control_list_proposals',
 };
 exports.CATEGORY_SCHEMA_VERSION = '2026-07-24-all-hazards-v2';
 exports.SCORING_LOGIC_VERSION = '2026-07-24-hirarc-residual-v2';

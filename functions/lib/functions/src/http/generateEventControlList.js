@@ -45,12 +45,16 @@ exports.generateEventControlList = (0, https_1.onCall)({ region: runtime_1.FUNCT
     }
     const event = eventSnap.data();
     const versionId = (request.data?.versionId ?? event.currentVersionId ?? '').trim();
+    const force = request.data?.force === true;
     if (!versionId) {
         throw new https_1.HttpsError('failed-precondition', 'The event has no submitted version.');
     }
     if (event.status !== 'Approved') {
         throw new https_1.HttpsError('failed-precondition', `Control list can only be generated after Admin final approval (current: ${event.status}).`);
     }
+    const proposalRef = eventRef.collection(types_1.COLLECTIONS.CONTROL_LIST_PROPOSALS).doc(versionId);
+    const existingProposalSnap = await proposalRef.get();
+    const existingProposal = existingProposalSnap.data();
     // Cache hit: controlListGenerated is true AND the snapshot is for the
     // current version. The snapshot was written by editEventControlList.
     if (event.controlListGenerated && event.controlListSnapshot && event.controlListSnapshot.length > 0) {
@@ -70,7 +74,12 @@ exports.generateEventControlList = (0, https_1.onCall)({ region: runtime_1.FUNCT
                 stage1Requirements: control.stage1Requirements,
                 stage2Requirement: control.stage2Requirement,
             }));
-            return { items, cached: true, source: 'cache' };
+            return {
+                items,
+                cached: true,
+                source: 'cache',
+                ...(existingProposal?.proposalId ? { proposalId: existingProposal.proposalId, proposalRevision: existingProposal.revision } : {}),
+            };
         }
         const items = event.controlListSnapshot.map((s) => ({
             controlName: s.controlName,
@@ -83,7 +92,30 @@ exports.generateEventControlList = (0, https_1.onCall)({ region: runtime_1.FUNCT
             })),
             stage2Requirement: s.stage2Label ? { kind: 'image', label: s.stage2Label } : null,
         }));
-        return { items, cached: true, source: 'cache' };
+        return {
+            items,
+            cached: true,
+            source: 'cache',
+            ...(existingProposal?.proposalId ? { proposalId: existingProposal.proposalId, proposalRevision: existingProposal.revision } : {}),
+        };
+    }
+    // A generated proposal is a recoverable draft, not a published control
+    // list. Reuse it on navigation/reload unless the Admin explicitly asks to
+    // regenerate it.
+    if (!force && existingProposalSnap.exists && existingProposal?.status === 'draft'
+        && existingProposal.eventId === eventId && existingProposal.versionId === versionId
+        && Array.isArray(existingProposal.items) && existingProposal.items.length > 0) {
+        return {
+            items: existingProposal.items,
+            cached: true,
+            source: existingProposal.source,
+            model: existingProposal.model,
+            promptVersion: existingProposal.promptVersion,
+            generatedAt: existingProposal.generatedAt,
+            ...(existingProposal.fallbackReason ? { fallbackReason: existingProposal.fallbackReason } : {}),
+            proposalId: existingProposal.proposalId,
+            proposalRevision: existingProposal.revision,
+        };
     }
     // Cache miss: call the shared proposal helper directly. This avoids a
     // callable-to-callable network hop while preserving the same contract as
@@ -92,6 +124,49 @@ exports.generateEventControlList = (0, https_1.onCall)({ region: runtime_1.FUNCT
     if (!proposal.items.length) {
         throw new https_1.HttpsError('failed-precondition', 'The proposal function returned no items. Check the event has required authorities.');
     }
-    return { ...proposal, cached: false };
+    const now = Date.now();
+    const persisted = await db.runTransaction(async (tx) => {
+        const [currentEventSnap, currentProposalSnap] = await Promise.all([tx.get(eventRef), tx.get(proposalRef)]);
+        const currentEvent = currentEventSnap.data();
+        if (!currentEventSnap.exists || currentEvent?.currentVersionId !== versionId || currentEvent.status !== 'Approved') {
+            throw new https_1.HttpsError('aborted', 'The application changed while the control proposal was being generated. Reload and try again.');
+        }
+        const currentProposal = currentProposalSnap.data();
+        if (!force && currentProposalSnap.exists && currentProposal?.status === 'draft'
+            && currentProposal.eventId === eventId && currentProposal.versionId === versionId
+            && Array.isArray(currentProposal.items) && currentProposal.items.length > 0) {
+            return { record: currentProposal, cached: true };
+        }
+        const revision = Number.isSafeInteger(currentProposal?.revision) && (currentProposal?.revision ?? 0) > 0
+            ? (currentProposal.revision + 1) : 1;
+        const record = {
+            proposalId: `${eventId}_${versionId}`,
+            eventId,
+            versionId,
+            revision,
+            status: 'draft',
+            items: proposal.items,
+            source: proposal.source,
+            model: proposal.model,
+            promptVersion: proposal.promptVersion,
+            generatedAt: proposal.generatedAt,
+            generatedBy: request.auth.uid,
+            updatedAt: now,
+            ...(proposal.fallbackReason ? { fallbackReason: proposal.fallbackReason } : {}),
+        };
+        tx.set(proposalRef, record);
+        return { record, cached: false };
+    });
+    return {
+        items: persisted.record.items,
+        cached: persisted.cached,
+        source: persisted.record.source,
+        model: persisted.record.model,
+        promptVersion: persisted.record.promptVersion,
+        generatedAt: persisted.record.generatedAt,
+        ...(persisted.record.fallbackReason ? { fallbackReason: persisted.record.fallbackReason } : {}),
+        proposalId: persisted.record.proposalId,
+        proposalRevision: persisted.record.revision,
+    };
 });
 //# sourceMappingURL=generateEventControlList.js.map

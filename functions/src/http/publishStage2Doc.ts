@@ -36,10 +36,13 @@ import {
 import { FUNCTION_REGION } from '../config/runtime';
 import { createNotification, resolveAuthUid } from '../utils/notifications';
 import { isActiveControlGeneration } from '../utils/controlLifecycle';
+import { stage2DocumentId, stage2PublicControlId } from '@shared/stage2';
 
 interface PublishStage2DocRequest {
   eventId?: string;
   controlId?: string;
+  /** Optional document id for compatibility with repaired legacy records. */
+  docId?: string;
 }
 
 interface PublishStage2DocResponse {
@@ -69,15 +72,19 @@ export async function publishStage2DocForUser(
 ): Promise<PublishStage2DocResponse> {
   const eventId = (data.eventId ?? '').trim();
   const controlId = (data.controlId ?? '').trim();
+  const requestedDocId = (data.docId ?? '').trim();
   if (!eventId) throw new HttpsError('invalid-argument', 'eventId is required.');
   if (!controlId) throw new HttpsError('invalid-argument', 'controlId is required.');
 
   const db = firestore();
   const eventRef = db.collection(COLLECTIONS.EVENTS).doc(eventId);
   const controlRef = eventRef.collection(COLLECTIONS.EVENT_CONTROLS).doc(controlId);
-  const docId = `${controlId}-s2`;
+  const docId = requestedDocId || stage2DocumentId(controlId);
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(docId)) {
+    throw new HttpsError('invalid-argument', 'docId must be a safe Stage 2 document id.');
+  }
   const docRef = controlRef.collection(COLLECTIONS.STAGE2_DOCS).doc(docId);
-  const publicControlId = `${controlId}-stage2`;
+  const publicControlId = stage2PublicControlId(controlId);
   const publicRef = db.collection(COLLECTIONS.PUBLIC_EVENT_CONTROLS)
     .doc(eventId)
     .collection(COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS)

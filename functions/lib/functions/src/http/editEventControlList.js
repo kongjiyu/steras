@@ -102,6 +102,11 @@ exports.editEventControlList = (0, https_1.onCall)({ region: runtime_1.FUNCTION_
     }
     // Compute the new snapshot for the parent event doc.
     const newSnapshot = buildControlListSnapshot(eventId, items, controlItemVersion);
+    const proposalId = typeof request.data?.proposalId === 'string' ? request.data.proposalId.trim() : '';
+    const proposalRevision = request.data?.proposalRevision;
+    if (proposalId && (!Number.isSafeInteger(proposalRevision) || proposalRevision < 1)) {
+        throw new https_1.HttpsError('invalid-argument', 'proposalRevision must be a positive safe integer when proposalId is provided.');
+    }
     return db.runTransaction(async (tx) => {
         // Reads first.
         const evSnap = await tx.get(eventRef);
@@ -115,6 +120,20 @@ exports.editEventControlList = (0, https_1.onCall)({ region: runtime_1.FUNCTION_
         // Published controls and their evidence are immutable. Corrections use a
         // new controlItemVersion; prior records remain available for audit.
         const existingControls = await tx.get(eventRef.collection(types_1.COLLECTIONS.EVENT_CONTROLS).where('versionId', '==', versionId));
+        const proposalRef = eventRef.collection(types_1.COLLECTIONS.CONTROL_LIST_PROPOSALS).doc(versionId);
+        const proposalSnap = await tx.get(proposalRef);
+        const proposal = proposalSnap.data();
+        if (proposalSnap.exists) {
+            if (!proposal || proposal.status !== 'draft' || proposal.eventId !== eventId || proposal.versionId !== versionId) {
+                throw new https_1.HttpsError('failed-precondition', 'The control proposal is no longer an editable draft. Reload the application.');
+            }
+            if (proposalId && proposal.proposalId !== proposalId) {
+                throw new https_1.HttpsError('aborted', 'The control proposal changed before confirmation. Reload and try again.');
+            }
+            if (proposalRevision !== undefined && proposal.revision !== proposalRevision) {
+                throw new https_1.HttpsError('aborted', 'The control proposal changed before confirmation. Reload and try again.');
+            }
+        }
         if (!existingControls.empty) {
             throw new https_1.HttpsError('failed-precondition', 'The published control list is immutable. Submit a new application version for corrections.');
         }
@@ -166,7 +185,20 @@ exports.editEventControlList = (0, https_1.onCall)({ region: runtime_1.FUNCTION_
             controlListSnapshot: newSnapshot,
             updatedAt: now,
         });
-        return { written: items.length, controlIds, controlListSnapshot: newSnapshot };
+        if (proposalSnap.exists && proposal) {
+            tx.set(proposalRef, {
+                status: 'confirmed',
+                confirmedAt: now,
+                confirmedBy: request.auth.uid,
+                updatedAt: now,
+            }, { merge: true });
+        }
+        return {
+            written: items.length,
+            controlIds,
+            controlListSnapshot: newSnapshot,
+            ...(proposal ? { proposalId: proposal.proposalId, proposalRevision: proposal.revision } : {}),
+        };
     }).then(async (result) => {
         // Notify the organiser that the control list is ready.
         if (event.organizerId) {
@@ -215,6 +247,7 @@ exports.editEventControlList = (0, https_1.onCall)({ region: runtime_1.FUNCTION_
             written: result.written,
             controlIds: result.controlIds,
             controlListSnapshot: result.controlListSnapshot,
+            ...(result.proposalId ? { proposalId: result.proposalId, proposalRevision: result.proposalRevision } : {}),
         };
     });
 });

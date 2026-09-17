@@ -10,6 +10,8 @@ interface AIAdvisoryProps {
   official?: boolean;
   canEdit?: boolean;
   onEdit?: () => void;
+  /** Action label used by authority pages to make the score-review intent explicit. */
+  editLabel?: string;
   reviewStatus?: string;
   /** Current officer review scores, kept separate from the immutable AI proposal. */
   reviewedCategories?: Array<{ categoryId: string; likelihood: ScoreRating; severity: ScoreRating }>;
@@ -17,7 +19,7 @@ interface AIAdvisoryProps {
   editor?: ReactNode;
 }
 
-export default function AIAdvisory({ advisory, resultRiskLevel, showCategories = true, official = false, canEdit = false, onEdit, reviewStatus, reviewedCategories, editor }: AIAdvisoryProps) {
+export default function AIAdvisory({ advisory, resultRiskLevel, showCategories = true, official = false, canEdit = false, onEdit, editLabel, reviewStatus, reviewedCategories, editor }: AIAdvisoryProps) {
   const available = advisory?.status === 'success';
   const reviewedByCategory = new Map((reviewedCategories ?? []).map((category) => [category.categoryId, category]));
   return (
@@ -30,7 +32,7 @@ export default function AIAdvisory({ advisory, resultRiskLevel, showCategories =
         <div className="flex flex-wrap items-center gap-2">
           <span className={`badge ${available ? 'badge-green' : 'badge-amber'}`}>{advisory?.status ?? 'not attempted'}</span>
           {reviewStatus && <span className="badge bg-green-100 text-status-approved" data-testid="score-review-status">{reviewStatus}</span>}
-          {canEdit && onEdit && <button type="button" className="btn-secondary !min-h-9 !px-3 !py-1.5 text-xs" onClick={onEdit} data-testid="ai-proposal-edit"><Pencil size={13} /> Edit</button>}
+          {canEdit && onEdit && <button type="button" className="btn-secondary !min-h-9 !px-3 !py-1.5 text-xs" onClick={onEdit} data-testid="ai-proposal-edit"><Pencil size={13} /> {editLabel ?? 'Edit'}</button>}
         </div>
       </div>
       {!available && (

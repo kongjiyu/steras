@@ -14,6 +14,12 @@ const resourceCalculator_1 = require("./resourceCalculator");
         (0, vitest_1.expect)((0, manualFinalisation_1.validateManualAssessmentInput)({ ...input(), categories: input().categories.slice(0, 7) }, assessment.evidence)).toContain('category-count');
         (0, vitest_1.expect)((0, manualFinalisation_1.validateManualAssessmentInput)({ ...input(), categories: input().categories.map((category) => ({ ...category, categoryId: 'crowd' })) }, assessment.evidence)).toContain('category');
     });
+    (0, vitest_1.it)('validates the Admin-owned resource quantities and planning maxima', () => {
+        const resources = { police: { quantity: 2, maximum: 4 }, security: { quantity: 3, maximum: 5 }, medicalTeams: { quantity: 1, maximum: 2 }, ambulances: { quantity: 1, maximum: 2 }, fireOfficers: { quantity: 2, maximum: 3 }, toilets: { quantity: 20, maximum: 25 }, wasteBins: { quantity: 10, maximum: 15 } };
+        (0, vitest_1.expect)((0, manualFinalisation_1.validateManualResourcePlan)({ resourcePlan: resources, resourceRationale: 'Admin reviewed capacity, ingress and emergency coverage.' })).toEqual([]);
+        (0, vitest_1.expect)((0, manualFinalisation_1.validateManualResourcePlan)({ resourcePlan: { ...resources, police: { quantity: 5, maximum: 2 } }, resourceRationale: 'Admin reviewed capacity, ingress and emergency coverage.' })).toContain('resource-police-range');
+        (0, vitest_1.expect)((0, manualFinalisation_1.validateManualResourcePlan)({ resourcePlan: resources, resourceRationale: '' })).toContain('resource-rationale');
+    });
     (0, vitest_1.it)('rejects invalid scores/evidence and requires missing-information when evidence is absent', () => {
         const assessment = manualReview();
         const badScore = input();

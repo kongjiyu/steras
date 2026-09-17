@@ -5,6 +5,7 @@ import { COLLECTIONS, EventControl, EventRecord, Stage2Doc } from '@shared/types
 import { FUNCTION_REGION } from '../config/runtime';
 import { isActiveControlGeneration } from '../utils/controlLifecycle';
 import { counterMatchesStage2 } from '../utils/stage2Counter';
+import { stage2DocumentId, stage2PublicControlId } from '@shared/stage2';
 
 export const withdrawStage2Report = onCall({ region: FUNCTION_REGION }, async request => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in first.');
@@ -17,9 +18,9 @@ export async function withdrawStage2ReportForUser(uid: string, data: { eventId?:
   const db = firestore();
   const eventRef = db.collection(COLLECTIONS.EVENTS).doc(eventId);
   const controlRef = eventRef.collection(COLLECTIONS.EVENT_CONTROLS).doc(controlId);
-  const stageRef = controlRef.collection(COLLECTIONS.STAGE2_DOCS).doc(`${controlId}-s2`);
+  const stageRef = controlRef.collection(COLLECTIONS.STAGE2_DOCS).doc(stage2DocumentId(controlId));
   const counters = controlRef.collection(COLLECTIONS.STAGE2_REPORTS);
-  const publicRef = db.collection(COLLECTIONS.PUBLIC_EVENT_CONTROLS).doc(eventId).collection(COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS).doc(`${controlId}-stage2`);
+  const publicRef = db.collection(COLLECTIONS.PUBLIC_EVENT_CONTROLS).doc(eventId).collection(COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS).doc(stage2PublicControlId(controlId));
   return db.runTransaction(async tx => {
     const [user, event, control, stage, reports, projection] = await Promise.all([
       tx.get(db.collection(COLLECTIONS.USERS).doc(uid)), tx.get(eventRef), tx.get(controlRef), tx.get(stageRef), tx.get(counters), tx.get(publicRef),

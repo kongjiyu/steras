@@ -59,7 +59,7 @@ function formatDate(ts?: number) {
 
 type QueueView = 'action' | 'all' | 'completed';
 const PRIORITY_TONE = { High: 'bg-red-50 text-red-700 border-red-200', Medium: 'bg-amber-50 text-amber-800 border-amber-200', Normal: 'bg-stone-50 text-ink-500 border-stone-200' };
-const QUEUE_GRID = '1.7fr 1.2fr 8rem 10rem 10rem 7rem 10rem';
+const QUEUE_GRID = '1.7fr 1.2fr 8rem 10rem 12rem 7rem 11rem';
 
 export default function AdminApplicationQueue() {
   const { profile } = useAuth();
@@ -69,7 +69,8 @@ export default function AdminApplicationQueue() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [status, setStatusFilter] = useState<AdminVisibleEventStatus | 'all'>(adminStatusFromQuery(params.get('status')));
-  const [view, setView] = useState<QueueView>((params.get('view') as QueueView) || 'action');
+  const requestedView = params.get('view') as QueueView | null;
+  const [view, setView] = useState<QueueView>(requestedView && ['action', 'all', 'completed'].includes(requestedView) ? requestedView : 'all');
 
   useEffect(() => {
     if (!isFirebaseConfigured) { setLoading(false); return; }
@@ -90,7 +91,7 @@ export default function AdminApplicationQueue() {
       if (view === 'action' && !workflow.needsAction) return false;
       if (view === 'completed' && !workflow.complete) return false;
       if (status !== 'all' && event.status !== status) return false;
-      return !queryText || [event.eventDetails.name, event.eventDetails.venueName, event.eventDetails.organizerName, event.eventDetails.type].some((value) => value.toLowerCase().includes(queryText));
+      return !queryText || [event.eventId, event.eventDetails.name, event.eventDetails.venueName, event.eventDetails.organizerName, event.eventDetails.type].some((value) => value.toLowerCase().includes(queryText));
     }).sort((a, b) => rank[a.workflow.priority] - rank[b.workflow.priority]);
   }, [rows, search, status, view]);
   const updateView = (next: QueueView) => { setView(next); params.set('view', next); setParams(params, { replace: true }); };
@@ -109,7 +110,7 @@ export default function AdminApplicationQueue() {
         {(['action', 'all', 'completed'] as QueueView[]).map((item) => <button key={item} type="button" onClick={() => updateView(item)} className={'min-h-11 flex-1 whitespace-nowrap border-b-2 px-2 text-xs font-semibold sm:flex-none sm:px-4 sm:text-sm ' + (view === item ? 'border-brand-700 text-brand-800' : 'border-transparent text-ink-500 hover:text-ink-800')}>{item === 'action' ? 'Needs action' : item === 'all' ? 'All applications' : 'Completed'} <span className="ml-1 text-[10px] sm:text-xs">{counts[item]}</span></button>)}
       </nav>
       <section className="mb-5 flex flex-col gap-3 border-b border-[#ded4c1] pb-4 md:flex-row">
-        <label className="relative min-w-0 flex-1"><span className="sr-only">Search applications</span><Search className="pointer-events-none absolute left-3 top-3.5 text-ink-400" size={17}/><input type="search" className="input min-h-11 !pl-10" placeholder="Search event, venue, organiser, or type" value={search} onChange={(event) => setSearch(event.target.value)}/></label>
+        <label className="relative min-w-0 flex-1"><span className="sr-only">Search applications</span><Search className="pointer-events-none absolute left-3 top-3.5 text-ink-400" size={17}/><input type="search" className="input min-h-11 !pl-10" placeholder="Search event, application ID, venue, organiser, or type" value={search} onChange={(event) => setSearch(event.target.value)}/></label>
         <label className="flex items-center gap-2 text-xs font-semibold text-ink-600"><Filter size={14}/><span>Status</span><select className="input min-h-11 md:w-44" value={status} onChange={(event) => updateStatus(event.target.value as AdminVisibleEventStatus | 'all')}><option value="all">All statuses</option>{STATUS_FILTERS.slice(1).map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
       </section>
       <section className="overflow-x-auto rounded-lg border border-[#ded5c5] bg-white shadow-card">

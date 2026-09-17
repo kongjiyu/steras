@@ -37,6 +37,7 @@ const firebase_admin_1 = require("firebase-admin");
 const firestore_1 = require("firebase-admin/firestore");
 const https_1 = require("firebase-functions/v2/https");
 const types_1 = require("../../../shared/types");
+const applicationState_1 = require("../../../shared/applicationState");
 const runtime_1 = require("../config/runtime");
 const resourceContract_1 = require("../engines/resourceContract");
 const notifications_1 = require("../utils/notifications");
@@ -65,29 +66,12 @@ exports.recordOfficerProposal = (0, https_1.onCall)({ region: runtime_1.FUNCTION
         throw new https_1.HttpsError('failed-precondition', 'The application has no submitted version.');
     const assessmentId = event.currentAssessmentId;
     const resourceId = event.currentResourceId;
-    if (!assessmentId || !resourceId || !safeDocumentId(assessmentId) || !safeDocumentId(resourceId)) {
-        throw new https_1.HttpsError('failed-precondition', 'Risk assessment and resources must point to the current application assessment.');
-    }
-    const assessmentRef = eventRef.collection(types_1.COLLECTIONS.ASSESSMENTS).doc(assessmentId);
-    const resourceRef = eventRef.collection(types_1.COLLECTIONS.RESOURCES).doc(resourceId);
-    const [assessmentSnap, resourceSnap] = await Promise.all([assessmentRef.get(), resourceRef.get()]);
     if (event.status !== 'UnderReview' || event.reviewStage !== 'authority') {
         throw new https_1.HttpsError('failed-precondition', 'This application version is no longer open for officer review.');
     }
     if (event.initialReview?.decision !== 'Approved') {
         throw new https_1.HttpsError('failed-precondition', 'The admin initial review has not released this application for officer review.');
     }
-    const resource = resourceSnap.data();
-    const assessment = assessmentSnap.data();
-    assertOfficerDecisionArtifacts(assessment, resource, eventId, versionId, assessmentId, resourceId, authorityType);
-    const readyAssessment = assessment;
-    if (readyAssessment.complianceStatus === 'blocked' && decision === 'Approved') {
-        throw new https_1.HttpsError('failed-precondition', 'This application cannot be approved while compliance checks are blocked.');
-    }
-    const readiness = readyAssessment.assessmentReadiness;
-    const finalizedAdminManual = readyAssessment.status === 'official_ready'
-        && 'sourceKind' in readyAssessment && readyAssessment.sourceKind === 'admin_manual';
-    validateOfficerRejectionRationale(decision, readiness, finalizedAdminManual, reason);
     // Find this officer's assignment.
     const assignmentId = `${versionId}_${profile.authorityType}`;
     const assignmentRef = eventRef.collection(types_1.COLLECTIONS.ASSIGNMENTS).doc(assignmentId);
@@ -102,6 +86,35 @@ exports.recordOfficerProposal = (0, https_1.onCall)({ region: runtime_1.FUNCTION
     if (assignment.status === 'revoked') {
         throw new https_1.HttpsError('failed-precondition', 'This assignment was revoked.');
     }
+    // Load only safe pointer targets. The readiness resolver intentionally runs
+    // before the defensive artifact fence so an actionable score-review blocker
+    // is never hidden by a stale or missing resource pointer.
+    const assessmentRef = safeDocumentId(assessmentId)
+        ? eventRef.collection(types_1.COLLECTIONS.ASSESSMENTS).doc(assessmentId)
+        : null;
+    const resourceRef = safeDocumentId(resourceId)
+        ? eventRef.collection(types_1.COLLECTIONS.RESOURCES).doc(resourceId)
+        : null;
+    const [assessmentSnap, resourceSnap] = await Promise.all([
+        assessmentRef ? assessmentRef.get() : Promise.resolve(null),
+        resourceRef ? resourceRef.get() : Promise.resolve(null),
+    ]);
+    const resource = resourceSnap?.data();
+    const assessment = assessmentSnap?.data();
+    const assignmentReadiness = (0, applicationState_1.resolveOfficerDecisionReadiness)({
+        eventId, versionId, assessmentId, resourceId, authorityType,
+        officerUid: callerUid, eventStatus: event.status, reviewStage: event.reviewStage,
+        assignment, assessment, resource, requiredAuthorities: event.requiredAuthorities ?? [],
+    });
+    if (!assignmentReadiness.ready)
+        throw new https_1.HttpsError('failed-precondition', assignmentReadiness.message);
+    const finalizedAdminManual = assessment?.status === 'official_ready'
+        && Boolean(assessment && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual');
+    validateOfficerRejectionRationale(decision, assessment?.assessmentReadiness, finalizedAdminManual, reason);
+    if (!assessmentId || !resourceId || !assessmentRef || !resourceRef || !assessmentSnap || !resourceSnap) {
+        throw new https_1.HttpsError('failed-precondition', 'Risk assessment and resources must point to the current application assessment.');
+    }
+    assertOfficerDecisionArtifacts(assessment, resource, eventId, versionId, assessmentId, resourceId, authorityType);
     const now = Date.now();
     return db.runTransaction(async (tx) => {
         // Reads first (Firestore requires all reads before all writes).
@@ -120,7 +133,6 @@ exports.recordOfficerProposal = (0, https_1.onCall)({ region: runtime_1.FUNCTION
             || currentEvent.assignedOfficerByAuthority?.[authorityType] !== callerUid) {
             throw new https_1.HttpsError('aborted', 'The application generation changed before the proposal was recorded.');
         }
-        assertOfficerDecisionArtifacts(currentAssessmentSnap.data(), currentResourceSnap.data(), eventId, versionId, assessmentId, resourceId, authorityType);
         const all = allAssignmentsSnap.docs
             .map((d) => ({ ...d.data(), assignmentId: d.id }))
             .filter((candidate) => candidate.versionId === versionId);
@@ -130,6 +142,17 @@ exports.recordOfficerProposal = (0, https_1.onCall)({ region: runtime_1.FUNCTION
             || currentAssignment.status === 'revoked') {
             throw new https_1.HttpsError('permission-denied', 'This assignment is no longer yours to review.');
         }
+        const currentAssessment = currentAssessmentSnap.data();
+        const currentResource = currentResourceSnap.data();
+        const transactionReadiness = (0, applicationState_1.resolveOfficerDecisionReadiness)({
+            eventId, versionId, assessmentId, resourceId, authorityType,
+            officerUid: request.auth.uid, eventStatus: currentEvent.status, reviewStage: currentEvent.reviewStage,
+            assignment: currentAssignment, assessment: currentAssessment, resource: currentResource,
+            requiredAuthorities: currentEvent.requiredAuthorities ?? [],
+        });
+        if (!transactionReadiness.ready)
+            throw new https_1.HttpsError('aborted', transactionReadiness.message);
+        assertOfficerDecisionArtifacts(currentAssessmentSnap.data(), currentResourceSnap.data(), eventId, versionId, assessmentId, resourceId, authorityType);
         const isAmendment = currentAssignment.status === 'completed';
         const previousReason = currentAssignment.reason ?? '';
         const previousSuggestion = currentAssignment.suggestion ?? '';

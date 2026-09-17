@@ -19,6 +19,7 @@ import {
 } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
 import { buildPublicEventControl } from '../http/publishStage2Doc';
+import { stage2PublicControlId } from '@shared/stage2';
 import { createNotification, resolveAuthUid } from '../utils/notifications';
 
 export type M4TerminalOutcome = 'confirmed_true' | 'dismissed_fake';
@@ -57,7 +58,7 @@ export async function applyM4ReportOutcome(
   const publicRef = db.collection(COLLECTIONS.PUBLIC_EVENT_CONTROLS)
     .doc(report.eventId)
     .collection(COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS)
-    .doc(`${report.controlId}-stage2`);
+    .doc(stage2PublicControlId(report.controlId));
 
   const result = await db.runTransaction(async (tx) => {
     const [eventSnap, controlSnap, stage2Snap, publicSnap] = await Promise.all([
@@ -126,7 +127,7 @@ export async function applyM4ReportOutcome(
         updatedAt: now,
       });
       tx.set(publicRef, buildPublicEventControl({
-        publicControlId: `${report.controlId}-stage2`,
+        publicControlId: stage2PublicControlId(report.controlId),
         eventId: report.eventId,
         versionId,
         controlId: report.controlId,

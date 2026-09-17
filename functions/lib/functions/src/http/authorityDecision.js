@@ -312,7 +312,7 @@ function assertOfficialAssessmentReady(event, versionId, assessment, resources, 
         })
         : undefined;
     const expectedHash = expectedCalculation?.ok ? expectedCalculation.resourceInputHash : undefined;
-    const validResources = isValidOfficialResources(resources, event.eventId, versionId, officialAssessment?.assessmentId, expectedHash, expectedCalculation?.ok ? expectedCalculation.items : undefined);
+    const validResources = isValidOfficialResources(resources, event.eventId, versionId, officialAssessment?.assessmentId, expectedHash, expectedCalculation?.ok ? expectedCalculation.items : undefined, manualAssessment);
     const official = isRecord(assessment) && isRecord(assessment.officialResult) ? assessment.officialResult : undefined;
     const proposal = isRecord(assessment) && isRecord(assessment.aiProposal) ? assessment.aiProposal : undefined;
     const reference = resources?.assessmentReference;
@@ -460,7 +460,42 @@ function isSafeManualAssessmentId(value) {
 function isSafeDocumentId(value) {
     return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 }
-function isValidOfficialResources(resources, eventId, versionId, assessmentId, expectedHash, expectedItems) {
+function isValidOfficialResources(resources, eventId, versionId, assessmentId, expectedHash, expectedItems, manualAssessment) {
+    if (manualAssessment?.resourcePlan && manualAssessment.resourceRationale) {
+        const planErrors = (0, manualFinalisation_1.validateManualResourcePlan)(manualAssessment);
+        if (planErrors.length > 0 || !isRecord(resources))
+            return false;
+        const manualInputHash = (0, node_crypto_1.createHash)('sha256').update((0, resourceCalculator_2.stableStringify)({
+            sourceKind: 'admin_manual', eventId, versionId, assessmentId,
+            manualAssessmentId: manualAssessment.manualAssessmentId,
+            resourcePlan: manualAssessment.resourcePlan,
+            resourceRationale: manualAssessment.resourceRationale,
+        })).digest('hex');
+        return resources.eventId === eventId
+            && resources.versionId === versionId
+            && resources.assessmentId === assessmentId
+            && resources.stage === 'official'
+            && resources.formulaVersion === types_1.RESOURCE_FORMULA_VERSION
+            && resources.configVersion === types_1.RESOURCE_CONFIG_VERSION
+            && resources.sourceRegistryVersion === types_1.RESOURCE_SOURCE_REGISTRY_VERSION
+            && resources.resourceInputHash === manualInputHash
+            && resources.resourceId === `official-${versionId}-${manualInputHash}`
+            && resources.assessmentReference.stage === 'official'
+            && resources.assessmentReference.sourceKind === 'admin_manual'
+            && resources.assessmentReference.manualAssessmentId === manualAssessment.manualAssessmentId
+            && Number.isFinite(resources.assessmentReference.finalizedAt)
+            && typeof resources.assessmentReference.finalizedBy === 'string'
+            && types_1.RESOURCE_KEYS.every((key) => {
+                const plan = manualAssessment.resourcePlan?.[key];
+                const item = resources.items?.[key];
+                return Boolean(plan && isRecord(item)
+                    && item.resource === key
+                    && item.baseline === plan.quantity
+                    && item.planningRange?.min === plan.quantity
+                    && item.planningRange?.max === plan.maximum);
+            })
+            && (0, resourceContract_1.validateResourceRecommendation)(resources).ok;
+    }
     return Boolean(isRecord(resources)
         && expectedHash
         && resources.eventId === eventId

@@ -58,7 +58,6 @@ import {
   friendlyRiskLevel,
 } from './adminApplicationPresentation';
 import { userFacingSystemText } from '../../utils/userFacingText';
-import { adminWorkflowState } from './adminWorkflow';
 
 const RISK_TONE: Record<string, string> = {
   Low: 'admin-badge admin-badge--good',
@@ -458,8 +457,6 @@ export default function AdminApplicationReview() {
   useEffect(() => {
     if (finalReviewReady && !finalDecision && officerAggregate) setFinalDecision(officerAggregate);
   }, [finalReviewReady, finalDecision, officerAggregate]);
-  const workflow = event ? adminWorkflowState(event) : null;
-
   const submitDecision = async () => {
     if (!eventId || !event || !decisionMode || !initialReviewOpen) return;
     if (decisionMode === 'reject' && rationale.trim().length < minRationaleLen) {
@@ -595,11 +592,6 @@ export default function AdminApplicationReview() {
                return <AdminApplicationSummary event={event} assessment={assessment} workflow={workflow} assignments={assignments} decisions={decisions} />;
             })()}
             <AdminAuthorityProgressCard event={event} assessment={assessment} assignments={assignments} decisions={decisions} />
-
-            {workflow && <section className="mb-5 grid gap-3 rounded-lg border border-[#cfd7b4] bg-[#f8faef] p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-              <div><p className="text-xs font-bold uppercase tracking-[0.08em] text-brand-700">Current workflow</p><h2 className="mt-1 font-display text-lg font-bold text-ink-900">{workflow.stage}</h2><p className="mt-1 text-sm text-ink-600">{workflow.needsAction ? `Admin action required: ${workflow.actionLabel}.` : workflow.stage === 'Authority review' ? 'Assigned officers are completing their review. No admin decision is due yet.' : workflow.stage === 'Awaiting organiser documentation' ? 'The application is approved. The organiser can now provide the published control evidence.' : 'Review the record and audit history below.'}</p></div>
-              <span className={`w-fit rounded-full border px-3 py-1 text-xs font-bold ${workflow.priority === 'High' ? 'border-red-200 bg-red-50 text-red-700' : workflow.priority === 'Medium' ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-stone-200 bg-white text-ink-500'}`}>{workflow.priority} priority</span>
-            </section>}
 
             <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
               {/* Main column */}

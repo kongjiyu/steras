@@ -43,6 +43,7 @@ const runtime_1 = require("../config/runtime");
 const notifications_1 = require("../utils/notifications");
 const base64File_1 = require("../utils/base64File");
 const controlLifecycle_1 = require("../utils/controlLifecycle");
+const stage2_1 = require("../../../shared/stage2");
 const MAX_FILE_BYTES = 700 * 1024;
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png']);
 exports.submitStage2Doc = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
@@ -83,12 +84,12 @@ async function submitStage2DocForUser(uid, data, now = Date.now()) {
     const db = (0, firebase_admin_1.firestore)();
     const eventRef = db.collection(types_1.COLLECTIONS.EVENTS).doc(eventId);
     const controlRef = eventRef.collection(types_1.COLLECTIONS.EVENT_CONTROLS).doc(controlId);
-    const docId = `${controlId}-s2`;
+    const docId = (0, stage2_1.stage2DocumentId)(controlId);
     const docRef = controlRef.collection(types_1.COLLECTIONS.STAGE2_DOCS).doc(docId);
     const publicRef = db.collection(types_1.COLLECTIONS.PUBLIC_EVENT_CONTROLS)
         .doc(eventId)
         .collection(types_1.COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS)
-        .doc(`${controlId}-stage2`);
+        .doc((0, stage2_1.stage2PublicControlId)(controlId));
     const userRef = db.collection(types_1.COLLECTIONS.USERS).doc(uid);
     const result = await db.runTransaction(async (tx) => {
         // Reads.

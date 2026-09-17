@@ -160,6 +160,7 @@ export type OfficerDecisionReadinessReason =
   | 'manual_not_finalized'
   | 'own_score_review_required'
   | 'other_score_reviews_pending'
+  | 'score_review_record_missing'
   | 'officialisation_pending'
   | 'compliance_blocked';
 
@@ -195,15 +196,42 @@ export function resolveOfficerDecisionReadiness(input: OfficerDecisionReadinessI
   }
   const isManual = assessment.sourceKind === 'admin_manual';
   const heads = assessment.authorityReviewState?.activeReviewHeads ?? {};
+  const required = input.requiredAuthorities ?? [];
+  const ownReviewId = heads[input.authorityType]?.reviewId;
+  const allRequiredHeadsPresent = required.length === 0
+    ? Boolean(ownReviewId)
+    : required.every((authority) => Boolean(heads[authority]?.reviewId));
+
+  // An assessment marked official must carry a coherent set of score-review
+  // heads and the review ids used to finalise it. If that provenance is
+  // missing, do not send an officer back into an editor that cannot repair an
+  // already-finalised record; show the integrity blocker instead.
+  if (!isManual && assessment.status === 'official_ready') {
+    const officialReviewIds = isRecord(assessment.officialResult) && Array.isArray(assessment.officialResult.reviewIds)
+      ? assessment.officialResult.reviewIds.filter((value): value is string => typeof value === 'string') : [];
+    const officialIdsMatch = allRequiredHeadsPresent
+      && officialReviewIds.length > 0
+      && required.every((authority) => {
+        const reviewId = heads[authority]?.reviewId;
+        return Boolean(reviewId && officialReviewIds.includes(reviewId));
+      });
+    if (!ownReviewId || !allRequiredHeadsPresent || !officialIdsMatch) {
+      return {
+        ready: false,
+        reason: 'score_review_record_missing',
+        message: 'The current score-review record is missing or inconsistent. Reload the application or ask an Admin to repair the review record.',
+      };
+    }
+  }
+
   // Surface the actionable score-review blocker before the downstream
   // official-resource check. Officers should be told to submit their own
   // review (or wait for another authority) rather than seeing a generic
   // finalisation message while M2 is still collecting reviews.
-  if (!isManual && !heads[input.authorityType]?.reviewId) {
+  if (!isManual && !ownReviewId) {
     return { ready: false, reason: 'own_score_review_required', message: 'Submit your score review first. Decisions unlock after it is finalised.' };
   }
-  const required = input.requiredAuthorities ?? [];
-  if (!isManual && required.length > 0 && !required.every((authority) => Boolean(heads[authority]?.reviewId))) {
+  if (!isManual && required.length > 0 && !allRequiredHeadsPresent) {
     return { ready: false, reason: 'other_score_reviews_pending', message: 'Waiting for the other required authority score reviews.' };
   }
   const resource = input.resource;
@@ -213,6 +241,9 @@ export function resolveOfficerDecisionReadiness(input: OfficerDecisionReadinessI
     return { ready: false, reason: 'resource_identity_mismatch', message: 'The resource recommendation does not match the current application version.' };
   }
   if (resource.stage !== 'official' || assessment.status !== 'official_ready') {
+    if (!isManual && allRequiredHeadsPresent) {
+      return { ready: false, reason: 'officialisation_pending', message: 'All score reviews are present, but M2 officialisation is still pending.' };
+    }
     return { ready: false, reason: 'manual_not_finalized', message: 'Wait for M2 official assessment finalisation before recording a decision.' };
   }
   if (isManual) {
@@ -220,7 +251,7 @@ export function resolveOfficerDecisionReadiness(input: OfficerDecisionReadinessI
   }
   const officialReviewIds = isRecord(assessment.officialResult) && Array.isArray(assessment.officialResult.reviewIds)
     ? assessment.officialResult.reviewIds.filter((value): value is string => typeof value === 'string') : [];
-  if (!officialReviewIds.includes(heads[input.authorityType]!.reviewId!)) {
+  if (!officialReviewIds.includes(ownReviewId!)) {
     return { ready: false, reason: 'officialisation_pending', message: 'All score reviews are present, but M2 officialisation is still pending.' };
   }
   return { ready: true, message: 'The official assessment and resources are ready.' };

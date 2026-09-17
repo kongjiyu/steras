@@ -79,6 +79,11 @@
   display: grid !important;
   font-size: 14px;
 }
+.admin-queue-column--status,
+.admin-queue-column--action {
+  min-width: 0;
+  white-space: nowrap;
+}
 .admin-queue-action {
   position: relative;
   display: inline-flex;
