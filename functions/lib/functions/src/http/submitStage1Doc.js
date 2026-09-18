@@ -53,6 +53,7 @@ const notifications_1 = require("../utils/notifications");
 const controlAggregate_1 = require("../utils/controlAggregate");
 const base64File_1 = require("../utils/base64File");
 const controlLifecycle_1 = require("../utils/controlLifecycle");
+const stage1_1 = require("../../../shared/stage1");
 const MAX_FILE_BYTES = 700 * 1024; // 700 KB binary (~940 KB base64; under the 1 MB Firestore doc limit)
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'application/pdf']);
 exports.submitStage1Doc = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
@@ -138,7 +139,7 @@ async function submitStage1DocForUser(uid, data, now = Date.now()) {
             throw new https_1.HttpsError('failed-precondition', `Control ${controlId} is for a prior version (${control.versionId}). The admin must re-commit the list for the current version.`);
         }
         // The docSlot must be in the control's stage1Requirements template.
-        const requirement = control.stage1Requirements.find((r) => `${controlId}-s1-${r.docType}` === docId);
+        const requirement = control.stage1Requirements.find((r) => (0, stage1_1.stage1DocumentId)(controlId, r.docType) === docId);
         if (!requirement) {
             throw new https_1.HttpsError('failed-precondition', `docId ${docId} is not in the control's Stage 1 requirements template.`);
         }
@@ -176,7 +177,7 @@ async function submitStage1DocForUser(uid, data, now = Date.now()) {
             const value = item.data();
             return Number.isInteger(value.revision) ? value.revision : 0;
         }), existingDoc?.revision ?? 0) + 1;
-        const revisionId = `${docId}-r${nextRevision}`;
+        const revisionId = (0, stage1_1.stage1RevisionId)(docId, nextRevision);
         const sourceHash = uploadedFile
             ? (0, crypto_1.createHash)('sha256').update(Buffer.from(data.fileBase64, 'base64')).digest('hex')
             : (0, crypto_1.createHash)('sha256').update(`${eventId}:${versionId}:${controlId}:${docId}:${nextRevision}:use_previous`).digest('hex');

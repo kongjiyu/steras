@@ -44,6 +44,7 @@ const notifications_1 = require("../utils/notifications");
 const base64File_1 = require("../utils/base64File");
 const controlLifecycle_1 = require("../utils/controlLifecycle");
 const stage2_1 = require("../../../shared/stage2");
+const stage1_1 = require("../../../shared/stage1");
 const MAX_FILE_BYTES = 700 * 1024;
 const ALLOWED_MIME = new Set(['image/jpeg', 'image/png']);
 exports.submitStage2Doc = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
@@ -128,7 +129,7 @@ async function submitStage2DocForUser(uid, data, now = Date.now()) {
         }
         const requiredStage1 = control.stage1Requirements.filter((requirement) => requirement.required);
         const stage1ById = new Map(stage1DocsSnap.docs.map((item) => [item.id, item.data()]));
-        const incomplete = requiredStage1.filter((requirement) => stage1ById.get(`${controlId}-s1-${requirement.docType}`)?.status !== 'verified');
+        const incomplete = requiredStage1.filter((requirement) => stage1ById.get((0, stage1_1.stage1DocumentId)(controlId, requirement.docType))?.status !== 'verified');
         if (incomplete.length > 0) {
             throw new https_1.HttpsError('failed-precondition', `Stage 2 is locked until this control's Stage 1 documents are approved: ${incomplete.map((requirement) => requirement.label).join(', ')}.`);
         }

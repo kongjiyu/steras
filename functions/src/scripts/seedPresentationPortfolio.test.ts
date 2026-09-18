@@ -18,6 +18,9 @@ describe('presentation portfolio seed safety', () => {
       action: 'verify', projectId: 'linkos-496505', only: 'presentation-putrajaya-community-run',
     });
     expect(() => parsePresentationArgs(['--verify', '--project', 'linkos-496505', '--only', 'not-managed'])).toThrow('--only must identify');
+    expect(parsePresentationArgs(['--verify', '--project', 'linkos-496505', '--only', 'presentation-craft-market'])).toEqual({
+      action: 'verify', projectId: 'linkos-496505', only: 'presentation-craft-market',
+    });
   });
 
   it('requires exact confirmation for every write operation', () => {

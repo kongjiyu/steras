@@ -25,6 +25,7 @@ import {
 } from '@shared/types';
 import { resolveApplicationDisplayState } from '@shared/applicationState';
 import { stage2DocumentId } from '@shared/stage2';
+import { stage1DocumentId } from '@shared/stage1';
 import { db } from '../../config/firebase';
 import EmptyState from '../../components/ui/EmptyState';
 import { ApplicationDisplayBadge } from '../../components/ui/StatusBadge';
@@ -160,7 +161,7 @@ export default function OrganizerEventControls() {
       for (const req of ctrl.stage1Requirements) {
         if (!req.required) continue;
         required += 1;
-        const docId = `${ctrl.controlId}-s1-${req.docType}`;
+        const docId = stage1DocumentId(ctrl.controlId, req.docType);
         const status = docs[docId]?.status ?? 'pending_submission';
         if (status === 'verified') verified += 1;
         else if (status === 'rejected') rejected += 1;
@@ -240,7 +241,7 @@ export default function OrganizerEventControls() {
         <div className="space-y-4" data-testid="organizer-event-controls-list">
           {controls.map((ctrl) => {
             const controlDocs = ctrl.stage1Requirements.map((req) => {
-              const docId = `${ctrl.controlId}-s1-${req.docType}`;
+              const docId = stage1DocumentId(ctrl.controlId, req.docType);
               // req doesn't carry a docId field on the type — we compute
               // it here and pass it through so the row component can
               // render the testid + key.

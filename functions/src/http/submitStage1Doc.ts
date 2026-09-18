@@ -56,6 +56,7 @@ import { createNotification } from '../utils/notifications';
 import { aggregateLabel } from '../utils/controlAggregate';
 import { validateBase64File } from '../utils/base64File';
 import { isActiveControlGeneration } from '../utils/controlLifecycle';
+import { stage1DocumentId, stage1RevisionId } from '@shared/stage1';
 
 interface SubmitStage1DocRequest {
   eventId?: string;
@@ -159,7 +160,7 @@ export async function submitStage1DocForUser(
       throw new HttpsError('failed-precondition', `Control ${controlId} is for a prior version (${control.versionId}). The admin must re-commit the list for the current version.`);
     }
     // The docSlot must be in the control's stage1Requirements template.
-    const requirement = control.stage1Requirements.find((r) => `${controlId}-s1-${r.docType}` === docId);
+    const requirement = control.stage1Requirements.find((r) => stage1DocumentId(controlId, r.docType) === docId);
     if (!requirement) {
       throw new HttpsError('failed-precondition', `docId ${docId} is not in the control's Stage 1 requirements template.`);
     }
@@ -198,7 +199,7 @@ export async function submitStage1DocForUser(
       const value = item.data() as { revision?: number };
       return Number.isInteger(value.revision) ? value.revision! : 0;
     }), existingDoc?.revision ?? 0) + 1;
-    const revisionId = `${docId}-r${nextRevision}`;
+    const revisionId = stage1RevisionId(docId, nextRevision);
     const sourceHash = uploadedFile
       ? createHash('sha256').update(Buffer.from(data.fileBase64!, 'base64')).digest('hex')
       : createHash('sha256').update(`${eventId}:${versionId}:${controlId}:${docId}:${nextRevision}:use_previous`).digest('hex');
