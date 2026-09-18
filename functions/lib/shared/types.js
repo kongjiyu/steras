@@ -97,6 +97,8 @@ exports.COLLECTIONS = {
     OFFICERS: 'officers',
     ASSIGNMENTS: 'assignments',
     STAGE1_DOCS: 'stage1_docs',
+    STAGE1_REVISIONS: 'revisions',
+    STAGE1_REDACTIONS: 'redactions',
     STAGE2_DOCS: 'stage2_docs',
     // M3 round N+1 (Workstream 4) — per-user rate-limit counters
     // under each control. Server-only writes; client reads for the
@@ -105,6 +107,7 @@ exports.COLLECTIONS = {
     STAGE2_REPORTS: 'stage2_reports',
     PUBLIC_EVENT_CONTROLS: 'public_event_controls',
     PUBLIC_EVENT_CONTROL_ITEMS: 'items',
+    PUBLIC_STAGE1_DOCS: 'stage1_documents',
     PUBLIC_REPORTS: 'public_reports',
     ADMIN_OPERATIONS: 'admin_operations',
     ADMIN_AUDIT_LOGS: 'admin_audit_logs',

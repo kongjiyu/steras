@@ -288,7 +288,8 @@ export default function OrganizerEventControls() {
                         authority={ctrl.authority}
                         label={ctrl.stage2Requirement.label}
                         doc={stage2Docs[ctrl.controlId] ?? null}
-                        onSubmitted={() => showToast('success', 'Stage 2 image published. Public verification can now begin.')}
+                        stage1Ready={controlDocs.filter((item) => item.requirement.required).every((item) => item.doc?.status === 'verified')}
+                        onSubmitted={() => showToast('success', 'Stage 2 image submitted for Admin publication review.')}
                         onError={(m) => showToast('error', m)}
                       />
                     </div>

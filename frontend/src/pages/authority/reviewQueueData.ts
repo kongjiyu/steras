@@ -1,16 +1,18 @@
 import { Assignment, DecisionValue, EventRecord, EventStatus } from '@shared/types';
 
 export type QueueSort = 'newest' | 'eventSoonest' | 'attendance';
-export type QueueFilter = 'all' | 'pending' | 'decided';
+export type QueueFilter = 'all' | 'pending' | 'decided' | 'documentation';
 
 export interface AuthorityQueueRow {
   event: EventRecord;
   assignment?: Pick<Assignment, 'status' | 'decision' | 'versionId' | 'authorityType'>;
-  action: 'review' | 'amend' | 'view';
+  stage1PendingCount?: number;
+  action: 'review' | 'amend' | 'documentation' | 'view';
   decision?: DecisionValue;
 }
 
-export function authorityQueueAction(row: Pick<AuthorityQueueRow, 'event' | 'assignment'>): AuthorityQueueRow['action'] {
+export function authorityQueueAction(row: Pick<AuthorityQueueRow, 'event' | 'assignment'> & { stage1PendingCount?: number }): AuthorityQueueRow['action'] {
+  if (row.event.status === 'Approved' && (row.stage1PendingCount ?? 0) > 0) return 'documentation';
   if (row.event.reviewStage !== 'authority') return 'view';
   if (row.assignment?.status === 'completed' && row.assignment.decision) return 'amend';
   return 'review';
@@ -24,7 +26,10 @@ export function filterAndSortAuthorityQueue(
 ): AuthorityQueueRow[] {
   const normalizedSearch = search.trim().toLocaleLowerCase();
   return rows
-    .filter((row) => filter === 'all' || (filter === 'decided' ? row.assignment?.status === 'completed' : row.assignment?.status !== 'completed'))
+    .filter((row) => filter === 'all'
+      || (filter === 'decided' ? row.assignment?.status === 'completed'
+        : filter === 'documentation' ? (row.stage1PendingCount ?? 0) > 0
+          : row.assignment?.status !== 'completed'))
     .filter((row) => !normalizedSearch || [row.event.eventId, row.event.eventDetails.name, row.event.eventDetails.venueName, row.event.eventDetails.type]
       .some((value) => value.toLocaleLowerCase().includes(normalizedSearch)))
     .sort((left, right) => {

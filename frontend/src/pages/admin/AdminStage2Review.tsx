@@ -38,6 +38,10 @@ import {
   RotateCcw,
   Upload,
   X,
+  ShieldCheck,
+  FileText,
+  Download,
+  Pencil,
 } from 'lucide-react';
 import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
@@ -46,7 +50,12 @@ import {
   COLLECTIONS,
   EventControl,
   EventRecord,
+  OfficerProfile,
   Stage2Doc,
+  Stage1Doc,
+  Stage1DocRevision,
+  Stage1RedactionDraft,
+  Stage1RedactionMask,
 } from '@shared/types';
 import { stage2DocumentId } from '@shared/stage2';
 import { db, functions } from '../../config/firebase';
@@ -74,6 +83,16 @@ export default function AdminStage2Review() {
   const [stage2Docs, setStage2Docs] = useState<Record<string, Stage2Doc | null>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [rejectingControl, setRejectingControl] = useState<EventControl | null>(null);
+  const [tab, setTab] = useState<'stage1' | 'stage2'>('stage1');
+  const [stage1Docs, setStage1Docs] = useState<Record<string, Stage1Doc | null>>({});
+  const [stage1Revisions, setStage1Revisions] = useState<Record<string, Stage1DocRevision[]>>({});
+  const [redactions, setRedactions] = useState<Record<string, Stage1RedactionDraft | null>>({});
+  const [redactionBusy, setRedactionBusy] = useState<string | null>(null);
+  const [reviewerBusy, setReviewerBusy] = useState<string | null>(null);
+  const [officers, setOfficers] = useState<OfficerProfile[]>([]);
+  const [editingRedaction, setEditingRedaction] = useState<string | null>(null);
+  const [maskDraft, setMaskDraft] = useState<Stage1RedactionMask[]>([]);
+  const [reviewedPages, setReviewedPages] = useState<number[]>([]);
 
   useEffect(() => {
     if (!eventId) return;
@@ -93,6 +112,13 @@ export default function AdminStage2Review() {
       setLoading(false);
     });
   }, [eventId, retryKey]);
+
+  useEffect(() => {
+    const officersQuery = query(collection(db, COLLECTIONS.OFFICERS), where('active', '==', true));
+    return onSnapshot(officersQuery, (snapshot) => {
+      setOfficers(snapshot.docs.map((item) => ({ ...(item.data() as OfficerProfile), uid: item.id })));
+    }, () => setLoadError('The active Stage 1 reviewer list could not be loaded.'));
+  }, [retryKey]);
 
   // Subscribe to the per-event event_controls (current version only).
   const versionId = event?.currentVersionId ?? 'v1';
@@ -145,6 +171,45 @@ export default function AdminStage2Review() {
       unsubs.push(unsub);
     }
     return () => { for (const u of unsubs) u(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventId, controls.map((c) => c.controlId).join('|'), retryKey]);
+
+  // Stage 1 documentation is reviewed and published independently from the
+  // Stage 2 image cards. Keep the current projection and its redaction draft
+  // keyed by control/doc so a replacement immediately removes stale public
+  // state from this page.
+  useEffect(() => {
+    if (!eventId || controls.length === 0) {
+      setStage1Docs({});
+      setStage1Revisions({});
+      setRedactions({});
+      return;
+    }
+    const unsubscribes: Array<() => void> = [];
+    const revisionUnsubscribes: Array<() => void> = [];
+    setStage1Revisions({});
+    for (const control of controls) {
+      const docsRef = collection(db, COLLECTIONS.EVENTS, eventId, COLLECTIONS.EVENT_CONTROLS, control.controlId, COLLECTIONS.STAGE1_DOCS);
+      unsubscribes.push(onSnapshot(docsRef, (snapshot) => {
+        for (const item of snapshot.docs) {
+          const key = `${control.controlId}__${item.id}`;
+          const stage1Doc = item.data() as Stage1Doc;
+          setStage1Docs((prev) => ({ ...prev, [key]: { ...stage1Doc, docId: item.id } }));
+          const revisionsRef = collection(docsRef, item.id, COLLECTIONS.STAGE1_REVISIONS);
+          revisionUnsubscribes.push(onSnapshot(revisionsRef, (revisions) => setStage1Revisions((prev) => ({
+            ...prev,
+            [key]: revisions.docs.map((revision) => revision.data() as Stage1DocRevision).sort((left, right) => right.revision - left.revision),
+          }))));
+          const redactionId = stage1Doc.revisionId ?? `${item.id}-r${stage1Doc.revision ?? 1}`;
+          const redactionRef = doc(db, COLLECTIONS.EVENTS, eventId, COLLECTIONS.EVENT_CONTROLS, control.controlId, COLLECTIONS.STAGE1_DOCS, item.id, COLLECTIONS.STAGE1_REDACTIONS, redactionId);
+          unsubscribes.push(onSnapshot(redactionRef, (redaction) => setRedactions((prev) => ({ ...prev, [key]: redaction.exists() ? redaction.data() as Stage1RedactionDraft : null }))));
+        }
+      }, () => setLoadError('Stage 1 documentation could not be loaded.')));
+    }
+    return () => {
+      for (const unsubscribe of unsubscribes) unsubscribe();
+      for (const unsubscribe of revisionUnsubscribes) unsubscribe();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventId, controls.map((c) => c.controlId).join('|'), retryKey]);
 
@@ -203,6 +268,65 @@ export default function AdminStage2Review() {
     }
   }
 
+  async function handleGenerateStage1(ctrl: EventControl, stage1Doc: Stage1Doc, regenerate = false) {
+    if (!eventId) return;
+    const key = `stage1-generate:${ctrl.controlId}:${stage1Doc.docId}`;
+    setRedactionBusy(key);
+    try {
+      const fn = httpsCallable<{ eventId: string; controlId: string; docId: string; regenerate?: boolean }, Stage1RedactionDraft>(functions, 'generateStage1Redaction');
+      const result = await fn({ eventId, controlId: ctrl.controlId, docId: stage1Doc.docId, ...(regenerate ? { regenerate: true } : {}) });
+      setRedactions((prev) => ({ ...prev, [`${ctrl.controlId}__${stage1Doc.docId}`]: result.data }));
+      toast.success(result.data.status === 'manual_required' ? 'AI redaction needs manual page review.' : 'Redaction draft generated.');
+    } catch (err) { toast.error(errorMessage(err)); }
+    finally { setRedactionBusy(null); }
+  }
+
+  async function handleAssignReviewer(ctrl: EventControl, reviewerUid: string) {
+    if (!eventId || !reviewerUid || reviewerUid === ctrl.stage1ReviewerUid) return;
+    setReviewerBusy(ctrl.controlId);
+    try {
+      const fn = httpsCallable<{ eventId: string; controlId: string; reviewerUid: string }, unknown>(functions, 'assignStage1Reviewer');
+      await fn({ eventId, controlId: ctrl.controlId, reviewerUid });
+      toast.success(`${ctrl.authority} Stage 1 reviewer updated.`);
+    } catch (err) { toast.error(errorMessage(err)); }
+    finally { setReviewerBusy(null); }
+  }
+
+  function openRedactionEditor(ctrl: EventControl, stage1Doc: Stage1Doc) {
+    const key = `${ctrl.controlId}__${stage1Doc.docId}`;
+    const draft = redactions[key];
+    if (!draft) return;
+    setEditingRedaction(key);
+    setMaskDraft(draft.masks ?? []);
+    setReviewedPages(draft.reviewedPages ?? []);
+  }
+
+  async function saveRedaction(ctrl: EventControl, stage1Doc: Stage1Doc) {
+    if (!eventId) return;
+    const key = `${ctrl.controlId}__${stage1Doc.docId}`;
+    setRedactionBusy(`stage1-save:${key}`);
+    try {
+      const fn = httpsCallable<{ eventId: string; controlId: string; docId: string; masks: Stage1RedactionMask[]; reviewedPages: number[] }, Stage1RedactionDraft>(functions, 'updateStage1Redaction');
+      const result = await fn({ eventId, controlId: ctrl.controlId, docId: stage1Doc.docId, masks: maskDraft, reviewedPages });
+      setRedactions((prev) => ({ ...prev, [key]: result.data }));
+      setEditingRedaction(null);
+      toast.success('Redaction review saved.');
+    } catch (err) { toast.error(errorMessage(err)); }
+    finally { setRedactionBusy(null); }
+  }
+
+  async function handlePublishStage1(ctrl: EventControl, stage1Doc: Stage1Doc, publish: boolean) {
+    if (!eventId) return;
+    const key = `${publish ? 'stage1-publish' : 'stage1-unpublish'}:${ctrl.controlId}:${stage1Doc.docId}`;
+    setRedactionBusy(key);
+    try {
+      const fn = httpsCallable<{ eventId: string; controlId: string; docId: string }, unknown>(functions, publish ? 'publishStage1Doc' : 'unpublishStage1Doc');
+      await fn({ eventId, controlId: ctrl.controlId, docId: stage1Doc.docId });
+      toast.success(publish ? 'Stage 1 document published to the public view.' : 'Stage 1 document unpublished.');
+    } catch (err) { toast.error(errorMessage(err)); }
+    finally { setRedactionBusy(null); }
+  }
+
   if (loading) return <div className="p-8 text-ink-500">Loading event...</div>;
   if (loadError) return <div className="p-8"><EmptyState title="Event unavailable" description={loadError}><button type="button" className="btn-secondary" onClick={() => setRetryKey((value) => value + 1)}>Try again</button></EmptyState></div>;
   if (!event) return <div className="p-8"><EmptyState title="Event not found" description="It may have been removed or you do not have access." /></div>;
@@ -226,7 +350,7 @@ export default function AdminStage2Review() {
 
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="font-display text-2xl font-bold text-ink-800">Stage 2 review</h1>
+          <h1 className="font-display text-2xl font-bold text-ink-800">Event documentation</h1>
           <p className="mt-1 text-sm text-ink-500">{details.name} · {venueName}</p>
           <p className="mt-1 text-xs text-ink-400">
             Version: <span className="font-semibold">{versionId}</span> ·{' '}
@@ -250,13 +374,39 @@ export default function AdminStage2Review() {
         </div>
       </div>
 
-      {!generated && (
+      <div className="mb-5 flex flex-wrap gap-2 border-b border-[#ded4c1] pb-3" role="tablist" aria-label="Documentation stage">
+        <button type="button" role="tab" aria-selected={tab === 'stage1'} onClick={() => setTab('stage1')} className={`min-h-11 rounded-md px-4 text-sm font-semibold ${tab === 'stage1' ? 'bg-brand-700 text-white' : 'border border-ink-200 bg-white text-ink-700'}`}><ShieldCheck size={15} /> Stage 1 · Authority verification</button>
+        <button type="button" role="tab" aria-selected={tab === 'stage2'} onClick={() => setTab('stage2')} className={`min-h-11 rounded-md px-4 text-sm font-semibold ${tab === 'stage2' ? 'bg-brand-700 text-white' : 'border border-ink-200 bg-white text-ink-700'}`}><ImageIcon size={15} /> Stage 2 · Admin publication</button>
+      </div>
+
+      {tab === 'stage1' && <AdminStage1Documentation
+        controls={controls}
+        stage1Docs={stage1Docs}
+        stage1Revisions={stage1Revisions}
+        officers={officers}
+        reviewerBusy={reviewerBusy}
+        onAssignReviewer={handleAssignReviewer}
+        redactions={redactions}
+        redactionBusy={redactionBusy}
+        editingRedaction={editingRedaction}
+        maskDraft={maskDraft}
+        reviewedPages={reviewedPages}
+        onGenerate={handleGenerateStage1}
+        onOpenEditor={openRedactionEditor}
+        onSave={saveRedaction}
+        onPublish={handlePublishStage1}
+        onCancelEditor={() => setEditingRedaction(null)}
+        onMasksChange={setMaskDraft}
+        onReviewedPagesChange={setReviewedPages}
+      />}
+
+      {tab === 'stage2' && !generated && (
         <div className="mb-5 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
           The control list hasn't been generated yet. Use <Link to={`/admin/applications/${eventId}/controls`} className="font-semibold underline">Open event control list</Link> to generate + commit the list first, then come back here.
         </div>
       )}
 
-      {generated && totalStage2 === 0 && (
+      {tab === 'stage2' && generated && totalStage2 === 0 && (
         <div className="card">
           <div className="card-body">
             <p className="text-sm text-ink-500">This event's control list has no Stage 2 requirements. Nothing to review.</p>
@@ -264,7 +414,7 @@ export default function AdminStage2Review() {
         </div>
       )}
 
-      {generated && totalStage2 > 0 && (
+      {tab === 'stage2' && generated && totalStage2 > 0 && (
         <div className="space-y-4" data-testid="admin-stage2-review-list">
           {reviewable.map((ctrl) => {
             const doc = stage2Docs[ctrl.controlId] ?? null;
@@ -418,6 +568,98 @@ export default function AdminStage2Review() {
   );
 }
 
+interface AdminStage1DocumentationProps {
+  controls: EventControl[];
+  stage1Docs: Record<string, Stage1Doc | null>;
+  stage1Revisions: Record<string, Stage1DocRevision[]>;
+  officers: OfficerProfile[];
+  reviewerBusy: string | null;
+  onAssignReviewer: (control: EventControl, reviewerUid: string) => void;
+  redactions: Record<string, Stage1RedactionDraft | null>;
+  redactionBusy: string | null;
+  editingRedaction: string | null;
+  maskDraft: Stage1RedactionMask[];
+  reviewedPages: number[];
+  onGenerate: (control: EventControl, stage1Doc: Stage1Doc, regenerate?: boolean) => void;
+  onOpenEditor: (control: EventControl, stage1Doc: Stage1Doc) => void;
+  onSave: (control: EventControl, stage1Doc: Stage1Doc) => void;
+  onPublish: (control: EventControl, stage1Doc: Stage1Doc, publish: boolean) => void;
+  onCancelEditor: () => void;
+  onMasksChange: (masks: Stage1RedactionMask[]) => void;
+  onReviewedPagesChange: (pages: number[]) => void;
+}
+
+function AdminStage1Documentation(props: AdminStage1DocumentationProps) {
+  const { controls, stage1Docs, stage1Revisions, officers, reviewerBusy, onAssignReviewer, redactions, redactionBusy, editingRedaction, maskDraft, reviewedPages, onGenerate, onOpenEditor, onSave, onPublish, onCancelEditor, onMasksChange, onReviewedPagesChange } = props;
+  return (
+    <div className="space-y-4" data-testid="admin-stage1-documentation">
+      <div className="rounded-md border border-brand-200 bg-brand-50/60 p-4 text-sm leading-6 text-brand-900">
+        Authority-verified Stage 1 documents are private until an Admin generates and reviews an irreversible black-box copy. Stage 2 images remain in the separate Admin publication tab.
+      </div>
+      {controls.length === 0 ? <div className="card"><div className="card-body text-sm text-ink-500">No current control list is available for this application.</div></div> : controls.map((control) => {
+        const documents = control.stage1Requirements.map((requirement) => {
+          const docId = `${control.controlId}-s1-${requirement.docType}`;
+          return { requirement, doc: stage1Docs[`${control.controlId}__${docId}`] ?? null, key: `${control.controlId}__${docId}` };
+        });
+        return <section key={control.controlId} className="card" data-testid={`admin-stage1-card-${control.authority}`}>
+          <div className="card-header flex-wrap gap-3">
+            <div className="flex items-center gap-2"><ShieldCheck size={16} className="text-brand-700" /><h2 className="font-semibold">{control.controlName}</h2></div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="badge bg-blue-100 text-brand-700">{control.authority}</span>
+              <label className="flex items-center gap-1 text-xs font-medium text-ink-600">
+                Stage 1 reviewer
+                <select className="input !min-h-9 !w-auto !py-1 text-xs" value={control.stage1ReviewerUid ?? ''} onChange={(event) => { if (event.target.value) onAssignReviewer(control, event.target.value); }} disabled={reviewerBusy === control.controlId}>
+                  <option value="">Default final-review officer</option>
+                  {officers.filter((officer) => officer.authorityType === control.authority).map((officer) => <option key={officer.uid} value={officer.uid}>{officer.uid}</option>)}
+                </select>
+              </label>
+            </div>
+          </div>
+          <div className="card-body space-y-3">
+            {documents.length === 0 ? <p className="text-sm text-ink-500">No Stage 1 files required.</p> : documents.map(({ requirement, doc: stage1Doc, key }) => {
+              const draft = redactions[key];
+              const revisions = stage1Revisions[key] ?? [];
+              const editing = editingRedaction === key && Boolean(draft);
+              const isBusy = redactionBusy?.includes(key) ?? false;
+              return <article key={key} className="rounded-md border border-ink-200 bg-white p-4" data-testid={`admin-stage1-doc-${requirement.docType}`}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2"><span className="badge bg-ink-100 text-ink-700">{requirement.docType}</span><h3 className="text-sm font-semibold text-ink-800">{requirement.label}</h3></div>
+                    <p className="mt-1 text-xs text-ink-500">{stage1Doc?.status === 'verified' ? `Verified ${stage1Doc.verifiedAt ? new Date(stage1Doc.verifiedAt).toLocaleString() : ''}` : stage1Doc?.status ?? 'Awaiting organizer submission'}</p>
+                  </div>
+                  <span className={`badge ${stage1Doc?.status === 'verified' ? 'bg-green-100 text-status-approved' : stage1Doc?.status === 'rejected' ? 'bg-red-100 text-status-rejected' : 'bg-ink-100 text-ink-600'}`}>{stage1Doc?.status === 'verified' ? 'Authority verified' : stage1Doc?.status === 'rejected' ? 'Rejected' : 'Not ready'}</span>
+                </div>
+                {!stage1Doc ? <p className="mt-3 text-sm text-ink-500">Organizer has not submitted this requirement.</p> : <>
+                  {stage1Doc.filePath && <a href={stage1Doc.filePath} target="_blank" rel="noreferrer" className="mt-3 inline-flex min-h-10 items-center gap-2 text-sm font-semibold text-brand-700 hover:underline"><FileText size={15} /> View private source</a>}
+                  {stage1Doc.usePreviousDeclaration && <p className="mt-3 rounded-md bg-blue-50 p-3 text-xs text-brand-800">Organizer submitted a Use Previous declaration. No file is available to publish.</p>}
+                  {revisions.length > 0 && <details className="mt-3 rounded-md border border-ink-200 bg-ink-50/40 p-3 text-xs"><summary className="cursor-pointer font-semibold text-ink-700">Revision history ({revisions.length})</summary><ol className="mt-2 space-y-2 border-t border-ink-100 pt-2">{revisions.map((revision) => <li key={revision.revisionId} className="flex flex-wrap items-center justify-between gap-2"><span>Revision {revision.revision} · {revision.status}</span><span className="text-ink-500">{revision.submittedAt ? new Date(revision.submittedAt).toLocaleString() : '—'}</span>{revision.rejectionReason && <span className="w-full whitespace-pre-line text-status-rejected">{revision.rejectionReason}</span>}</li>)}</ol></details>}
+                  {stage1Doc.status === 'verified' && <div className="mt-3 flex flex-wrap items-center gap-2">
+                    {!draft && stage1Doc.filePath && <button type="button" className="btn-secondary !min-h-9 !px-3 !py-1.5 text-xs" onClick={() => onGenerate(control, stage1Doc)} disabled={isBusy}><ShieldCheck size={14} /> {isBusy ? 'Generating…' : 'Generate redacted copy'}</button>}
+                    {draft && <span className={`badge ${draft.status === 'published' ? 'bg-green-100 text-status-approved' : draft.status === 'manual_required' ? 'bg-gold-100 text-gold-700' : 'bg-blue-100 text-brand-700'}`}>{draft.status === 'manual_required' ? 'Manual review required' : draft.status}</span>}
+                    {draft && draft.status !== 'published' && <button type="button" className="btn-secondary !min-h-9 !px-3 !py-1.5 text-xs" onClick={() => onOpenEditor(control, stage1Doc)}><Pencil size={14} /> Edit redaction</button>}
+                    {stage1Doc.usePreviousDeclaration && !draft?.status && <button type="button" className="btn-success !min-h-9 !px-3 !py-1.5 text-xs" onClick={() => onPublish(control, stage1Doc, true)} disabled={isBusy}>Publish verified declaration</button>}
+                    {draft?.status === 'ready' && <button type="button" className="btn-success !min-h-9 !px-3 !py-1.5 text-xs" onClick={() => onPublish(control, stage1Doc, true)} disabled={isBusy}>Publish to public</button>}
+                    {draft?.status === 'published' && <button type="button" className="btn-secondary !min-h-9 !px-3 !py-1.5 text-xs" onClick={() => onPublish(control, stage1Doc, false)} disabled={isBusy}>Unpublish</button>}
+                  </div>}
+                  {draft?.status === 'manual_required' && <p className="mt-2 text-xs leading-5 text-gold-700">{draft.aiFailureReason ?? 'AI redaction was unavailable.'} Add black boxes manually and review every page before saving.</p>}
+                  {draft?.status === 'published' && draft.redactedFilePath && <a href={draft.redactedFilePath} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-2 text-xs font-semibold text-brand-700 hover:underline"><Download size={13} /> View published redacted copy</a>}
+                  {editing && draft && <div className="mt-4 rounded-md border border-brand-200 bg-brand-50/40 p-3" data-testid="stage1-redaction-editor">
+                    <div className="flex items-center justify-between gap-2"><h4 className="text-sm font-semibold text-ink-800">Manual black-box review</h4><button type="button" className="text-xs font-semibold text-ink-600" onClick={onCancelEditor}>Cancel</button></div>
+                    <div className="mt-3 space-y-2">{maskDraft.map((mask, index) => <div key={`${mask.page}-${index}`} className="grid gap-2 sm:grid-cols-6"><input aria-label={`Mask ${index + 1} page`} className="input" type="number" min={1} value={mask.page} onChange={(event) => onMasksChange(maskDraft.map((item, itemIndex) => itemIndex === index ? { ...item, page: Math.max(1, Number(event.target.value) || 1) } : item))} /><input aria-label={`Mask ${index + 1} x`} className="input" type="number" min={0} max={1} step={0.01} value={mask.x} onChange={(event) => onMasksChange(maskDraft.map((item, itemIndex) => itemIndex === index ? { ...item, x: Number(event.target.value) || 0 } : item))} /><input aria-label={`Mask ${index + 1} y`} className="input" type="number" min={0} max={1} step={0.01} value={mask.y} onChange={(event) => onMasksChange(maskDraft.map((item, itemIndex) => itemIndex === index ? { ...item, y: Number(event.target.value) || 0 } : item))} /><input aria-label={`Mask ${index + 1} width`} className="input" type="number" min={0.01} max={1} step={0.01} value={mask.width} onChange={(event) => onMasksChange(maskDraft.map((item, itemIndex) => itemIndex === index ? { ...item, width: Number(event.target.value) || 0.01 } : item))} /><input aria-label={`Mask ${index + 1} height`} className="input" type="number" min={0.01} max={1} step={0.01} value={mask.height} onChange={(event) => onMasksChange(maskDraft.map((item, itemIndex) => itemIndex === index ? { ...item, height: Number(event.target.value) || 0.01 } : item))} /><button type="button" className="btn-secondary !min-h-9 !px-2 text-xs" onClick={() => onMasksChange(maskDraft.filter((_, itemIndex) => itemIndex !== index))}>Remove</button></div>)}</div>
+                    <button type="button" className="btn-secondary mt-3 !min-h-9 !px-3 !py-1.5 text-xs" onClick={() => onMasksChange([...maskDraft, { page: 1, x: 0, y: 0, width: 0.2, height: 0.1, category: 'other', source: 'admin' }])}>Add black box</button>
+                    <div className="mt-3 flex flex-wrap gap-2">{Array.from({ length: Math.max(1, draft.pageCount) }, (_, pageIndex) => pageIndex + 1).map((page) => <label key={page} className="inline-flex items-center gap-1 text-xs"><input type="checkbox" checked={reviewedPages.includes(page)} onChange={(event) => onReviewedPagesChange(event.target.checked ? [...new Set([...reviewedPages, page])] : reviewedPages.filter((value) => value !== page))} /> Page {page} reviewed</label>)}</div>
+                    <button type="button" className="btn-primary mt-3" onClick={() => onSave(control, stage1Doc)} disabled={redactionBusy === `stage1-save:${key}`}>{redactionBusy === `stage1-save:${key}` ? 'Saving…' : 'Save redaction review'}</button>
+                  </div>}
+                </>}
+              </article>;
+  })}
+          </div>
+        </section>;
+      })}
+    </div>
+  );
+}
+
 interface RejectModalProps {
   ctrl: EventControl;
   onClose: () => void;
@@ -487,4 +729,13 @@ function RejectModal({ ctrl, onClose, onSubmit, submitting }: RejectModalProps) 
       </div>
     </div>
   );
+}
+
+function errorMessage(error: unknown): string {
+  if (error && typeof error === 'object') {
+    const value = error as { message?: unknown; details?: unknown };
+    if (typeof value.details === 'string' && value.details.trim()) return value.details;
+    if (typeof value.message === 'string' && value.message.trim()) return value.message;
+  }
+  return 'The documentation action could not be completed.';
 }

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { collection, doc, getDoc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
 import { format } from 'date-fns';
 import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
-import { Assignment, COLLECTIONS, EventRecord } from '@shared/types';
+import { Assignment, COLLECTIONS, EventControl, EventRecord, Stage1Doc } from '@shared/types';
 import { resolveApplicationDisplayState } from '@shared/applicationState';
 import { db, isFirebaseConfigured } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -56,7 +56,23 @@ export default function ReviewQueue() {
             assignment = legacy.docs[0] ? { ...(legacy.docs[0].data() as Assignment), assignmentId: legacy.docs[0].id } : undefined;
           }
         }
-        return { event, assignment, decision: assignment?.decision, action: authorityQueueAction({ event, assignment }) };
+        let stage1PendingCount = 0;
+        if (event.status === 'Approved' && event.controlListGenerated === true && profile.authorityType && versionId) {
+          const controls = (await getDocs(query(
+            collection(db, COLLECTIONS.EVENTS, event.eventId, COLLECTIONS.EVENT_CONTROLS),
+            where('versionId', '==', versionId),
+          ))).docs.map((item) => ({ ...(item.data() as EventControl), controlId: item.id }));
+          const ownControls = controls.filter((control) => control.authority === profile.authorityType);
+          const docs = await Promise.all(ownControls.map((control) => getDocs(collection(
+            db, COLLECTIONS.EVENTS, event.eventId, COLLECTIONS.EVENT_CONTROLS, control.controlId, COLLECTIONS.STAGE1_DOCS,
+          ))));
+          stage1PendingCount = ownControls.reduce((count, control, index) => {
+            const byId = new Map(docs[index].docs.map((item) => [item.id, item.data() as Stage1Doc]));
+            return count + control.stage1Requirements.filter((requirement) => requirement.required
+              && byId.get(`${control.controlId}-s1-${requirement.docType}`)?.status === 'pending_verification').length;
+          }, 0);
+        }
+        return { event, assignment, stage1PendingCount, decision: assignment?.decision, action: authorityQueueAction({ event, assignment, stage1PendingCount }) };
       })).then((nextRows) => {
         if (!active || token !== hydrationToken) return;
         setRows(nextRows);
@@ -78,18 +94,24 @@ export default function ReviewQueue() {
   const totalPages = pageCount(filtered.length, PAGE_SIZE);
   const currentPage = Math.min(page, totalPages);
   const visible = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
-  const statusCount = (status: QueueFilter) => status === 'all' ? rows.length : rows.filter((row) => status === 'decided' ? row.assignment?.status === 'completed' : row.assignment?.status !== 'completed').length;
+  const statusCount = (status: QueueFilter) => status === 'all'
+    ? rows.length
+    : status === 'decided'
+      ? rows.filter((row) => row.assignment?.status === 'completed').length
+      : status === 'documentation'
+        ? rows.filter((row) => (row.stage1PendingCount ?? 0) > 0).length
+        : rows.filter((row) => row.assignment?.status !== 'completed').length;
   const updateFilters = (action: () => void) => { action(); setPage(1); };
 
   return (
     <div className="p-5 sm:p-8">
-      <PageHeader eyebrow="Authority workspace" title="Review Queue" description="Applications assigned to your agency that still require review action." />
+      <PageHeader eyebrow="Authority workspace" title="Review Queue" description="Applications and documentation tasks assigned to your agency." />
 
       <div className="mb-5 grid gap-3 border-y border-[#ded4c1] py-4 md:grid-cols-[minmax(0,1fr)_13rem]">
         <label className="relative">
           <span className="sr-only">Search applications</span>
           <Search className="pointer-events-none absolute left-3 top-3.5 text-ink-400" size={17} />
-          <input className="input min-h-11 !pl-10" value={search} onChange={(event) => updateFilters(() => setSearch(event.target.value))} placeholder="Search event, venue, or type" />
+          <input className="input min-h-11 !pl-10" value={search} onChange={(event) => updateFilters(() => setSearch(event.target.value))} placeholder="Search application ID, event, venue, or type" />
         </label>
         <label><span className="sr-only">Sort applications</span>
           <select className="input min-h-11" value={sort} onChange={(event) => updateFilters(() => setSort(event.target.value as QueueSort))}>
@@ -100,9 +122,9 @@ export default function ReviewQueue() {
         </label>
       </div>
 
-      <p className="mb-3 text-sm text-ink-500">Pending: awaiting the initial review. Under Review: the application is in the authority review workflow.</p>
+      <p className="mb-3 text-sm text-ink-500">Documentation tasks cover Stage 1 files awaiting verification after final approval.</p>
       <div className="mb-5 flex flex-wrap gap-2" aria-label="Filter queue by status">
-        {(['all', 'pending', 'decided'] as const).map((status) => (
+        {(['all', 'pending', 'decided', 'documentation'] as const).map((status) => (
           <button
             type="button"
             key={status}
@@ -141,11 +163,13 @@ export default function ReviewQueue() {
                       currentVersionId: event.currentVersionId,
                       currentAssessmentId: event.currentAssessmentId,
                       currentResourceId: event.currentResourceId,
+                      controlListGenerated: event.controlListGenerated,
                       initialReview: event.initialReview,
                       requiredAuthorities: event.requiredAuthorities,
                       assignedOfficerUids: event.assignedOfficerUids,
                       })} />
                       {row.action === 'amend' && <span className="badge bg-brand-50 text-brand-700">Decision submitted · Amend decision{row.decision ? ` · ${row.decision}` : ''}</span>}
+                      {row.action === 'documentation' && <span className="badge bg-gold-50 text-gold-700">Review documents · {row.stage1PendingCount} pending</span>}
                       {row.action === 'view' && <span className="badge bg-ink-100 text-ink-600">View only</span>}
                     </div>
                   </div>
@@ -168,5 +192,6 @@ export default function ReviewQueue() {
 
 function labelFilter(status: QueueFilter): string {
   if (status === 'all') return 'All';
+  if (status === 'documentation') return 'Documentation';
   return status === 'decided' ? 'Decided' : 'Pending review';
 }

@@ -109,11 +109,12 @@ export async function submitStage2DocForUser(
 
   const result = await db.runTransaction(async (tx) => {
     // Reads.
-    const [userSnap, eventSnap, controlSnap, docSnap] = await Promise.all([
+    const [userSnap, eventSnap, controlSnap, docSnap, stage1DocsSnap] = await Promise.all([
       tx.get(userRef),
       tx.get(eventRef),
       tx.get(controlRef),
       tx.get(docRef),
+      tx.get(controlRef.collection(COLLECTIONS.STAGE1_DOCS)),
     ]);
 
     if (!userSnap.exists) throw new HttpsError('permission-denied', 'User profile not found.');
@@ -139,6 +140,12 @@ export async function submitStage2DocForUser(
     }
     if (!control.stage2Requirement) {
       throw new HttpsError('failed-precondition', `Control ${controlId} does not require Stage 2.`);
+    }
+    const requiredStage1 = control.stage1Requirements.filter((requirement) => requirement.required);
+    const stage1ById = new Map(stage1DocsSnap.docs.map((item) => [item.id, item.data() as { status?: string }]));
+    const incomplete = requiredStage1.filter((requirement) => stage1ById.get(`${controlId}-s1-${requirement.docType}`)?.status !== 'verified');
+    if (incomplete.length > 0) {
+      throw new HttpsError('failed-precondition', `Stage 2 is locked until this control's Stage 1 documents are approved: ${incomplete.map((requirement) => requirement.label).join(', ')}.`);
     }
     const existingDoc = docSnap.exists ? (docSnap.data() as Stage2Doc) : null;
     if (existingDoc && existingDoc.m4TicketId) {

@@ -20,24 +20,28 @@ const runtime_1 = require("../config/runtime");
 exports.onEventStatusChanged = (0, firestore_1.onDocumentUpdated)({ document: `${types_1.COLLECTIONS.EVENTS}/{eventId}`, region: runtime_1.FUNCTION_REGION }, async (change) => {
     const before = change.data?.before.data();
     const after = change.data?.after.data();
-    if (!after || after.status !== 'Withdrawn' || before?.status === 'Withdrawn')
+    if (!after || !['Withdrawn', 'Cancelled'].includes(after.status) || before?.status === after.status)
         return;
-    await cleanupWithdrawnEvent(change.params.eventId);
+    await cleanupClosedEvent(change.params.eventId, after.status === 'Cancelled' ? 'Cancelled' : 'Withdrawn');
 });
 async function cleanupWithdrawnEvent(eventId, now = Date.now()) {
+    await cleanupClosedEvent(eventId, 'Withdrawn', now);
+}
+async function cleanupClosedEvent(eventId, expectedStatus, now = Date.now()) {
     const db = (0, firebase_admin_1.firestore)();
     const eventRef = db.collection(types_1.COLLECTIONS.EVENTS).doc(eventId);
-    const [eventSnap, controlsSnap, assignmentsSnap, publicItemsSnap, incidentsSnap] = await Promise.all([
+    const [eventSnap, controlsSnap, assignmentsSnap, publicItemsSnap, publicStage1DocsSnap, incidentsSnap] = await Promise.all([
         eventRef.get(),
         eventRef.collection(types_1.COLLECTIONS.EVENT_CONTROLS).get(),
         eventRef.collection(types_1.COLLECTIONS.ASSIGNMENTS).get(),
         db.collection(types_1.COLLECTIONS.PUBLIC_EVENT_CONTROLS).doc(eventId).collection(types_1.COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS).get(),
+        db.collection(types_1.COLLECTIONS.PUBLIC_EVENT_CONTROLS).doc(eventId).collection(types_1.COLLECTIONS.PUBLIC_STAGE1_DOCS).get(),
         db.collection(types_1.COLLECTIONS.INCIDENTS).where('eventId', '==', eventId).get(),
     ]);
     if (!eventSnap.exists)
         return;
     const event = eventSnap.data();
-    if (event.status !== 'Withdrawn')
+    if (event.status !== expectedStatus)
         return;
     // Keep each batch comfortably below Firestore's 500-write limit. All
     // operations are updates/deletes, so running them again is safe.
@@ -46,7 +50,7 @@ async function cleanupWithdrawnEvent(eventId, now = Date.now()) {
         operations.push((batch) => batch.set(assignment.ref, {
             status: 'revoked',
             revokedAt: now,
-            revokedBy: 'system:withdrawn',
+            revokedBy: `system:${expectedStatus.toLowerCase()}`,
         }, { merge: true }));
     }
     for (const control of controlsSnap.docs) {
@@ -70,7 +74,9 @@ async function cleanupWithdrawnEvent(eventId, now = Date.now()) {
     }
     for (const publicItem of publicItemsSnap.docs)
         operations.push((batch) => batch.delete(publicItem.ref));
-    for (const incidentDocument of incidentsSnap.docs) {
+    for (const publicStage1 of publicStage1DocsSnap.docs)
+        operations.push((batch) => batch.delete(publicStage1.ref));
+    for (const incidentDocument of expectedStatus === 'Withdrawn' ? incidentsSnap.docs : []) {
         const incident = incidentDocument.data();
         if (incident.schemaVersion !== m4_1.M4_SCHEMA_VERSION || incident.status === 'resolved' || incident.activityClosed === true)
             continue;
@@ -99,11 +105,11 @@ async function cleanupWithdrawnEvent(eventId, now = Date.now()) {
             operation(batch);
         await batch.commit();
     }
-    const cleanupAuditId = `withdrawn_cleanup_${event.currentVersionId ?? 'unversioned'}`;
+    const cleanupAuditId = `${expectedStatus.toLowerCase()}_cleanup_${event.currentVersionId ?? 'unversioned'}`;
     await db.runTransaction(async (transaction) => {
         const current = await transaction.get(eventRef);
         const currentEvent = current.data();
-        if (!current.exists || currentEvent?.status !== 'Withdrawn'
+        if (!current.exists || currentEvent?.status !== expectedStatus
             || currentEvent.currentVersionId !== event.currentVersionId)
             return;
         transaction.set(eventRef, {
@@ -115,24 +121,24 @@ async function cleanupWithdrawnEvent(eventId, now = Date.now()) {
             id: cleanupAuditId,
             eventId,
             versionId: event.currentVersionId,
-            action: 'withdrawn_cleanup',
+            action: expectedStatus === 'Withdrawn' ? 'withdrawn_cleanup' : 'cancelled_cleanup',
             actorId: 'system',
             actorRole: 'system',
             timestamp: now,
             previousStatus: event.withdrawnFromStatus ?? event.status,
-            newStatus: 'Withdrawn',
-            notes: 'Closed pending assignments and unpublished event-control projections after withdrawal.',
+            newStatus: expectedStatus,
+            notes: `Closed pending assignments and unpublished event-control projections after ${expectedStatus.toLowerCase()}.`,
             metadata: {
                 assignmentsClosed: assignmentsSnap.size,
                 controlsClosed: controlsSnap.size,
-                publicItemsRemoved: publicItemsSnap.size,
-                incidentsClosed: incidentsSnap.docs.filter((document) => {
+                publicItemsRemoved: publicItemsSnap.size + publicStage1DocsSnap.size,
+                incidentsClosed: expectedStatus === 'Withdrawn' ? incidentsSnap.docs.filter((document) => {
                     const incident = document.data();
                     return incident.schemaVersion === m4_1.M4_SCHEMA_VERSION && incident.status !== 'resolved' && incident.activityClosed !== true;
-                }).length,
+                }).length : 0,
             },
         }, { merge: true });
     });
-    logger_1.logger.info('[onEventStatusChanged] withdrawal cleanup complete', { eventId, assignments: assignmentsSnap.size, controls: controlsSnap.size });
+    logger_1.logger.info('[onEventStatusChanged] closed-event cleanup complete', { eventId, status: expectedStatus, assignments: assignmentsSnap.size, controls: controlsSnap.size });
 }
 //# sourceMappingURL=onEventStatusChanged.js.map

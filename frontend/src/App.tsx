@@ -133,6 +133,7 @@ export default function App() {
         <Route path="/admin/applications/:eventId" element={<AdminApplicationReview />} />
         <Route path="/admin/applications/:eventId/assign" element={<AdminAssignment />} />
         <Route path="/admin/applications/:eventId/controls" element={<AdminControlListEditor />} />
+        <Route path="/admin/applications/:eventId/documentation" element={<AdminStage2Review />} />
         <Route path="/admin/applications/:eventId/stage2-review" element={<AdminStage2Review />} />
         <Route path="/admin/users" element={<AdminUsers />} />
         <Route path="/admin/venues" element={<AdminVenues />} />

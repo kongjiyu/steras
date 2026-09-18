@@ -12,11 +12,9 @@ exports.submitStage1DocForUser = submitStage1DocForUser;
  *      `status: 'pending_verification'`, stashing the bytes as a data
  *      URL in `filePath` (per the project convention: base64 in
  *      Firestore, NOT Firebase Storage).
- *   2. USE PREVIOUS (the receipt shortcut). Per the M3 owner decision
- *      2026-08-19 (and the dropped-A26 decision from 2026-08-17), this
- *      is a one-click flag on `docType: 'receipt'` slots. No
- *      source-event picker, no sourceEventId. Stage 2 is the public
- *      verification backstop. The audit log records the rationale.
+ *   2. USE PREVIOUS (a no-file declaration). The declaration is still
+ *      submitted as a new revision and must be reviewed by the current
+ *      Stage 1 authority before it can satisfy the control gate.
  *
  * Validation:
  *   - Caller is signed in.
@@ -30,7 +28,7 @@ exports.submitStage1DocForUser = submitStage1DocForUser;
  *   - Existing doc's `status` is NOT 'verified' (organiser cannot
  *     re-upload after an officer approved without admin involvement).
  *   - For the upload path: file size, mime type, base64 sanity.
- *   - For the use_previous path: `docType === 'receipt'`.
+ *   - For the use_previous path: no file bytes are accepted or stored.
  *
  * Behaviour:
  *   - Writes the `stage1_docs/{docId}` doc with the new status.
@@ -41,12 +39,13 @@ exports.submitStage1DocForUser = submitStage1DocForUser;
  *     (`type: 'stage1_doc_submitted'`).
  *
  * Idempotency:
- *   - The doc id is composite (the requirement's docId). Re-submitting
- *     overwrites in place.
- *   - The notification sourceActionId is `${eventId}_${controlId}_${docId}_${now}`
- *     so retries within the same `now` window are deduped.
+ *   - The current projection remains a convenient read model while each
+ *     submission is immutable in `revisions`.
+ *   - A repeated `idempotencyKey` returns the existing revision without a
+ *     second upload, audit event, notification, or control-version bump.
  */
 const firebase_admin_1 = require("firebase-admin");
+const crypto_1 = require("crypto");
 const https_1 = require("firebase-functions/v2/https");
 const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
@@ -77,12 +76,15 @@ async function submitStage1DocForUser(uid, data, now = Date.now()) {
     const controlId = (data.controlId ?? '').trim();
     const docId = (data.docId ?? '').trim();
     const usePrevious = data.usePrevious === true;
+    const idempotencyKey = (data.idempotencyKey ?? '').trim();
     if (!eventId)
         throw new https_1.HttpsError('invalid-argument', 'eventId is required.');
     if (!controlId)
         throw new https_1.HttpsError('invalid-argument', 'controlId is required.');
     if (!docId)
         throw new https_1.HttpsError('invalid-argument', 'docId is required.');
+    if (idempotencyKey.length > 200)
+        throw new https_1.HttpsError('invalid-argument', 'idempotencyKey must be at most 200 characters.');
     if (usePrevious) {
         // Use-previous: no file params expected, but tolerate them.
     }
@@ -100,6 +102,8 @@ async function submitStage1DocForUser(uid, data, now = Date.now()) {
     const eventRef = db.collection(types_1.COLLECTIONS.EVENTS).doc(eventId);
     const controlRef = eventRef.collection(types_1.COLLECTIONS.EVENT_CONTROLS).doc(controlId);
     const docRef = controlRef.collection(types_1.COLLECTIONS.STAGE1_DOCS).doc(docId);
+    const publicStage1Ref = db.collection(types_1.COLLECTIONS.PUBLIC_EVENT_CONTROLS).doc(eventId)
+        .collection(types_1.COLLECTIONS.PUBLIC_STAGE1_DOCS).doc(`${controlId}-${docId}`);
     const userRef = db.collection(types_1.COLLECTIONS.USERS).doc(uid);
     const result = await db.runTransaction(async (tx) => {
         // Reads first.
@@ -138,21 +142,57 @@ async function submitStage1DocForUser(uid, data, now = Date.now()) {
         if (!requirement) {
             throw new https_1.HttpsError('failed-precondition', `docId ${docId} is not in the control's Stage 1 requirements template.`);
         }
-        if (usePrevious && requirement.docType !== 'receipt') {
-            throw new https_1.HttpsError('failed-precondition', `"Use Previous" is only allowed for purchase receipts (A25). This slot is ${requirement.docType}.`);
-        }
         const existingDoc = docSnap.exists ? docSnap.data() : null;
         if (existingDoc && existingDoc.status === 'verified') {
             throw new https_1.HttpsError('failed-precondition', 'This Stage 1 document has already been verified. Contact the admin to reopen.');
         }
-        // Build the new doc payload.
+        const revisionSnapshot = await tx.get(docRef.collection(types_1.COLLECTIONS.STAGE1_REVISIONS));
+        if (idempotencyKey) {
+            const prior = revisionSnapshot.docs.find((item) => {
+                const revision = item.data();
+                return revision.idempotencyKey === idempotencyKey && revision.eventId === eventId && revision.versionId === versionId;
+            });
+            if (prior) {
+                const priorRevision = prior.data();
+                return {
+                    eventId,
+                    controlId,
+                    docId,
+                    versionId,
+                    organizerId: event.organizerId,
+                    authorityType: control.authority,
+                    controlName: control.controlName,
+                    docLabel: priorRevision.label,
+                    usePrevious: priorRevision.usePreviousDeclaration === true,
+                    revision: priorRevision.revision,
+                    revisionId: priorRevision.revisionId,
+                    uploadedAt: priorRevision.submittedAt,
+                    newAggregateLabel: control.label,
+                    idempotent: true,
+                };
+            }
+        }
+        const nextRevision = Math.max(0, ...revisionSnapshot.docs.map((item) => {
+            const value = item.data();
+            return Number.isInteger(value.revision) ? value.revision : 0;
+        }), existingDoc?.revision ?? 0) + 1;
+        const revisionId = `${docId}-r${nextRevision}`;
+        const sourceHash = uploadedFile
+            ? (0, crypto_1.createHash)('sha256').update(Buffer.from(data.fileBase64, 'base64')).digest('hex')
+            : (0, crypto_1.createHash)('sha256').update(`${eventId}:${versionId}:${controlId}:${docId}:${nextRevision}:use_previous`).digest('hex');
+        // Build the new current projection.
         const newDoc = {
             docId,
             docType: requirement.docType,
             label: (data.label ?? '').trim() || requirement.label,
             uploadedAt: now,
             uploadedBy: uid,
-            status: usePrevious ? 'use_previous' : 'pending_verification',
+            // A declaration has no bytes, but it still enters the same Authority
+            // review queue as an uploaded file.
+            status: 'pending_verification',
+            revision: nextRevision,
+            revisionId,
+            ...(usePrevious ? { usePreviousDeclaration: true } : {}),
         };
         if (!usePrevious) {
             // File size validation (decode the base64 to byte count).
@@ -162,22 +202,12 @@ async function submitStage1DocForUser(uid, data, now = Date.now()) {
             // Use-previous: don't set filePath. The doc has no bytes.
             delete newDoc.filePath;
         }
-        // If the prior status was 'rejected', keep the rejection data on the
-        // doc so the officer sees the history on the next pass. (Q4 confirmed.)
-        // Only set the fields when defined — Firestore rejects `undefined`
-        // values (we'd need ignoreUndefinedProperties on the Admin SDK to
-        // allow it, and the rule for this collection is strict).
-        if (existingDoc && existingDoc.status === 'rejected') {
-            if (existingDoc.rejectionReason)
-                newDoc.rejectionReason = existingDoc.rejectionReason;
-            if (existingDoc.rejectionSuggestion)
-                newDoc.rejectionSuggestion = existingDoc.rejectionSuggestion;
-        }
-        // If switching from 'use_previous' to an upload (or vice-versa),
-        // explicitly drop the other path's state.
-        if (!usePrevious) {
-            delete newDoc.usePreviousSourceEventId;
-        }
+        // A new revision starts with a clean verification state. If switching
+        // from a declaration to an upload, explicitly drop declaration fields.
+        delete newDoc.rejectionReason;
+        delete newDoc.rejectionSuggestion;
+        if (!usePrevious)
+            delete newDoc.usePreviousDeclaration;
         // Reads — all stage1_docs for this control to recompute the aggregate.
         const allDocsSnap = await tx.get(controlRef.collection(types_1.COLLECTIONS.STAGE1_DOCS));
         const allDocs = allDocsSnap.docs.map((d) => d.data());
@@ -185,11 +215,35 @@ async function submitStage1DocForUser(uid, data, now = Date.now()) {
         const othersFiltered = allDocs.filter((d) => d.docId !== docId);
         const merged = [...othersFiltered, newDoc];
         const newAggregateLabel = (0, controlAggregate_1.aggregateLabel)(merged);
-        // Writes.
-        // A resubmission replaces transient verification fields. Any rejection
-        // context intentionally retained above is copied into `newDoc` explicitly.
+        // Writes. The current projection is convenient for existing clients;
+        // every submission is also retained as an immutable revision.
+        const revision = {
+            revisionId,
+            eventId,
+            versionId,
+            controlId,
+            docId,
+            revision: nextRevision,
+            docType: requirement.docType,
+            label: newDoc.label,
+            ...(newDoc.filePath ? { filePath: newDoc.filePath } : {}),
+            ...(data.fileName ? { fileName: data.fileName } : {}),
+            ...(data.mimeType ? { mimeType: data.mimeType } : {}),
+            ...(uploadedFile ? { fileSizeBytes: uploadedFile.sizeBytes } : {}),
+            sha256: sourceHash,
+            ...(usePrevious ? { usePreviousDeclaration: true } : {}),
+            submittedBy: uid,
+            submittedAt: now,
+            ...(idempotencyKey ? { idempotencyKey } : {}),
+            status: newDoc.status,
+        };
+        if (existingDoc?.revisionId && revisionSnapshot.docs.some((item) => item.id === existingDoc.revisionId)) {
+            tx.update(docRef.collection(types_1.COLLECTIONS.STAGE1_REVISIONS).doc(existingDoc.revisionId), { supersededAt: now });
+        }
+        tx.set(docRef.collection(types_1.COLLECTIONS.STAGE1_REVISIONS).doc(revisionId), revision);
         tx.set(docRef, newDoc);
-        tx.update(controlRef, { label: newAggregateLabel, updatedAt: now });
+        tx.delete(publicStage1Ref);
+        tx.update(controlRef, { label: newAggregateLabel, controlItemVersion: (control.controlItemVersion ?? 0) + 1, updatedAt: now });
         // Audit log.
         const auditId = `${versionId}_${controlId}_${docId}_submitted_${now}`;
         const auditRef = eventRef.collection(types_1.COLLECTIONS.AUDIT_LOGS).doc(auditId);
@@ -200,7 +254,10 @@ async function submitStage1DocForUser(uid, data, now = Date.now()) {
             controlId,
             docId,
             docType: requirement.docType,
-            path: usePrevious ? 'use_previous' : 'upload',
+            path: usePrevious ? 'use_previous_declaration' : 'upload',
+            revision: nextRevision,
+            revisionId,
+            sourceHash,
         };
         if (!usePrevious) {
             metadata.fileName = data.fileName;
@@ -211,7 +268,7 @@ async function submitStage1DocForUser(uid, data, now = Date.now()) {
             id: auditId,
             eventId,
             versionId,
-            action: 'stage1_doc_submitted',
+            action: 'stage1_doc_revision_submitted',
             actorId: uid,
             actorRole: 'organizer',
             timestamp: now,
@@ -228,28 +285,35 @@ async function submitStage1DocForUser(uid, data, now = Date.now()) {
             controlName: control.controlName,
             docLabel: newDoc.label,
             usePrevious,
+            revision: nextRevision,
+            revisionId,
             uploadedAt: now,
             newAggregateLabel,
+            idempotent: false,
         };
     });
     // Notifications — outside the transaction. Notify the assigned officer
     // (if any) and all admin users.
-    await fireSubmitNotifications({
-        eventId: result.eventId,
-        controlId: result.controlId,
-        docId: result.docId,
-        versionId: result.versionId,
-        authorityType: result.authorityType,
-        controlName: result.controlName,
-        docLabel: result.docLabel,
-        usePrevious: result.usePrevious,
-        uploadedAt: result.uploadedAt,
-    });
+    if (!result.idempotent) {
+        await fireSubmitNotifications({
+            eventId: result.eventId,
+            controlId: result.controlId,
+            docId: result.docId,
+            versionId: result.versionId,
+            authorityType: result.authorityType,
+            controlName: result.controlName,
+            docLabel: result.docLabel,
+            usePrevious: result.usePrevious,
+            uploadedAt: result.uploadedAt,
+        });
+    }
     return {
         eventId: result.eventId,
         controlId: result.controlId,
         docId: result.docId,
-        status: result.usePrevious ? 'use_previous' : 'pending_verification',
+        status: 'pending_verification',
+        revision: result.revision,
+        revisionId: result.revisionId,
         uploadedAt: result.uploadedAt,
     };
 }
@@ -264,7 +328,12 @@ async function fireSubmitNotifications(args) {
     const assignmentId = `${args.versionId}_${args.authorityType}`;
     const assignmentRef = db.collection(types_1.COLLECTIONS.EVENTS).doc(args.eventId).collection(types_1.COLLECTIONS.ASSIGNMENTS).doc(assignmentId);
     const assignmentSnap = await assignmentRef.get();
-    const officerUid = assignmentSnap.exists ? (assignmentSnap.data().officerUid ?? null) : null;
+    const controlSnap = await db.collection(types_1.COLLECTIONS.EVENTS).doc(args.eventId)
+        .collection(types_1.COLLECTIONS.EVENT_CONTROLS).doc(args.controlId).get();
+    const officerUid = controlSnap.exists
+        ? (controlSnap.data().stage1ReviewerUid
+            ?? (assignmentSnap.exists ? (assignmentSnap.data().officerUid ?? null) : null))
+        : (assignmentSnap.exists ? (assignmentSnap.data().officerUid ?? null) : null);
     // Find all admin users.
     const adminsSnap = await db.collection(types_1.COLLECTIONS.USERS).where('role', '==', 'admin').get();
     const adminUids = adminsSnap.docs.map((d) => d.id);

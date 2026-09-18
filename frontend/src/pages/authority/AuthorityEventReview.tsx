@@ -33,6 +33,7 @@ import {
   ResourceQuantities,
   RiskAssessment,
   Stage1Doc,
+  Stage1DocRevision,
 } from '@shared/types';
 import { resolveApplicationDisplayState, resolveOfficerDecisionReadiness } from '@shared/applicationState';
 import { db, functions, isFirebaseConfigured, storage } from '../../config/firebase';
@@ -42,6 +43,7 @@ import ContextEvidence from '../../components/m2/ContextEvidence';
 import ResourceRecommendationView from '../../components/m2/ResourceRecommendation';
 import AuthorityScoreReviewForm from '../../components/m2/AuthorityScoreReviewForm';
 import AuthorityAssessmentWarnings from '../../components/m2/AuthorityAssessmentWarnings';
+import { safeStage1DocumentHref } from '../../components/stage1/safeDocumentLink';
 import { assessmentRiskLevel, isAuthorityScoreResolution, isAuthorityScoreReview, isCurrentAssessmentRecord, isCurrentAuthorityDecision, isCurrentEventRecord, isCurrentEventVersion, isCurrentResourceRecommendation, isCurrentRiskAssessment, isSafeManualAssessmentId } from '../../components/m2/m2Contract';
 import { RESOURCE_FIELDS, toResourceQuantities } from '../../components/m2/m2Presentation';
 import EmptyState from '../../components/ui/EmptyState';
@@ -99,6 +101,7 @@ export default function AuthorityEventReview() {
   // and carry the verification provenance directly on the doc.
   const [eventControls, setEventControls] = useState<EventControl[]>([]);
   const [stage1DocsByControl, setStage1DocsByControl] = useState<Record<string, Stage1Doc[]>>({});
+  const [stage1RevisionsByDoc, setStage1RevisionsByDoc] = useState<Record<string, Stage1DocRevision[]>>({});
   // Per-doc form state, keyed by `${controlId}__${docId}`.
   const [docRationale, setDocRationale] = useState<Record<string, string>>({});
   const [docEvidencePath, setDocEvidencePath] = useState<Record<string, string>>({});
@@ -204,15 +207,32 @@ export default function AuthorityEventReview() {
       // Subscribe to each control's stage1_docs sub-collection.
       // (We tear down previous subscriptions in the cleanup.)
       const unsubscribes: Array<() => void> = [];
+      const revisionUnsubscribes: Array<() => void> = [];
       const next: Record<string, Stage1Doc[]> = {};
+      setStage1RevisionsByDoc({});
       for (const control of controls) {
         const ref = collection(eventReference, COLLECTIONS.EVENT_CONTROLS, control.controlId, COLLECTIONS.STAGE1_DOCS);
         unsubscribes.push(onSnapshot(query(ref), (docsSnap) => {
           next[control.controlId] = docsSnap.docs.map((d) => ({ ...(d.data() as Stage1Doc), docId: d.id }) as Stage1Doc);
           setStage1DocsByControl((prev) => ({ ...prev, [control.controlId]: next[control.controlId] }));
+          for (const docSnapshot of docsSnap.docs) {
+            const key = `${control.controlId}__${docSnapshot.id}`;
+            const revisionRef = collection(ref, docSnapshot.id, COLLECTIONS.STAGE1_REVISIONS);
+            revisionUnsubscribes.push(onSnapshot(revisionRef, (revisions) => {
+              setStage1RevisionsByDoc((prev) => ({
+                ...prev,
+                [key]: revisions.docs
+                  .map((item) => item.data() as Stage1DocRevision)
+                  .sort((left, right) => right.revision - left.revision),
+              }));
+            }, supportingError));
+          }
         }, supportingError));
       }
-      return () => { for (const u of unsubscribes) u(); };
+      return () => {
+        for (const u of unsubscribes) u();
+        for (const u of revisionUnsubscribes) u();
+      };
     }, supportingError);
     return () => {
       unsubscribeAssessment();
@@ -340,6 +360,9 @@ export default function AuthorityEventReview() {
 
   const details = event.eventDetails;
   const reviewOpen = ['Pending', 'UnderReview'].includes(event.status) && event.reviewStage === 'authority';
+  const documentationOpen = event.status === 'Approved'
+    && event.controlListGenerated === true
+    && event.reviewStage !== 'closed';
   const ownAssignment = profile?.uid && profile.authorityType
     ? assignments.find((assignment) => assignment.versionId === event.currentVersionId
       && assignment.authorityType === profile.authorityType
@@ -347,6 +370,7 @@ export default function AuthorityEventReview() {
       && assignment.status !== 'revoked')
     : undefined;
   const isNamedOfficer = Boolean(ownAssignment);
+  const isStage1Reviewer = Boolean(profile?.uid && eventControls.some((control) => control.stage1ReviewerUid === profile.uid));
   const manualOfficialAssessment = assessment?.status === 'official_ready'
     && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual';
   const requiredAuthorities = event.requiredAuthorities ?? [];
@@ -482,8 +506,8 @@ export default function AuthorityEventReview() {
     if (!eventId) return;
     const key = `${controlId}__${docId}`;
     const rationale = (docRationale[key] ?? '').trim();
-    if (rationale.length < 10) {
-      toast.error('Verification rationale must be at least 10 characters.');
+    if (status === 'rejected' && rationale.length < 10) {
+      toast.error('A rejection reason must be at least 10 characters.');
       return;
     }
     setSubmittingDoc(key);
@@ -671,9 +695,11 @@ export default function AuthorityEventReview() {
           <ControlVerificationSection
             eventControls={eventControls}
             stage1DocsByControl={stage1DocsByControl}
+            stage1RevisionsByDoc={stage1RevisionsByDoc}
             myAuthorityType={myAuthorityType}
-            isNamedOfficer={isNamedOfficer}
-            reviewOpen={reviewOpen}
+            isNamedOfficer={isNamedOfficer || isStage1Reviewer}
+            documentationOpen={documentationOpen}
+            currentUid={profile?.uid}
             docRationale={docRationale}
             docEvidencePath={docEvidencePath}
             submittingDoc={submittingDoc}
@@ -952,9 +978,11 @@ function callableErrorMessage(error: unknown, fallback: string): string {
 interface ControlVerificationSectionProps {
   eventControls: EventControl[];
   stage1DocsByControl: Record<string, Stage1Doc[]>;
+  stage1RevisionsByDoc: Record<string, Stage1DocRevision[]>;
   myAuthorityType: AuthorityType | undefined;
   isNamedOfficer: boolean;
-  reviewOpen: boolean;
+  documentationOpen: boolean;
+  currentUid?: string;
   docRationale: Record<string, string>;
   docEvidencePath: Record<string, string>;
   submittingDoc: string | null;
@@ -966,14 +994,14 @@ interface ControlVerificationSectionProps {
 
 function ControlVerificationSection(props: ControlVerificationSectionProps) {
   const {
-    eventControls, stage1DocsByControl, myAuthorityType, isNamedOfficer, reviewOpen,
+    eventControls, stage1DocsByControl, stage1RevisionsByDoc, myAuthorityType, isNamedOfficer, documentationOpen, currentUid,
     docRationale, docEvidencePath, submittingDoc, identityNames,
     onRationaleChange, onEvidencePathChange, onSubmit,
   } = props;
   if (eventControls.length === 0) {
     return null;
   }
-  const canAct = reviewOpen && isNamedOfficer;
+  const canAct = documentationOpen && isNamedOfficer;
   return (
     <section className="card">
       <div className="card-header">
@@ -990,7 +1018,9 @@ function ControlVerificationSection(props: ControlVerificationSectionProps) {
       <div className="card-body space-y-4">
         {eventControls.map((control) => {
           const docs = stage1DocsByControl[control.controlId] ?? [];
-          const controlCanAct = canAct && control.authority === myAuthorityType;
+          const controlCanAct = canAct
+            && control.authority === myAuthorityType
+            && (!control.stage1ReviewerUid || control.stage1ReviewerUid === currentUid);
           return (
             <div key={control.controlId} className="rounded-md border border-ink-100 p-3">
               <div className="flex flex-wrap items-start justify-between gap-2">
@@ -1006,10 +1036,13 @@ function ControlVerificationSection(props: ControlVerificationSectionProps) {
               <div className="mt-3 space-y-3">
                 {docs.map((doc) => {
                   const key = `${control.controlId}__${doc.docId}`;
+                  const revisions = stage1RevisionsByDoc[key] ?? [];
                   const rationale = docRationale[key] ?? '';
                   const evidence = docEvidencePath[key] ?? '';
-                  const isFinal = doc.status === 'verified' || doc.status === 'rejected' || doc.status === 'use_previous';
-                  const canSubmitDoc = controlCanAct && doc.status === 'pending_verification' && rationale.trim().length >= 10 && submittingDoc === null;
+                  const isFinal = doc.status === 'verified' || doc.status === 'rejected';
+                  const awaitingVerification = doc.status === 'pending_verification' || doc.status === 'use_previous';
+                  const canSubmitDoc = controlCanAct && awaitingVerification && submittingDoc === null;
+                  const canRejectDoc = canSubmitDoc && rationale.trim().length >= 10;
                   return (
                     <div key={doc.docId} className="rounded-md bg-cream-50 p-3">
                       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -1028,7 +1061,21 @@ function ControlVerificationSection(props: ControlVerificationSectionProps) {
                           {doc.rejectionReason && <p className="mt-1 whitespace-pre-line">{doc.rejectionReason}</p>}
                         </div>
                       )}
-                      {controlCanAct && doc.status === 'pending_verification' && (
+                      {safeStage1DocumentHref(doc.filePath) && <a href={safeStage1DocumentHref(doc.filePath)} target="_blank" rel="noreferrer" className="mt-2 inline-flex min-h-9 items-center gap-1.5 text-xs font-semibold text-brand-700 hover:underline"><FileText size={13} /> View private document</a>}
+                      {revisions.length > 0 && (
+                        <details className="mt-2 rounded border border-ink-200 bg-white px-2 py-1.5 text-xs">
+                          <summary className="cursor-pointer font-semibold text-ink-700">Revision history ({revisions.length})</summary>
+                          <ol className="mt-2 space-y-2 border-t border-ink-100 pt-2">
+                            {revisions.map((revision) => <li key={revision.revisionId} className="flex flex-wrap items-center justify-between gap-2">
+                              <span>Revision {revision.revision} · {formatWorkflowValue(revision.status)}</span>
+                              <span className="text-ink-500">{revision.submittedAt ? format(new Date(revision.submittedAt), 'PPp') : '—'}</span>
+                              {revision.rejectionReason && <span className="w-full whitespace-pre-line text-status-rejected">{revision.rejectionReason}</span>}
+                            </li>)}
+                          </ol>
+                        </details>
+                      )}
+                      {doc.status === 'use_previous' && <p className="mt-2 rounded bg-blue-50 px-2 py-1.5 text-xs text-brand-800">Organizer supplied a Use Previous declaration. Review the declaration before approving; no file is available.</p>}
+                      {controlCanAct && awaitingVerification && (
                         <div className="mt-2 space-y-2">
                           <label className="block text-xs font-medium text-ink-600">
                             Verification rationale
@@ -1051,9 +1098,9 @@ function ControlVerificationSection(props: ControlVerificationSectionProps) {
                               placeholder="evidence/control-evacuation-plan.pdf"
                             />
                           </label>
-                          <p className="text-right text-xs text-ink-400">{rationale.trim().length}/1000 · minimum 10</p>
+                          <p className="text-right text-xs text-ink-400">{rationale.trim().length}/1000 · rejection minimum 10; approval reason optional</p>
                           <div className="flex justify-end gap-2">
-                            <button type="button" className="btn-secondary" disabled={!canSubmitDoc} onClick={() => onSubmit(control.controlId, doc.docId, 'rejected')}>
+                            <button type="button" className="btn-secondary" disabled={!canRejectDoc} onClick={() => onSubmit(control.controlId, doc.docId, 'rejected')}>
                               <X size={15} />{submittingDoc === key ? 'Recording...' : 'Reject'}
                             </button>
                             <button type="button" className="btn-success" disabled={!canSubmitDoc} onClick={() => onSubmit(control.controlId, doc.docId, 'verified')}>
