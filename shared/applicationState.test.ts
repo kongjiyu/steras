@@ -72,12 +72,13 @@ describe('resolveOfficerDecisionReadiness', () => {
     expect(resolveOfficerDecisionReadiness(input)).toMatchObject({ ready: true });
   });
 
-  it('explains own and other score-review blockers for AI-assisted assessment', () => {
+  it('allows direct decisions on the current provisional AI output while leaving score editing optional', () => {
     const ai = { ...input, assessment: { ...input.assessment, status: 'authority_review' as const, sourceKind: undefined, authorityReviewRequired: true, authorityReviewState: { activeReviewHeads: {} }, officialResult: null } };
-    expect(resolveOfficerDecisionReadiness(ai).reason).toBe('own_score_review_required');
+    const provisional = { ...ai, resource: { ...ai.resource, stage: 'provisional' as const } };
+    expect(resolveOfficerDecisionReadiness(provisional)).toMatchObject({ ready: true });
     const completeHeads = { PDRM: { reviewId: 'pdrm-review' }, BOMBA: { reviewId: 'bomba-review' } };
-    expect(resolveOfficerDecisionReadiness({ ...ai, requiredAuthorities: ['PDRM', 'BOMBA'], assessment: { ...ai.assessment, authorityReviewState: { activeReviewHeads: completeHeads } } }).reason).toBe('officialisation_pending');
-    expect(resolveOfficerDecisionReadiness({ ...ai, requiredAuthorities: ['PDRM', 'BOMBA'], assessment: { ...ai.assessment, authorityReviewState: { activeReviewHeads: { PDRM: { reviewId: 'pdrm-review' } } } } }).reason).toBe('other_score_reviews_pending');
+    expect(resolveOfficerDecisionReadiness({ ...provisional, requiredAuthorities: ['PDRM', 'BOMBA'], assessment: { ...ai.assessment, authorityReviewState: { activeReviewHeads: completeHeads } } })).toMatchObject({ ready: true });
+    expect(resolveOfficerDecisionReadiness({ ...provisional, requiredAuthorities: ['PDRM', 'BOMBA'], assessment: { ...ai.assessment, authorityReviewState: { activeReviewHeads: { PDRM: { reviewId: 'pdrm-review' } } } } })).toMatchObject({ ready: true });
   });
 
   it('reports an integrity blocker for an AI assessment marked official without review provenance', () => {
@@ -98,7 +99,7 @@ describe('resolveOfficerDecisionReadiness', () => {
       },
       resource: { ...input.resource, stage: 'provisional' as const },
     };
-    expect(resolveOfficerDecisionReadiness(ai).reason).toBe('own_score_review_required');
+    expect(resolveOfficerDecisionReadiness(ai)).toMatchObject({ ready: true });
   });
 
   it('does not hide a closed-review blocker behind the checkbox state', () => {

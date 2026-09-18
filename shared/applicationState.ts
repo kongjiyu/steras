@@ -224,26 +224,23 @@ export function resolveOfficerDecisionReadiness(input: OfficerDecisionReadinessI
     }
   }
 
-  // Surface the actionable score-review blocker before the downstream
-  // official-resource check. Officers should be told to submit their own
-  // review (or wait for another authority) rather than seeing a generic
-  // finalisation message while M2 is still collecting reviews.
-  if (!isManual && !ownReviewId) {
-    return { ready: false, reason: 'own_score_review_required', message: 'Submit your score review first. Decisions unlock after it is finalised.' };
-  }
-  if (!isManual && required.length > 0 && !allRequiredHeadsPresent) {
-    return { ready: false, reason: 'other_score_reviews_pending', message: 'Waiting for the other required authority score reviews.' };
-  }
   const resource = input.resource;
   if (!resource) return { ready: false, reason: 'resource_missing', message: 'The matching official resource recommendation is not available yet.' };
   if (resource.resourceId !== input.resourceId || resource.eventId !== input.eventId
     || resource.versionId !== input.versionId || resource.assessmentId !== input.assessmentId) {
     return { ready: false, reason: 'resource_identity_mismatch', message: 'The resource recommendation does not match the current application version.' };
   }
-  if (resource.stage !== 'official' || assessment.status !== 'official_ready') {
-    if (!isManual && allRequiredHeadsPresent) {
-      return { ready: false, reason: 'officialisation_pending', message: 'All score reviews are present, but M2 officialisation is still pending.' };
+  if (!isManual && (assessment.status === 'provisional_ready' || assessment.status === 'authority_review')) {
+    if (resource.stage !== 'provisional') {
+      return { ready: false, reason: 'resource_identity_mismatch', message: 'The provisional resource recommendation does not match the current M2 assessment.' };
     }
+    // Unchanged AI scores are implicitly confirmed by the officer's decision.
+    // A separate score-review action is only needed when the officer wants to
+    // override a category. Other authorities may still be collecting their
+    // reviews; finalisation is deferred until every assignment is decided.
+    return { ready: true, message: 'The current provisional assessment is ready. Reviewing AI scores is optional unless you want to change them.' };
+  }
+  if (resource.stage !== 'official' || assessment.status !== 'official_ready') {
     return { ready: false, reason: 'manual_not_finalized', message: 'Wait for M2 official assessment finalisation before recording a decision.' };
   }
   if (isManual) {

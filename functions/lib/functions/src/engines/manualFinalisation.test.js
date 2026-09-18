@@ -20,7 +20,7 @@ const resourceCalculator_1 = require("./resourceCalculator");
         (0, vitest_1.expect)((0, manualFinalisation_1.validateManualResourcePlan)({ resourcePlan: { ...resources, police: { quantity: 5, maximum: 2 } }, resourceRationale: 'Admin reviewed capacity, ingress and emergency coverage.' })).toContain('resource-police-range');
         (0, vitest_1.expect)((0, manualFinalisation_1.validateManualResourcePlan)({ resourcePlan: resources, resourceRationale: '' })).toContain('resource-rationale');
     });
-    (0, vitest_1.it)('rejects invalid scores/evidence and requires missing-information when evidence is absent', () => {
+    (0, vitest_1.it)('rejects invalid scores/evidence while allowing an optional missing-information explanation', () => {
         const assessment = manualReview();
         const badScore = input();
         badScore.categories[0].likelihood = 0;
@@ -31,7 +31,7 @@ const resourceCalculator_1 = require("./resourceCalculator");
         const missing = input();
         missing.categories[0].evidenceReferences = [];
         missing.categories[0].missingInformation = '';
-        (0, vitest_1.expect)((0, manualFinalisation_1.validateManualAssessmentInput)(missing, assessment.evidence)).toContain('missing-information-crowd');
+        (0, vitest_1.expect)((0, manualFinalisation_1.validateManualAssessmentInput)(missing, assessment.evidence)).not.toContain('missing-information-crowd');
     });
     (0, vitest_1.it)('fails closed for malformed evidence-reference containers instead of throwing', () => {
         const assessment = manualReview();

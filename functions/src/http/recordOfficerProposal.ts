@@ -16,35 +16,41 @@
  *     `status: 'completed'` on the assignment.
  *   - Does NOT change `events.status`. (The old `makeAuthorityDecision`
  *     still does; this function is the new path.)
- *   - When all assignments are completed, sets
- *     `events/{eventId}.reviewStage = 'second'` and emits a notification
- *     to the admin. The organiser is notified only after the admin records
- *     the final second-review outcome.
+ *   - When all assignments are completed, authority-reviewed AI assessments
+ *     are officialised first; only a successful finalisation advances
+ *     `events/{eventId}.reviewStage = 'second'`. Failures leave the event in
+ *     Authority Review for the Admin retry/resolution controls.
  *   - Reason and suggestion are split per FR-M3-05.
  *
  * FR-M3-15 (officer reject with reason + suggestion) and FR-M3-16
  * (officer approve) are realised here.
  */
+import { createHash } from 'node:crypto';
 import { firestore } from 'firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import {
   Assignment,
+  AuthorityScoreReview,
   AssessmentReadiness,
   AuthorityType,
   COLLECTIONS,
   DecisionValue,
   EventRecord,
   OfficialRiskAssessment,
+  ProvisionalRiskAssessment,
   REJECTION_REASON_CATEGORIES,
   RejectionReasonCategory,
   ResourceRecommendation,
   RiskAssessment,
+  SCORE_REVIEW_SCHEMA_VERSION,
   UserProfile,
 } from '@shared/types';
 import { resolveOfficerDecisionReadiness } from '@shared/applicationState';
 import { FUNCTION_REGION } from '../config/runtime';
 import { validateResourceRecommendation } from '../engines/resourceContract';
+import { buildAuthorityReviewState } from '../engines/authorityFinalisation';
+import { finalizeStoredReviewState } from './authorityScoreReview';
 import { createNotification } from '../utils/notifications';
 
 export interface RecordOfficerProposalRequest {
@@ -182,6 +188,57 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
       resourceId,
       authorityType,
     );
+    const currentSourceKind = currentAssessment && 'sourceKind' in currentAssessment
+      ? (currentAssessment as { sourceKind?: string }).sourceKind : undefined;
+    const currentReviewState = currentAssessment && 'authorityReviewState' in currentAssessment
+      ? currentAssessment.authorityReviewState : undefined;
+    const currentProvisionalAssessment = currentAssessment && 'provisionalResult' in currentAssessment
+      ? currentAssessment as ProvisionalRiskAssessment : undefined;
+    const currentIsManualOfficial = currentAssessment?.status === 'official_ready' && currentSourceKind === 'admin_manual';
+    const currentIsAiProvisional = Boolean(currentProvisionalAssessment
+      && currentProvisionalAssessment.aiProposal?.status === 'success');
+    const currentHead = currentReviewState?.activeReviewHeads?.[authorityType];
+    let implicitReviewRef: FirebaseFirestore.DocumentReference | undefined;
+    let implicitReviewSnap: FirebaseFirestore.DocumentSnapshot | undefined;
+    if (currentIsAiProvisional && !currentHead?.reviewId && currentProvisionalAssessment) {
+      implicitReviewRef = assessmentRef.collection(COLLECTIONS.SCORE_REVIEWS).doc(implicitScoreReviewId(versionId, authorityType, callerUid, currentProvisionalAssessment.provisionalResult.calculatedAt));
+      implicitReviewSnap = await tx.get(implicitReviewRef);
+      const nextImplicitReview = buildImplicitUnchangedScoreReview(currentProvisionalAssessment, eventId, versionId, assessmentId, authorityType, callerUid, implicitReviewRef.id, now);
+      const storedImplicit = implicitReviewSnap.data() as AuthorityScoreReview | undefined;
+      if (storedImplicit && !sameImplicitReview(storedImplicit, nextImplicitReview)) {
+        throw new HttpsError('aborted', 'The unchanged AI confirmation record changed before the decision was recorded.');
+      }
+      const previousState = currentReviewState;
+      const existingHeadEntries = Object.entries(previousState?.activeReviewHeads ?? {})
+        .filter(([authority, head]) => authority !== authorityType && Boolean(head?.reviewId));
+      const existingHeadSnapshots = existingHeadEntries.length
+        ? await tx.getAll(...existingHeadEntries.map(([, head]) => assessmentRef.collection(COLLECTIONS.SCORE_REVIEWS).doc(head!.reviewId)))
+        : [];
+      const existingReviews = existingHeadSnapshots
+        .map((snapshot) => snapshot.data() as AuthorityScoreReview | undefined)
+        .filter((review): review is AuthorityScoreReview => Boolean(review?.reviewId));
+      const nextState = buildAuthorityReviewState(
+        [...(currentEvent.requiredAuthorities ?? [])],
+        [...existingReviews, nextImplicitReview],
+        now,
+      );
+      if (!implicitReviewSnap.exists) {
+        tx.create(implicitReviewRef, nextImplicitReview);
+        const auditRef = eventRef.collection(COLLECTIONS.AUDIT_LOGS).doc(`${nextImplicitReview.reviewId}-implicit-confirmed`);
+        tx.create(auditRef, {
+          id: auditRef.id,
+          eventId,
+          versionId,
+          action: 'authority_score_reviewed',
+          actorId: callerUid,
+          actorRole: 'authority',
+          timestamp: now,
+          notes: 'Unchanged AI scores were implicitly confirmed when the officer recorded an application decision.',
+          metadata: { reviewId: nextImplicitReview.reviewId, authorityType, source: 'implicit_decision' },
+        });
+      }
+      tx.set(assessmentRef, { status: 'authority_review', authorityReviewState: nextState }, { merge: true });
+    }
     const isAmendment = currentAssignment.status === 'completed';
     const previousReason = currentAssignment.reason ?? '';
     const previousSuggestion = currentAssignment.suggestion ?? '';
@@ -244,7 +301,9 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
       }, { merge: true });
     }
 
-    if (allCompleted && !isAmendment) {
+    const needsOfficialFinalization = allCompleted && !currentIsManualOfficial
+      && currentAssessment?.status !== 'official_ready';
+    if (allCompleted && !needsOfficialFinalization) {
       tx.update(eventRef, {
         reviewStage: 'second',
         updatedAt: now,
@@ -300,9 +359,30 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
       });
     }
 
-    return { assignmentId, decision, allCompleted, amended: isAmendment, idempotent: false };
+    return { assignmentId, decision, allCompleted, needsOfficialFinalization, amended: isAmendment, idempotent: false };
   }).then(async (result) => {
-    // Fire-and-forget notification to the admin when all officers are done.
+    let finalizationPending = false;
+    let officialized = !result.needsOfficialFinalization;
+    if (result.needsOfficialFinalization) {
+      try {
+        await finalizeStoredReviewState(callerUid, eventId, false, now, { versionId, assessmentId });
+        await db.runTransaction(async (tx) => {
+          const eventSnapshot = await tx.get(eventRef);
+          const current = eventSnapshot.data() as EventRecord | undefined;
+          if (eventSnapshot.exists && current?.currentVersionId === versionId
+            && current.currentAssessmentId === assessmentId
+            && current.reviewStage === 'authority' && current.status === 'UnderReview') {
+            tx.update(eventRef, { reviewStage: 'second', updatedAt: Date.now() });
+          }
+        });
+      } catch (error) {
+        finalizationPending = true;
+        officialized = false;
+        console.warn('[recordOfficerProposal] official finalisation deferred; the decision remains recorded in Authority Review:', error);
+      }
+    }
+    // Notify the admin when all officers are done. If finalisation failed, the
+    // message explicitly points to the retry/resolution path.
     if (result.allCompleted) {
       try {
         const adminUid = await findFirstAdminUid(db);
@@ -312,8 +392,10 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
             eventId,
             versionId,
             type: 'decision_made',
-            title: 'All officers have decided',
-            message: `All assigned officers have recorded their decisions. Ready for second review.`,
+            title: finalizationPending ? 'Authority decisions need M2 finalisation' : 'All officers have decided',
+            message: finalizationPending
+              ? 'All assigned officers have recorded decisions, but official assessment finalisation needs Admin resolution or retry.'
+              : 'All assigned officers have recorded their decisions. Ready for second review.',
             sourceActionId: `all-officers-done_${versionId}`,
           });
         }
@@ -331,6 +413,8 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
       decision: result.decision,
       allCompleted: result.allCompleted,
       amended: result.amended,
+      ...(officialized ? { officialized: true } : {}),
+      ...(finalizationPending ? { finalizationPending: true } : {}),
       ...(result.idempotent ? { idempotent: true } : {}),
     };
   });
@@ -430,10 +514,18 @@ export function assertOfficerDecisionArtifacts(
     || resource.versionId !== versionId || resource.assessmentId !== assessmentId) {
     throw new HttpsError('failed-precondition', 'Risk assessment and resources must be ready before recording a proposal.');
   }
+  const manualOfficial = 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual';
+  const provisionalAi = !manualOfficial
+    && (assessment.status === 'provisional_ready' || assessment.status === 'authority_review')
+    && resource.stage === 'provisional';
+  if (assessment.status !== 'official_ready' && !provisionalAi) {
+    throw new HttpsError('failed-precondition', 'Officer decisions require the current provisional or official assessment and matching resource revision.');
+  }
+  if (provisionalAi) return;
   if (assessment.status !== 'official_ready' || resource.stage !== 'official') {
     throw new HttpsError('failed-precondition', 'Officer decisions require the current official assessment and official resource revision.');
   }
-  if ('sourceKind' in assessment && assessment.sourceKind === 'admin_manual') return;
+  if (manualOfficial) return;
   const aiOfficial = assessment as OfficialRiskAssessment;
   const head = aiOfficial.authorityReviewState?.activeReviewHeads?.[authorityType];
   const officialReviewIds = Array.isArray(aiOfficial.officialResult.reviewIds)
@@ -441,6 +533,58 @@ export function assertOfficerDecisionArtifacts(
   if (!head?.reviewId || !officialReviewIds.includes(head.reviewId)) {
     throw new HttpsError('failed-precondition', 'Submit and finalize your eight-category score review before recording an application proposal.');
   }
+}
+
+/** Build the auditable score-review record created when an officer records a
+ * decision without changing any AI-proposed category scores. */
+export function buildImplicitUnchangedScoreReview(
+  assessment: ProvisionalRiskAssessment,
+  eventId: string,
+  versionId: string,
+  assessmentId: string,
+  authorityType: AuthorityType,
+  reviewerId: string,
+  reviewId: string,
+  createdAt: number,
+): AuthorityScoreReview {
+  return {
+    reviewId,
+    schemaVersion: SCORE_REVIEW_SCHEMA_VERSION,
+    eventId,
+    versionId,
+    assessmentId,
+    proposalId: assessment.aiProposal.proposalId,
+    provisionalCalculatedAt: assessment.provisionalResult.calculatedAt,
+    assessmentInputHash: assessment.inputHash,
+    categorySchemaVersion: assessment.provisionalResult.categorySchemaVersion,
+    authorityType,
+    reviewerId,
+    categories: assessment.aiProposal.categories.map((category) => ({
+      categoryId: category.categoryId,
+      likelihood: category.likelihood,
+      severity: category.severity,
+      decision: 'confirmed' as const,
+    })),
+    rationale: 'Officer accepted the unchanged AI score proposal while recording an application decision.',
+    idempotencyKey: `implicit-decision-${reviewId}`,
+    source: 'implicit_decision',
+    createdAt,
+  };
+}
+
+function implicitScoreReviewId(versionId: string, authorityType: AuthorityType, reviewerId: string, calculatedAt: number): string {
+  return `${versionId}-${authorityType}-implicit-${createHash('sha256').update(`${reviewerId}:${calculatedAt}`).digest('hex').slice(0, 24)}`;
+}
+
+function sameImplicitReview(stored: AuthorityScoreReview, expected: AuthorityScoreReview): boolean {
+  return stored.reviewId === expected.reviewId
+    && stored.eventId === expected.eventId
+    && stored.versionId === expected.versionId
+    && stored.assessmentId === expected.assessmentId
+    && stored.authorityType === expected.authorityType
+    && stored.reviewerId === expected.reviewerId
+    && stored.proposalId === expected.proposalId
+    && stored.source === 'implicit_decision';
 }
 
 async function findFirstAdminUid(db: FirebaseFirestore.Firestore): Promise<string | null> {

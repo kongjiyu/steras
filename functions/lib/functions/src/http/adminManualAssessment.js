@@ -320,10 +320,10 @@ function buildAdminManualResource(args) {
     const items = Object.fromEntries(types_1.RESOURCE_KEYS.map((key) => {
         const value = args.manual.resourcePlan[key];
         const quantityInputId = `manual.resource.${key}.quantity`;
-        const maximumInputId = `manual.resource.${key}.maximum`;
+        const maximum = value.maximum ?? value.quantity;
         const inputReferences = [
             { inputId: quantityInputId, kind: 'event_field', path: `manualAssessment.resourcePlan.${key}.quantity`, value: value.quantity },
-            { inputId: maximumInputId, kind: 'event_field', path: `manualAssessment.resourcePlan.${key}.maximum`, value: value.maximum },
+            ...(value.maximum !== undefined ? [{ inputId: `manual.resource.${key}.maximum`, kind: 'event_field', path: `manualAssessment.resourcePlan.${key}.maximum`, value: value.maximum }] : []),
         ];
         const ruleId = `manual.resource.${key}.admin-entered`;
         const assumptionId = `manual.resource.${key}.admin-plan`;
@@ -331,10 +331,10 @@ function buildAdminManualResource(args) {
                 status: 'ready',
                 resource: key,
                 baseline: value.quantity,
-                planningRange: { min: value.quantity, max: value.maximum },
+                planningRange: { min: value.quantity, max: maximum },
                 inputReferences,
                 assumptions: [{ assumptionId, statement: args.manual.resourceRationale, sourceIds: [source.sourceId] }],
-                appliedRules: [{ ruleId, description: 'Admin-entered operational quantity and planning maximum.', inputReferenceIds: [quantityInputId, maximumInputId], sourceIds: [source.sourceId], contribution: value.maximum - value.quantity }],
+                appliedRules: [{ ruleId, description: 'Admin-entered operational quantity.', inputReferenceIds: inputReferences.map((reference) => reference.inputId), sourceIds: [source.sourceId], contribution: maximum - value.quantity }],
                 sourceSnapshots: [{ ...source }],
                 authoritySource: { status: 'not_supplied', reason: 'This planning value was entered by the reviewing Admin for the manual-review recovery workflow.' },
                 confidence: 'authority_validated',

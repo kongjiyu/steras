@@ -245,6 +245,25 @@ describe('Firestore security rules', () => {
     await assertFails(getDocs(collection(adminDb, 'events')));
   });
 
+  it('allows Admins to read control-list proposals while keeping them server-written', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, 'users/admin-proposal-reader'), { uid: 'admin-proposal-reader', role: 'admin' });
+      await setDoc(doc(db, 'users/authority-proposal-reader'), { uid: 'authority-proposal-reader', role: 'authority', authorityType: 'PDRM' });
+      await setDoc(doc(db, 'events/proposal-visible'), {
+        eventId: 'proposal-visible', organizerId: 'organizer-1', status: 'Approved', requiredAuthorities: ['PDRM'],
+      });
+      await setDoc(doc(db, 'events/proposal-visible/control_list_proposals/v1'), {
+        eventId: 'proposal-visible', versionId: 'v1', status: 'draft', revision: 1, items: [],
+      });
+    });
+    const adminDb = environment.authenticatedContext('admin-proposal-reader').firestore();
+    const authorityDb = environment.authenticatedContext('authority-proposal-reader').firestore();
+    await assertSucceeds(getDoc(doc(adminDb, 'events/proposal-visible/control_list_proposals/v1')));
+    await assertFails(getDoc(doc(authorityDb, 'events/proposal-visible/control_list_proposals/v1')));
+    await assertFails(setDoc(doc(adminDb, 'events/proposal-visible/control_list_proposals/v2'), { status: 'draft' }));
+  });
+
   it('keeps privileged accounts, venue mutations, and admin operation records backend-only', async () => {
     await environment.withSecurityRulesDisabled(async (context) => {
       const db = context.firestore();

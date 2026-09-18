@@ -576,7 +576,7 @@ export default function AuthorityEventReview() {
                       />}
                     {assessment.status !== 'manual_review_required' && assessment.status !== 'official_ready' && (
                       <p className="rounded-md border border-brand-200 bg-brand-50/60 p-3 text-xs leading-5 text-brand-800" data-testid="score-review-guidance">
-                        Review each category before deciding. Submitting unchanged categories confirms the AI proposal; changing a likelihood or severity value requires an override rationale.
+                        You may approve or reject the current AI proposal directly. Use <strong>Review AI scores</strong> only if you want to change a likelihood or severity value; changed values require an override rationale, while unchanged values are confirmed implicitly with your decision.
                       </p>
                     )}
                   <div className="border-t border-[#e3dacb] pt-5">

@@ -141,6 +141,7 @@ async function submitScoreReviewForUser(uid, data, now = Date.now()) {
             categories: normalizedCategories(input.categories),
             rationale: input.rationale.trim(),
             idempotencyKey: input.idempotencyKey,
+            source: 'explicit_editor',
             ...(currentHeads[profile.authorityType]?.reviewId ? { supersedesReviewId: currentHeads[profile.authorityType].reviewId } : {}),
             createdAt: now,
         };

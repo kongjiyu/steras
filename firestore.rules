@@ -295,6 +295,14 @@ service cloud.firestore {
         allow write: if false; // server-only
       }
 
+      // Control-list proposals are generated and confirmed by Cloud
+      // Functions. Admins can inspect drafts and confirmed revisions while
+      // all client writes remain server-only.
+      match /control_list_proposals/{proposalId} {
+        allow read: if isAdminReviewableEvent(eventId);
+        allow write: if false;
+      }
+
       // ---- Sub-collection: control_verifications (M3 verified-control workflow) ----
       // Read by assigned authority + event owner + admin. Writes server-only
       // (verifyEventControl Cloud Function is the only writer).

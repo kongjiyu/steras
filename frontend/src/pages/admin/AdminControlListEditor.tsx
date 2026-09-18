@@ -64,6 +64,8 @@ export default function AdminControlListEditor() {
   const [event, setEvent] = useState<EventRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const [controlsError, setControlsError] = useState('');
+  const [proposalError, setProposalError] = useState('');
   const [items, setItems] = useState<ProposedControlItem[]>([]);
   const [proposalSource, setProposalSource] = useState<'cache' | 'minimax' | 'deterministic_fallback' | null>(null);
   const [proposalCached, setProposalCached] = useState(false);
@@ -106,14 +108,23 @@ export default function AdminControlListEditor() {
       return undefined;
     }
     const eventReference = doc(db, COLLECTIONS.EVENTS, eventId);
+    setControlsError('');
+    setProposalError('');
     const unsubscribeControls = onSnapshot(collection(eventReference, COLLECTIONS.EVENT_CONTROLS), (snapshot) => {
       setCurrentControls(snapshot.docs
         .map((item) => ({ ...(item.data() as Partial<EventControl>), controlId: item.id }) as EventControl)
         .filter((control) => control.versionId === event.currentVersionId));
-    }, () => setLoadError('The current control list could not be loaded.'));
+    }, () => setControlsError('The current control list could not be loaded.'));
     const unsubscribeProposal = onSnapshot(doc(eventReference, COLLECTIONS.CONTROL_LIST_PROPOSALS, event.currentVersionId), (snapshot) => {
       setCurrentProposal(snapshot.exists() ? snapshot.data() as ControlListProposal : null);
-    }, () => setLoadError('The control-list proposal could not be loaded.'));
+      setProposalError('');
+    }, () => {
+      // A missing or temporarily unreadable draft should not hide the event
+      // itself. Generation is server-owned and remains available as a
+      // recoverable empty state.
+      setCurrentProposal(null);
+      setProposalError('The saved control-list draft could not be loaded. You can generate a fresh proposal.');
+    });
     return () => { unsubscribeControls(); unsubscribeProposal(); };
   }, [event?.currentVersionId, eventId]);
 
@@ -159,7 +170,10 @@ export default function AdminControlListEditor() {
   // A current control, snapshot, confirmed proposal, or event flag is a
   // published artifact. If any of those disagree, lock editing and explain
   // the integrity issue instead of presenting an action that must fail.
-  const hasPublishedArtifacts = Boolean(hasPublishedFlag || snapshot.length > 0 || currentControls.length > 0 || currentProposal?.status === 'confirmed');
+  // A stale flag by itself is recoverable: only concrete current-version
+  // controls, a snapshot, or a confirmed proposal constitute a published
+  // artifact that must be integrity-locked.
+  const hasPublishedArtifacts = Boolean(snapshot.length > 0 || currentControls.length > 0 || currentProposal?.status === 'confirmed');
   const inconsistentPublished = Boolean(hasPublishedArtifacts && !confirmed);
 
   const dirty = useMemo(() => items.length > 0 && !confirmed, [confirmed, items]);
@@ -315,6 +329,13 @@ export default function AdminControlListEditor() {
         <div className="mb-5 rounded-md border border-status-rejected/40 bg-red-50 p-3 text-sm text-status-rejected" role="alert" data-testid="control-list-integrity-error">
           This application is marked as having a confirmed control list, but the current-version controls or proposal record is incomplete. Editing is locked until an Admin repairs the list.
         </div>
+      )}
+
+      {controlsError && !inconsistentPublished && (
+        <div className="mb-5 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800" role="status">{controlsError}</div>
+      )}
+      {proposalError && !inconsistentPublished && (
+        <div className="mb-5 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800" role="status">{proposalError}</div>
       )}
 
       {canEdit && !confirmed && !inconsistentPublished && (

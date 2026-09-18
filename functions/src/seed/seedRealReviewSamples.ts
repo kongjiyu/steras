@@ -10,6 +10,7 @@ import {
   EventDetails,
   EventRecord,
   EventVersion,
+  EvidenceKey,
   M1_DOCUMENT_SCHEMA_VERSION,
   M1_EVIDENCE_MANIFEST_SCHEMA_VERSION,
   RESOURCE_KEYS,
@@ -19,6 +20,7 @@ import {
   ProvisionalRiskAssessment,
   SCORE_REVIEW_SCHEMA_VERSION,
   Venue,
+  ScoreEvidence,
 } from '@shared/types';
 import {
   REAL_REVIEW_SAMPLE_AS_OF,
@@ -323,6 +325,32 @@ function proposalFor(sample: RealReviewSampleDefinition, now: number, event: Eve
   };
 }
 
+function manualFixtureEvidence(existing: ScoreEvidence[], now: number): ScoreEvidence[] {
+  const keys: EvidenceKey[] = ['weather', 'crowd', 'venue', 'history', 'holiday', 'public_health', 'sanitation', 'medical', 'security', 'transport', 'compliance'];
+  return keys.map((key, index) => {
+    const source = existing[index % Math.max(1, existing.length)];
+    return {
+      ...(source ?? {
+        description: `Synthetic contextual evidence for ${key}.`,
+        source: 'steras-real-review-fixture',
+        status: 'available',
+        quality: 'verified' as const,
+        confidenceScore: 90,
+        syntheticStatus: 'all' as const,
+      }),
+      key,
+      description: `Synthetic contextual evidence for ${key}; eligible for Admin manual review only.`,
+      sourceTimestamp: now,
+      source: 'steras-real-review-fixture',
+      status: 'available',
+      quality: 'verified',
+      confidenceScore: 90,
+      eligibility: 'eligible',
+      syntheticStatus: 'all',
+    };
+  });
+}
+
 function buildArtifacts(sample: RealReviewSampleDefinition, event: EventRecord, userIds: UserIds, now: number, evidenceGeneration: string): {
   assessment: RiskAssessment;
   resource?: ResourceRecommendation;
@@ -345,7 +373,9 @@ function buildArtifacts(sample: RealReviewSampleDefinition, event: EventRecord, 
   const evidencePath = `${STORAGE_PREFIX}/${sample.id}/${VERSION_ID}/application-evidence.txt`;
   const common = {
     assessmentId, eventId: sample.id, versionId: VERSION_ID, schemaVersion: ASSESSMENT_SCHEMA_VERSION,
-    contextSnapshot: context, evidence: generated.baseline.evidence,
+    contextSnapshot: context, evidence: sample.workflow === 'manual_review_required'
+      ? manualFixtureEvidence(generated.baseline.evidence, now)
+      : generated.baseline.evidence,
     contextEvidence: [{
       evidenceId: `context-${sample.id}`, evidenceKey: 'compliance' as const, sourceKind: 'submitted_document' as const,
        sourceLocator: evidencePath, retrievedAt: now, sourceVersion: `storage-generation:${evidenceGeneration}`,
@@ -644,6 +674,14 @@ async function verifySample(ctx: SterasTestContext, sample: RealReviewSampleDefi
     if (!decisions.empty) failures.push(`${sample.id}: manual-review fixture contains officer decisions`);
     if (assessmentData && ('provisionalResult' in assessmentData || 'officialResult' in assessmentData)) failures.push(`${sample.id}: manual-review fixture contains a fabricated risk result`);
     if (assessmentData?.aiProposal && assessmentData.aiProposal.status !== 'unavailable') failures.push(`${sample.id}: manual-review fixture provider result is not unavailable`);
+    const eligibleEvidence = new Set((assessmentData?.evidence ?? [])
+      .filter((item) => item?.eligibility === 'eligible' && item.quality !== 'missing'
+        && typeof item.status === 'string' && !['unavailable', 'unmatched', 'missing'].includes(item.status.toLowerCase()))
+      .map((item) => item.key));
+    if (eligibleEvidence.size < 8) failures.push(`${sample.id}: manual-review fixture must expose at least eight eligible evidence references`);
+    if ([...eligibleEvidence].some((key) => !['weather', 'crowd', 'venue', 'history', 'holiday', 'public_health', 'sanitation', 'medical', 'security', 'transport', 'compliance'].includes(key))) {
+      failures.push(`${sample.id}: manual-review fixture contains an invalid evidence reference`);
+    }
   }
   const displayState = resolveApplicationDisplayState({
     status: event?.status ?? 'Pending', reviewStage: event?.reviewStage, currentVersionId: event?.currentVersionId,

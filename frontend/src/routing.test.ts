@@ -12,7 +12,7 @@ describe('routing policy', () => {
   it('keeps incident reporting inside each authenticated workspace shell', () => {
     expect(getIncidentPath('organizer')).toBe('/organizer/incidents');
     expect(getIncidentPath('authority')).toBe('/authority/incidents');
-    expect(getIncidentPath('admin')).toBe('/admin/incidents');
+    expect(getIncidentPath('admin')).toBe('/admin');
     expect(getIncidentPath('public')).toBe('/incidents');
   });
 

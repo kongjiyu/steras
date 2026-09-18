@@ -43,6 +43,13 @@ const MANAGED_BY = 'seed:presentation-portfolio';
 const VERSION_ID = 'v1';
 const PARTICIPANT_DEMO_EMAIL = 'participant.showcase@steras.test';
 const ORGANIZER_DEMO_EMAIL = 'organizer1@steras.test';
+const SHOWCASE_AUTHORITY_EMAILS: Record<AuthorityType, string> = {
+  PDRM: 'pdrm.showcase@steras.test',
+  BOMBA: 'bomba.showcase@steras.test',
+  KKM: 'kkm.showcase@steras.test',
+  DBKL: 'dbkl.showcase@steras.test',
+  MOTAC: 'motac.showcase@steras.test',
+};
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
 
@@ -166,7 +173,11 @@ async function loadIdentities(db: Firestore): Promise<SeedIdentity> {
     db.collection(COLLECTIONS.USERS).where('role', '==', 'admin').limit(10).get(),
     db.collection(COLLECTIONS.USERS).where('email', '==', ORGANIZER_DEMO_EMAIL).limit(1).get(),
     db.collection(COLLECTIONS.USERS).where('role', '==', 'public').limit(10).get(),
-    db.collection(COLLECTIONS.USERS).where('role', '==', 'authority').limit(50).get(),
+    Promise.all(Object.entries(SHOWCASE_AUTHORITY_EMAILS).map(async ([authorityType, email]) => ({
+      authorityType: authorityType as AuthorityType,
+      email,
+      snapshot: await db.collection(COLLECTIONS.USERS).where('email', '==', email).limit(2).get(),
+    }))),
   ]);
   const admin = admins.docs[0]?.data() as UserProfile | undefined;
   const organizer = organizers.docs.map((document) => document.data() as UserProfile)
@@ -177,10 +188,16 @@ async function loadIdentities(db: Firestore): Promise<SeedIdentity> {
     throw new Error(`Admin, ${ORGANIZER_DEMO_EMAIL} and a Public participant profile must already exist.`);
   }
   const authorityUids: Partial<Record<AuthorityType, string>> = {};
-  authorities.docs.forEach((document) => {
-    const profile = document.data() as UserProfile;
-    if (profile.authorityType && !authorityUids[profile.authorityType]) authorityUids[profile.authorityType] = profile.uid;
+  const missingAuthorities: string[] = [];
+  authorities.forEach(({ authorityType, email, snapshot }) => {
+    const matching = snapshot.docs.map((document) => ({ ...(document.data() as UserProfile), uid: (document.data() as UserProfile).uid || document.id }))
+      .find((profile) => profile.role === 'authority' && profile.authorityType === authorityType && profile.email === email);
+    if (!matching?.uid) missingAuthorities.push(`${authorityType} (${email})`);
+    else authorityUids[authorityType] = matching.uid;
   });
+  if (missingAuthorities.length > 0) {
+    throw new Error(`Required showcase authority accounts are missing or have the wrong role/department: ${missingAuthorities.join(', ')}`);
+  }
   return { adminUid: admin.uid, organizerUid: organizer.uid, participantUid: participant.uid, authorityUids };
 }
 
@@ -349,7 +366,7 @@ function buildArtifacts(scenarioValue: Scenario, event: EventRecord, identities:
   };
   const pendingInitialReview = scenarioValue.status === 'Pending';
   const reviews = pendingInitialReview ? [] : requiredAuthorities.map((authority) => {
-    const reviewerId = identities.authorityUids[authority] ?? identities.adminUid;
+    const reviewerId = identities.authorityUids[authority]!;
     return {
       reviewId: `${assessmentId}-${authority.toLowerCase()}-review`,
       schemaVersion: SCORE_REVIEW_SCHEMA_VERSION,
@@ -490,8 +507,8 @@ async function writeScenario(db: Firestore, scenarioValue: Scenario, venue: Venu
     editableVersionId: null,
     draftDocumentPaths: [],
     requiredAuthorities,
-    assignedOfficerUids: initialReviewed ? requiredAuthorities.map((authority) => identities.authorityUids[authority] ?? identities.adminUid) : [],
-    assignedOfficerByAuthority: initialReviewed ? Object.fromEntries(requiredAuthorities.map((authority) => [authority, identities.authorityUids[authority] ?? identities.adminUid])) : {},
+    assignedOfficerUids: initialReviewed ? requiredAuthorities.map((authority) => identities.authorityUids[authority]!) : [],
+    assignedOfficerByAuthority: initialReviewed ? Object.fromEntries(requiredAuthorities.map((authority) => [authority, identities.authorityUids[authority]!])) : {},
     reviewStage: terminal ? null : secondReviewReady ? 'second' : scenarioValue.status === 'UnderReview' ? 'authority' : 'initial',
     controlListGenerated: scenarioValue.status === 'Approved',
     createdAt: scenarioValue.createdAt,
@@ -525,13 +542,13 @@ async function writeScenario(db: Firestore, scenarioValue: Scenario, venue: Venu
     const assignmentId = `${VERSION_ID}_${authority}`;
     batch.set(eventRef.collection(COLLECTIONS.ASSIGNMENTS).doc(assignmentId), {
       assignmentId, eventId, versionId: VERSION_ID, authorityType: authority,
-      officerUid: identities.authorityUids[authority] ?? identities.adminUid,
+      officerUid: identities.authorityUids[authority]!,
       assignedBy: identities.adminUid, assignedAt: initialReviewAt,
       status: authorityCompleted ? 'completed' : scenarioValue.status === 'UnderReview' ? 'in_progress' : 'pending',
       ...(authorityCompleted ? { decision: rejected ? 'Rejected' : 'Approved', reason: rejected ? 'Risk controls require revision.' : 'Required materials and controls reviewed.', suggestion: rejected ? 'Revise crowd, traffic and evacuation controls.' : 'Proceed with the approved controls.', ...(rejected ? { rejectionReasonCategory: 'risk_controls_inadequate' } : {}), decidedAt: authorityReviewAt } : {}),
       presentationData: marker(eventId),
     });
-    if (authorityCompleted) batch.set(eventRef.collection(COLLECTIONS.DECISION_HISTORY).doc(`${assignmentId}-decision`), { decisionId: `${assignmentId}-decision`, eventId, versionId: VERSION_ID, authorityType: authority, decision: rejected ? 'Rejected' : 'Approved', rationale: rejected ? 'Risk controls require revision.' : 'Required materials and controls reviewed.', suggestion: rejected ? 'Revise crowd, traffic and evacuation controls.' : 'Proceed with the approved controls.', reviewStage: 'authority', ...(rejected ? { rejectionReasonCategory: 'risk_controls_inadequate' } : {}), materialsReviewed: true, reviewerId: identities.authorityUids[authority] ?? identities.adminUid, decidedAt: authorityReviewAt, current: true, presentationData: marker(eventId) });
+    if (authorityCompleted) batch.set(eventRef.collection(COLLECTIONS.DECISION_HISTORY).doc(`${assignmentId}-decision`), { decisionId: `${assignmentId}-decision`, eventId, versionId: VERSION_ID, authorityType: authority, decision: rejected ? 'Rejected' : 'Approved', rationale: rejected ? 'Risk controls require revision.' : 'Required materials and controls reviewed.', suggestion: rejected ? 'Revise crowd, traffic and evacuation controls.' : 'Proceed with the approved controls.', reviewStage: 'authority', ...(rejected ? { rejectionReasonCategory: 'risk_controls_inadequate' } : {}), materialsReviewed: true, reviewerId: identities.authorityUids[authority]!, decidedAt: authorityReviewAt, current: true, presentationData: marker(eventId) });
   }
   if (initialReviewed) batch.set(eventRef.collection(COLLECTIONS.AUDIT_LOGS).doc('presentation-initial-review'), { id: 'presentation-initial-review', eventId, versionId: VERSION_ID, action: 'decision_made', actorId: identities.adminUid, actorRole: 'admin', timestamp: initialReviewAt, metadata: { reviewStage: 'initial', decision: 'Approved' }, presentationData: marker(eventId) });
   if (terminal) batch.set(eventRef.collection(COLLECTIONS.AUDIT_LOGS).doc('presentation-second-review'), { id: 'presentation-second-review', eventId, versionId: VERSION_ID, action: 'decision_made', actorId: identities.adminUid, actorRole: 'admin', timestamp: terminalAt, metadata: { reviewStage: 'second', finalDecision: scenarioValue.status, ...(scenarioValue.status === 'Rejected' ? { rejectionReasonCategory: 'risk_controls_inadequate' } : {}) }, presentationData: marker(eventId) });
@@ -652,7 +669,7 @@ async function writeIncidents(db: Firestore, scenarioValue: Scenario, event: Rec
       ...(status === 'authority_investigation' ? {
         referredAuthorityId: 'pdrm-kuala-lumpur-demo',
         referredAuthorityType: 'PDRM' as const,
-        assignedAuthorityOfficerUid: identities.authorityUids.PDRM ?? identities.adminUid,
+        assignedAuthorityOfficerUid: identities.authorityUids.PDRM!,
       } : {}),
       ...(resolved ? { finalResolution: 'The response team completed the documented action and closed the incident without further escalation.', resolvedAt: occurredAt + 45 * 60_000 } : {}),
       assessmentEligible: resolved,

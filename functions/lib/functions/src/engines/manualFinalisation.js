@@ -28,7 +28,7 @@ function validateManualResourcePlan(input) {
         }
         if (!isWholeNonNegative(value.quantity))
             errors.push(`resource-${key}-quantity`);
-        if (!isWholeNonNegative(value.maximum))
+        if (value.maximum !== undefined && !isWholeNonNegative(value.maximum))
             errors.push(`resource-${key}-maximum`);
         if (isWholeNonNegative(value.quantity) && isWholeNonNegative(value.maximum)
             && Number(value.maximum) < Number(value.quantity))
@@ -80,10 +80,7 @@ function validateManualAssessmentInput(input, evidence) {
                 errors.push(`rationale-${raw.categoryId}`);
             if (!validEvidenceReferences(raw.evidenceReferences, eligible, false))
                 errors.push(`evidence-${raw.categoryId}`);
-            const refs = Array.isArray(raw.evidenceReferences) ? raw.evidenceReferences : [];
-            if (refs.length === 0 && !validText(raw.missingInformation, 10, 1000))
-                errors.push(`missing-information-${raw.categoryId}`);
-            if (refs.length > 0 && (typeof raw.missingInformation !== 'string' || raw.missingInformation.length > 1000))
+            if (typeof raw.missingInformation !== 'string' || raw.missingInformation.length > 1000)
                 errors.push(`missing-information-${raw.categoryId}`);
         }
     if (CATEGORY_IDS.some((categoryId) => !seen.has(categoryId)))
@@ -262,7 +259,7 @@ function isWholeNonNegative(value) {
 function cloneResourcePlan(value) {
     return Object.fromEntries(types_1.RESOURCE_KEYS.map((key) => [key, {
             quantity: value[key].quantity,
-            maximum: value[key].maximum,
+            ...(value[key].maximum !== undefined ? { maximum: value[key].maximum } : {}),
         }]));
 }
 function isRecord(value) {

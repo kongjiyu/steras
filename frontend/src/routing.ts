@@ -17,7 +17,7 @@ export function getRoleHome(role?: UserRole | null): string | null {
 export function getIncidentPath(role?: UserRole | null): string {
   if (role === 'organizer') return '/organizer/incidents';
   if (role === 'authority') return '/authority/incidents';
-  if (role === 'admin') return '/admin/incidents';
+  if (role === 'admin') return '/admin';
   return role === 'public' ? '/incidents' : '/calendar';
 }
 

@@ -795,7 +795,9 @@ export interface AdminManualCategoryInput {
  * no automatic resource calculator is invoked for this path. */
 export interface AdminManualResourceInput {
   quantity: number;
-  maximum: number;
+  /** Legacy planning upper bound. New manual submissions omit it and the
+   * canonical official resource stores min=max=quantity. */
+  maximum?: number;
 }
 
 export type AdminManualResourcePlan = Record<ResourceKey, AdminManualResourceInput>;
@@ -888,6 +890,10 @@ export interface AuthorityScoreReview {
   rationale: string;
   idempotencyKey: string;
   supersedesReviewId?: string;
+  /** Provenance for the officer confirmation path. Explicit editor reviews
+   * use `explicit_editor`; a direct decision against unchanged AI scores uses
+   * `implicit_decision`. Legacy records may omit this field. */
+  source?: 'explicit_editor' | 'implicit_decision';
   createdAt: number;
 }
 
