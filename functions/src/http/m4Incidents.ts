@@ -3,7 +3,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { firestore } from 'firebase-admin';
 import { getStorage } from 'firebase-admin/storage';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
-import { COLLECTIONS, type EventRecord, type OfficerProfile, type PublicReport, type UserProfile } from '@shared/types';
+import { COLLECTIONS, type EventControl, type EventRecord, type OfficerProfile, type PublicReport, type UserProfile } from '@shared/types';
 import {
   INCIDENT_CATEGORIES, M4_AI_PROMPT_VERSION, M4_EVIDENCE_MAX_BYTES, M4_SCHEMA_VERSION, m4EventDayBounds, m4IncidentCreationDate, m4IncidentIdForSequence,
   type M4AIAssessment, type M4AuthorityDirectoryEntry, type M4EvidenceRef,
@@ -22,6 +22,7 @@ const DIRECTORY = 'authority_directory';
 const INCIDENT_REQUESTS = 'incident_submission_keys';
 const INCIDENT_COUNTERS = 'incident_counters';
 const ALLOWED_EVIDENCE = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
+const AI_HISTORY_ACTIONS = new Set(['ai_incident_assessment', 'ai_authority_recommendation']);
 
 export const submitIncident = onCall({ region: FUNCTION_REGION, timeoutSeconds: 60, memory: '512MiB', secrets: [MINIMAX_API_KEY] }, async (request) => {
   const { uid, profile } = await requireProfile(request.auth?.uid);
@@ -35,11 +36,13 @@ export const submitIncident = onCall({ region: FUNCTION_REGION, timeoutSeconds: 
   const event = eventSnap.data() as EventRecord;
   assertReportableEvent(event, Date.now());
   assertOccurrenceWithinEventDay(event, input.occurredAt);
+  let linkedControlName: string | undefined;
   if (input.linkedControlId) {
     const controlRef = db.collection(COLLECTIONS.EVENTS).doc(input.eventId).collection(COLLECTIONS.EVENT_CONTROLS).doc(input.linkedControlId);
     const stage2Id = input.linkedStage2DocId ?? `${input.linkedControlId}-s2`;
     const [control, stage2] = await Promise.all([controlRef.get(), controlRef.collection(COLLECTIONS.STAGE2_DOCS).doc(stage2Id).get()]);
     if (!control.exists || !stage2.exists || stage2.data()?.published !== true) throw new HttpsError('failed-precondition', 'Linked Event Control evidence is not published.');
+    linkedControlName = (control.data() as EventControl).controlName;
   }
   const submissionKey = createHash('sha256').update(`${uid}:${input.idempotencyKey}`).digest('hex');
   const requestRef = db.collection(INCIDENT_REQUESTS).doc(submissionKey);
@@ -111,6 +114,7 @@ export const submitIncident = onCall({ region: FUNCTION_REGION, timeoutSeconds: 
       if (!currentControl.exists || !currentStage2.exists || currentStage2.data()?.published !== true) {
         throw new HttpsError('failed-precondition', 'Linked Event Control evidence is no longer published.');
       }
+      linkedControlName = (currentControl.data() as EventControl).controlName;
     }
     const nextSequence = Number(counterSnap.data()?.nextSequence ?? 0) + 1;
     try {
@@ -132,6 +136,7 @@ export const submitIncident = onCall({ region: FUNCTION_REGION, timeoutSeconds: 
       ...(aiAssessment.status === 'success' ? { severity: aiAssessment.severity, immediateActionRequired: aiAssessment.immediateActionRequired } : {}),
       status: aiAssessment.status === 'success' ? 'submitted' : 'manual_review_required',
       ...(input.linkedControlId ? { linkedControlId: input.linkedControlId } : {}),
+      ...(linkedControlName ? { linkedControlName } : {}),
       ...(input.linkedStage2DocId ? { linkedStage2DocId: input.linkedStage2DocId } : {}),
       recommendedAuthorityIds,
       assessmentEligible: false, synthetic: false, date: input.occurredAt, createdAt: now, updatedAt: now,
@@ -157,14 +162,35 @@ export const listIncidents = onCall({ region: FUNCTION_REGION }, async (request)
   const { uid, profile } = await requireProfile(request.auth?.uid);
   const db = firestore();
   let query: FirebaseFirestore.Query = db.collection(COLLECTIONS.INCIDENTS).where('schemaVersion', '==', M4_SCHEMA_VERSION);
-  if (profile.role === 'organizer') query = query.where('organizerId', '==', uid);
-  else if (profile.role === 'authority') query = query.where('assignedAuthorityOfficerUid', '==', uid);
-  else if (profile.role !== 'admin') query = query.where('reporterUid', '==', uid);
-  const snap = profile.role === 'admin' ? undefined : await query.limit(100).get();
-  const records = snap?.docs.map((doc) => doc.data() as M4IncidentRecord).sort((a, b) => b.createdAt - a.createdAt) ?? [];
+  let records: M4IncidentRecord[] = [];
+  if (profile.role === 'organizer') {
+    records = (await query.where('organizerId', '==', uid).limit(100).get()).docs.map((doc) => doc.data() as M4IncidentRecord);
+  } else if (profile.role === 'authority' && profile.authorityType) {
+    // Authority referrals belong to the authority department, so every signed-in officer of that authority type can receive them.
+    const [assignedSnap, referredSnap] = await Promise.all([
+      query.where('assignedAuthorityOfficerUid', '==', uid).limit(100).get(),
+      query.where('referredAuthorityType', '==', profile.authorityType).limit(100).get(),
+    ]);
+    records = Array.from(new Map([...assignedSnap.docs, ...referredSnap.docs].map((doc) => [doc.id, doc])).values())
+      .map((doc) => doc.data() as M4IncidentRecord);
+  } else if (profile.role !== 'admin') {
+    records = (await query.where('reporterUid', '==', uid).limit(100).get()).docs.map((doc) => doc.data() as M4IncidentRecord);
+  } else {
+    records = (await query.limit(100).get()).docs.map((doc) => doc.data() as M4IncidentRecord);
+  }
+  records.sort((a, b) => b.createdAt - a.createdAt);
+  const reporterProfiles = new Map<string, Pick<UserProfile, 'name' | 'email'>>();
+  if (profile.role !== 'public') {
+    const reporterUids = [...new Set(records.map((record) => record.reporterUid))];
+    const reporterSnaps = await Promise.all(reporterUids.map((reporterUid) => db.collection(COLLECTIONS.USERS).doc(reporterUid).get()));
+    reporterSnaps.forEach((snap) => {
+      const reporter = snap.data() as Pick<UserProfile, 'name' | 'email'> | undefined;
+      if (reporter) reporterProfiles.set(snap.id, reporter);
+    });
+  }
   const histories = profile.role === 'public' ? new Map<string, M4IncidentHistoryEntry[]>() : new Map(await Promise.all(records.map(async (record) => {
     const history = await db.collection(COLLECTIONS.INCIDENTS).doc(record.incidentId).collection(HISTORY).orderBy('timestamp').limit(200).get();
-    return [record.incidentId, history.docs.map((doc) => doc.data() as M4IncidentHistoryEntry)] as const;
+    return [record.incidentId, history.docs.map((doc) => doc.data() as M4IncidentHistoryEntry).filter((entry) => !AI_HISTORY_ACTIONS.has(entry.action))] as const;
   })));
   const reportable = profile.role === 'public'
     ? await db.collection(COLLECTIONS.PUBLIC_EVENTS).limit(100).get()
@@ -177,7 +203,11 @@ export const listIncidents = onCall({ region: FUNCTION_REGION }, async (request)
       : { eventId: doc.id, name: value.eventName ?? doc.id, startDatetime: value.startDatetime ?? 0, endDatetime: value.endDatetime ?? 0 };
   }).filter((event) => event.startDatetime <= Date.now() && event.endDatetime >= Date.now() - 7 * DAY)
     .sort((left, right) => right.startDatetime - left.startDatetime) ?? [];
-  return { incidents: records.map((record) => ({ ...safeIncident(record, profile.role, uid), ...(profile.role === 'public' ? {} : { history: histories.get(record.incidentId) ?? [] }) })), reportableEvents: events };
+  return { incidents: records.map((record) => ({ ...safeIncident(record, profile.role, uid), ...(profile.role === 'public' ? {} : {
+    reporterName: reporterProfiles.get(record.reporterUid)?.name,
+    reporterEmail: reporterProfiles.get(record.reporterUid)?.email ?? record.reporterUid,
+    history: histories.get(record.incidentId) ?? [],
+  }) })), reportableEvents: events };
 });
 
 export const manageIncident = onCall({ region: FUNCTION_REGION }, async (request) => {
@@ -194,6 +224,7 @@ export const manageIncident = onCall({ region: FUNCTION_REGION }, async (request
   const actionEvidence = await validateEvidence(uid, actionEvidencePaths);
   let notify: { uid?: string; record: M4IncidentRecord; summary: string } | undefined;
   let replayed = false;
+  let autoResolved = false;
   const historyId = createHash('sha256').update(`${incidentId}:${action}:${uid}:${idempotencyKey}`).digest('hex').slice(0, 24);
   const historyRef = ref.collection(HISTORY).doc(historyId);
   const outboxId = `${incidentId}_${action}_${idempotencyKey}`;
@@ -221,16 +252,23 @@ export const manageIncident = onCall({ region: FUNCTION_REGION }, async (request
       if (!canPerformIncidentAction(record, profile, uid, action)) deny();
       const team = text(input.team, 'team', 2, 100); const note = text(input.note, 'note', 10, 1000);
       patch = { ...patch, assignedInternalTeam: team, status: 'responding', reviewedAt: record.reviewedAt ?? now, actionStartedAt: record.actionStartedAt ?? now }; summary = `Assigned ${team}: ${note}`;
+      notify = { uid: record.reporterUid, record, summary: `The organiser assigned ${team} to respond to your incident report.` };
     } else if (action === 'record_response') {
       if (!canPerformIncidentAction(record, profile, uid, action)) deny();
-      summary = text(input.note, 'note', 10, 2000); patch = { ...patch, status: 'awaiting_resolution', reviewedAt: record.reviewedAt ?? now, actionStartedAt: record.actionStartedAt ?? now };
+      summary = text(input.note, 'note', 10, 2000);
+      autoResolved = shouldAutoResolveAfterResponse(record);
+      patch = { ...patch, status: autoResolved ? 'resolved' : 'awaiting_resolution', reviewedAt: record.reviewedAt ?? now, actionStartedAt: record.actionStartedAt ?? now,
+        ...(autoResolved ? { finalResolution: summary, resolvedAt: now } : {}) };
+      notify = { uid: record.reporterUid, record, summary: autoResolved
+        ? 'The organiser recorded the action and closed your incident report.'
+        : 'The organiser recorded a response action for your incident report. It is awaiting final resolution.' };
     } else if (action === 'refer_authority') {
       if (!canPerformIncidentAction(record, profile, uid, action)) deny();
       const authorityId = identifier(input.authorityId, 'authorityId');
       const directory = await tx.get(db.collection(DIRECTORY).doc(authorityId));
       const entry = directory.data() as M4AuthorityDirectoryEntry | undefined;
-      if (!entry?.active || !entry.serviceCategories.includes(record.category)) throw new HttpsError('failed-precondition', 'Authority is not active for this incident category.');
-      patch = { ...patch, referredAuthorityId: entry.authorityId, referredAuthorityType: entry.authorityType, status: 'authority_investigation', reviewedAt: record.reviewedAt ?? now, actionStartedAt: record.actionStartedAt ?? now };
+      if (!entry?.active) throw new HttpsError('failed-precondition', 'Authority is not active in the authority directory.');
+      patch = { ...patch, referredAuthorityId: entry.authorityId, referredAuthorityType: entry.authorityType, referredAuthorityName: entry.name, status: 'authority_investigation', reviewedAt: record.reviewedAt ?? now, actionStartedAt: record.actionStartedAt ?? now };
       summary = `Referred to ${entry.name}: ${text(input.note, 'note', 10, 1000)}`;
       const officerRegistry = await tx.get(db.collection(COLLECTIONS.OFFICERS)
         .where('active', '==', true).where('authorityType', '==', entry.authorityType).limit(100));
@@ -278,7 +316,7 @@ export const manageIncident = onCall({ region: FUNCTION_REGION }, async (request
     if (notify?.uid) queueIncidentNotification(tx, incidentNotification({ recipientUid: notify.uid, eventId: notify.record.eventId, versionId: notify.record.eventVersionId, type: 'incident_updated', title: 'Incident update', message: notify.summary, sourceActionId: outboxId, notificationId: `${outboxId}_${notify.uid}` }), now, outboxId);
   });
   await deliverIncidentNotification(outboxId);
-  return { incidentId, action, updatedAt: now, replayed };
+  return { incidentId, action, updatedAt: now, replayed, autoResolved };
 });
 
 export const listAuthorityDirectory = onCall({ region: FUNCTION_REGION }, async (request) => {
@@ -382,13 +420,15 @@ function appendHistory(tx: FirebaseFirestore.Transaction, ref: FirebaseFirestore
 export function safeIncident(record: M4IncidentRecord, role: UserProfile['role'], uid: string) {
   if (role !== 'public' && !(role === 'organizer' && record.organizerId !== uid)) return record;
   const {
-    incidentId, eventId, eventName, eventType, category, description, location, occurredAt, evidence, status, linkedControlId,
+    incidentId, eventId, eventName, eventType, category, description, location, occurredAt, evidence, status, linkedControlId, linkedControlName,
+    referredAuthorityName,
   } = record;
   return {
     incidentId, eventId, eventName, status, category, location, occurredAt, description, evidence,
     ...(eventType ? { eventType } : {}),
+    ...(referredAuthorityName ? { referredAuthorityName } : {}),
     progress: participantIncidentProgress(record),
-    ...(category === 'event_control_discrepancy' && linkedControlId ? { linkedControlId } : {}),
+    ...(category === 'event_control_discrepancy' && linkedControlId ? { linkedControlId, ...(linkedControlName ? { linkedControlName } : {}) } : {}),
   };
 }
 function identifier(value: unknown, field: string) { const result = String(value ?? '').trim(); if (!/^[A-Za-z0-9_-]{8,128}$/.test(result)) throw new HttpsError('invalid-argument', `${field} is invalid.`); return result; }
@@ -405,13 +445,20 @@ export function assertEvidencePath(uid: string, path: string) { if (!new RegExp(
 export function canPerformIncidentAction(record: M4IncidentRecord, profile: UserProfile, uid: string, action: string) {
   if (record.activityClosed === true) return false;
   const organizer = profile.role === 'organizer' && record.organizerId === uid;
+  const internalResponseReady = record.status === 'responding' && Boolean(record.assignedInternalTeam) && !record.referredAuthorityId;
   if (action === 'assign_internal' || action === 'refer_authority') return organizer && ['submitted', 'manual_review_required', 'organizer_review'].includes(record.status);
   if (action === 'record_response') return organizer && !record.referredAuthorityId && ['submitted', 'manual_review_required', 'organizer_review', 'responding'].includes(record.status);
-  if (action === 'resolve') return organizer && record.status === 'awaiting_resolution';
-  if (action === 'record_investigation') return record.status === 'authority_investigation' && profile.role === 'authority' && profile.authorityType === record.referredAuthorityType && record.assignedAuthorityOfficerUid === uid;
+  if (action === 'resolve') return organizer && (record.status === 'awaiting_resolution' || internalResponseReady);
+  if (action === 'record_investigation') return record.status === 'authority_investigation' && profile.role === 'authority' && profile.authorityType === record.referredAuthorityType;
   return false;
 }
-export function assertResolutionReady(record: M4IncidentRecord) { if (record.status !== 'awaiting_resolution') throw new HttpsError('failed-precondition', 'Record a completed response or authority finding before resolution.'); }
+export function assertResolutionReady(record: M4IncidentRecord) {
+  const internalResponseReady = record.status === 'responding' && Boolean(record.assignedInternalTeam) && !record.referredAuthorityId;
+  if (record.status !== 'awaiting_resolution' && !internalResponseReady) throw new HttpsError('failed-precondition', 'Record a completed response or authority finding before resolution.');
+}
+export function shouldAutoResolveAfterResponse(record: Pick<M4IncidentRecord, 'immediateActionRequired'>) {
+  return record.immediateActionRequired === false;
+}
 export function buildIncidentAiPayload(input: Pick<ReturnType<typeof validateSubmission>, 'category' | 'description' | 'location' | 'occurredAt'> & { evidence: M4EvidenceRef[] }, event: EventRecord) { return { category: input.category, description: input.description, location: input.location, occurredAt: input.occurredAt, evidence: input.evidence.map(({ name, mimeType, size }) => ({ name, mimeType, size })), event: { name: event.eventDetails.name, type: event.eventDetails.type, venueName: event.eventDetails.venueName, venueAddress: event.eventDetails.venueAddress, venueState: event.eventDetails.venueState ?? null, venueCapacity: event.eventDetails.venueCapacity, attendance: event.eventDetails.expectedAttendance, startDatetime: event.eventDetails.startDatetime, endDatetime: event.eventDetails.endDatetime } }; }
 export function rankRecommendedAuthorities(entries: M4AuthorityDirectoryEntry[], category: M4IncidentCategory, assessment: M4AIAssessment, event: EventRecord) {
   const locationText = `${event.eventDetails.venueName} ${event.eventDetails.venueAddress} ${event.eventDetails.venueState}`.toLocaleLowerCase();

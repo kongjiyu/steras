@@ -96,6 +96,8 @@ export default function App() {
         <Route path="/organizer/events/:eventId" element={<EventDetail />} />
         <Route path="/organizer/events/:eventId/controls" element={<OrganizerEventControls />} />
         <Route path="/organizer/incidents" element={<Incidents />} />
+        <Route path="/organizer/incidents/list" element={<Incidents />} />
+        <Route path="/organizer/incident/list" element={<Incidents />} />
       </Route>
 
       {/* Authority routes (auth + role=authority) — sidebar layout */}

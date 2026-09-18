@@ -159,6 +159,28 @@ describe('live incident workspace resilience', () => {
     expect(mocks.submit.mock.calls[2][0].idempotencyKey).not.toBe(mocks.submit.mock.calls[0][0].idempotencyKey);
   });
 
+  it('shows a submission loading state and prevents duplicate clicks while Firebase is pending', async () => {
+    let resolveSubmit!: (value: { data: Record<string, unknown> }) => void;
+    mocks.submit.mockImplementationOnce(() => new Promise((resolve) => { resolveSubmit = resolve; }));
+    render(<Incidents />);
+    await openSubmissionForm();
+    await screen.findByRole('option', { name: 'QA Event' });
+    fillReport();
+
+    const button = screen.getByRole('button', { name: 'Submit Incident Report' });
+    fireEvent.click(button);
+
+    expect(await screen.findByRole('button', { name: 'Submitting incident report' })).toBeDisabled();
+    expect(screen.getByText('Submitting incident report… Please keep this page open.')).toBeInTheDocument();
+    expect(mocks.submit).toHaveBeenCalledOnce();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Submitting incident report' }));
+    expect(mocks.submit).toHaveBeenCalledOnce();
+
+    await act(async () => resolveSubmit({ data: {} }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Submitting incident report' })).not.toBeInTheDocument());
+  });
+
   it('does not turn a successful submission into a failed submission when refresh fails', async () => {
     render(<Incidents />);
     await openSubmissionForm();
@@ -207,9 +229,66 @@ describe('live incident workspace resilience', () => {
   it.each(['organizer', 'authority'])('does not expose submission to %s accounts', async (role) => {
     mocks.role = role;
     render(<Incidents />);
-    await screen.findByText('0 accessible records');
+    if (role === 'organizer') {
+      await screen.findByRole('tab', { name: 'Action required (0)' });
+    } else {
+      await screen.findByText('0 accessible records');
+    }
     expect(screen.queryByRole('heading', { name: 'Submit Incident Report' })).not.toBeInTheDocument();
     expect(screen.getByText(/can review and act/)).toBeInTheDocument();
+  });
+
+  it('gives organizers focused indicators and separates active work from closed records', async () => {
+    mocks.role = 'organizer';
+    mocks.list.mockResolvedValue({ data: { incidents: [
+      { ...incident('submitted', 'Action needed'), severity: 'high' as const },
+      { ...incident('awaiting_resolution', 'Resolution ready'), severity: 'high' as const },
+      incident('responding', 'Team responding'),
+      incident('resolved', 'Closed case'),
+    ], reportableEvents: [] } });
+    renderIncidents('/organizer/incidents');
+
+    expect(await screen.findByText('Action Required')).toBeInTheDocument();
+    expect(screen.getByText('High Severity')).toBeInTheDocument();
+    expect(screen.getByText('Resolution Review')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Action required (1)' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Resolution review (1)' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'In progress (1)' })).toBeInTheDocument();
+    expect(screen.getByText('Action needed')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Action needed/ }).textContent).not.toContain('Action required');
+    expect(screen.queryByText('Resolution ready')).not.toBeInTheDocument();
+    expect(screen.queryByText('Closed case')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Resolution review (1)' }));
+    expect(await screen.findByText('Resolution ready')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Resolution ready/ }).textContent).not.toContain('Review for resolution');
+    expect(screen.queryByText('Action needed')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'In progress (1)' }));
+    expect(await screen.findByText('Team responding')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Team responding/ }).textContent).toContain('In progress');
+  });
+
+  it('opens a searchable full organizer incident list with status tabs', async () => {
+    mocks.role = 'organizer';
+    mocks.list.mockResolvedValue({ data: { incidents: [
+      { ...incident('submitted', 'Pending report'), severity: 'high' as const },
+      incident('responding', 'Ongoing report'),
+      incident('resolved', 'Closed report'),
+    ], reportableEvents: [] } });
+    renderIncidents('/organizer/incidents/list');
+
+    expect(await screen.findByRole('heading', { name: 'Incident list' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Incident queue' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Organizer report list' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'All (3)' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Ongoing (1)' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Pending action (1)' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Closed (1)' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Search incident reports')).toBeInTheDocument();
+    expect(screen.getByLabelText('Organizer incident category filter')).toBeInTheDocument();
+    expect(screen.getByText('Pending report')).toBeInTheDocument();
+    expect(screen.getByText('Closed report')).toBeInTheDocument();
   });
 
   it('keeps admin on directory management without participant submission or incident review', async () => {
@@ -259,7 +338,7 @@ describe('live incident workspace resilience', () => {
     mocks.role = 'organizer';
     mocks.list.mockResolvedValue({ data: { incidents: [
       incident('awaiting_resolution', 'Awaiting incident'),
-      incident('submitted', 'New incident'),
+      { ...incident('submitted', 'New incident'), immediateActionRequired: true, aiAssessment: { ...incident('submitted', 'New incident').aiAssessment, immediateActionRequired: true } },
     ], reportableEvents: [] } });
     mocks.directory.mockResolvedValue({ data: { authorities: [{
       authorityId: 'pdrm-kuala-lumpur-demo', name: 'PDRM Kuala Lumpur', authorityType: 'PDRM',
@@ -268,6 +347,7 @@ describe('live incident workspace resilience', () => {
     }] } });
     render(<Incidents />);
     expect(await screen.findByRole('heading', { name: 'New incident' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Open assignment/ }));
     expect(screen.getByRole('button', { name: 'Assign internal team' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Request external authority' })).toBeDisabled();
     fireEvent.change(screen.getByLabelText('Response note'), { target: { value: 'Venue team notified.' } });
@@ -281,6 +361,7 @@ describe('live incident workspace resilience', () => {
     mocks.role = 'organizer';
     mocks.list.mockResolvedValue({ data: { incidents: [incident('awaiting_resolution', 'Awaiting incident')], reportableEvents: [] } });
     render(<Incidents />);
+    fireEvent.click(await screen.findByRole('tab', { name: 'Resolution review (1)' }));
     await screen.findByRole('heading', { name: 'Awaiting incident' });
     expect(screen.queryByRole('button', { name: 'Assign internal team' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Request external authority' })).not.toBeInTheDocument();
