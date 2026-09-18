@@ -439,7 +439,7 @@ function ReportModal({ ctrl, eventId, onClose, onSubmitted, onError }: ReportMod
       if (result.data.alreadyReported) {
         onSubmitted('You already reported this image. The previous incident investigation is still open.');
       } else {
-        onSubmitted(`Report submitted. Reference: ${result.data.ticketId}. The incident queue may take a moment to update.`);
+        onSubmitted(`Report submitted. Reference: ${result.data.ticketId}. A new incident record is being created in the incident module.`);
       }
     } catch (err) {
       onError(errMessage(err));

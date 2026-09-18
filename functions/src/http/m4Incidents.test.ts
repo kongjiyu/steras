@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { EventRecord } from '@shared/types';
 import { M4_AI_PROMPT_VERSION, m4EventDayBounds, m4IncidentIdForSequence, participantIncidentProgress } from '@shared/m4';
 import {
-  assertEvidencePath, assertOccurrenceWithinEventDay, assertReportableEvent, assertResolutionReady, assertSubmissionGeneration, buildIncidentAiPayload,
+  assertEvidencePath, assertOccurrenceWithinEventDay, assertReportableEvent, assertResolutionReady, assertSubmissionGeneration, buildIncidentAiPayload, shouldAutoResolveAfterResponse,
   actionRequestHash, canPerformIncidentAction, canSubmitIncident, rankRecommendedAuthorities, safeIncident, sameSubmission, validateSubmission,
   parseIncidentAiResponse,
 } from './m4Incidents';
@@ -167,17 +167,28 @@ describe('M4 incident input boundary', () => {
     expect(canPerformIncidentAction(record, organizer, 'organizer-1', 'assign_internal')).toBe(false);
     expect(canPerformIncidentAction(record, organizer, 'organizer-1', 'refer_authority')).toBe(false);
     expect(canPerformIncidentAction(record, organizer, 'organizer-2', 'resolve')).toBe(false);
+    const internallyAssigned = { ...record, status: 'responding', referredAuthorityId: undefined, assignedInternalTeam: 'Festival operations team' } as Parameters<typeof canPerformIncidentAction>[0];
+    expect(canPerformIncidentAction(internallyAssigned, organizer, 'organizer-1', 'resolve')).toBe(true);
+    expect(canPerformIncidentAction({ ...internallyAssigned, referredAuthorityId: 'pdrm-kl' }, organizer, 'organizer-1', 'resolve')).toBe(false);
     expect(canPerformIncidentAction(record, authority, 'pdrm-1', 'record_investigation')).toBe(true);
+    expect(canPerformIncidentAction({ ...record, assignedAuthorityOfficerUid: 'another-pdrm-officer' }, authority, 'pdrm-2', 'record_investigation')).toBe(true);
     expect(canPerformIncidentAction({ ...record, status: 'awaiting_resolution' }, authority, 'pdrm-1', 'record_investigation')).toBe(false);
-    expect(canPerformIncidentAction(record, authority, 'pdrm-2', 'record_investigation')).toBe(false);
+    expect(canPerformIncidentAction(record, authority, 'pdrm-2', 'record_investigation')).toBe(true);
     expect(canPerformIncidentAction(record, { role: 'authority', authorityType: 'BOMBA' } as typeof authority, 'pdrm-1', 'record_investigation')).toBe(false);
     expect(canPerformIncidentAction({ ...record, activityClosed: true }, authority, 'pdrm-1', 'record_investigation')).toBe(false);
   });
 
   it('prevents early closure before a completed response or investigation', () => {
     expect(() => assertResolutionReady({ status: 'responding' } as Parameters<typeof assertResolutionReady>[0])).toThrow();
+    expect(() => assertResolutionReady({ status: 'responding', assignedInternalTeam: 'Festival operations team' } as Parameters<typeof assertResolutionReady>[0])).not.toThrow();
     expect(() => assertResolutionReady({ status: 'authority_investigation' } as Parameters<typeof assertResolutionReady>[0])).toThrow();
     expect(() => assertResolutionReady({ status: 'awaiting_resolution' } as Parameters<typeof assertResolutionReady>[0])).not.toThrow();
+  });
+
+  it('auto-closes a response when the assessment says immediate action is not required', () => {
+    expect(shouldAutoResolveAfterResponse({ immediateActionRequired: false })).toBe(true);
+    expect(shouldAutoResolveAfterResponse({ immediateActionRequired: true })).toBe(false);
+    expect(shouldAutoResolveAfterResponse({})).toBe(false);
   });
 
   it('binds an action idempotency replay to the complete action payload and evidence', () => {

@@ -94,16 +94,16 @@ export interface M4IncidentRecord {
   category: M4IncidentCategory; incidentType: string; description: string; location: string; occurredAt: number;
   evidence: M4EvidenceRef[]; aiAssessment: M4AIAssessment; aiAuthorityRecommendation?: M4AuthorityRecommendation; severity?: M4IncidentSeverity;
   immediateActionRequired?: boolean; status: M4IncidentStatus; assignedInternalTeam?: string;
-  referredAuthorityId?: string; referredAuthorityType?: AuthorityType; linkedControlId?: string; linkedStage2DocId?: string;
+  referredAuthorityId?: string; referredAuthorityType?: AuthorityType; referredAuthorityName?: string; linkedControlId?: string; linkedStage2DocId?: string;
   publicReportTicketId?: string; finalResolution?: string; discrepancyOutcome?: 'confirmed_true' | 'dismissed_fake';
-  recommendedAuthorityIds?: string[]; assignedAuthorityOfficerUid?: string;
+  recommendedAuthorityIds?: string[]; assignedAuthorityOfficerUid?: string; linkedControlName?: string;
   assessmentEligible: boolean; synthetic: boolean; date: number; createdAt: number; updatedAt: number; resolvedAt?: number;
   reviewedAt?: number; actionStartedAt?: number;
   activityClosed?: boolean; closureReason?: 'event_withdrawn'; closedAt?: number;
 }
 
 /** Builds the participant-safe progress timeline without exposing internal AI or response details. */
-export function participantIncidentProgress(record: Pick<M4IncidentRecord, 'status' | 'createdAt' | 'updatedAt' | 'resolvedAt' | 'reviewedAt' | 'actionStartedAt' | 'finalResolution'>): M4ParticipantProgressStep[] {
+export function participantIncidentProgress(record: Pick<M4IncidentRecord, 'status' | 'createdAt' | 'updatedAt' | 'resolvedAt' | 'reviewedAt' | 'actionStartedAt' | 'finalResolution'> & Partial<Pick<M4IncidentRecord, 'assignedInternalTeam' | 'referredAuthorityType' | 'referredAuthorityName'>>): M4ParticipantProgressStep[] {
   const reviewComplete = ['responding', 'authority_investigation', 'awaiting_resolution', 'resolved'].includes(record.status);
   const actionInProgress = ['responding', 'authority_investigation'].includes(record.status);
   const actionComplete = ['awaiting_resolution', 'resolved'].includes(record.status);
@@ -116,7 +116,18 @@ export function participantIncidentProgress(record: Pick<M4IncidentRecord, 'stat
   }
   steps.push({ key: 'review', title: 'Reviewed', state: 'complete', timestamp: record.reviewedAt ?? record.updatedAt, description: 'Your report has been reviewed.' });
   if (actionInProgress || actionComplete) {
-    steps.push({ key: 'action', title: 'Action in progress', state: actionInProgress ? 'current' : 'complete', timestamp: record.actionStartedAt ?? record.updatedAt, description: actionInProgress ? 'The organiser has started action on this report.' : 'The response action has been completed.' });
+    const authorityName = record.referredAuthorityName ?? record.referredAuthorityType ?? 'the assigned authority';
+    const actionTitle = record.status === 'authority_investigation'
+      ? `Investigation ongoing by ${authorityName}`
+      : record.status === 'responding'
+        ? `Action taken by ${record.assignedInternalTeam ?? 'the internal response team'}`
+        : 'Action completed';
+    const actionDescription = record.status === 'authority_investigation'
+      ? 'The selected authority is investigating this report.'
+      : record.status === 'responding'
+        ? 'The organiser has assigned an internal response team.'
+        : 'The response action has been completed.';
+    steps.push({ key: 'action', title: actionTitle, state: actionInProgress ? 'current' : 'complete', timestamp: record.actionStartedAt ?? record.updatedAt, description: actionDescription });
   }
   if (resolutionCurrent || resolved) steps.push({ key: 'resolved', title: 'Resolved', state: resolved ? 'complete' : 'current', timestamp: resolved ? record.resolvedAt : undefined, description: resolved ? 'The incident has been resolved.' : 'The response is complete and awaiting final resolution.', ...(resolved && record.finalResolution ? { note: record.finalResolution } : {}) });
   return steps;
