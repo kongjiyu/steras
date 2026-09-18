@@ -36,7 +36,14 @@ import {
   Users,
 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
-import { EVENT_TYPES, EventType } from '@shared/types';
+import {
+  EVENT_STATUSES,
+  EVENT_TYPES,
+  type AuthorityType,
+  type EventStatus,
+  EventType,
+  type RiskLevel,
+} from '@shared/types';
 import type { AnalyticsPortfolioRequest, AnalyticsPortfolioResponse } from '@shared/analytics';
 import { functions, isFirebaseConfigured } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -103,6 +110,28 @@ interface AnalyticsProps {
   embedded?: boolean;
 }
 
+interface AnalyticsFilters {
+  scope: AnalysisScope;
+  eventType: EventType;
+  from: string;
+  to: string;
+  includePresentationData: boolean;
+  status: EventStatus | 'all';
+  risk: RiskLevel | 'all';
+  authority: AuthorityType | 'all';
+}
+
+const DEFAULT_FILTERS: AnalyticsFilters = {
+  scope: 'overall',
+  eventType: 'festival',
+  from: '',
+  to: '',
+  includePresentationData: false,
+  status: 'all',
+  risk: 'all',
+  authority: 'all',
+};
+
 export default function Analytics({ previewMode = false, embedded = false }: AnalyticsProps) {
   const { profile, signOut } = useAuth();
   const navigate = useNavigate();
@@ -112,10 +141,14 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
   const [eventType, setEventType] = useState<EventType>('festival');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const [statusFilter, setStatusFilter] = useState<EventStatus | 'all'>('all');
+  const [riskFilter, setRiskFilter] = useState<RiskLevel | 'all'>('all');
+  const [authorityFilter, setAuthorityFilter] = useState<AuthorityType | 'all'>('all');
   const [loading, setLoading] = useState(!previewMode);
   const [error, setError] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [includePresentationData, setIncludePresentationData] = useState(true);
+  const [includePresentationData, setIncludePresentationData] = useState(false);
+  const [appliedFilters, setAppliedFilters] = useState<AnalyticsFilters>(DEFAULT_FILTERS);
   const [reportRecords, setReportRecords] = useState<AnalyticsRecord[]>([]);
   const [backendMeta, setBackendMeta] = useState<{
     syntheticExcluded: number;
@@ -142,7 +175,17 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
     const load = async () => {
       try {
         const callable = httpsCallable<AnalyticsPortfolioRequest, AnalyticsPortfolioResponse>(functions, 'getAnalyticsPortfolio');
-        const response = await callable({ limit: 500, includeSynthetic: includePresentationData });
+        setLoading(true);
+        const response = await callable({
+          limit: 500,
+          includeSynthetic: appliedFilters.includePresentationData,
+          ...(appliedFilters.from ? { from: malaysiaBoundary(appliedFilters.from, 'start') } : {}),
+          ...(appliedFilters.to ? { to: malaysiaBoundary(appliedFilters.to, 'end') } : {}),
+          ...(appliedFilters.scope === 'eventType' ? { eventTypes: [appliedFilters.eventType] } : {}),
+          ...(appliedFilters.status !== 'all' ? { statuses: [appliedFilters.status] } : {}),
+          ...(appliedFilters.risk !== 'all' ? { riskLevels: [appliedFilters.risk] } : {}),
+          ...(appliedFilters.authority !== 'all' ? { authorityTypes: [appliedFilters.authority] } : {}),
+        });
         if (!active) return;
         const validated = parseAnalyticsPortfolioResponse(response.data);
         if (!validated) throw new Error('Invalid analytics response');
@@ -158,10 +201,18 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
         };
         setRecords(nextRecords);
         setBackendMeta(nextMeta);
-        setReportRecords(selectRecords(nextRecords, 'overall', undefined, '', ''));
-        setReport(buildReportModel('risk-incident', 'overall', undefined, {
+        setReportRecords(selectRecords(
+          nextRecords,
+          appliedFilters.scope,
+          appliedFilters.scope === 'eventType' ? appliedFilters.eventType : undefined,
+          appliedFilters.from,
+          appliedFilters.to,
+        ));
+        setReport(buildReportModel(reportType, appliedFilters.scope, appliedFilters.scope === 'eventType' ? appliedFilters.eventType : undefined, {
           records: nextRecords,
-          includeSynthetic: includePresentationData,
+          from: appliedFilters.from,
+          to: appliedFilters.to,
+          includeSynthetic: appliedFilters.includePresentationData,
           syntheticExcluded: nextMeta.syntheticExcluded,
           unavailableSections: nextMeta.unavailableSections,
           totalMatched: nextMeta.totalMatched,
@@ -179,11 +230,17 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
     };
     void load();
     return () => { active = false; };
-  }, [includePresentationData, previewMode, profile?.role]);
+  }, [appliedFilters, previewMode, profile?.role, reportType]);
 
   const selectedRecords = useMemo(
-    () => selectRecords(records, scope, scope === 'eventType' ? eventType : undefined, from, to),
-    [eventType, from, records, scope, to],
+    () => selectRecords(
+      records,
+      appliedFilters.scope,
+      appliedFilters.scope === 'eventType' ? appliedFilters.eventType : undefined,
+      appliedFilters.from,
+      appliedFilters.to,
+    ),
+    [appliedFilters, records],
   );
 
   const handleSignOut = async () => {
@@ -194,6 +251,21 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
   const handleGenerate = () => {
     if (loading || error || (from && to && from > to)) return;
     setIsGenerating(true);
+    const nextFilters: AnalyticsFilters = {
+      scope,
+      eventType,
+      from,
+      to,
+      includePresentationData,
+      status: statusFilter,
+      risk: riskFilter,
+      authority: authorityFilter,
+    };
+    setAppliedFilters(nextFilters);
+    if (!previewMode) {
+      setIsGenerating(false);
+      return;
+    }
     const nextReport = buildReportModel(reportType, scope, scope === 'eventType' ? eventType : undefined, {
       preview: previewMode,
       records,
@@ -212,6 +284,22 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
     setIsGenerating(false);
   };
 
+  const handleResetFilters = () => {
+    setScope(DEFAULT_FILTERS.scope);
+    setEventType(DEFAULT_FILTERS.eventType);
+    setFrom(DEFAULT_FILTERS.from);
+    setTo(DEFAULT_FILTERS.to);
+    setIncludePresentationData(DEFAULT_FILTERS.includePresentationData);
+    setStatusFilter(DEFAULT_FILTERS.status);
+    setRiskFilter(DEFAULT_FILTERS.risk);
+    setAuthorityFilter(DEFAULT_FILTERS.authority);
+    setAppliedFilters(DEFAULT_FILTERS);
+    if (previewMode) {
+      setReport(buildReportModel(reportType, DEFAULT_FILTERS.scope, undefined, { preview: true }));
+      setReportRecords([]);
+    }
+  };
+
   const handleExport = () => {
     downloadBlob(
       reportCsv(report, reportRecords),
@@ -228,7 +316,7 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
         <section className="reports-hero">
           <div className="reports-hero__grid">
             <div className="relative z-[1]">
-              <div className="reports-hero__eyebrow"><Activity size={14} /> Analytics &amp; Reporting</div>
+              <div className="reports-hero__eyebrow"><Activity size={14} /> Module 5 · Analytics &amp; Reporting</div>
               <h1>See the portfolio clearly.</h1>
               <p>
                 Read-only intelligence for the STERAS administrator. Compare event risk,
@@ -241,16 +329,20 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
                 <i />
                 <span>Read-only</span>
                 <i />
-                <span>PII-safe</span>
+                <span>Personal information excluded</span>
               </div>
             </div>
             <div className="reports-hero__meta relative z-[1]">
-              <MetaStat icon={<Database size={17} />} label="Eligible responses" value={loading ? 'Loading...' : error ? 'Data Not Available' : formatNumber(report.eligibleRecords)} />
+              <MetaStat icon={<Database size={17} />} label="Eligible applications" value={loading ? 'Loading...' : error ? 'Data Not Available' : formatNumber(report.eligibleRecords)} />
               <MetaStat icon={<CalendarDays size={17} />} label="Coverage" value={<CoverageValue label={report.coverage.label} />} />
               <MetaStat
                 icon={<ShieldCheck size={17} />}
-                label={includePresentationData ? 'Presentation records' : 'Presentation excluded'}
-                value={includePresentationData ? formatNumber(backendMeta.presentationIncluded) : report.syntheticExcluded === null ? 'Data Not Available' : formatNumber(report.syntheticExcluded)}
+                label={previewMode ? 'Preview records' : includePresentationData ? 'Presentation records' : 'Presentation excluded'}
+                value={previewMode
+                  ? formatNumber(report.population)
+                  : includePresentationData
+                    ? formatNumber(backendMeta.presentationIncluded)
+                    : report.syntheticExcluded === null ? 'Data Not Available' : formatNumber(report.syntheticExcluded)}
               />
             </div>
           </div>
@@ -263,7 +355,7 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
               <h2 id="report-builder-title">Choose the question you need answered</h2>
               <p>Each view uses the latest valid source records available to the system.</p>
             </div>
-            <div className="report-builder__source"><Database size={15} /> {previewMode ? 'Design preview · synthetic data' : includePresentationData ? 'Live Firestore · presentation records included' : 'Live Firestore · operational records only'}</div>
+            <div className="report-builder__source"><Database size={15} /> {previewMode ? 'Preview data' : includePresentationData ? 'Live Firestore · presentation records included' : 'Live Firestore · operational records only'}</div>
           </div>
 
           <div className="report-selector-grid">
@@ -287,15 +379,6 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
           </div>
 
           <div className="report-filters">
-            {!previewMode && (
-              <label className="report-filter-group min-w-[13rem] cursor-pointer">
-                <span className="report-filter-label">Presentation dataset</span>
-                <span className="flex min-h-11 items-center gap-2 rounded-md border border-[#d8d0c1] bg-white px-3 text-sm font-semibold text-ink-700">
-                  <input type="checkbox" checked={includePresentationData} onChange={(event) => setIncludePresentationData(event.target.checked)} />
-                  Include presentation records
-                </span>
-              </label>
-            )}
             <div className="report-filter-group">
               <span className="report-filter-label">Analysis scope</span>
               <div className="scope-toggle" role="group" aria-label="Analysis scope">
@@ -317,8 +400,37 @@ export default function Analytics({ previewMode = false, embedded = false }: Ana
               <span className="report-filter-label">To</span>
               <input type="date" value={to} min={from || undefined} onChange={(event) => setTo(event.target.value)} />
             </label>
+            {!previewMode && (
+              <>
+                <label className="report-filter-group report-filter-select">
+                  <span className="report-filter-label">Application status</span>
+                  <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as EventStatus | 'all')}>
+                    <option value="all">All statuses</option>
+                    {EVENT_STATUSES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </label>
+                <label className="report-filter-group report-filter-select">
+                  <span className="report-filter-label">Official risk</span>
+                  <select value={riskFilter} onChange={(event) => setRiskFilter(event.target.value as RiskLevel | 'all')}>
+                    <option value="all">All risk levels</option>
+                    {(['Low', 'Medium', 'High'] as RiskLevel[]).map((value) => <option key={value} value={value}>{value}</option>)}
+                  </select>
+                </label>
+                <label className="report-filter-group report-filter-select">
+                  <span className="report-filter-label">Required authority</span>
+                  <select value={authorityFilter} onChange={(event) => setAuthorityFilter(event.target.value as AuthorityType | 'all')}>
+                    <option value="all">All authorities</option>
+                    {(['PDRM', 'BOMBA', 'KKM', 'DBKL', 'MOTAC'] as AuthorityType[]).map((value) => <option key={value} value={value}>{value}</option>)}
+                  </select>
+                </label>
+                <label className="report-filter-checkbox">
+                  <input type="checkbox" checked={includePresentationData} onChange={(event) => setIncludePresentationData(event.target.checked)} />
+                  <span><strong>Include presentation data</strong><small>Off by default; Admin opt-in only</small></span>
+                </label>
+              </>
+            )}
             <div className="report-filter-actions">
-              <button type="button" className="btn-secondary !min-h-[42px]" onClick={() => { setFrom(''); setTo(''); }}>
+              <button type="button" className="btn-secondary !min-h-[42px]" onClick={handleResetFilters}>
                 <RefreshCw size={15} /> Reset
               </button>
               <button type="button" className="btn-primary !min-h-[42px]" onClick={handleGenerate} disabled={isGenerating || loading || Boolean(error) || Boolean(from && to && from > to)}>
@@ -390,21 +502,21 @@ function ReportOutput({
           <div className="flex flex-wrap items-center gap-2">
             <p className="report-kicker">{REPORT_CATALOG.find((item) => item.id === model.reportType)?.eyebrow ?? 'Analytics report'}</p>
             <StatusChip status={model.dataStatus} />
-            {previewMode && <span className="status-chip status-chip--demo">Synthetic design data</span>}
+            {previewMode && <span className="status-chip status-chip--demo">Preview only</span>}
           </div>
           <h2>{model.title}</h2>
           <p>{model.scopeLabel + (model.eventTypeLabel ? ' · ' + model.eventTypeLabel : '') + ' · Generated ' + formatDateTime(model.generatedAt)}</p>
         </div>
         <div className="report-output-actions no-print">
           <button type="button" className="btn-secondary" onClick={onExport}><Download size={15} /> Export CSV</button>
-          <button type="button" className="btn-primary" onClick={onPdf}><FileDown size={15} /> Save as PDF</button>
+          <button type="button" className="btn-primary" onClick={onPdf}><FileDown size={15} /> Print / Save as PDF</button>
         </div>
       </div>
 
       <div className="report-notice">
         <ShieldCheck size={16} />
-        <span>Latest valid source records only. Personal information, private evidence paths, incident descriptions, and internal authority notes are excluded.</span>
-        <span className="report-notice__coverage"><CalendarDays size={14} /> {model.coverage.label}</span>
+        <span className="report-notice__message">Latest valid source records only. Personal information, private evidence paths, incident descriptions, and internal authority notes are excluded.</span>
+        <span className="report-notice__coverage"><CalendarDays size={14} /> Application creation date · Asia/Kuala_Lumpur · {model.coverage.label}</span>
       </div>
       {model.truncated && (
         <div className="report-callout report-callout--warning mt-4" role="status">
@@ -627,26 +739,30 @@ function ControlComplianceView({ model }: { model: ReportModel }) {
 
 function DefinitionsPanel({ definitions }: { definitions: MetricDefinition[] }) {
   return (
-    <section className="definitions-panel mt-6">
-      <div className="definitions-panel__heading">
-        <div>
-          <p className="report-kicker">Trust layer</p>
-          <h2>Metric definitions &amp; availability rules</h2>
-          <p>Every number has a source boundary. Missing values remain visible as <strong>Data Not Available</strong>.</p>
+    <details className="definitions-panel mt-6">
+      <summary className="definitions-panel__summary">
+        <div className="definitions-panel__heading">
+          <div>
+            <p className="report-kicker">Trust layer</p>
+            <h2>Metric definitions &amp; availability rules</h2>
+            <p>Every number has a source boundary. Missing values remain visible as <strong>Data Not Available</strong>.</p>
+          </div>
+          <ChevronRight className="definitions-panel__toggle" size={20} aria-hidden="true" />
         </div>
-        <div className="definitions-panel__privacy"><LockKeyhole size={15} /> No PII in report output</div>
+      </summary>
+      <div className="definitions-panel__content">
+        <div className="overflow-x-auto">
+          <table className="report-table report-table--definitions">
+            <thead><tr><th>Metric</th><th>Formula</th><th>Denominator</th><th>Unavailable rule</th></tr></thead>
+            <tbody>{definitions.map((item) => <tr key={item.metric}><td className="font-semibold text-ink-800">{item.metric}</td><td>{item.formula}</td><td>{item.denominator}</td><td>{item.unavailable}</td></tr>)}</tbody>
+          </table>
+        </div>
+        <div className="definitions-panel__footer">
+          <span><ShieldCheck size={15} /> Read-only analytics · source records are never changed</span>
+          <span><FileText size={15} /> CSV export and browser Print / Save as PDF include scope, date, coverage, source, and privacy metadata</span>
+        </div>
       </div>
-      <div className="overflow-x-auto">
-        <table className="report-table report-table--definitions">
-          <thead><tr><th>Metric</th><th>Formula</th><th>Denominator</th><th>Unavailable rule</th></tr></thead>
-          <tbody>{definitions.map((item) => <tr key={item.metric}><td className="font-semibold text-ink-800">{item.metric}</td><td>{item.formula}</td><td>{item.denominator}</td><td>{item.unavailable}</td></tr>)}</tbody>
-        </table>
-      </div>
-      <div className="definitions-panel__footer">
-        <span><ShieldCheck size={15} /> Read-only analytics · source records are never changed</span>
-        <span><FileText size={15} /> CSV and PDF exports include scope, date, coverage, source, and privacy metadata</span>
-      </div>
-    </section>
+    </details>
   );
 }
 
@@ -781,7 +897,7 @@ function formatNumber(value: number) {
 
 function percent(value: number) {
   if (!Number.isFinite(value)) return 'Data Not Available';
-  return (value * 100).toFixed(value * 100 < 10 ? 1 : 0) + '%';
+  return (value * 100).toFixed(1) + '%';
 }
 
 function formatMonth(month: string) {
@@ -790,6 +906,10 @@ function formatMonth(month: string) {
 
 function formatDateTime(timestamp: number) {
   return new Intl.DateTimeFormat('en-MY', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kuala_Lumpur' }).format(new Date(timestamp));
+}
+
+function malaysiaBoundary(date: string, boundary: 'start' | 'end') {
+  return Date.parse(`${date}T${boundary === 'start' ? '00:00:00.000' : '23:59:59.999'}+08:00`);
 }
 
 function downloadBlob(content: string, filename: string, type: string) {

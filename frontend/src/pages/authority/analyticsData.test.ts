@@ -50,6 +50,19 @@ describe('analyticsData', () => {
     expect(filterAnalyticsRecords(records, '2026-02-01', '2026-02-28').map((record) => record.eventId)).toEqual(['two']);
   });
 
+  it('uses Asia/Kuala_Lumpur consistently for filtering and monthly grouping', () => {
+    const boundaryRecord = record({
+      eventId: 'kl-boundary',
+      eventName: 'KL boundary',
+      eventType: 'festival',
+      status: 'Pending',
+      createdAt: Date.parse('2026-01-31T16:30:00.000Z'),
+      updatedAt: Date.parse('2026-01-31T16:30:00.000Z'),
+    });
+    expect(filterAnalyticsRecords([boundaryRecord], '2026-02-01', '2026-02-01')).toHaveLength(1);
+    expect(buildMonthlyAnalytics([boundaryRecord])[0]?.month).toBe('2026-02');
+  });
+
   it('keeps exports PII-free and neutralizes spreadsheet formulas', () => {
     const csv = analyticsCsv(records);
     expect(csv).toContain("'=Unsafe name");
@@ -58,7 +71,7 @@ describe('analyticsData', () => {
   });
 
   it('summarizes approval counts without dividing by zero', () => {
-    expect(analyticsSummary(records)).toMatchObject({ applications: 2, approved: 1, aiCategoryAgreementRate: 0, fallbackRate: 0 });
+    expect(analyticsSummary(records)).toMatchObject({ applications: 2, approved: 1, aiCategoryAgreementRate: null, fallbackRate: null });
   });
 
   it('preserves a valid zero-hour turnaround instead of treating it as unavailable', () => {
@@ -81,6 +94,57 @@ describe('analyticsData', () => {
   it('rejects invalid and reversed date ranges predictably', () => {
     expect(filterAnalyticsRecords(records, 'not-a-date', '2026-02-28')).toEqual([]);
     expect(filterAnalyticsRecords(records, '2026-03-01', '2026-02-01')).toEqual([]);
+  });
+
+  it('applies preview date filters to every report calculation', () => {
+    const full = buildReportModel('application-outcome', 'overall', undefined, {
+      preview: true, from: '2026-03-01', to: '2026-08-31',
+    });
+    const june = buildReportModel('application-outcome', 'overall', undefined, {
+      preview: true, from: '2026-06-01', to: '2026-06-30',
+    });
+    expect(june.population).toBeLessThan(full.population);
+    expect(june.monthlyTrend.map((item) => item.month)).toEqual(['2026-06']);
+    expect(june.coverage.label).toBe('01 Jun 2026 – 30 Jun 2026');
+    const approval = String(june.summary.find((item) => item.label === 'Approved outcome')?.value);
+    expect(Number(approval.replace('%', ''))).toBeLessThanOrEqual(100);
+  });
+
+  it('keeps preview resource quantities unscaled and derives rates from counts', () => {
+    const full = buildReportModel('resource-override', 'overall', undefined, {
+      preview: true, from: '2026-03-01', to: '2026-08-31',
+    });
+    const june = buildReportModel('resource-override', 'overall', undefined, {
+      preview: true, from: '2026-06-01', to: '2026-06-30',
+    });
+    expect(june.resources[0]?.baseline).toBe(full.resources[0]?.baseline);
+    for (const item of june.resources) {
+      expect(item.overrideRate).toBe(item.overrideSample ? (item.overrides ?? 0) / item.overrideSample : null);
+    }
+    const comparableItems = june.resources.reduce((sum, item) => sum + item.overrideSample, 0);
+    const overrides = june.resources.reduce((sum, item) => sum + (item.overrides ?? 0), 0);
+    expect(june.summary.find((item) => item.label === 'Override rate')?.value)
+      .toBe(`${(overrides / comparableItems * 100).toFixed(1)}%`);
+  });
+
+  it('derives preview control verification from the displayed status counts', () => {
+    const model = buildReportModel('control-compliance', 'overall', undefined, { preview: true });
+    const verified = model.controls.statuses.find((item) => item.label === 'Verified')?.value ?? 0;
+    expect(model.controls.verifiedRate).toBe(model.controls.totalItems ? verified / model.controls.totalItems : 0);
+    expect(model.summary.find((item) => item.label === 'Control items')?.value).toBe(model.controls.totalItems);
+    expect(model.summary.find((item) => item.label === 'Verified')?.value).toBe(`${(model.controls.verifiedRate * 100).toFixed(1)}%`);
+  });
+
+  it('derives preview incident summary percentages from the displayed incident rows', () => {
+    const model = buildReportModel('risk-incident', 'overall', undefined, {
+      preview: true, from: '2026-06-01', to: '2026-06-30',
+    });
+    const actionRequired = model.incidents.immediateAction.find((item) => item.label === 'Action required')?.value ?? 0;
+    const actionTotal = model.incidents.immediateAction.reduce((sum, item) => sum + item.value, 0);
+    expect(model.summary.find((item) => item.label === 'Action required')?.value)
+      .toBe(`${(actionRequired / actionTotal * 100).toFixed(1)}%`);
+    expect(model.incidents.resolution.some((item) => item.label === 'Rejected')).toBe(false);
+    expect(model.incidents.resolution.some((item) => item.label === 'Dismissed as False')).toBe(true);
   });
 
   it('keeps a count of one distinct from a 100 percent share', () => {
@@ -121,6 +185,18 @@ describe('analyticsData', () => {
     expect(csv).toContain('"events_with_incident_rate","0.5"');
     expect(csv).toContain('"average_incidents_per_event","2"');
     expect(csv).toContain('"average_incidents_per_affected_event","4"');
+  });
+
+  it('labels dismissed-false incident outcomes without calling them rejected', () => {
+    const dismissed = record({ ...records[0], incidents: {
+      available: true, total: 1, verified: 0, severityAvailable: true,
+      bySeverity: { low: 1, medium: 0, high: 0 },
+      byStatus: { verified: 0, under_review: 0, rejected: 1, unknown: 0 },
+      immediateActionRequired: { available: false }, externalEscalations: { available: false },
+    } });
+    const model = buildReportModel('risk-incident', 'overall', undefined, { records: [dismissed] });
+    expect(model.incidents.resolution.map(({ label, value }) => ({ label, value })))
+      .toEqual([{ label: 'Dismissed as False', value: 1 }]);
   });
 
   it('excludes unavailable incident records from counts and denominators', () => {
