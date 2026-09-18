@@ -58,9 +58,11 @@ import {
   Stage1RedactionMask,
 } from '@shared/types';
 import { stage2DocumentId } from '@shared/stage2';
+import { stage1DocumentId } from '@shared/stage1';
 import { db, functions } from '../../config/firebase';
 import EmptyState from '../../components/ui/EmptyState';
 import StatusBadge from '../../components/ui/StatusBadge';
+import { displayIdentityName, useDisplayIdentities, type DisplayIdentityMap } from '../../hooks/useDisplayIdentities';
 
 interface PublishResponse {
   published: true;
@@ -591,6 +593,7 @@ interface AdminStage1DocumentationProps {
 
 function AdminStage1Documentation(props: AdminStage1DocumentationProps) {
   const { controls, stage1Docs, stage1Revisions, officers, reviewerBusy, onAssignReviewer, redactions, redactionBusy, editingRedaction, maskDraft, reviewedPages, onGenerate, onOpenEditor, onSave, onPublish, onCancelEditor, onMasksChange, onReviewedPagesChange } = props;
+  const identityNames = useDisplayIdentities(officers.map((officer) => officer.uid));
   return (
     <div className="space-y-4" data-testid="admin-stage1-documentation">
       <div className="rounded-md border border-brand-200 bg-brand-50/60 p-4 text-sm leading-6 text-brand-900">
@@ -598,7 +601,7 @@ function AdminStage1Documentation(props: AdminStage1DocumentationProps) {
       </div>
       {controls.length === 0 ? <div className="card"><div className="card-body text-sm text-ink-500">No current control list is available for this application.</div></div> : controls.map((control) => {
         const documents = control.stage1Requirements.map((requirement) => {
-          const docId = `${control.controlId}-s1-${requirement.docType}`;
+          const docId = stage1DocumentId(control.controlId, requirement.docType);
           return { requirement, doc: stage1Docs[`${control.controlId}__${docId}`] ?? null, key: `${control.controlId}__${docId}` };
         });
         return <section key={control.controlId} className="card" data-testid={`admin-stage1-card-${control.authority}`}>
@@ -610,7 +613,7 @@ function AdminStage1Documentation(props: AdminStage1DocumentationProps) {
                 Stage 1 reviewer
                 <select className="input !min-h-9 !w-auto !py-1 text-xs" value={control.stage1ReviewerUid ?? ''} onChange={(event) => { if (event.target.value) onAssignReviewer(control, event.target.value); }} disabled={reviewerBusy === control.controlId}>
                   <option value="">Default final-review officer</option>
-                  {officers.filter((officer) => officer.authorityType === control.authority).map((officer) => <option key={officer.uid} value={officer.uid}>{officer.uid}</option>)}
+                  {officers.filter((officer) => officer.authorityType === control.authority).map((officer) => <option key={officer.uid} value={officer.uid}>{formatStage1ReviewerLabel(officer, identityNames)}</option>)}
                 </select>
               </label>
             </div>
@@ -658,6 +661,10 @@ function AdminStage1Documentation(props: AdminStage1DocumentationProps) {
       })}
     </div>
   );
+}
+
+export function formatStage1ReviewerLabel(officer: OfficerProfile, identities: DisplayIdentityMap): string {
+  return `${displayIdentityName(officer.uid, identities, `${officer.authorityType} officer`)} · ${officer.authorityType} · ${officer.state}`;
 }
 
 interface RejectModalProps {

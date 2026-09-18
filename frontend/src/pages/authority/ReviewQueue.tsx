@@ -5,6 +5,7 @@ import { format } from 'date-fns';
 import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import { Assignment, COLLECTIONS, EventControl, EventRecord, Stage1Doc } from '@shared/types';
 import { resolveApplicationDisplayState } from '@shared/applicationState';
+import { stage1DocumentId } from '@shared/stage1';
 import { db, isFirebaseConfigured } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import EmptyState from '../../components/ui/EmptyState';
@@ -69,7 +70,7 @@ export default function ReviewQueue() {
           stage1PendingCount = ownControls.reduce((count, control, index) => {
             const byId = new Map(docs[index].docs.map((item) => [item.id, item.data() as Stage1Doc]));
             return count + control.stage1Requirements.filter((requirement) => requirement.required
-              && byId.get(`${control.controlId}-s1-${requirement.docType}`)?.status === 'pending_verification').length;
+              && byId.get(stage1DocumentId(control.controlId, requirement.docType))?.status === 'pending_verification').length;
           }, 0);
         }
         return { event, assignment, stage1PendingCount, decision: assignment?.decision, action: authorityQueueAction({ event, assignment, stage1PendingCount }) };

@@ -46,6 +46,7 @@ import { createNotification } from '../utils/notifications';
 import { validateBase64File } from '../utils/base64File';
 import { isActiveControlGeneration } from '../utils/controlLifecycle';
 import { stage2DocumentId, stage2PublicControlId } from '@shared/stage2';
+import { stage1DocumentId } from '@shared/stage1';
 
 interface SubmitStage2DocRequest {
   eventId?: string;
@@ -143,7 +144,7 @@ export async function submitStage2DocForUser(
     }
     const requiredStage1 = control.stage1Requirements.filter((requirement) => requirement.required);
     const stage1ById = new Map(stage1DocsSnap.docs.map((item) => [item.id, item.data() as { status?: string }]));
-    const incomplete = requiredStage1.filter((requirement) => stage1ById.get(`${controlId}-s1-${requirement.docType}`)?.status !== 'verified');
+    const incomplete = requiredStage1.filter((requirement) => stage1ById.get(stage1DocumentId(controlId, requirement.docType))?.status !== 'verified');
     if (incomplete.length > 0) {
       throw new HttpsError('failed-precondition', `Stage 2 is locked until this control's Stage 1 documents are approved: ${incomplete.map((requirement) => requirement.label).join(', ')}.`);
     }
