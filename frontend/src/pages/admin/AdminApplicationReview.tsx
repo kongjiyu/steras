@@ -820,7 +820,7 @@ export default function AdminApplicationReview() {
                     Event Control List
                   </Link>
                   {event.controlListGenerated === true && (
-                    <Link to={`/admin/applications/${event.eventId}/documentation`} className="btn-secondary w-full justify-start">
+                    <Link to={`/admin/applications/${event.eventId}/controls?tab=stage1`} className="btn-secondary w-full justify-start">
                       Event Documentation
                     </Link>
                   )}

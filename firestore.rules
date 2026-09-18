@@ -449,6 +449,13 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Provenance and repair governance is server-only. This collection may
+    // contain source paths and verification decisions and must never be
+    // exposed through client reads or writes.
+    match /data_governance_records/{recordId} {
+      allow read, write: if false;
+    }
+
     // ---- M4 incidents — privacy-safe access goes through role-aware callables ----
     match /incidents/{incidentId} {
       allow read, write: if false;

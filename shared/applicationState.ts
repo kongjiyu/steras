@@ -173,8 +173,8 @@ export interface OfficerDecisionReadiness {
 /** Resolve the exact blocker for an officer application decision. This is a
  * pure, serialisable rule shared by the Authority UI and callable fences. */
 export function resolveOfficerDecisionReadiness(input: OfficerDecisionReadinessInput): OfficerDecisionReadiness {
-  if (input.eventStatus !== 'UnderReview' || input.reviewStage !== 'authority') {
-    return { ready: false, reason: 'review_closed', message: 'Officer decisions are available only during Authority Review.' };
+  if (input.eventStatus !== 'UnderReview' || (input.reviewStage !== 'authority' && input.reviewStage !== 'second')) {
+    return { ready: false, reason: 'review_closed', message: 'Officer decisions are available during Authority or Final Review.' };
   }
   const assignment = input.assignment;
   if (!assignment || assignment.status === 'revoked') {

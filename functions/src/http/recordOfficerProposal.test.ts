@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { allRequiredAssignmentsCompleted, assertCurrentOfficerAssignment } from './recordOfficerProposal';
+import { allRequiredAssignmentsCompleted, assertCurrentOfficerAssignment, isOfficerReviewOpen } from './recordOfficerProposal';
 
 const assignment = {
   assignmentId: 'v1_PDRM',
@@ -13,6 +13,14 @@ const assignment = {
 } as const;
 
 describe('recordOfficerProposal transactional assignment fence', () => {
+  it('keeps amendments open through Final Review but closes after Admin finalisation', () => {
+    expect(isOfficerReviewOpen({ status: 'UnderReview', reviewStage: 'authority' })).toBe(true);
+    expect(isOfficerReviewOpen({ status: 'UnderReview', reviewStage: 'second' })).toBe(true);
+    const finalDecision = { reviewerUid: 'admin-1', decidedAt: 1, confirmedDecision: 'Approved' as const };
+    expect(isOfficerReviewOpen({ status: 'Approved', reviewStage: 'closed', secondReview: finalDecision })).toBe(false);
+    expect(isOfficerReviewOpen({ status: 'UnderReview', reviewStage: 'second', secondReview: finalDecision })).toBe(false);
+  });
+
   it('accepts the current canonical pending, in-progress, or completed assignment', () => {
     expect(() => assertCurrentOfficerAssignment(assignment, 'v1_PDRM', 'event-1', 'v1', 'PDRM', 'officer-1')).not.toThrow();
     expect(() => assertCurrentOfficerAssignment({ ...assignment, status: 'in_progress' }, 'v1_PDRM', 'event-1', 'v1', 'PDRM', 'officer-1')).not.toThrow();

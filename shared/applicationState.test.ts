@@ -72,6 +72,10 @@ describe('resolveOfficerDecisionReadiness', () => {
     expect(resolveOfficerDecisionReadiness(input)).toMatchObject({ ready: true });
   });
 
+  it('keeps the assigned officer decision-ready during Final Review', () => {
+    expect(resolveOfficerDecisionReadiness({ ...input, reviewStage: 'second' })).toMatchObject({ ready: true });
+  });
+
   it('allows direct decisions on the current provisional AI output while leaving score editing optional', () => {
     const ai = { ...input, assessment: { ...input.assessment, status: 'authority_review' as const, sourceKind: undefined, authorityReviewRequired: true, authorityReviewState: { activeReviewHeads: {} }, officialResult: null } };
     const provisional = { ...ai, resource: { ...ai.resource, stage: 'provisional' as const } };
@@ -102,7 +106,7 @@ describe('resolveOfficerDecisionReadiness', () => {
     expect(resolveOfficerDecisionReadiness(ai)).toMatchObject({ ready: true });
   });
 
-  it('does not hide a closed-review blocker behind the checkbox state', () => {
-    expect(resolveOfficerDecisionReadiness({ ...input, reviewStage: 'second' }).reason).toBe('review_closed');
+  it('keeps the decision readiness open during Final Review', () => {
+    expect(resolveOfficerDecisionReadiness({ ...input, reviewStage: 'second' })).toMatchObject({ ready: true });
   });
 });

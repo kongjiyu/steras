@@ -46,7 +46,7 @@ const AdminAnalytics = lazy(() => import('./pages/admin/AdminAnalytics'));
 const AdminAudit = lazy(() => import('./pages/admin/AdminAudit'));
 const AdminAssignment = lazy(() => import('./pages/admin/AdminAssignment'));
 const AdminControlListEditor = lazy(() => import('./pages/admin/AdminControlListEditor'));
-const AdminStage2Review = lazy(() => import('./pages/admin/AdminStage2Review'));
+const AdminDocumentationRedirect = lazy(() => import('./pages/admin/AdminDocumentationRedirect'));
 const OrganizerEventControls = lazy(() => import('./pages/organizer/OrganizerEventControls'));
 const Incidents = lazy(() => import('./pages/incidents/Incidents'));
 
@@ -135,8 +135,8 @@ export default function App() {
         <Route path="/admin/applications/:eventId" element={<AdminApplicationReview />} />
         <Route path="/admin/applications/:eventId/assign" element={<AdminAssignment />} />
         <Route path="/admin/applications/:eventId/controls" element={<AdminControlListEditor />} />
-        <Route path="/admin/applications/:eventId/documentation" element={<AdminStage2Review />} />
-        <Route path="/admin/applications/:eventId/stage2-review" element={<AdminStage2Review />} />
+        <Route path="/admin/applications/:eventId/documentation" element={<AdminDocumentationRedirect />} />
+        <Route path="/admin/applications/:eventId/stage2-review" element={<AdminDocumentationRedirect />} />
         <Route path="/admin/users" element={<AdminUsers />} />
         <Route path="/admin/venues" element={<AdminVenues />} />
         <Route path="/admin/analytics" element={<AdminAnalytics />} />

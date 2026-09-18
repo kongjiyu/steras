@@ -45,7 +45,6 @@ const MANAGED_BY = 'seed:steras:real-review-samples' as const;
 const VERSION_ID = 'v1';
 const FIXTURE_DESCRIPTION = 'STERAS TEST FIXTURE — not an actual permit application.';
 const PRODUCTION_PROJECT_ID = 'linkos-496505';
-const ALLOW_PRODUCTION_ENV = 'STERAS_REAL_SAMPLES_ALLOW_PRODUCTION';
 const CONFIRM_DATASET_ENV = 'STERAS_REAL_SAMPLES_CONFIRM_DATASET';
 const STORAGE_PREFIX = 'event_documents';
 
@@ -135,8 +134,8 @@ function assertProductionGuard(projectId: string, action: Action): void {
   if (projectId !== PRODUCTION_PROJECT_ID) {
     throw new Error(`Refusing target ${projectId || '(unset)'}. Real review samples are locked to ${PRODUCTION_PROJECT_ID}.`);
   }
-  if (action === 'apply' && process.env[ALLOW_PRODUCTION_ENV] !== 'true') {
-    throw new Error(`Set ${ALLOW_PRODUCTION_ENV}=true to authorize writes to the production project.`);
+  if (action === 'apply' && !process.env.FIRESTORE_EMULATOR_HOST) {
+    throw new Error('Production fixture apply is disabled. Use the reference scenario only with FIRESTORE_EMULATOR_HOST in emulator/CI.');
   }
   if (process.env[CONFIRM_DATASET_ENV] && process.env[CONFIRM_DATASET_ENV] !== REAL_REVIEW_SAMPLE_DATASET_ID) {
     throw new Error(`Set ${CONFIRM_DATASET_ENV}=${REAL_REVIEW_SAMPLE_DATASET_ID}, or unset it.`);
@@ -701,7 +700,7 @@ export async function runRealReviewSampleSeed(selection: SeedSelection | Action,
   assertProductionGuard(ctx.projectId, normalized.action);
   await assertNoCollisions(ctx, normalized.sampleIds);
   if (normalized.action === 'dry-run') {
-    console.info(JSON.stringify({ projectId: ctx.projectId, datasetId: REAL_REVIEW_SAMPLE_DATASET_ID, asOf: REAL_REVIEW_SAMPLE_AS_OF, events: normalized.sampleIds.map((id) => ({ ...REAL_REVIEW_SAMPLES[id], startIso: REAL_REVIEW_SAMPLES[id].startIso, endIso: REAL_REVIEW_SAMPLES[id].endIso })), guardedWrites: `requires ${ALLOW_PRODUCTION_ENV}=true`, requiredAccounts: [STERAS_TEST_ACCOUNT_EMAILS.admin, STERAS_TEST_ACCOUNT_EMAILS.organizer, STERAS_TEST_ACCOUNT_EMAILS.PDRM, STERAS_TEST_ACCOUNT_EMAILS.BOMBA, STERAS_TEST_ACCOUNT_EMAILS.KKM, STERAS_TEST_ACCOUNT_EMAILS.DBKL, STERAS_TEST_ACCOUNT_EMAILS.MOTAC] }, null, 2));
+    console.info(JSON.stringify({ projectId: ctx.projectId, datasetId: REAL_REVIEW_SAMPLE_DATASET_ID, asOf: REAL_REVIEW_SAMPLE_AS_OF, events: normalized.sampleIds.map((id) => ({ ...REAL_REVIEW_SAMPLES[id], startIso: REAL_REVIEW_SAMPLES[id].startIso, endIso: REAL_REVIEW_SAMPLES[id].endIso })), guardedWrites: 'requires FIRESTORE_EMULATOR_HOST (emulator/CI only)', requiredAccounts: [STERAS_TEST_ACCOUNT_EMAILS.admin, STERAS_TEST_ACCOUNT_EMAILS.organizer, STERAS_TEST_ACCOUNT_EMAILS.PDRM, STERAS_TEST_ACCOUNT_EMAILS.BOMBA, STERAS_TEST_ACCOUNT_EMAILS.KKM, STERAS_TEST_ACCOUNT_EMAILS.DBKL, STERAS_TEST_ACCOUNT_EMAILS.MOTAC] }, null, 2));
     return;
   }
   const userIds = await resolveRequiredUsers(ctx);

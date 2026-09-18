@@ -18,6 +18,8 @@ import {
   type EventRecord,
   type EventStatus,
   type EventType,
+  type OrganizerAssessmentSummary,
+  type OrganizerResourceRecommendation,
   type ProvisionalRiskAssessment,
   type ResourceRecommendation,
   type ProposedControlItem,
@@ -112,6 +114,17 @@ const PRESENTATION_IMAGES = [
   'stage2-kkm-medical-point.jpg',
   'm4-crowd-arrival-surge.jpg',
 ];
+
+// Keep the evidence mapping stable across reruns so a reviewer sees the same
+// authority-appropriate photograph for a given control. These are the
+// photorealistic JPEGs committed under docs/presentation/assets/e2e-2026-09-30.
+const PRESENTATION_IMAGE_BY_AUTHORITY: Record<AuthorityType, string> = {
+  PDRM: 'stage2-pdrm-crowd-entry.jpg',
+  BOMBA: 'stage2-bomba-fire-egress.jpg',
+  KKM: 'stage2-kkm-medical-point.jpg',
+  DBKL: 'stage2-dbkl-venue-setup.jpg',
+  MOTAC: 'm4-crowd-arrival-surge.jpg',
+};
 
 function scenario(slug: string, name: string, type: EventType, status: EventStatus, risk: RiskBand, createdDate: string, eventDate: string, attendance: number, incidentSeverities: Scenario['incidentSeverities'], postFinalStage?: PostFinalStage | 'none'): Scenario {
   return {
@@ -470,6 +483,62 @@ function buildArtifacts(scenarioValue: Scenario, event: EventRecord, identities:
   return { assessment, resource: { ...resource, presentationData: marker(eventId) }, reviews, inputHash };
 }
 
+/** Build the same organizer-safe projection produced by the live finalisation
+ * functions. Presentation fixtures must exercise the real organizer read
+ * path, not only the private assessment/resource documents. */
+function buildOrganizerAssessmentSummary(
+  assessment: RiskAssessment,
+  resource: ResourceRecommendation,
+  requiredAuthorities: AuthorityType[],
+  computedAt: number,
+): OrganizerAssessmentSummary {
+  const result = 'officialResult' in assessment && assessment.officialResult
+    ? assessment.officialResult
+    : 'provisionalResult' in assessment ? assessment.provisionalResult : undefined;
+  if (!result) throw new Error(`${assessment.eventId}: assessment result unavailable for organizer summary.`);
+  const reviewState = 'authorityReviewState' in assessment ? assessment.authorityReviewState : undefined;
+  const completedAuthorities = Object.keys(reviewState?.activeReviewHeads ?? {}).filter(
+    (authority) => Boolean(reviewState?.activeReviewHeads?.[authority as AuthorityType]?.reviewId),
+  ).length;
+  const projection: OrganizerResourceRecommendation = {
+    resourceId: resource.resourceId,
+    revision: resource.revision,
+    stage: resource.stage,
+    items: Object.fromEntries(RESOURCE_KEYS.map((key) => [key, {
+      baseline: resource.items[key].baseline,
+      planningRange: { ...resource.items[key].planningRange },
+    }])) as OrganizerResourceRecommendation['items'],
+    disclaimer: resource.stage === 'official'
+      ? 'Planning ranges derived from an official risk assessment; resource ratios remain indicative and are not statutory minimums.'
+      : 'Planning ranges are provisional and remain subject to authority review.',
+  };
+  return {
+    assessmentId: assessment.assessmentId,
+    eventId: assessment.eventId,
+    versionId: assessment.versionId,
+    schemaVersion: assessment.schemaVersion,
+    status: assessment.status,
+    overallScore: result.overallScore,
+    overallRiskLevel: result.overallRiskLevel,
+    categories: result.categories.map((category) => ({
+      categoryId: category.categoryId,
+      categoryName: category.categoryName,
+      normalizedScore: category.normalizedScore,
+      riskLevel: category.riskLevel,
+    })),
+    assessmentReadiness: assessment.assessmentReadiness,
+    complianceStatus: assessment.complianceStatus,
+    authorityReviewRequired: assessment.authorityReviewRequired,
+    authorityReviewProgress: {
+      completed: Math.min(completedAuthorities, requiredAuthorities.length),
+      required: requiredAuthorities.length,
+    },
+    resourceQuantities: Object.fromEntries(RESOURCE_KEYS.map((key) => [key, resource.items[key].baseline])) as unknown as OrganizerAssessmentSummary['resourceQuantities'],
+    resourceRecommendation: projection,
+    computedAt,
+  };
+}
+
 async function uploadFile(path: string, bytes: Buffer, contentType: string, fixtureId: string) {
   const bucket = getStorage().bucket();
   const token = hash(`${DATASET_ID}:${path}`).slice(0, 32);
@@ -540,6 +609,7 @@ async function writeScenario(db: Firestore, scenarioValue: Scenario, venue: Venu
   batch.set(eventRef.collection(COLLECTIONS.VERSIONS).doc(VERSION_ID), { versionId: VERSION_ID, eventId, versionNumber: 1, eventDetails: details, documentPaths: [`event_documents/${eventId}/${VERSION_ID}/application-evidence.pdf`], submittedBy: organizer.uid, submittedAt, inputHash: artifacts.inputHash, presentationData: marker(eventId) });
   batch.set(eventRef.collection(COLLECTIONS.ASSESSMENTS).doc(artifacts.assessment.assessmentId), artifacts.assessment);
   batch.set(eventRef.collection(COLLECTIONS.RESOURCES).doc(artifacts.resource.resourceId), artifacts.resource);
+  batch.set(eventRef.collection(COLLECTIONS.ASSESSMENT_SUMMARIES).doc(VERSION_ID), buildOrganizerAssessmentSummary(artifacts.assessment, artifacts.resource, requiredAuthorities, terminalAt));
   for (const review of artifacts.reviews) batch.set(eventRef.collection(COLLECTIONS.ASSESSMENTS).doc(artifacts.assessment.assessmentId).collection(COLLECTIONS.SCORE_REVIEWS).doc(review.reviewId), { ...review, presentationData: marker(eventId) });
   for (const authority of initialReviewed ? requiredAuthorities : []) {
     const rejected = scenarioValue.status === 'Rejected' && authority === requiredAuthorities[0];
@@ -609,9 +679,13 @@ async function writeControl(db: Firestore, scenarioValue: Scenario, event: Event
     batch.set(controlRef, { controlId, eventId, versionId: VERSION_ID, controlName: item.controlName, authority: item.authority, stageRequirement: item.stageRequirement, stage1Requirements: item.stage1Requirements, stage2Requirement: item.stage2Requirement, controlItemVersion: 1, label: snapshot[authorityIndex].label, createdAt: now, updatedAt: now, stage1ReviewerUid, stage1ReviewerAssignedAt: now, presentationData: marker(eventId) });
     const seedStage1 = !isManagedPostFinal || stage1Submitted || stage2Submitted;
     const seedStage2 = !isManagedPostFinal || stage2Submitted;
-    const imageName = PRESENTATION_IMAGES[(index + authorityIndex) % (PRESENTATION_IMAGES.length - 1)];
+    const imageName = PRESENTATION_IMAGE_BY_AUTHORITY[item.authority]
+      ?? PRESENTATION_IMAGES[(index + authorityIndex) % (PRESENTATION_IMAGES.length - 1)];
     const bytes = seedStage2 ? await readFile(resolve(process.cwd(), '..', 'docs', 'presentation', 'assets', 'e2e-2026-09-30', imageName)) : null;
     const uploaded = bytes ? await uploadFile(`events/${eventId}/controls/${controlId}/stage2/${imageName}`, bytes, 'image/jpeg', eventId) : null;
+    if (uploaded && (!uploaded.url.startsWith('https://firebasestorage.googleapis.com/') || uploaded.url.includes('placehold'))) {
+      throw new Error(`${eventId}: refusing to seed a placeholder or non-Firebase Stage 2 image URL.`);
+    }
     if (seedStage1) for (const requirement of stage1Requirements) {
       const docId = stage1DocumentId(controlId, requirement.docType);
       const revision = 1;
@@ -899,15 +973,20 @@ async function verifyDataset(db: Firestore, only?: string) {
     if (['urban-parade', 'putrajaya-community-run'].includes(scenarioValue.slug) && (event.status !== 'UnderReview' || event.reviewStage !== 'second' || !event.authorityReviewCompletedAt)) {
       failures.push(`${eventId}: second-review demonstration state is invalid`);
     }
-    const [assessment, resource, incidents] = await Promise.all([
+    const [assessment, resource, summary, incidents] = await Promise.all([
       eventRef.collection(COLLECTIONS.ASSESSMENTS).doc(event.currentAssessmentId ?? '').get(),
       eventRef.collection(COLLECTIONS.RESOURCES).doc(event.currentResourceId ?? '').get(),
+      eventRef.collection(COLLECTIONS.ASSESSMENT_SUMMARIES).doc(VERSION_ID).get(),
       db.collection(COLLECTIONS.INCIDENTS).where('eventId', '==', eventId).get(),
     ]);
     const assessmentValue = assessment.data();
     const resourceValue = resource.data();
     if (!assessment.exists || !isAnalyticsAssessment(assessmentValue)) failures.push(`${eventId}: invalid assessment`);
     if (!resource.exists || !validateResourceRecommendation(resourceValue).ok) failures.push(`${eventId}: invalid resource`);
+    const summaryValue = summary.data() as Partial<OrganizerAssessmentSummary> | undefined;
+    if (!summary.exists || summaryValue?.eventId !== eventId || summaryValue.versionId !== VERSION_ID
+      || !summaryValue.resourceRecommendation || !summaryValue.resourceQuantities
+      || !summaryValue.overallRiskLevel) failures.push(`${eventId}: organizer-safe assessment summary is missing or incomplete`);
     if (event.status === 'Pending') {
       if (!isReviewableProvisionalAssessment(assessmentValue, eventId, VERSION_ID, event.currentAssessmentId ?? '')) {
         failures.push(`${eventId}: pending assessment is not ready for initial review`);
@@ -993,6 +1072,15 @@ async function main() {
     const selectedScenarios = only ? SCENARIOS.filter((scenarioValue) => eventIdFor(scenarioValue) === only) : SCENARIOS;
     console.info(JSON.stringify({ projectId, action, datasetId: DATASET_ID, events: selectedScenarios.map(({ slug, name, status, risk, startAt, incidentSeverities, incidentCategories, postFinalStage }) => ({ eventId: eventIdFor({ slug }), name, status, risk, startAt: new Date(startAt).toISOString(), reportableDemo: slug.startsWith('participant-'), postFinalStage, incidents: incidentSeverities.length, incidentCategories })) }, null, 2));
     return;
+  }
+  const selectedScenario = only ? SCENARIOS.find((scenarioValue) => eventIdFor(scenarioValue) === only) : undefined;
+  const explicitProductionRepair = process.env.STERAS_ALLOW_PRESENTATION_PRODUCTION_REPAIR === 'true';
+  if ((action === 'apply' || action === 'cleanup') && !process.env.FIRESTORE_EMULATOR_HOST
+    && !(explicitProductionRepair && selectedScenario?.postFinalStage)) {
+    throw new Error('Production fixture apply/cleanup is disabled. Use FIRESTORE_EMULATOR_HOST, or explicitly set STERAS_ALLOW_PRESENTATION_PRODUCTION_REPAIR=true with --only a managed post-final fixture.');
+  }
+  if (explicitProductionRepair && selectedScenario?.postFinalStage && !process.env.FIRESTORE_EMULATOR_HOST) {
+    console.warn(`[presentation-portfolio] Explicitly repairing managed post-final fixture ${only}; non-managed records remain protected.`);
   }
   initializeApp({ credential: applicationDefault(), projectId, storageBucket: `${projectId}.firebasestorage.app` });
   const db = getFirestore();
