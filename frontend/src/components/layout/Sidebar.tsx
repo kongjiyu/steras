@@ -187,7 +187,6 @@ export const ADMIN_NAV: SidebarNavSection[] = [
     items: [
       { to: '/admin', label: 'Dashboard', mobileLabel: 'Home', icon: LayoutDashboard, end: true },
       { to: '/admin/applications', label: 'Application queue', mobileLabel: 'Queue', icon: ListChecks },
-      { to: '/admin/incidents', label: 'Incidents', mobileLabel: 'Incidents', icon: Siren },
     ],
   },
   {

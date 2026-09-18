@@ -35,7 +35,7 @@ describe('Admin manual assessment contract and calculation', () => {
     expect(validateManualResourcePlan({ resourcePlan: resources, resourceRationale: '' })).toContain('resource-rationale');
   });
 
-  it('rejects invalid scores/evidence and requires missing-information when evidence is absent', () => {
+  it('rejects invalid scores/evidence while allowing an optional missing-information explanation', () => {
     const assessment = manualReview();
     const badScore = input();
     badScore.categories[0].likelihood = 0 as never;
@@ -46,7 +46,7 @@ describe('Admin manual assessment contract and calculation', () => {
     const missing = input();
     missing.categories[0].evidenceReferences = [];
     missing.categories[0].missingInformation = '';
-    expect(validateManualAssessmentInput(missing, assessment.evidence)).toContain('missing-information-crowd');
+    expect(validateManualAssessmentInput(missing, assessment.evidence)).not.toContain('missing-information-crowd');
   });
 
   it('fails closed for malformed evidence-reference containers instead of throwing', () => {

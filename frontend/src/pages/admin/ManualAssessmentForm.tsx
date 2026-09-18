@@ -33,7 +33,7 @@ export interface ManualAssessmentFormProps {
 
 export type ManualAssessmentFieldErrors = Record<string, string>;
 
-type ManualResourceDraft = Record<ResourceKey, { quantity: string; maximum: string }>;
+type ManualResourceDraft = Record<ResourceKey, { quantity: string }>;
 type ManualResourceValidationPlan = Partial<Record<ResourceKey, { quantity?: number | string; maximum?: number | string }>>;
 
 const RESOURCE_LABELS: Record<ResourceKey, string> = {
@@ -69,8 +69,7 @@ export function validateManualAssessmentDraft(
     if (!Number.isInteger(category.severity) || category.severity < 1 || category.severity > 5) errors[`${prefix}-severity`] = 'Choose a severity score from 1 to 5.';
     if (category.rationale.trim().length < 10) errors[`${prefix}-rationale`] = 'Enter a category rationale (at least 10 characters).';
     if (category.evidenceReferences.some((reference) => !eligibleEvidence.includes(reference))) errors[`${prefix}-evidence`] = 'Remove evidence references that are not eligible for this version.';
-    if (category.evidenceReferences.length === 0 && category.missingInformation.trim().length < 10) errors[`${prefix}-missing`] = 'Explain what information is missing (at least 10 characters).';
-    if (category.evidenceReferences.length > 0 && category.missingInformation.length > 1000) errors[`${prefix}-missing`] = 'Missing-information explanation must be at most 1000 characters.';
+    if (category.missingInformation.length > 1000) errors[`${prefix}-missing`] = 'Missing-information explanation must be at most 1000 characters.';
   });
   if (rationale.trim().length < 20) errors.rationale = 'Enter an overall assessment rationale (at least 20 characters).';
   // The fourth-argument legacy helper remains usable by existing callers;
@@ -80,10 +79,10 @@ export function validateManualAssessmentDraft(
     RESOURCE_KEYS.forEach((key) => {
       const item = resourcePlan?.[key];
       const quantity = wholeNumber(item?.quantity);
-      const maximum = wholeNumber(item?.maximum);
+      const maximum = item?.maximum === undefined ? undefined : wholeNumber(item.maximum);
       if (quantity === undefined || quantity < 0) errors[`resource-${key}-quantity`] = 'Enter a whole number of 0 or more.';
-      if (maximum === undefined || maximum < 0) errors[`resource-${key}-maximum`] = 'Enter a whole number of 0 or more.';
-      if (quantity !== undefined && maximum !== undefined && maximum >= 0 && maximum < quantity) errors[`resource-${key}-range`] = 'Maximum must be at least the recommended quantity.';
+      if (item?.maximum !== undefined && (maximum === undefined || maximum < 0)) errors[`resource-${key}-maximum`] = 'Enter a whole number of 0 or more.';
+      if (quantity !== undefined && maximum !== undefined && maximum < quantity) errors[`resource-${key}-range`] = 'Maximum must be at least the recommended quantity.';
     });
     if (resourceRationale.trim().length < 10) errors['resource-rationale'] = 'Explain the resource planning basis (at least 10 characters).';
   }
@@ -92,7 +91,7 @@ export function validateManualAssessmentDraft(
 
 export function friendlyManualAssessmentError(code: string): string {
   if (code === 'assessment-rationale') return 'Enter an overall assessment rationale (at least 20 characters).';
-  if (code === 'resource-plan') return 'Enter recommended and maximum quantities for all seven resources.';
+  if (code === 'resource-plan') return 'Enter a recommended quantity for all seven resources.';
   if (code === 'resource-rationale') return 'Explain the resource planning basis (at least 10 characters).';
   if (code.startsWith('resource-') && code.endsWith('-range')) return 'Maximum must be at least the recommended quantity.';
   if (code.startsWith('resource-')) return 'Enter a whole number of 0 or more.';
@@ -162,7 +161,7 @@ export default function ManualAssessmentForm({ eventId, assessment, onCompleted 
   })));
   const [rationale, setRationale] = useState('');
   const [resourcePlan, setResourcePlan] = useState<ManualResourceDraft>(() => Object.fromEntries(
-    RESOURCE_KEYS.map((key) => [key, { quantity: '', maximum: '' }]),
+    RESOURCE_KEYS.map((key) => [key, { quantity: '' }]),
   ) as ManualResourceDraft);
   const [resourceRationale, setResourceRationale] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -170,7 +169,7 @@ export default function ManualAssessmentForm({ eventId, assessment, onCompleted 
   const [validationAttempted, setValidationAttempted] = useState(false);
   const [idempotencyKey] = useState(() => `manual-${crypto.randomUUID()}`);
   const persisted = Boolean(assessment.activeManualAssessmentId);
-  const evidenceKeys = eligibleEvidence.map((item) => item.key);
+  const evidenceKeys = useMemo(() => [...new Set(eligibleEvidence.map((item) => item.key))], [eligibleEvidence]);
   const normalizedResourcePlan = useMemo(() => toResourcePlan(resourcePlan), [resourcePlan]);
   const errors = useMemo(() => validateManualAssessmentDraft(hazards, categories, rationale, evidenceKeys, resourcePlan, resourceRationale), [categories, evidenceKeys, hazards, rationale, resourcePlan, resourceRationale]);
   const completeCategories = categories.filter((category) => Object.keys(validateManualAssessmentDraft([hazards[0]], [category], 'a'.repeat(20), evidenceKeys)).every((key) => !key.startsWith('category-'))).length;
@@ -287,20 +286,15 @@ export default function ManualAssessmentForm({ eventId, assessment, onCompleted 
 
           <div className="mt-6 rounded-md border border-[#e3dacb] bg-cream-50 p-4" data-testid="manual-resource-plan">
             <h3 className="font-display font-semibold text-ink-800">Admin resource recommendation</h3>
-            <p className="mt-1 text-xs leading-5 text-ink-500">Set the recommended quantity and maximum planning quantity. These values are recorded as the official resource recommendation for this manual review.</p>
+            <p className="mt-1 text-xs leading-5 text-ink-500">Set the Admin-recommended quantity for each resource. The official planning range is recorded as that quantity.</p>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               {RESOURCE_KEYS.map((key) => (
                 <div key={key} className="rounded border border-[#e3dacb] bg-white p-3">
                   <p className="text-sm font-semibold text-ink-800">{RESOURCE_LABELS[key]}</p>
-                  <div className="mt-2 grid grid-cols-2 gap-2">
-                    <label className="text-xs text-ink-600">Recommended quantity
-                      <input className="input mt-1" type="number" min="0" step="1" inputMode="numeric" value={resourcePlan[key].quantity} onChange={(event) => updateResource(setResourcePlan, key, { quantity: event.target.value })} aria-invalid={Boolean(fieldErrors[`resource-${key}-quantity`] || fieldErrors[`resource-${key}-range`])} data-manual-field-error={fieldErrors[`resource-${key}-quantity`] || fieldErrors[`resource-${key}-range`] ? 'true' : undefined} />
-                    </label>
-                    <label className="text-xs text-ink-600">Maximum planning quantity
-                      <input className="input mt-1" type="number" min="0" step="1" inputMode="numeric" value={resourcePlan[key].maximum} onChange={(event) => updateResource(setResourcePlan, key, { maximum: event.target.value })} aria-invalid={Boolean(fieldErrors[`resource-${key}-maximum`] || fieldErrors[`resource-${key}-range`])} data-manual-field-error={fieldErrors[`resource-${key}-maximum`] || fieldErrors[`resource-${key}-range`] ? 'true' : undefined} />
-                    </label>
-                  </div>
-                  {(fieldErrors[`resource-${key}-quantity`] || fieldErrors[`resource-${key}-maximum`] || fieldErrors[`resource-${key}-range`]) && <p className="mt-1 text-xs text-status-rejected">{fieldErrors[`resource-${key}-quantity`] || fieldErrors[`resource-${key}-maximum`] || fieldErrors[`resource-${key}-range`]}</p>}
+                  <label className="mt-2 block text-xs text-ink-600">Recommended quantity
+                    <input className="input mt-1" type="number" min="0" step="1" inputMode="numeric" value={resourcePlan[key].quantity} onChange={(event) => updateResource(setResourcePlan, key, { quantity: event.target.value })} aria-invalid={Boolean(fieldErrors[`resource-${key}-quantity`])} data-manual-field-error={fieldErrors[`resource-${key}-quantity`] ? 'true' : undefined} />
+                  </label>
+                  {fieldErrors[`resource-${key}-quantity`] && <p className="mt-1 text-xs text-status-rejected">{fieldErrors[`resource-${key}-quantity`]}</p>}
                 </div>
               ))}
             </div>
@@ -331,7 +325,7 @@ function Score({ label, value, error, onChange }: { label: string; value: ScoreR
 }
 
 function EvidenceSelector({ evidence, selected, error, onChange }: { evidence: EvidenceKey[]; selected: EvidenceKey[]; error?: string; onChange: (value: EvidenceKey[]) => void }) {
-  return <fieldset className="mt-2" tabIndex={error ? -1 : undefined} data-manual-field-error={error ? 'true' : undefined} aria-invalid={Boolean(error)}><legend className="text-xs font-medium text-ink-600">Eligible evidence references</legend><div className="mt-1 flex flex-wrap gap-2">{evidence.length ? evidence.map((key) => <label key={key} className="inline-flex items-center gap-1 rounded border border-[#ded5c5] px-2 py-1 text-xs"><input type="checkbox" checked={selected.includes(key)} onChange={(event) => onChange(event.target.checked ? [...selected, key] : selected.filter((value) => value !== key))} />{key}</label>) : <span className="text-xs text-status-rejected">No eligible evidence is available.</span>}</div></fieldset>;
+  return <fieldset className="mt-2" tabIndex={error ? -1 : undefined} data-manual-field-error={error ? 'true' : undefined} aria-invalid={Boolean(error)}><legend className="text-xs font-medium text-ink-600">Eligible evidence references</legend><div className="mt-1 flex flex-wrap gap-2">{evidence.length ? evidence.map((key) => <label key={key} className="inline-flex items-center gap-1 rounded border border-[#ded5c5] px-2 py-1 text-xs"><input type="checkbox" checked={selected.includes(key)} onChange={(event) => onChange(event.target.checked ? [...selected, key] : selected.filter((value) => value !== key))} />{formatEvidenceKey(key)}</label>) : <span className="text-xs text-status-rejected">No eligible evidence is available.</span>}</div></fieldset>;
 }
 
 function updateHazard(setter: React.Dispatch<React.SetStateAction<AdminManualHazard[]>>, index: number, patch: Partial<AdminManualHazard>) {
@@ -349,11 +343,9 @@ function updateResource(setter: React.Dispatch<React.SetStateAction<ManualResour
 function toResourcePlan(draft: ManualResourceDraft): AdminManualResourcePlan | undefined {
   const values = Object.fromEntries(RESOURCE_KEYS.map((key) => [key, {
     quantity: Number(draft[key].quantity),
-    maximum: Number(draft[key].maximum),
   }])) as AdminManualResourcePlan;
-  return RESOURCE_KEYS.every((key) => draft[key].quantity.trim() !== '' && draft[key].maximum.trim() !== ''
-    && Number.isSafeInteger(values[key].quantity) && values[key].quantity >= 0
-    && Number.isSafeInteger(values[key].maximum) && values[key].maximum >= values[key].quantity)
+  return RESOURCE_KEYS.every((key) => draft[key].quantity.trim() !== ''
+    && Number.isSafeInteger(values[key].quantity) && values[key].quantity >= 0)
     ? values : undefined;
 }
 
@@ -366,6 +358,23 @@ function wholeNumber(value: unknown): number | undefined {
 
 function formatCategory(categoryId: string): string {
   return MANUAL_ASSESSMENT_CATEGORIES.find((category) => category.id === categoryId)?.name ?? categoryId.replaceAll('_', ' ');
+}
+
+function formatEvidenceKey(key: EvidenceKey): string {
+  const labels: Record<EvidenceKey, string> = {
+    weather: 'Weather forecast',
+    crowd: 'Crowd and attendance',
+    venue: 'Venue registry',
+    history: 'Historical incidents',
+    holiday: 'Calendar and holidays',
+    public_health: 'Public-health context',
+    sanitation: 'Food, water and sanitation',
+    medical: 'Medical capacity',
+    security: 'Security context',
+    transport: 'Transport and accessibility',
+    compliance: 'Submitted compliance evidence',
+  };
+  return labels[key] ?? key.replaceAll('_', ' ');
 }
 
 function mapServerErrorsToFields(codes: string[]): ManualAssessmentFieldErrors {

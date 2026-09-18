@@ -138,7 +138,6 @@ export default function App() {
         <Route path="/admin/venues" element={<AdminVenues />} />
         <Route path="/admin/analytics" element={<AdminAnalytics />} />
         <Route path="/admin/audit" element={<AdminAudit />} />
-        <Route path="/admin/incidents" element={<Incidents />} />
       </Route>
 
       {/* Fallback */}

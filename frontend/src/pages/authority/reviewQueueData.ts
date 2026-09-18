@@ -25,7 +25,7 @@ export function filterAndSortAuthorityQueue(
   const normalizedSearch = search.trim().toLocaleLowerCase();
   return rows
     .filter((row) => filter === 'all' || (filter === 'decided' ? row.assignment?.status === 'completed' : row.assignment?.status !== 'completed'))
-    .filter((row) => !normalizedSearch || [row.event.eventDetails.name, row.event.eventDetails.venueName, row.event.eventDetails.type]
+    .filter((row) => !normalizedSearch || [row.event.eventId, row.event.eventDetails.name, row.event.eventDetails.venueName, row.event.eventDetails.type]
       .some((value) => value.toLocaleLowerCase().includes(normalizedSearch)))
     .sort((left, right) => {
       if (sort === 'eventSoonest') return left.event.eventDetails.startDatetime - right.event.eventDetails.startDatetime;
@@ -43,7 +43,7 @@ export function filterAndSortQueue(
   const normalizedSearch = search.trim().toLocaleLowerCase();
   return events
     .filter((event) => status === 'all' || event.status === status)
-    .filter((event) => !normalizedSearch || [event.eventDetails.name, event.eventDetails.venueName, event.eventDetails.type]
+    .filter((event) => !normalizedSearch || [event.eventId, event.eventDetails.name, event.eventDetails.venueName, event.eventDetails.type]
       .some((value) => value.toLocaleLowerCase().includes(normalizedSearch)))
     .sort((left, right) => {
       if (sort === 'eventSoonest') return left.eventDetails.startDatetime - right.eventDetails.startDatetime;

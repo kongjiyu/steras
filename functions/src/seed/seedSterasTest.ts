@@ -21,10 +21,12 @@ import {
   EventRecord,
   EventType,
   EventStatus,
+  EvidenceKey,
   RESOURCE_KEYS,
   RESOURCE_SCHEMA_VERSION,
   ResourceRecommendation,
   RiskAssessment,
+  ScoreEvidence,
   ProvisionalRiskAssessment,
   SCORE_REVIEW_SCHEMA_VERSION,
   M1_DOCUMENT_SCHEMA_VERSION,
@@ -495,6 +497,28 @@ function uatProposal(baseline: ReturnType<typeof computeCategoryBasedAssessment>
   };
 }
 
+function manualFixtureEvidence(existing: ScoreEvidence[], now: number): ScoreEvidence[] {
+  const keys: EvidenceKey[] = ['weather', 'crowd', 'venue', 'history', 'holiday', 'public_health', 'sanitation', 'medical', 'security', 'transport', 'compliance'];
+  return keys.map((key, index) => {
+    const source = existing[index % Math.max(1, existing.length)];
+    return {
+      ...(source ?? {
+        description: `Synthetic contextual evidence for ${key}.`, source: 'steras-test-fixture', status: 'available',
+        quality: 'verified' as const, confidenceScore: 90, eligibility: 'eligible' as const, syntheticStatus: 'all' as const,
+      }),
+      key,
+      description: `Synthetic contextual evidence for ${key}; eligible for manual-review validation.`,
+      sourceTimestamp: now,
+      source: 'steras-test-fixture',
+      status: 'available',
+      quality: 'verified',
+      confidenceScore: 90,
+      eligibility: 'eligible',
+      syntheticStatus: 'all',
+    };
+  });
+}
+
 function buildAssessmentArtifacts(
   scenario: Scenario,
   event: EventRecord,
@@ -514,7 +538,7 @@ function buildAssessmentArtifacts(
     versionId: VERSION_ID,
     schemaVersion: ASSESSMENT_SCHEMA_VERSION,
     contextSnapshot: context,
-    evidence: baseline.evidence,
+    evidence: scenario.recordKind === 'manual' ? manualFixtureEvidence(baseline.evidence, now) : baseline.evidence,
     contextEvidence: [{ evidenceId: `steras-test-${scenario.id}-context`, evidenceKey: 'compliance' as const, sourceKind: 'submitted_document' as const, sourceLocator: `event_documents/${scenario.id}/${VERSION_ID}/evidence.pdf`, retrievedAt: now, sourceVersion: `storage-generation:${evidenceGeneration}`, eligibility: 'eligible' as const, synthetic: true, visibility: 'authority_only' as const }],
     sourceTimestamps: { weather: now, holiday: now, venue: now, incidents: now },
     contextStatuses: { weather: 'steras-test:matched', holiday: 'steras-test:verified', venue: 'matched', incidents: 'unmatched' },
@@ -1023,6 +1047,13 @@ export async function verifySterasTestDataset(ctx: SterasTestContext): Promise<v
       failures.push(`${scenario.id}: event references invalid current M2 pointers`);
     }
     if (manualWithoutOutput && (assessmentData?.status !== 'manual_review_required' || scenario.reviewStage !== 'manual')) failures.push(`${scenario.id}: manual fixture stage/output is invalid`);
+    if (manualWithoutOutput) {
+      const eligibleEvidence = new Set((assessmentData?.evidence ?? [])
+        .filter((item) => item?.eligibility === 'eligible' && item.quality !== 'missing'
+          && typeof item.status === 'string' && !['unavailable', 'unmatched', 'missing'].includes(item.status.toLowerCase()))
+        .map((item) => item.key));
+      if (eligibleEvidence.size < 8) failures.push(`${scenario.id}: manual fixture must expose at least eight eligible evidence references`);
+    }
     if (scenario.reviewStage === 'initial' && (assessmentData?.status !== 'provisional_ready' || !resourceData || resourceData.stage !== 'provisional')) failures.push(`${scenario.id}: Initial Review fixture must have provisional M2 output only`);
     if (scenario.reviewStage === 'authority' && (!resourceData || resourceData.stage !== 'provisional')) failures.push(`${scenario.id}: Under Review fixture must have provisional resources`);
     if (scenario.reviewStage === 'second' && (!resourceData || resourceData.stage !== 'official')) failures.push(`${scenario.id}: Final Review fixture must have official resources`);

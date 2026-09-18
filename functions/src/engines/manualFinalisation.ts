@@ -46,7 +46,7 @@ export function validateManualResourcePlan(input: Pick<ManualAssessmentInput, 'r
       continue;
     }
     if (!isWholeNonNegative(value.quantity)) errors.push(`resource-${key}-quantity`);
-    if (!isWholeNonNegative(value.maximum)) errors.push(`resource-${key}-maximum`);
+    if (value.maximum !== undefined && !isWholeNonNegative(value.maximum)) errors.push(`resource-${key}-maximum`);
     if (isWholeNonNegative(value.quantity) && isWholeNonNegative(value.maximum)
       && Number(value.maximum) < Number(value.quantity)) errors.push(`resource-${key}-range`);
   }
@@ -84,9 +84,7 @@ export function validateManualAssessmentInput(input: unknown, evidence: unknown)
     if (!isScore(raw.likelihood) || !isScore(raw.severity)) errors.push(`score-${raw.categoryId}`);
     if (!validText(raw.rationale, 10, 1000)) errors.push(`rationale-${raw.categoryId}`);
     if (!validEvidenceReferences(raw.evidenceReferences, eligible, false)) errors.push(`evidence-${raw.categoryId}`);
-    const refs = Array.isArray(raw.evidenceReferences) ? raw.evidenceReferences : [];
-    if (refs.length === 0 && !validText(raw.missingInformation, 10, 1000)) errors.push(`missing-information-${raw.categoryId}`);
-    if (refs.length > 0 && (typeof raw.missingInformation !== 'string' || raw.missingInformation.length > 1000)) errors.push(`missing-information-${raw.categoryId}`);
+    if (typeof raw.missingInformation !== 'string' || raw.missingInformation.length > 1000) errors.push(`missing-information-${raw.categoryId}`);
   }
   if (CATEGORY_IDS.some((categoryId) => !seen.has(categoryId))) errors.push('missing-category');
   return [...new Set(errors)];
@@ -281,7 +279,7 @@ function isWholeNonNegative(value: unknown): value is number {
 function cloneResourcePlan(value: AdminManualResourcePlan): AdminManualResourcePlan {
   return Object.fromEntries(RESOURCE_KEYS.map((key) => [key, {
     quantity: value[key].quantity,
-    maximum: value[key].maximum,
+    ...(value[key].maximum !== undefined ? { maximum: value[key].maximum } : {}),
   }])) as AdminManualResourcePlan;
 }
 
