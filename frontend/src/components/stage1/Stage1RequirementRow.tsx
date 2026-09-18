@@ -6,9 +6,8 @@
  * | verified | rejected | use_previous) and the appropriate action
  * buttons (Upload | Use Previous | Replace | Resubmit | View).
  *
- * Per the M3 owner decision 2026-08-19, "Use Previous" is a one-click
- * flag (no source-event picker) available only for `docType: 'receipt'`
- * (A25). Stage 2 is the public verification backstop.
+ * "Use Previous" is a no-file declaration. It still enters the current
+ * Authority review queue and only satisfies the Stage 1 gate after approval.
  *
  * Reused later (Workstream 5 publish) by the admin and officer UIs when
  * they need to show the same per-row state.
@@ -83,7 +82,7 @@ export default function Stage1RequirementRow(props: Stage1RequirementRowProps) {
   const dialog = useAppDialog();
 
   const status: Stage1Doc['status'] = doc?.status ?? 'pending_submission';
-  const isReceipt = requirement.docType === 'receipt';
+  const canUsePrevious = true;
   const isEffectivelyBusy = busy || submitting;
 
   async function handleFileSelected(e: ChangeEvent<HTMLInputElement>) {
@@ -110,8 +109,8 @@ export default function Stage1RequirementRow(props: Stage1RequirementRowProps) {
       // Strip the "data:<mime>;base64," prefix — the Cloud Function adds
       // it back when constructing filePath.
       const base64 = dataUrl.split(',', 2)[1];
-      const fn = httpsCallable<{ eventId: string; controlId: string; docId: string; fileName: string; mimeType: string; fileBase64: string }, { status: Stage1Doc['status'] }>(functions, 'submitStage1Doc');
-      const result = await fn({ eventId, controlId, docId: requirement.docId, fileName: file.name, mimeType: file.type, fileBase64: base64 });
+      const fn = httpsCallable<{ eventId: string; controlId: string; docId: string; fileName: string; mimeType: string; fileBase64: string; idempotencyKey: string }, { status: Stage1Doc['status'] }>(functions, 'submitStage1Doc');
+      const result = await fn({ eventId, controlId, docId: requirement.docId, fileName: file.name, mimeType: file.type, fileBase64: base64, idempotencyKey: crypto.randomUUID() });
       onSubmitted?.(result.data);
     } catch (err) {
       const msg = errorMessageFrom(err);
@@ -123,15 +122,15 @@ export default function Stage1RequirementRow(props: Stage1RequirementRowProps) {
   }
 
   async function handleUsePrevious() {
-    if (!isReceipt) return;
-    if (!await dialog.confirm({ title: 'Use the previous receipt?', description: 'STERAS will reuse the earlier receipt for this requirement. Public verification remains available, and missing items can still be reported through Incident reporting.', confirmLabel: 'Use previous receipt', cancelLabel: 'Upload another receipt' })) {
+    if (!canUsePrevious) return;
+    if (!await dialog.confirm({ title: 'Use a previous document declaration?', description: 'STERAS will record that the existing document remains valid. The assigned Authority must still review and approve the declaration. No file will be published from this path.', confirmLabel: 'Submit declaration', cancelLabel: 'Upload a file' })) {
       return;
     }
     setSubmitting(true);
     setErrorMessage('');
     try {
-      const fn = httpsCallable<{ eventId: string; controlId: string; docId: string; usePrevious: boolean }, { status: Stage1Doc['status'] }>(functions, 'submitStage1Doc');
-      const result = await fn({ eventId, controlId, docId: requirement.docId, usePrevious: true });
+      const fn = httpsCallable<{ eventId: string; controlId: string; docId: string; usePrevious: boolean; idempotencyKey: string }, { status: Stage1Doc['status'] }>(functions, 'submitStage1Doc');
+      const result = await fn({ eventId, controlId, docId: requirement.docId, usePrevious: true, idempotencyKey: crypto.randomUUID() });
       onSubmitted?.(result.data);
     } catch (err) {
       const msg = errorMessageFrom(err);
@@ -197,7 +196,7 @@ export default function Stage1RequirementRow(props: Stage1RequirementRowProps) {
           />
           {renderActions({
             status,
-            isReceipt,
+            canUsePrevious,
             filePath: doc?.filePath,
             disabled: disabled || isEffectivelyBusy,
             onUpload: openFilePicker,
@@ -211,14 +210,14 @@ export default function Stage1RequirementRow(props: Stage1RequirementRowProps) {
 
 interface ActionsProps {
   status: Stage1Doc['status'];
-  isReceipt: boolean;
+  canUsePrevious: boolean;
   filePath?: string;
   disabled: boolean;
   onUpload: () => void;
   onUsePrevious: () => void;
 }
 
-function renderActions({ status, isReceipt, filePath, disabled, onUpload, onUsePrevious }: ActionsProps) {
+function renderActions({ status, canUsePrevious, filePath, disabled, onUpload, onUsePrevious }: ActionsProps) {
   const safeFilePath = safeStage1DocumentHref(filePath);
   const uploadBtn = (label: string, icon: React.ReactNode, testid: string, key: string) => (
     <button
@@ -265,7 +264,7 @@ function renderActions({ status, isReceipt, filePath, disabled, onUpload, onUseP
       return (
         <>
           {uploadBtn('Upload', <Upload size={14} />, 'stage1-upload', 'upload')}
-          {isReceipt && previousButton('Use Previous', 'stage1-use-previous', 'use-previous')}
+          {canUsePrevious && previousButton('Use Previous declaration', 'stage1-use-previous', 'use-previous')}
         </>
       );
     case 'pending_verification':
@@ -279,7 +278,7 @@ function renderActions({ status, isReceipt, filePath, disabled, onUpload, onUseP
       return (
         <>
           {uploadBtn('Resubmit', <Upload size={14} />, 'stage1-resubmit', 'resubmit')}
-          {isReceipt && previousButton('Use Previous', 'stage1-use-previous', 'use-previous')}
+          {canUsePrevious && previousButton('Use Previous declaration', 'stage1-use-previous', 'use-previous')}
         </>
       );
     case 'use_previous':

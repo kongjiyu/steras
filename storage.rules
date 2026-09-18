@@ -74,6 +74,23 @@ service firebase.storage {
       allow update, delete: if false;
     }
 
+    function isAdmin() {
+      return isSignedIn() && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Stage 1 redacted derivatives are server-created public artifacts. The
+    // source files and drafts remain private Firestore data and are never
+    // exposed through this path.
+    match /public_stage1/{eventId}/{controlId}/{docId}/{fileName} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /stage1_redaction_drafts/{eventId}/{controlId}/{docId}/{fileName} {
+      allow read: if isSignedIn() && (isAdmin() || isAssignedAuthority(eventId) || ownsEvent(eventId));
+      allow write: if false;
+    }
+
     // Default deny everything else
     match /{path=**} {
       allow read, write: if false;

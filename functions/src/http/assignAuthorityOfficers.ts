@@ -216,6 +216,12 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
     }
 
     const assignmentSnapshots = new Map<AuthorityType, FirebaseFirestore.DocumentSnapshot>();
+    const controlsSnapshot = await tx.get(eventRef.collection(COLLECTIONS.EVENT_CONTROLS));
+    const controlSnapshots = new Map<AuthorityType, FirebaseFirestore.QueryDocumentSnapshot>();
+    for (const snapshot of controlsSnapshot.docs) {
+      const control = snapshot.data() as { versionId?: string; authority?: AuthorityType };
+      if (control.versionId === versionId && control.authority) controlSnapshots.set(control.authority, snapshot);
+    }
     for (const authority of submittedAuthorities) {
       const assignmentId = `${versionId}_${authority}`;
       assignmentSnapshots.set(authority, await tx.get(eventRef.collection(COLLECTIONS.ASSIGNMENTS).doc(assignmentId)));
@@ -276,6 +282,14 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
           `Officer ${officerUid} is at workload limit (${officer.workloadLimit}). Swap to a backup.`,
         );
       }
+      const controlSnapshot = controlSnapshots.get(auth);
+      if (!controlSnapshot?.exists) {
+        throw new HttpsError('failed-precondition', `The ${auth} control list item is missing for the current version.`);
+      }
+      const control = controlSnapshot.data() as { versionId?: string; authority?: AuthorityType };
+      if (control.versionId !== versionId || control.authority !== auth) {
+        throw new HttpsError('failed-precondition', `The ${auth} control list item is stale or mismatched.`);
+      }
     }
 
     // Now writes — all reads are done.
@@ -294,6 +308,8 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
         status: 'pending',
       };
       tx.set(assignmentRef, assignment);
+      const controlRef = controlSnapshots.get(auth as AuthorityType)!.ref;
+      tx.set(controlRef, { stage1ReviewerUid: officerUid, stage1ReviewerAssignedAt: now, updatedAt: now }, { merge: true });
       tx.update(officerRef, {
         workloadCount: Math.max(0, officer?.workloadCount ?? 0) + 1,
         lastAssignedAt: now,

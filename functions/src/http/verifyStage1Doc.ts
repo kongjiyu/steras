@@ -34,6 +34,7 @@ import {
   EventControl,
   EventRecord,
   Stage1Doc,
+  Stage1DocRevision,
   UserProfile,
 } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
@@ -86,8 +87,11 @@ export async function verifyStage1DocForUser(
   if (status !== 'verified' && status !== 'rejected') {
     throw new HttpsError('invalid-argument', 'status must be "verified" or "rejected".');
   }
-  if (rationale.length < RATIONALE_MIN || rationale.length > RATIONALE_MAX) {
-    throw new HttpsError('invalid-argument', `Rationale must be between ${RATIONALE_MIN} and ${RATIONALE_MAX} characters.`);
+  if (rationale.length > RATIONALE_MAX) {
+    throw new HttpsError('invalid-argument', `Rationale must be at most ${RATIONALE_MAX} characters.`);
+  }
+  if (status === 'rejected' && rationale.length < RATIONALE_MIN) {
+    throw new HttpsError('invalid-argument', `A rejection reason must be between ${RATIONALE_MIN} and ${RATIONALE_MAX} characters.`);
   }
 
   const db = firestore();
@@ -110,24 +114,32 @@ export async function verifyStage1DocForUser(
     }
     if (!eventSnap.exists) throw new HttpsError('not-found', 'Event application was not found.');
     const event = eventSnap.data() as EventRecord;
+    if (!controlSnap.exists) {
+      throw new HttpsError('not-found', `Control ${controlId} was not found for this event.`);
+    }
+    const control = controlSnap.data() as EventControl;
     const assignment = assignmentsSnap.docs
       .map((snapshot) => snapshot.data() as { versionId?: string; authorityType?: string; officerUid?: string; status?: string })
       .find((candidate) => candidate.versionId === event.currentVersionId
         && candidate.authorityType === profile.authorityType
         && candidate.officerUid === uid
         && (candidate.status === 'pending' || candidate.status === 'in_progress' || candidate.status === 'completed'));
-    if (!assignment) {
+    // Stage 1 can be independently reassigned after Final Review. In that
+    // case the control's current reviewer is the source of truth even when
+    // the reviewer is not the officer who owns the original authority
+    // decision assignment.
+    const isCurrentStage1Reviewer = control.stage1ReviewerUid === uid;
+    if (!assignment && !isCurrentStage1Reviewer) {
       throw new HttpsError('permission-denied', 'You are not the named officer assigned to this application.');
     }
-    if (!controlSnap.exists) {
-      throw new HttpsError('not-found', `Control ${controlId} was not found for this event.`);
-    }
-    const control = controlSnap.data() as EventControl;
     if (!isActiveControlGeneration(event, control, eventId)) {
       throw new HttpsError('failed-precondition', 'This control is not active for the current application version.');
     }
     if (control.authority !== profile.authorityType) {
       throw new HttpsError('permission-denied', `This control belongs to ${control.authority}, not ${profile.authorityType}.`);
+    }
+    if (control.stage1ReviewerUid && control.stage1ReviewerUid !== uid) {
+      throw new HttpsError('permission-denied', 'This Stage 1 document is assigned to another reviewer.');
     }
     if (!docSnap.exists) {
       throw new HttpsError('not-found', `Stage 1 document ${docId} was not found for control ${controlId}.`);
@@ -136,20 +148,21 @@ export async function verifyStage1DocForUser(
     if (doc.status === 'pending_submission') {
       throw new HttpsError('failed-precondition', 'The organiser has not uploaded this Stage 1 document yet.');
     }
-    if (doc.status === 'use_previous') {
-      throw new HttpsError('failed-precondition', 'This Stage 1 document uses a prior receipt and does not need officer verification.');
-    }
     if (doc.status === 'verified' || doc.status === 'rejected') {
       if (doc.status === status && doc.verifiedBy === uid && doc.rejectionReason === rationale) {
         return { eventId, controlId, docId, status, idempotent: true };
       }
       throw new HttpsError('failed-precondition', `This Stage 1 document is already ${doc.status}.`);
     }
-    // doc.status === 'pending_verification' — proceed.
+    // pending_verification and use_previous declarations both require an
+    // explicit current-authority review.
 
     // Read all stage1_docs for this control to recompute the aggregate label.
     const allDocsSnap = await tx.get(
       eventRef.collection(COLLECTIONS.EVENT_CONTROLS).doc(controlId).collection(COLLECTIONS.STAGE1_DOCS),
+    );
+    const revisionsSnap = await tx.get(
+      eventRef.collection(COLLECTIONS.EVENT_CONTROLS).doc(controlId).collection(COLLECTIONS.STAGE1_DOCS).doc(docId).collection(COLLECTIONS.STAGE1_REVISIONS),
     );
     const allDocs = allDocsSnap.docs.map((d) => d.data() as Stage1Doc);
     const updatedDoc: Stage1Doc = { ...doc, status, verifiedBy: uid, verifiedAt: now };
@@ -157,7 +170,8 @@ export async function verifyStage1DocForUser(
       updatedDoc.rejectionReason = rationale;
     } else {
       // Clear any prior rejection reason on a successful verify
-      updatedDoc.rejectionReason = '';
+      delete updatedDoc.rejectionReason;
+      delete updatedDoc.rejectionSuggestion;
     }
     if (evidencePath) {
       // Keep officer verification provenance separate from the organizer's
@@ -173,6 +187,15 @@ export async function verifyStage1DocForUser(
 
     // Writes.
     tx.set(docSnap.ref, updatedDoc, { merge: true });
+    if (doc.revisionId && revisionsSnap.docs.some((item) => item.id === doc.revisionId)) {
+      const revision = revisionsSnap.docs.find((item) => item.id === doc.revisionId)!.data() as Stage1DocRevision;
+      tx.set(docSnap.ref.collection(COLLECTIONS.STAGE1_REVISIONS).doc(doc.revisionId), {
+        ...revision,
+        status,
+        ...(status === 'verified' ? { verifiedBy: uid, verifiedAt: now, rejectionReason: null } : { verifiedBy: uid, verifiedAt: now, rejectionReason: rationale }),
+        verificationEvidencePath: evidencePath ?? null,
+      }, { merge: true });
+    }
     tx.update(controlSnap.ref, { label: newAggregateLabel, updatedAt: now });
 
     // Maintain event.verifiedControlIds.
@@ -199,7 +222,7 @@ export async function verifyStage1DocForUser(
       actorId: uid,
       actorRole: 'authority',
       timestamp: now,
-      notes: rationale,
+      notes: rationale || 'Stage 1 document reviewed and approved.',
       metadata: {
         authorityType: profile.authorityType,
         controlId,

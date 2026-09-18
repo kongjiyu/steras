@@ -191,10 +191,11 @@ async function createValidDraftSubmissionAssets(eventId: string, versionId = 'v1
 async function seedProfilesAndEvent() {
   await environment.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
+    await setDoc(doc(db, 'users/admin-1'), { role: 'admin' });
     await setDoc(doc(db, 'users/organizer-1'), { role: 'organizer', name: validDetails.organizerName, email: validDetails.organizerEmail, phone: validDetails.organizerPhone });
     await setDoc(doc(db, 'users/authority-1'), { role: 'authority', authorityType: 'PDRM' });
-    await setDoc(doc(db, 'events/event-1'), {
-      organizerId: 'organizer-1', status: 'Pending', requiredAuthorities: ['PDRM'],
+      await setDoc(doc(db, 'events/event-1'), {
+        organizerId: 'organizer-1', status: 'Pending', requiredAuthorities: ['PDRM'],
       assignedOfficerUids: ['authority-1'], assignedOfficerByAuthority: { PDRM: 'authority-1' },
     });
     await setDoc(doc(db, 'events/event-1/assessments/v1'), { officialScore: 50 });
@@ -1165,6 +1166,45 @@ describe('Firestore security rules', () => {
     await assertSucceeds(getDoc(doc(environment.authenticatedContext('organizer-1').firestore(), 'events/event-1/event_controls/control-1/stage2_docs/control-1-s2')));
     await assertSucceeds(getDoc(doc(environment.unauthenticatedContext().firestore(), 'public_event_controls/event-1/items/control-1-stage2')));
     await assertFails(setDoc(doc(environment.unauthenticatedContext().firestore(), 'public_event_controls/event-1/items/attacker'), { sanitized: true }));
+  });
+
+  it('allows assigned authorities to read Stage 1 history while public users see only the published projection', async () => {
+    await seedProfilesAndEvent();
+    await environment.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, 'events/event-1/event_controls/control-1'), {
+        controlId: 'control-1', eventId: 'event-1', versionId: 'v1', authority: 'PDRM',
+        controlName: 'PDRM control', stageRequirement: 'stage1_and_stage2', stage1Requirements: [],
+        stage2Requirement: null, controlItemVersion: 1, label: 'verified', createdAt: 1, updatedAt: 1,
+      });
+      await setDoc(doc(db, 'events/event-1/event_controls/control-1/stage1_docs/control-1-s1-application'), {
+        docId: 'control-1-s1-application', docType: 'application', label: 'Application', status: 'verified', revision: 2,
+        revisionId: 'control-1-s1-application-r2', filePath: 'data:application/pdf;base64,AA==', verifiedBy: 'authority-1',
+      });
+      await setDoc(doc(db, 'events/event-1/event_controls/control-1/stage1_docs/control-1-s1-application/revisions/control-1-s1-application-r1'), {
+        revisionId: 'control-1-s1-application-r1', revision: 1, status: 'rejected', docId: 'control-1-s1-application',
+      });
+      await setDoc(doc(db, 'events/event-1/event_controls/control-1/stage1_docs/control-1-s1-application/redactions/control-1-s1-application-r2'), {
+        redactionId: 'control-1-s1-application-r2', status: 'ready', pageCount: 1,
+      });
+      await setDoc(doc(db, 'public_event_controls/event-1/stage1_documents/control-1-control-1-s1-application'), {
+        publicStage1Id: 'control-1-control-1-s1-application', eventId: 'event-1', controlId: 'control-1',
+        docId: 'control-1-s1-application', revision: 2, authority: 'PDRM', status: 'verified', sanitized: true,
+        adminReviewed: true, publishedAt: 1,
+      });
+    });
+    const authorityDb = environment.authenticatedContext('authority-1').firestore();
+    const adminDb = environment.authenticatedContext('admin-1').firestore();
+    const organizerDb = environment.authenticatedContext('organizer-1').firestore();
+    const publicDb = environment.unauthenticatedContext().firestore();
+    await assertSucceeds(getDoc(doc(authorityDb, 'events/event-1/event_controls/control-1/stage1_docs/control-1-s1-application')));
+    await assertSucceeds(getDoc(doc(authorityDb, 'events/event-1/event_controls/control-1/stage1_docs/control-1-s1-application/revisions/control-1-s1-application-r1')));
+    await assertFails(getDoc(doc(authorityDb, 'events/event-1/event_controls/control-1/stage1_docs/control-1-s1-application/redactions/control-1-s1-application-r2')));
+    await assertSucceeds(getDoc(doc(adminDb, 'events/event-1/event_controls/control-1/stage1_docs/control-1-s1-application/redactions/control-1-s1-application-r2')));
+    await assertSucceeds(getDoc(doc(organizerDb, 'events/event-1/event_controls/control-1/stage1_docs/control-1-s1-application')));
+    await assertSucceeds(getDoc(doc(publicDb, 'public_event_controls/event-1/stage1_documents/control-1-control-1-s1-application')));
+    await assertFails(getDoc(doc(publicDb, 'events/event-1/event_controls/control-1/stage1_docs/control-1-s1-application')));
+    await assertFails(setDoc(doc(publicDb, 'public_event_controls/event-1/stage1_documents/forged'), { sanitized: true }));
   });
 
   it('rejects direct public report creation and scopes confirmation markers to their owner', async () => {

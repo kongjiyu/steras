@@ -32,6 +32,7 @@ export interface Stage2RequirementRowProps {
   label: string;
   /** The current Stage 2 doc from Firestore. Null if not yet uploaded. */
   doc: Stage2Doc | null;
+  stage1Ready?: boolean;
   disabled?: boolean;
   onSubmitted?: (result: { docId: string; status: 'pending' }) => void;
   onError?: (message: string) => void;
@@ -41,11 +42,11 @@ const MAX_FILE_BYTES = 700 * 1024;
 const ALLOWED_MIME = ['image/jpeg', 'image/png'];
 
 export default function Stage2RequirementRow(props: Stage2RequirementRowProps) {
-  const { eventId, controlId, authority, label, doc, disabled = false, onSubmitted, onError } = props;
+  const { eventId, controlId, authority, label, doc, stage1Ready = true, disabled = false, onSubmitted, onError } = props;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const isBusy = disabled || submitting;
+  const isBusy = disabled || !stage1Ready || submitting;
 
   const reported = !!doc?.m4TicketId;
   const published = !!doc?.published;
@@ -235,6 +236,7 @@ export default function Stage2RequirementRow(props: Stage2RequirementRowProps) {
           )}
         </div>
       </div>
+      {!stage1Ready && <p className="mt-2 rounded bg-amber-50 px-2 py-1.5 text-xs text-amber-800">Stage 2 upload unlocks after every required Stage 1 document for this control is Authority-approved.</p>}
     </div>
   );
 }

@@ -1314,7 +1314,14 @@ export type AuditAction =
   | 'stage2_doc_rejected'
   | 'control_resubmit_required'
   | 'control_restored'
+  | 'stage1_reviewer_assigned'
+  | 'stage1_doc_revision_submitted'
+  | 'stage1_redaction_generated'
+  | 'stage1_redaction_reviewed'
+  | 'stage1_doc_published'
+  | 'stage1_doc_unpublished'
   | 'assessment_reviewed'
+  | 'cancelled_cleanup'
   | 'withdrawn_cleanup'
   | 'deployment_migration';
 
@@ -1329,6 +1336,7 @@ export type NotificationType =
   // Q1 refactor: per-doc Stage 1 verification notifications
   | 'stage1_doc_approved'
   | 'stage1_doc_rejected'
+  | 'stage1_reviewer_assigned'
   // M3 round N+1 (Workstream 3) — organizer Stage 1 upload
   | 'stage1_doc_submitted'
   // M3 round N+1 (Workstream 4) — Stage 2 public flow
@@ -1536,6 +1544,8 @@ export const COLLECTIONS = {
   OFFICERS: 'officers',
   ASSIGNMENTS: 'assignments',
   STAGE1_DOCS: 'stage1_docs',
+  STAGE1_REVISIONS: 'revisions',
+  STAGE1_REDACTIONS: 'redactions',
   STAGE2_DOCS: 'stage2_docs',
   // M3 round N+1 (Workstream 4) — per-user rate-limit counters
   // under each control. Server-only writes; client reads for the
@@ -1544,6 +1554,7 @@ export const COLLECTIONS = {
   STAGE2_REPORTS: 'stage2_reports',
   PUBLIC_EVENT_CONTROLS: 'public_event_controls',
   PUBLIC_EVENT_CONTROL_ITEMS: 'items',
+  PUBLIC_STAGE1_DOCS: 'stage1_documents',
   PUBLIC_REPORTS: 'public_reports',
   ADMIN_OPERATIONS: 'admin_operations',
   ADMIN_AUDIT_LOGS: 'admin_audit_logs',
@@ -1612,16 +1623,97 @@ export interface Stage1Doc {
   /** Storage path or external URL to the uploaded file. */
   filePath?: string;
   status: 'pending_submission' | 'pending_verification' | 'verified' | 'rejected' | 'use_previous';
-  /** If `status: 'use_previous'`, the source event this reuses from.
-   *  Per the locked decision, "Use Previous" is unconditional (no A26
-   *  gate). */
+  /** Current immutable submission revision. Legacy records default to 1. */
+  revision?: number;
+  /** The current revision document id. */
+  revisionId?: string;
+  /** If `status: 'use_previous'`, this is a declaration rather than a file.
+   * It must still be reviewed by the assigned authority. */
   usePreviousSourceEventId?: string;
+  usePreviousDeclaration?: boolean;
   verifiedBy?: string;
   verifiedAt?: number;
   /** Optional, non-clickable verification locator supplied by the officer. */
   verificationEvidencePath?: string;
   rejectionReason?: string;
   rejectionSuggestion?: string;
+}
+
+/** Immutable history for one Stage 1 upload/declaration. */
+export interface Stage1DocRevision {
+  revisionId: string;
+  eventId: string;
+  versionId: string;
+  controlId: string;
+  docId: string;
+  revision: number;
+  docType: Stage1Doc['docType'];
+  label: string;
+  filePath?: string;
+  fileName?: string;
+  mimeType?: string;
+  fileSizeBytes?: number;
+  sha256?: string;
+  usePreviousDeclaration?: boolean;
+  submittedBy: string;
+  submittedAt: number;
+  /** Client retry key; repeating the same submission is a no-op. */
+  idempotencyKey?: string;
+  status: Stage1Doc['status'];
+  verifiedBy?: string;
+  verifiedAt?: number;
+  rejectionReason?: string;
+  verificationEvidencePath?: string;
+  supersededAt?: number;
+}
+
+/** Reviewer assignment for one Stage 1 control. */
+export interface Stage1ReviewAssignment {
+  assignmentId: string;
+  eventId: string;
+  versionId: string;
+  controlId: string;
+  authorityType: AuthorityType;
+  reviewerUid: string;
+  assignedBy: string;
+  assignedAt: number;
+  status: 'active' | 'revoked';
+  reassignedFrom?: string;
+  revokedAt?: number;
+}
+
+export interface Stage1RedactionMask {
+  page: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  category: 'government_id' | 'contact' | 'address' | 'signature' | 'payment' | 'qr_or_barcode' | 'personal_identifier' | 'other';
+  source: 'minimax' | 'admin';
+}
+
+export interface Stage1RedactionDraft {
+  redactionId: string;
+  eventId: string;
+  versionId: string;
+  controlId: string;
+  docId: string;
+  revision: number;
+  sourceHash: string;
+  sourceFilePath?: string;
+  status: 'draft' | 'processing' | 'manual_required' | 'ready' | 'published' | 'failed';
+  masks: Stage1RedactionMask[];
+  pageCount: number;
+  reviewedPages: number[];
+  aiProvider: 'minimax' | 'manual';
+  aiModel?: string;
+  aiFailureReason?: string;
+  generatedAt: number;
+  generatedBy: string;
+  updatedAt: number;
+  publishedAt?: number;
+  publishedBy?: string;
+  redactedFilePath?: string;
 }
 
 /** Stage 2 control documentation (visual evidence). */
@@ -1663,6 +1755,26 @@ export interface PublicEventControl {
   sanitizedBy: string;
 }
 
+/** Sanitised public projection for an individually published Stage 1 item. */
+export interface PublicStage1Document {
+  publicStage1Id: string;
+  eventId: string;
+  versionId: string;
+  controlId: string;
+  docId: string;
+  revision: number;
+  authority: AuthorityType;
+  controlName: string;
+  documentLabel: string;
+  status: 'verified' | 'use_previous';
+  fileUrl?: string;
+  fileMimeType?: string;
+  publishedAt: number;
+  sanitized: true;
+  adminReviewed: true;
+  disclosure: 'Sensitive data redacted · Admin reviewed' | 'Verified previous-document declaration · No file published';
+}
+
 /** Full Event Control canonical shape — replaces the flat `event_controls`
  *  doc with a sub-collection layout (FR-M3-22..29, Q1 refactor). */
 export interface EventControl {
@@ -1689,6 +1801,9 @@ export interface EventControl {
   labelRemovedAt?: number;
   createdAt: number;
   updatedAt: number;
+  /** Current Stage 1 reviewer. Defaults to the authority decision officer. */
+  stage1ReviewerUid?: string;
+  stage1ReviewerAssignedAt?: number;
 }
 
 /** Outcome of a Stage 1 verification (officer's per-doc decision). */

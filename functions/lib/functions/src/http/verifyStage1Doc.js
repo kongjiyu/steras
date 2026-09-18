@@ -72,8 +72,11 @@ async function verifyStage1DocForUser(uid, data, now = Date.now()) {
     if (status !== 'verified' && status !== 'rejected') {
         throw new https_1.HttpsError('invalid-argument', 'status must be "verified" or "rejected".');
     }
-    if (rationale.length < RATIONALE_MIN || rationale.length > RATIONALE_MAX) {
-        throw new https_1.HttpsError('invalid-argument', `Rationale must be between ${RATIONALE_MIN} and ${RATIONALE_MAX} characters.`);
+    if (rationale.length > RATIONALE_MAX) {
+        throw new https_1.HttpsError('invalid-argument', `Rationale must be at most ${RATIONALE_MAX} characters.`);
+    }
+    if (status === 'rejected' && rationale.length < RATIONALE_MIN) {
+        throw new https_1.HttpsError('invalid-argument', `A rejection reason must be between ${RATIONALE_MIN} and ${RATIONALE_MAX} characters.`);
     }
     const db = (0, firebase_admin_1.firestore)();
     const eventRef = db.collection(types_1.COLLECTIONS.EVENTS).doc(eventId);
@@ -94,24 +97,32 @@ async function verifyStage1DocForUser(uid, data, now = Date.now()) {
         if (!eventSnap.exists)
             throw new https_1.HttpsError('not-found', 'Event application was not found.');
         const event = eventSnap.data();
+        if (!controlSnap.exists) {
+            throw new https_1.HttpsError('not-found', `Control ${controlId} was not found for this event.`);
+        }
+        const control = controlSnap.data();
         const assignment = assignmentsSnap.docs
             .map((snapshot) => snapshot.data())
             .find((candidate) => candidate.versionId === event.currentVersionId
             && candidate.authorityType === profile.authorityType
             && candidate.officerUid === uid
             && (candidate.status === 'pending' || candidate.status === 'in_progress' || candidate.status === 'completed'));
-        if (!assignment) {
+        // Stage 1 can be independently reassigned after Final Review. In that
+        // case the control's current reviewer is the source of truth even when
+        // the reviewer is not the officer who owns the original authority
+        // decision assignment.
+        const isCurrentStage1Reviewer = control.stage1ReviewerUid === uid;
+        if (!assignment && !isCurrentStage1Reviewer) {
             throw new https_1.HttpsError('permission-denied', 'You are not the named officer assigned to this application.');
         }
-        if (!controlSnap.exists) {
-            throw new https_1.HttpsError('not-found', `Control ${controlId} was not found for this event.`);
-        }
-        const control = controlSnap.data();
         if (!(0, controlLifecycle_1.isActiveControlGeneration)(event, control, eventId)) {
             throw new https_1.HttpsError('failed-precondition', 'This control is not active for the current application version.');
         }
         if (control.authority !== profile.authorityType) {
             throw new https_1.HttpsError('permission-denied', `This control belongs to ${control.authority}, not ${profile.authorityType}.`);
+        }
+        if (control.stage1ReviewerUid && control.stage1ReviewerUid !== uid) {
+            throw new https_1.HttpsError('permission-denied', 'This Stage 1 document is assigned to another reviewer.');
         }
         if (!docSnap.exists) {
             throw new https_1.HttpsError('not-found', `Stage 1 document ${docId} was not found for control ${controlId}.`);
@@ -120,18 +131,17 @@ async function verifyStage1DocForUser(uid, data, now = Date.now()) {
         if (doc.status === 'pending_submission') {
             throw new https_1.HttpsError('failed-precondition', 'The organiser has not uploaded this Stage 1 document yet.');
         }
-        if (doc.status === 'use_previous') {
-            throw new https_1.HttpsError('failed-precondition', 'This Stage 1 document uses a prior receipt and does not need officer verification.');
-        }
         if (doc.status === 'verified' || doc.status === 'rejected') {
             if (doc.status === status && doc.verifiedBy === uid && doc.rejectionReason === rationale) {
                 return { eventId, controlId, docId, status, idempotent: true };
             }
             throw new https_1.HttpsError('failed-precondition', `This Stage 1 document is already ${doc.status}.`);
         }
-        // doc.status === 'pending_verification' — proceed.
+        // pending_verification and use_previous declarations both require an
+        // explicit current-authority review.
         // Read all stage1_docs for this control to recompute the aggregate label.
         const allDocsSnap = await tx.get(eventRef.collection(types_1.COLLECTIONS.EVENT_CONTROLS).doc(controlId).collection(types_1.COLLECTIONS.STAGE1_DOCS));
+        const revisionsSnap = await tx.get(eventRef.collection(types_1.COLLECTIONS.EVENT_CONTROLS).doc(controlId).collection(types_1.COLLECTIONS.STAGE1_DOCS).doc(docId).collection(types_1.COLLECTIONS.STAGE1_REVISIONS));
         const allDocs = allDocsSnap.docs.map((d) => d.data());
         const updatedDoc = { ...doc, status, verifiedBy: uid, verifiedAt: now };
         if (status === 'rejected') {
@@ -139,7 +149,8 @@ async function verifyStage1DocForUser(uid, data, now = Date.now()) {
         }
         else {
             // Clear any prior rejection reason on a successful verify
-            updatedDoc.rejectionReason = '';
+            delete updatedDoc.rejectionReason;
+            delete updatedDoc.rejectionSuggestion;
         }
         if (evidencePath) {
             // Keep officer verification provenance separate from the organizer's
@@ -154,6 +165,15 @@ async function verifyStage1DocForUser(uid, data, now = Date.now()) {
         const isAllVerifiedNow = merged.every((d) => d.status === 'verified' || d.status === 'use_previous');
         // Writes.
         tx.set(docSnap.ref, updatedDoc, { merge: true });
+        if (doc.revisionId && revisionsSnap.docs.some((item) => item.id === doc.revisionId)) {
+            const revision = revisionsSnap.docs.find((item) => item.id === doc.revisionId).data();
+            tx.set(docSnap.ref.collection(types_1.COLLECTIONS.STAGE1_REVISIONS).doc(doc.revisionId), {
+                ...revision,
+                status,
+                ...(status === 'verified' ? { verifiedBy: uid, verifiedAt: now, rejectionReason: null } : { verifiedBy: uid, verifiedAt: now, rejectionReason: rationale }),
+                verificationEvidencePath: evidencePath ?? null,
+            }, { merge: true });
+        }
         tx.update(controlSnap.ref, { label: newAggregateLabel, updatedAt: now });
         // Maintain event.verifiedControlIds.
         const existingVerified = (event.verifiedControlIds ?? []);
@@ -179,7 +199,7 @@ async function verifyStage1DocForUser(uid, data, now = Date.now()) {
             actorId: uid,
             actorRole: 'authority',
             timestamp: now,
-            notes: rationale,
+            notes: rationale || 'Stage 1 document reviewed and approved.',
             metadata: {
                 authorityType: profile.authorityType,
                 controlId,

@@ -24,6 +24,7 @@ import { httpsCallable } from 'firebase/functions';
 import {
   AlertTriangle,
   CalendarDays,
+  FileText,
   CheckCircle2,
   ChevronLeft,
   Clock3,
@@ -39,6 +40,7 @@ import {
   COLLECTIONS,
   PublicEventControl,
   PublicEvent,
+  PublicStage1Document,
   Stage2Doc,
 } from '@shared/types';
 import { auth, db, functions, isFirebaseConfigured } from '../../config/firebase';
@@ -59,6 +61,7 @@ export default function PublicEventDetail() {
   const [controlsError, setControlsError] = useState('');
   const [controls, setControls] = useState<PublicEventControl[]>([]);
   const [stage2Docs, setStage2Docs] = useState<Record<string, Stage2Doc | null>>({});
+  const [stage1Documents, setStage1Documents] = useState<PublicStage1Document[]>([]);
   const [currentUid, setCurrentUid] = useState<string | null>(null);
   const [toast, setToast] = useState<{ kind: 'success' | 'error'; message: string } | null>(null);
 
@@ -87,6 +90,13 @@ export default function PublicEventDetail() {
       setError('The approved event could not be loaded.');
       setLoading(false);
     });
+  }, [eventId, retryKey]);
+
+  useEffect(() => {
+    if (!isFirebaseConfigured || !eventId) return;
+    return onSnapshot(collection(db, COLLECTIONS.PUBLIC_EVENT_CONTROLS, eventId, COLLECTIONS.PUBLIC_STAGE1_DOCS), (snapshot) => {
+      setStage1Documents(snapshot.docs.map((item) => ({ publicStage1Id: item.id, ...(item.data() as Partial<PublicStage1Document>) }) as PublicStage1Document).sort((left, right) => left.authority.localeCompare(right.authority)));
+    }, () => setControlsError('Published Stage 1 documentation could not be loaded.'));
   }, [eventId, retryKey]);
 
   // Subscribe only to the server-written sanitised projection. Public
@@ -130,7 +140,7 @@ export default function PublicEventDetail() {
   if (error) return <div className="min-h-screen bg-[#f4eddf]"><PublicHeader /><main className="mx-auto max-w-5xl px-5 py-8 sm:px-8 sm:py-12"><div className="py-10"><EmptyState title="Event unavailable" description={error}><button type="button" className="btn-secondary" onClick={() => { setLoading(true); setRetryKey((value) => value + 1); }}>Try again</button></EmptyState></div></main></div>;
   if (!event) return <div className="min-h-screen bg-[#f4eddf]"><PublicHeader /><main className="mx-auto max-w-5xl px-5 py-8 sm:px-8 sm:py-12"><div className="py-10"><EmptyState title="Event not publicly listed" description="The event may not be approved, or its public listing has been removed." /><div className="mt-5 text-center"><Link to="/calendar" className="text-sm font-semibold text-[#52651c]">Back to approved events</Link></div></div></main></div>;
 
-  return <EventContent controlsError={controlsError} retryControls={() => setRetryKey((value) => value + 1)} event={event} controls={controls} stage2Docs={stage2Docs} currentUid={currentUid} viewerEligible={profile?.role === 'public'} showToast={showToast} eventId={eventId!} toast={toast} />;
+  return <EventContent controlsError={controlsError} retryControls={() => setRetryKey((value) => value + 1)} event={event} controls={controls} stage2Docs={stage2Docs} stage1Documents={stage1Documents} currentUid={currentUid} viewerEligible={profile?.role === 'public'} showToast={showToast} eventId={eventId!} toast={toast} />;
 }
 
 interface EventContentProps {
@@ -139,6 +149,7 @@ interface EventContentProps {
   event: PublicEvent;
   controls: PublicEventControl[];
   stage2Docs: Record<string, Stage2Doc | null>;
+  stage1Documents: PublicStage1Document[];
   currentUid: string | null;
   viewerEligible: boolean;
   eventId: string;
@@ -146,7 +157,7 @@ interface EventContentProps {
   showToast: (kind: 'success' | 'error', message: string) => void;
 }
 
-function EventContent({ controlsError, retryControls, event, controls, stage2Docs, currentUid, viewerEligible, eventId, toast, showToast }: EventContentProps) {
+function EventContent({ controlsError, retryControls, event, controls, stage2Docs, stage1Documents, currentUid, viewerEligible, eventId, toast, showToast }: EventContentProps) {
   // Workstream 5: only show controls where the admin has actually
   // published the Stage 2 doc. Pending + rejected images stay hidden
   // from the public view (per FR-M3-21 / UC-14). The Firestore rule
@@ -194,6 +205,19 @@ function EventContent({ controlsError, retryControls, event, controls, stage2Doc
             </div>
 
             <p className="mt-5 max-w-2xl text-xs leading-5 text-[#7a8063]">This listing contains approved, non-sensitive event information. Operational risk scores, private evidence and internal incident records are never published here.</p>
+
+            <div className="mt-10" data-testid="public-stage1-list">
+              <h2 className="font-display text-lg font-bold text-[#303528]">Stage 1 documentation status</h2>
+              <p className="mt-1 max-w-2xl text-sm leading-6 text-[#6b6555]">Only documentation explicitly published by Admin is shown. Stage 1 documents are read-only and cannot be confirmed or reported by public viewers.</p>
+              {stage1Documents.length === 0 ? <div className="mt-4 rounded-lg border border-[#ded4c1] bg-[#fffdf7] p-5 text-sm text-[#6b6555]">No Stage 1 documentation has been published yet.</div> : <div className="mt-4 space-y-3">
+                {stage1Documents.map((document) => <article key={document.publicStage1Id} className="rounded-lg border border-[#ded4c1] bg-[#fffdf7] p-4" data-testid={`public-stage1-card-${document.authority}`}>
+                  <div className="flex flex-wrap items-center gap-2"><span className="badge bg-blue-100 text-brand-700 text-xs">{document.authority}</span><h3 className="font-semibold text-[#20251d]">{document.controlName}</h3><span className="ml-auto badge bg-green-100 text-status-approved text-xs">Authority verified</span></div>
+                  <p className="mt-2 text-sm text-[#5f6254]">{document.documentLabel}</p>
+                  <p className="mt-2 text-xs text-[#7a8063]">{document.disclosure} · Published {new Date(document.publishedAt).toLocaleString()}</p>
+                  {document.fileUrl ? <a href={document.fileUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex min-h-10 items-center gap-2 rounded-md border border-[#a8b57e] bg-white px-3 py-2 text-xs font-semibold text-[#52651c]"><FileText size={14} /> Preview / download redacted copy</a> : <p className="mt-3 rounded bg-blue-50 px-3 py-2 text-xs text-brand-800">Verified previous-document declaration; no file was published.</p>}
+                </article>)}
+              </div>}
+            </div>
 
             {/* Verified controls (Workstream 4 — Stage 2 images + confirm/report). */}
             <div className="mt-10">
