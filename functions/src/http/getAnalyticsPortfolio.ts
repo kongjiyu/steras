@@ -53,7 +53,7 @@ import {
 
 const DEFAULT_LIMIT = 250;
 const MAX_LIMIT = 500;
-const MAX_FETCH = 1_000;
+const SCAN_PAGE_SIZE = 250;
 const MAX_RANGE_MS = 5 * 366 * 24 * 60 * 60 * 1_000;
 const MAX_FILTER_VALUES = 25;
 const OVERRIDE_LIMIT = 200;
@@ -101,15 +101,11 @@ export const getAnalyticsPortfolio = onCall<AnalyticsPortfolioRequest | undefine
     assertAnalyticsAdmin(profileSnapshot.data() as UserProfile | undefined);
 
     const input = validateAnalyticsPortfolioRequest(request.data);
-    const fetchLimit = Math.min(MAX_FETCH, Math.max(input.limit * 2, DEFAULT_LIMIT));
     let query: FirebaseFirestore.Query = db.collection(COLLECTIONS.EVENTS).orderBy('createdAt', 'desc');
     if (input.from !== undefined) query = query.where('createdAt', '>=', input.from);
     if (input.to !== undefined) query = query.where('createdAt', '<=', input.to);
 
-    const eventSnapshot = await query.limit(fetchLimit).get();
-    const eventCandidates = eventSnapshot.docs
-      .map((snapshot) => canonicalEventDocument(snapshot.id, snapshot.data()))
-      .filter((event) => eventMatchesBaseFilters(event, input));
+    const eventCandidates = await readAllMatchingEventCandidates(query, input);
 
     const records = await mapWithConcurrency(eventCandidates, 10, async (event) => {
       const eventReference = db.collection(COLLECTIONS.EVENTS).doc(event.eventId);
@@ -222,9 +218,7 @@ export const getAnalyticsPortfolio = onCall<AnalyticsPortfolioRequest | undefine
     const generatedAt = Date.now();
     const childCollectionsTruncated = selected.some((record) => Object.values(record.sourceCoverage).includes('truncated'));
     const childCollectionsUnavailable = selected.some((record) => Object.values(record.sourceCoverage).includes('unavailable'));
-    const eventScanTruncated = eventSnapshot.size === fetchLimit;
     const limitations = [
-      ...(eventScanTruncated ? ['Event scan reached the server cap; totalMatched is a lower bound.'] : []),
       ...(childCollectionsTruncated ? ['One or more child collections reached a server cap; affected record metrics are incomplete.'] : []),
       ...(childCollectionsUnavailable ? ['Malformed child records were excluded; affected record metrics are unavailable.'] : []),
     ];
@@ -236,12 +230,12 @@ export const getAnalyticsPortfolio = onCall<AnalyticsPortfolioRequest | undefine
       records: selected,
       totalMatched: operationalRecords.length,
       syntheticExcluded,
-      truncated: eventScanTruncated || childCollectionsTruncated || operationalRecords.length > input.limit,
+      truncated: childCollectionsTruncated || operationalRecords.length > input.limit,
       unavailableSections,
       coverage: {
-        eventScan: eventScanTruncated ? 'truncated' : 'complete',
+        eventScan: 'complete',
         childCollections: childCollectionsTruncated ? 'truncated' : childCollectionsUnavailable ? 'unavailable' : 'complete',
-        totalMatchedExact: !eventScanTruncated,
+        totalMatchedExact: true,
         limitations,
       },
     };
@@ -628,6 +622,26 @@ function eventMatchesBaseFilters(event: EventRecord, input: AnalyticsPortfolioRe
   if (input.venueIds?.length && (!event.eventDetails.venueId || !input.venueIds.includes(event.eventDetails.venueId))) return false;
   if (input.authorityTypes?.length && !event.requiredAuthorities.some((authority) => input.authorityTypes?.includes(authority))) return false;
   return Number.isFinite(event.createdAt) && Number.isFinite(event.updatedAt);
+}
+
+async function readAllMatchingEventCandidates(
+  query: FirebaseFirestore.Query,
+  input: AnalyticsPortfolioRequest,
+): Promise<Array<EventRecord & Record<string, unknown>>> {
+  const candidates: Array<EventRecord & Record<string, unknown>> = [];
+  let cursor: FirebaseFirestore.QueryDocumentSnapshot | undefined;
+  let hasMore = true;
+  while (hasMore) {
+    const pageQuery = cursor ? query.startAfter(cursor) : query;
+    const snapshot = await pageQuery.limit(SCAN_PAGE_SIZE).get();
+    snapshot.docs
+      .map((document) => canonicalEventDocument(document.id, document.data()))
+      .filter((event) => eventMatchesBaseFilters(event, input))
+      .forEach((event) => candidates.push(event));
+    cursor = snapshot.docs.at(-1);
+    hasMore = snapshot.size === SCAN_PAGE_SIZE && Boolean(cursor);
+  }
+  return candidates;
 }
 
 async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper: (item: T) => Promise<R>): Promise<R[]> {
