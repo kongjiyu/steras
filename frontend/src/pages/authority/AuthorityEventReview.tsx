@@ -359,7 +359,9 @@ export default function AuthorityEventReview() {
   if (!event) return <div className="p-8"><EmptyState title="Event not found" description="It may have been removed or you do not have access." /></div>;
 
   const details = event.eventDetails;
-  const reviewOpen = ['Pending', 'UnderReview'].includes(event.status) && event.reviewStage === 'authority';
+  const reviewOpen = ['Pending', 'UnderReview'].includes(event.status)
+    && (event.reviewStage === 'authority' || event.reviewStage === 'second')
+    && !event.secondReview;
   const documentationOpen = event.status === 'Approved'
     && event.controlListGenerated === true
     && event.reviewStage !== 'closed';
@@ -761,7 +763,7 @@ export default function AuthorityEventReview() {
             <div className="card-header"><h2 className="font-semibold">Your decision</h2></div>
             <div className="card-body space-y-3">
               {ownDecision && <p className="rounded-md bg-cream-50 p-3 text-sm text-ink-700" data-testid="current-officer-decision">
-                Current decision: <span className="font-semibold">{formatWorkflowValue(ownDecision.decision)}</span>. You may amend it while the application remains in Authority Review.
+                Current decision: <span className="font-semibold">{formatWorkflowValue(ownDecision.decision)}</span>. You may amend it while the application remains in Authority or Final Review.
               </p>}
               {!reviewOpen && <p className="rounded-md bg-cream-50 p-3 text-sm text-ink-600">This review is closed with status {formatWorkflowValue(event.status)}.</p>}
               {reviewOpen && !isNamedOfficer && <p className="rounded-md bg-cream-50 p-3 text-sm text-ink-600">Read-only: this application is assigned to another officer.</p>}

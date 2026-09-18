@@ -4,12 +4,15 @@ import { assertSharedProjectAuthorization, parseSterasTestAction } from './seedS
 
 const originalAllow = process.env.STERAS_TEST_ALLOW_SHARED_PROJECT;
 const originalConfirm = process.env.STERAS_TEST_CONFIRM_DATASET;
+const originalEmulator = process.env.FIRESTORE_EMULATOR_HOST;
 
 afterEach(() => {
   if (originalAllow === undefined) delete process.env.STERAS_TEST_ALLOW_SHARED_PROJECT;
   else process.env.STERAS_TEST_ALLOW_SHARED_PROJECT = originalAllow;
   if (originalConfirm === undefined) delete process.env.STERAS_TEST_CONFIRM_DATASET;
   else process.env.STERAS_TEST_CONFIRM_DATASET = originalConfirm;
+  if (originalEmulator === undefined) delete process.env.FIRESTORE_EMULATOR_HOST;
+  else process.env.FIRESTORE_EMULATOR_HOST = originalEmulator;
 });
 
 describe('seedSterasTest safety contract', () => {
@@ -27,12 +30,14 @@ describe('seedSterasTest safety contract', () => {
 
   it('refuses writes without shared-project opt-in', () => {
     delete process.env.STERAS_TEST_ALLOW_SHARED_PROJECT;
-    expect(() => assertSharedProjectAuthorization('linkos-496505', 'apply')).toThrow(/ALLOW_SHARED_PROJECT/);
+    delete process.env.FIRESTORE_EMULATOR_HOST;
+    expect(() => assertSharedProjectAuthorization('linkos-496505', 'apply')).toThrow(/emulator\/CI/i);
     expect(() => assertSharedProjectAuthorization('another-project', 'dry-run')).toThrow(/locked/);
   });
 
   it('requires the exact dataset confirmation before cleanup', () => {
     process.env.STERAS_TEST_ALLOW_SHARED_PROJECT = 'true';
+    process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
     process.env.STERAS_TEST_CONFIRM_DATASET = 'wrong-dataset';
     expect(() => assertSharedProjectAuthorization('linkos-496505', 'cleanup')).toThrow(STERAS_TEST_DATASET_ID);
     process.env.STERAS_TEST_CONFIRM_DATASET = STERAS_TEST_DATASET_ID;

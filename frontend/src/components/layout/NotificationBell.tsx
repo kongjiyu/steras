@@ -24,6 +24,7 @@ import { db, functions, isFirebaseConfigured } from '../../config/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { COLLECTIONS, Notification } from '@shared/types';
 import { userFacingSystemText } from '../../utils/userFacingText';
+import { organizerNotificationPath } from '../../utils/notificationTarget';
 
 const MAX_VISIBLE = 20;
 
@@ -194,7 +195,7 @@ export default function NotificationBell() {
                         )}
                       </div>
                     )}
-                    {n.eventId && <Link to={`/organizer/events/${n.eventId}`} onClick={() => { void toggleRead(n); setOpen(false); }} className="mt-2 inline-flex min-h-9 items-center text-xs font-semibold text-brand-700 underline underline-offset-2">Open application</Link>}
+                    {n.eventId && <Link to={organizerNotificationPath(n)} onClick={() => { void toggleRead(n); setOpen(false); }} className="mt-2 inline-flex min-h-9 items-center text-xs font-semibold text-brand-700 underline underline-offset-2">{organizerNotificationPath(n).endsWith('/controls') ? 'Open controls & documentation' : 'Open application'}</Link>}
                     <p className="mt-1 text-[11px] uppercase tracking-[0.06em] text-ink-400">{timeAgo(n.createdAt)}</p>
                   </div>
                   {!n.read && (

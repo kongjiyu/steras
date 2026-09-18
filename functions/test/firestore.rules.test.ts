@@ -265,6 +265,18 @@ describe('Firestore security rules', () => {
     await assertFails(setDoc(doc(adminDb, 'events/proposal-visible/control_list_proposals/v2'), { status: 'draft' }));
   });
 
+  it('keeps integrity governance records server-only', async () => {
+    await environment.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), 'data_governance_records/source-1'), {
+        sourcePath: 'events/source-1', verificationStatus: 'unverified', visibility: 'private',
+      });
+      await setDoc(doc(context.firestore(), 'users/admin-governance'), { uid: 'admin-governance', role: 'admin' });
+    });
+    const adminDb = environment.authenticatedContext('admin-governance').firestore();
+    await assertFails(getDoc(doc(adminDb, 'data_governance_records/source-1')));
+    await assertFails(setDoc(doc(adminDb, 'data_governance_records/source-2'), { visibility: 'private' }));
+  });
+
   it('keeps privileged accounts, venue mutations, and admin operation records backend-only', async () => {
     await environment.withSecurityRulesDisabled(async (context) => {
       const db = context.firestore();

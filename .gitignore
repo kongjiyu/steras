@@ -144,3 +144,7 @@ $RECYCLE.BIN/
 
 # Local admin portal review evidence
 /output/admin-portal-review/
+
+# Production integrity audit artifacts are local, redacted operational output;
+# do not commit paths or repair manifests from a live project.
+/output/integrity/

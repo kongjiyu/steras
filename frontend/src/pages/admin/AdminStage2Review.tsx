@@ -75,8 +75,17 @@ interface UnpublishResponse {
   rejectedAt: number;
 }
 
-export default function AdminStage2Review() {
-  const { eventId } = useParams<{ eventId: string }>();
+export interface AdminStage2ReviewProps {
+  /** Used by the unified control workspace so this panel can be embedded
+   * without changing the existing Stage 1/Stage 2 action handlers. */
+  eventIdOverride?: string;
+  embedded?: boolean;
+  initialTab?: 'stage1' | 'stage2';
+}
+
+export default function AdminStage2Review({ eventIdOverride, embedded = false, initialTab }: AdminStage2ReviewProps = {}) {
+  const { eventId: routeEventId } = useParams<{ eventId: string }>();
+  const eventId = eventIdOverride ?? routeEventId;
   const [event, setEvent] = useState<EventRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -85,7 +94,7 @@ export default function AdminStage2Review() {
   const [stage2Docs, setStage2Docs] = useState<Record<string, Stage2Doc | null>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [rejectingControl, setRejectingControl] = useState<EventControl | null>(null);
-  const [tab, setTab] = useState<'stage1' | 'stage2'>('stage1');
+  const [tab, setTab] = useState<'stage1' | 'stage2'>(initialTab ?? 'stage1');
   const [stage1Docs, setStage1Docs] = useState<Record<string, Stage1Doc | null>>({});
   const [stage1Revisions, setStage1Revisions] = useState<Record<string, Stage1DocRevision[]>>({});
   const [redactions, setRedactions] = useState<Record<string, Stage1RedactionDraft | null>>({});
@@ -95,6 +104,10 @@ export default function AdminStage2Review() {
   const [editingRedaction, setEditingRedaction] = useState<string | null>(null);
   const [maskDraft, setMaskDraft] = useState<Stage1RedactionMask[]>([]);
   const [reviewedPages, setReviewedPages] = useState<number[]>([]);
+
+  useEffect(() => {
+    if (initialTab) setTab(initialTab);
+  }, [initialTab]);
 
   useEffect(() => {
     if (!eventId) return;
@@ -345,12 +358,12 @@ export default function AdminStage2Review() {
   const reportedCount = reviewable.filter((c) => !!stage2Docs[c.controlId]?.m4TicketId).length;
 
   return (
-    <div className="p-5 sm:p-8">
-      <Link to={`/admin/applications/${eventId}`} className="mb-4 inline-flex min-h-11 items-center gap-1 text-sm font-medium text-brand-700 hover:text-brand-800">
+    <div className={embedded ? '' : 'p-5 sm:p-8'}>
+      {!embedded && <Link to={`/admin/applications/${eventId}`} className="mb-4 inline-flex min-h-11 items-center gap-1 text-sm font-medium text-brand-700 hover:text-brand-800">
         <ChevronLeft size={16} /> Back to application
-      </Link>
+      </Link>}
 
-      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      {!embedded && <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="font-display text-2xl font-bold text-ink-800">Event documentation</h1>
           <p className="mt-1 text-sm text-ink-500">{details.name} · {venueName}</p>
@@ -374,12 +387,12 @@ export default function AdminStage2Review() {
             <span className="text-xs font-semibold text-ink-500">Control list: not generated</span>
           )}
         </div>
-      </div>
+      </div>}
 
-      <div className="mb-5 flex flex-wrap gap-2 border-b border-[#ded4c1] pb-3" role="tablist" aria-label="Documentation stage">
+      {!embedded && <div className="mb-5 flex flex-wrap gap-2 border-b border-[#ded4c1] pb-3" role="tablist" aria-label="Documentation stage">
         <button type="button" role="tab" aria-selected={tab === 'stage1'} onClick={() => setTab('stage1')} className={`min-h-11 rounded-md px-4 text-sm font-semibold ${tab === 'stage1' ? 'bg-brand-700 text-white' : 'border border-ink-200 bg-white text-ink-700'}`}><ShieldCheck size={15} /> Stage 1 · Authority verification</button>
         <button type="button" role="tab" aria-selected={tab === 'stage2'} onClick={() => setTab('stage2')} className={`min-h-11 rounded-md px-4 text-sm font-semibold ${tab === 'stage2' ? 'bg-brand-700 text-white' : 'border border-ink-200 bg-white text-ink-700'}`}><ImageIcon size={15} /> Stage 2 · Admin publication</button>
-      </div>
+      </div>}
 
       {tab === 'stage1' && <AdminStage1Documentation
         controls={controls}

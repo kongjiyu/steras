@@ -179,9 +179,12 @@ export default function MyEvents() {
                   </td>
                   <td className="px-4 py-3"><OrganizerStatusBadge status={String(e.status)} state={resolveApplicationDisplayState(e)} /></td>
                   <td className="px-4 py-3 text-right">
-                    <Link to={isEditableApplicationStatus(String(e.status)) ? `/organizer/events/${e.eventId}/edit` : `/organizer/events/${e.eventId}`} className="text-brand-600 hover:text-brand-700 text-sm font-medium">
-                      {isEditableApplicationStatus(String(e.status)) ? 'Edit' : 'View'}
-                    </Link>
+                    <div className="flex items-center justify-end gap-3">
+                      <Link to={isEditableApplicationStatus(String(e.status)) ? `/organizer/events/${e.eventId}/edit` : `/organizer/events/${e.eventId}`} className="text-brand-600 hover:text-brand-700 text-sm font-medium">
+                        {isEditableApplicationStatus(String(e.status)) ? 'Edit' : 'View'}
+                      </Link>
+                      {e.controlListGenerated === true && <Link data-testid={`event-controls-${e.eventId}`} to={`/organizer/events/${e.eventId}/controls`} className="text-brand-600 hover:text-brand-700 text-sm font-semibold">Controls</Link>}
+                    </div>
                   </td>
                 </tr></Fragment>;
               })}
@@ -198,7 +201,7 @@ export default function MyEvents() {
                 <div className="flex items-start justify-between gap-3"><h2 className="font-display text-base font-bold leading-snug text-ink-800">{e.eventDetails.name || 'Untitled event'}</h2><OrganizerStatusBadge status={String(e.status)} state={resolveApplicationDisplayState(e)} /></div>
                 <div className="mt-3 space-y-1 text-sm text-ink-500"><p className="flex items-center gap-2"><MapPin size={14} />{e.eventDetails.venueName || 'Venue not set'}</p><p className="tabular-nums">{e.eventDetails.startDatetime ? format(new Date(e.eventDetails.startDatetime), 'PP') : 'Not scheduled'}</p><p>{versionLabel(e)} - {assessmentLabel(e)}</p><p>{organizerAdminDecisionLabel(e)} - {organizerPublicationLabel(publicationStateFor(e))}</p></div>
                 <div className="mt-4 flex items-center justify-between border-t border-[#e3dacb] pt-3 text-sm font-semibold text-brand-700"><span>{editable ? 'Continue application' : 'View application'}</span><ArrowRight size={16} /></div>
-              </Link></li></Fragment>;
+              </Link>{e.controlListGenerated === true && <Link data-testid={`event-controls-${e.eventId}`} to={`/organizer/events/${e.eventId}/controls`} className="mt-2 block rounded-lg border border-brand-200 bg-brand-50 px-4 py-3 text-center text-sm font-semibold text-brand-700">Event controls &amp; documentation</Link>}</li></Fragment>;
             })}
           </ul>
         </div>

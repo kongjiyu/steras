@@ -28,3 +28,29 @@ jobs:
       - run: npm run test
       - run: npm run test:rules
       - run: npm run build
+
+  # Forks cannot access production credentials. Internal pushes and internal
+  # pull requests may opt into the same read-only audit once the repository
+  # owner configures the OIDC provider and enables the repository variable.
+  production-integrity-audit:
+    if: vars.STERAS_PRODUCTION_AUDIT_ENABLED == 'true' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.STERAS_PRODUCTION_WIF_PROVIDER }}
+          service_account: ${{ secrets.STERAS_PRODUCTION_AUDIT_SERVICE_ACCOUNT }}
+      # Warning-level legacy markers are also blocking once the approved
+      # migration has completed; this prevents new fixture/source metadata
+      # from silently returning to business documents.
+      - run: npm run audit:data -- --project linkos-496505 --fail-on warning

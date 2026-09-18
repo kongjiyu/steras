@@ -197,8 +197,8 @@ export function assertSharedProjectAuthorization(projectId: string, action: Ster
   if (projectId !== STERAS_TEST_SHARED_PROJECT_ID) {
     throw new Error(`Refusing target ${projectId}. This dataset is locked to ${STERAS_TEST_SHARED_PROJECT_ID}.`);
   }
-  if (['apply', 'cleanup'].includes(action) && process.env.STERAS_TEST_ALLOW_SHARED_PROJECT !== 'true') {
-    throw new Error('Set STERAS_TEST_ALLOW_SHARED_PROJECT=true to authorize writes to the shared linkos project.');
+  if (['apply', 'cleanup'].includes(action) && !process.env.FIRESTORE_EMULATOR_HOST) {
+    throw new Error('Production fixture apply/cleanup is disabled. Use the reference scenario only with FIRESTORE_EMULATOR_HOST in emulator/CI.');
   }
   if (action === 'cleanup' && process.env.STERAS_TEST_CONFIRM_DATASET !== STERAS_TEST_DATASET_ID) {
     throw new Error(`Set STERAS_TEST_CONFIRM_DATASET=${STERAS_TEST_DATASET_ID} before cleanup.`);

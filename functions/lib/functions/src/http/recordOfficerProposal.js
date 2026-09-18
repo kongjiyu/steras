@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.recordOfficerProposal = void 0;
 exports.validateOfficerRejectionRationale = validateOfficerRejectionRationale;
 exports.validateOfficerProposalRequest = validateOfficerProposalRequest;
+exports.isOfficerReviewOpen = isOfficerReviewOpen;
 exports.assertOfficerDecisionArtifacts = assertOfficerDecisionArtifacts;
 exports.buildImplicitUnchangedScoreReview = buildImplicitUnchangedScoreReview;
 exports.assertCurrentOfficerAssignment = assertCurrentOfficerAssignment;
@@ -70,7 +71,7 @@ exports.recordOfficerProposal = (0, https_1.onCall)({ region: runtime_1.FUNCTION
         throw new https_1.HttpsError('failed-precondition', 'The application has no submitted version.');
     const assessmentId = event.currentAssessmentId;
     const resourceId = event.currentResourceId;
-    if (event.status !== 'UnderReview' || event.reviewStage !== 'authority') {
+    if (!isOfficerReviewOpen(event)) {
         throw new https_1.HttpsError('failed-precondition', 'This application version is no longer open for officer review.');
     }
     if (event.initialReview?.decision !== 'Approved') {
@@ -133,7 +134,8 @@ exports.recordOfficerProposal = (0, https_1.onCall)({ region: runtime_1.FUNCTION
         const currentEvent = currentEventSnap.data();
         if (!currentEventSnap.exists || currentEvent?.currentVersionId !== versionId
             || currentEvent.currentAssessmentId !== assessmentId || currentEvent.currentResourceId !== resourceId
-            || currentEvent.status !== 'UnderReview' || currentEvent.reviewStage !== 'authority'
+            || !isOfficerReviewOpen(currentEvent)
+            || Boolean(currentEvent.secondReview)
             || currentEvent.assignedOfficerByAuthority?.[authorityType] !== callerUid) {
             throw new https_1.HttpsError('aborted', 'The application generation changed before the proposal was recorded.');
         }
@@ -319,7 +321,8 @@ exports.recordOfficerProposal = (0, https_1.onCall)({ region: runtime_1.FUNCTION
                     const current = eventSnapshot.data();
                     if (eventSnapshot.exists && current?.currentVersionId === versionId
                         && current.currentAssessmentId === assessmentId
-                        && current.reviewStage === 'authority' && current.status === 'UnderReview') {
+                        && (current.reviewStage === 'authority' || current.reviewStage === 'second') && current.status === 'UnderReview'
+                        && !current.secondReview) {
                         tx.update(eventRef, { reviewStage: 'second', updatedAt: Date.now() });
                     }
                 });
@@ -428,6 +431,14 @@ function validateOfficerProposalRequest(request) {
 }
 function safeDocumentId(value) {
     return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+}
+/** Authority officers may amend a proposal while the application is still in
+ * Authority Review or the Admin's Final Review.  A populated secondReview is
+ * the transactional final-decision fence and closes amendments immediately. */
+function isOfficerReviewOpen(event) {
+    return event.status === 'UnderReview'
+        && (event.reviewStage === 'authority' || event.reviewStage === 'second')
+        && !event.secondReview;
 }
 function assertOfficerDecisionArtifacts(assessment, resource, eventId, versionId, assessmentId, resourceId, authorityType) {
     if (!assessment || assessment.assessmentId !== assessmentId

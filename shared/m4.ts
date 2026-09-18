@@ -1,4 +1,5 @@
 import type { AuthorityType, EventType, UserRole } from './types';
+import type { EventReference } from './dataIntegrity';
 
 export const M4_SCHEMA_VERSION = '2026-09-03-m4-v1';
 export const M4_AI_PROMPT_VERSION = '2026-09-03-incident-triage-v1';
@@ -90,6 +91,9 @@ export interface M4IncidentRecord {
   reportWithdrawnAt?: number;
   schemaVersion: typeof M4_SCHEMA_VERSION;
   incidentId: string; eventId: string; eventVersionId: string; venueId: string; eventType: EventType;
+  /** New records may use a historical occurrence reference when no current
+   * application exists; eventId remains for legacy compatibility. */
+  eventReference?: EventReference; historicalEventId?: string;
   eventName: string; organizerId: string; reporterUid: string; reporterRole: UserRole;
   category: M4IncidentCategory; incidentType: string; description: string; location: string; occurredAt: number;
   evidence: M4EvidenceRef[]; aiAssessment: M4AIAssessment; aiAuthorityRecommendation?: M4AuthorityRecommendation; severity?: M4IncidentSeverity;
