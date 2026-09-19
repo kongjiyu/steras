@@ -50,6 +50,9 @@ const VERSION_ID = 'v1';
 export function hasPublicEvidence(parentExists: boolean, itemCount: number, stage1Count: number): boolean {
   return parentExists || itemCount > 0 || stage1Count > 0;
 }
+export function shouldPublishPresentationEvent(status: EventStatus, postFinalStage?: PostFinalStage): boolean {
+  return status === 'Approved' && !postFinalStage;
+}
 const PARTICIPANT_DEMO_EMAIL = 'participant.showcase@steras.test';
 const ADMIN_DEMO_EMAIL = 'admin.showcase@steras.test';
 const ORGANIZER_DEMO_EMAIL = 'organizer1@steras.test';
@@ -634,6 +637,8 @@ async function writeScenario(db: Firestore, scenarioValue: Scenario, venue: Venu
   await batch.commit();
   if (scenarioValue.status === 'Approved') {
     await writeControl(db, scenarioValue, event as EventRecord, identities, organizer, index, terminalAt);
+  }
+  if (shouldPublishPresentationEvent(scenarioValue.status, scenarioValue.postFinalStage)) {
     const details = (event as EventRecord).eventDetails;
     const publicEvent: PublicEvent = {
       eventId,
@@ -993,13 +998,13 @@ async function verifyDataset(db: Firestore, only?: string) {
       db.collection(COLLECTIONS.PUBLIC_EVENTS).doc(eventId).get(),
       db.collection(COLLECTIONS.PUBLIC_EVENT_CONTROLS).doc(eventId).get(),
     ]);
-    if (event.status === 'Approved') {
+    if (shouldPublishPresentationEvent(event.status, scenarioValue.postFinalStage)) {
       const value = publicEvent.data() as Partial<PublicEvent> | undefined;
       if (!publicEvent.exists || value?.eventId !== eventId || value.versionId !== VERSION_ID || value.publicStatus !== 'approved') {
         failures.push(`${eventId}: approved presentation fixture is missing its public event projection`);
       }
     } else if (publicEvent.exists || publicControls.exists) {
-      failures.push(`${eventId}: non-approved managed presentation fixture has a public projection`);
+      failures.push(`${eventId}: private managed presentation fixture has a public projection`);
     }
     if (event.eventDetails.organizerEmail !== ORGANIZER_DEMO_EMAIL) failures.push(`${eventId}: unexpected organiser ${event.eventDetails.organizerEmail}`);
     if (event.status === 'Pending') {
@@ -1077,12 +1082,6 @@ async function verifyDataset(db: Firestore, only?: string) {
         })) failures.push(`${eventId}/${control.id}: Stage 1 revision projection is incomplete`);
         if (scenarioValue.postFinalStage === 'stage1_submitted' && stage1.docs.some((document) => document.data()?.status !== 'pending_verification')) failures.push(`${eventId}/${control.id}: Stage 1 evidence should await verification`);
         if (scenarioValue.postFinalStage === 'stage2_submitted' && stage2.docs.some((document) => document.data()?.published === true)) failures.push(`${eventId}/${control.id}: Stage 2 evidence must await Admin publication`);
-      }
-      const publicProjection = await db.collection(COLLECTIONS.PUBLIC_EVENTS).doc(eventId).get();
-      const publicControls = await db.collection(COLLECTIONS.PUBLIC_EVENT_CONTROLS).doc(eventId).get();
-      const publicValue = publicProjection.data() as Partial<PublicEvent> | undefined;
-      if (!publicProjection.exists || publicValue?.versionId !== VERSION_ID || publicValue.publicStatus !== 'approved') {
-        failures.push(`${eventId}: managed post-final fixture is missing its public event projection`);
       }
       const [publicItems, publicStage1] = await Promise.all([
         publicControls.ref.collection(COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS).get(),
