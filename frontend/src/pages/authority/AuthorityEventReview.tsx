@@ -80,6 +80,7 @@ export default function AuthorityEventReview() {
   const [confirmedReview, setConfirmedReview] = useState(false);
   const [suggestion, setSuggestion] = useState('');
   const [rejectionReasonCategory, setRejectionReasonCategory] = useState<RejectionReasonCategory | ''>('');
+  const [decisionValidationError, setDecisionValidationError] = useState('');
   const [submittingDecision, setSubmittingDecision] = useState<DecisionValue | null>(null);
   const [editingResources, setEditingResources] = useState(false);
   const [resourceDraft, setResourceDraft] = useState<ResourceQuantities | null>(null);
@@ -373,8 +374,6 @@ export default function AuthorityEventReview() {
     : undefined;
   const isNamedOfficer = Boolean(ownAssignment);
   const isStage1Reviewer = Boolean(profile?.uid && eventControls.some((control) => control.stage1ReviewerUid === profile.uid));
-  const manualOfficialAssessment = assessment?.status === 'official_ready'
-    && 'sourceKind' in assessment && assessment.sourceKind === 'admin_manual';
   const requiredAuthorities = event.requiredAuthorities ?? [];
   const decisionReadiness = resolveOfficerDecisionReadiness({
     eventId: event.eventId,
@@ -392,12 +391,14 @@ export default function AuthorityEventReview() {
   });
   const decisionReadinessMessage = reviewOpen && isNamedOfficer && !decisionReadiness.ready ? decisionReadiness.message : '';
   const scoreReviewActionRequired = decisionReadiness.reason === 'own_score_review_required';
-  const requiresExtendedRejectionRationale = Boolean(!manualOfficialAssessment
-    && (assessment?.assessmentReadiness === 'provisional' || assessment?.assessmentReadiness === 'insufficient_data'));
-  const rejectionRationaleMinimum = requiresExtendedRejectionRationale ? 80 : 10;
+  const rejectionRationaleMinimum = 10;
   // FR-M3-16: approval requires an explicit materials-review confirmation.
-  const canApprove = isNamedOfficer && decisionReadiness.ready && confirmedReview;
-  const canReject = isNamedOfficer && decisionReadiness.ready && rationale.trim().length >= rejectionRationaleMinimum && suggestion.trim().length >= 10 && Boolean(rejectionReasonCategory);
+  const decisionActionAvailable = reviewOpen && isNamedOfficer && decisionReadiness.ready;
+  // Keep both actions clickable once the assignment is ready. Validation is
+  // performed on click so an amendment never looks silently disabled when a
+  // required rejection field is still empty.
+  const canApprove = decisionActionAvailable;
+  const canReject = decisionActionAvailable;
   const ownDecision = myAuthorityType ? currentDecisions.get(myAuthorityType) : undefined;
   const displayState = resolveApplicationDisplayState({
     status: event.status,
@@ -419,6 +420,21 @@ export default function AuthorityEventReview() {
   const submitDecision = async (decision: DecisionValue) => {
     const isApproval = decision === 'Approved';
     if (!eventId || (isApproval ? !canApprove : !canReject)) return;
+    if (isApproval && !confirmedReview) {
+      setDecisionValidationError('Confirm that you reviewed the assessment, evidence, advisory, and resource recommendation before approving.');
+      return;
+    }
+    if (!isApproval) {
+      const missing: string[] = [];
+      if (rationale.trim().length < 10) missing.push('a rejection reason of at least 10 characters');
+      if (suggestion.trim().length < 10) missing.push('a corrective suggestion of at least 10 characters');
+      if (!rejectionReasonCategory) missing.push('a rejection category');
+      if (missing.length > 0) {
+        setDecisionValidationError(`To reject this application, add ${missing.join(', ')}.`);
+        return;
+      }
+    }
+    setDecisionValidationError('');
     setSubmittingDecision(decision);
     try {
       const command = httpsCallable<{
@@ -561,7 +577,10 @@ export default function AuthorityEventReview() {
             <h1 className="font-display text-2xl font-bold text-ink-800">{details.name}</h1>
             <p className="mt-1 text-sm text-ink-500">{details.venueName} · {format(new Date(details.startDatetime), 'PPp')}</p>
           </div>
-           <ApplicationDisplayBadge state={displayState} />
+           <div className="flex flex-wrap items-center gap-2">
+             <ApplicationDisplayBadge state={displayState} />
+             {eventControls.length > 0 && <Link to={`/authority/events/${eventId}/controls`} className="btn-secondary !min-h-10 !px-3 !py-1.5 text-xs" data-testid="authority-control-documentation-link">Event control documentation</Link>}
+           </div>
         </div>
       </div>
 
@@ -772,18 +791,19 @@ export default function AuthorityEventReview() {
                 {scoreReviewActionRequired && <button type="button" className="btn-secondary mt-3 !min-h-9 !px-3 !py-1.5 text-xs" onClick={() => setEditingScores(true)} data-testid="review-ai-scores-action"><Pencil size={13} /> Review AI scores</button>}
               </div>}
               <label className="block text-xs font-medium text-ink-600">Decision rationale <span className="font-normal text-ink-400">(optional for approval; required for rejection)</span>
-                <textarea className="input mt-1 resize-y" rows={4} maxLength={1000} disabled={!reviewOpen || !isNamedOfficer} value={rationale} onChange={(e) => setRationale(e.target.value)} placeholder="Record the evidence and reasoning behind your proposal." />
+                <textarea className="input mt-1 resize-y" rows={4} maxLength={1000} disabled={!reviewOpen || !isNamedOfficer} value={rationale} onChange={(e) => { setRationale(e.target.value); setDecisionValidationError(''); }} placeholder="Record the evidence and reasoning behind your proposal." />
               </label>
               <p className="text-right text-xs text-ink-400">{rationale.trim().length}/1000 · minimum {rejectionRationaleMinimum} when rejecting</p>
               <label className="block text-xs font-medium text-ink-600">Suggestion / corrective action <span className="font-normal text-ink-400">(required for rejection)</span>
-                <textarea className="input mt-1 resize-y" rows={3} maxLength={1000} disabled={!reviewOpen || !isNamedOfficer} value={suggestion} onChange={(e) => setSuggestion(e.target.value)} placeholder="Explain the action the organizer should take, if applicable." />
+                <textarea className="input mt-1 resize-y" rows={3} maxLength={1000} disabled={!reviewOpen || !isNamedOfficer} value={suggestion} onChange={(e) => { setSuggestion(e.target.value); setDecisionValidationError(''); }} placeholder="Explain the action the organizer should take, if applicable." />
               </label>
               <label className="block text-xs font-medium text-ink-600">Rejection category
-                <select className="input mt-1" disabled={!reviewOpen || !isNamedOfficer} value={rejectionReasonCategory} onChange={(event) => setRejectionReasonCategory(event.target.value as RejectionReasonCategory)}>
+                <select className="input mt-1" disabled={!reviewOpen || !isNamedOfficer} value={rejectionReasonCategory} onChange={(event) => { setRejectionReasonCategory(event.target.value as RejectionReasonCategory); setDecisionValidationError(''); }}>
                   <option value="">Select when rejecting</option>
                   {REJECTION_REASON_CATEGORIES.map((category) => <option key={category} value={category}>{category.replaceAll('_', ' ')}</option>)}
                 </select>
               </label>
+              {decisionValidationError && <p className="rounded-md border border-status-rejected/30 bg-red-50 p-3 text-xs leading-5 text-status-rejected" role="alert" data-testid="decision-validation-error">{decisionValidationError}</p>}
               {suggestion.trim().length === 0 && <p className="text-right text-xs text-ink-400">Required when rejecting</p>}
               <label className={`flex items-start gap-2 rounded-md border px-3 py-2 text-xs text-ink-600 ${confirmedReview ? 'border-brand-300 bg-brand-50/50' : 'border-ink-200 bg-white'}`}>
                 <input

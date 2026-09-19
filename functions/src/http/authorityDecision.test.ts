@@ -213,12 +213,12 @@ describe('officer decision boundary', () => {
     expect(() => validateOfficerProposalRequest({ eventId: 'event-1', decision: 'Rejected', reason: 'Evidence is not sufficient.', suggestion: 'Fix it.' })).toThrow(HttpsError);
   });
 
-  it('retains the stronger rationale rule for provisional or insufficient assessments on rejection', () => {
-    const provisional = 'a'.repeat(79);
-    const valid = 'a'.repeat(80);
-    expect(() => validateOfficerRejectionRationale('Rejected', 'provisional', false, provisional)).toThrow(HttpsError);
+  it('uses the unified ten-character rationale rule for every rejection amendment', () => {
+    const short = 'a'.repeat(9);
+    const valid = 'a'.repeat(10);
+    expect(() => validateOfficerRejectionRationale('Rejected', 'provisional', false, short)).toThrow(HttpsError);
     expect(() => validateOfficerRejectionRationale('Rejected', 'insufficient_data', false, valid)).not.toThrow();
-    expect(() => validateOfficerRejectionRationale('Rejected', 'provisional', true, provisional)).not.toThrow();
+    expect(() => validateOfficerRejectionRationale('Rejected', 'provisional', true, valid)).not.toThrow();
   });
 
   it('rejects event IDs that could escape the event document path', () => {

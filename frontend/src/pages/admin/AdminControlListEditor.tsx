@@ -61,6 +61,24 @@ interface CommittedResponse {
 
 const ALL_AUTHORITIES: AuthorityType[] = ['PDRM', 'BOMBA', 'KKM', 'DBKL', 'MOTAC'];
 type WorkspaceTab = 'controls' | 'stage1' | 'stage2';
+type SnapshotLoadState = 'loading' | 'loaded' | 'error';
+
+function isControlListProposalShape(value: unknown): value is ControlListProposal {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const proposal = value as Partial<ControlListProposal>;
+  if (typeof proposal.eventId !== 'string' || typeof proposal.versionId !== 'string'
+    || typeof proposal.status !== 'string' || !Number.isSafeInteger(proposal.revision)
+    || !Array.isArray(proposal.items)) return false;
+  return proposal.items.every((item) => Boolean(item && typeof item === 'object'
+    && typeof item.authority === 'string'
+    && typeof item.controlName === 'string'
+    && (item.stageRequirement === 'stage1_only' || item.stageRequirement === 'stage1_and_stage2')
+    && Array.isArray(item.stage1Requirements)
+    && item.stage1Requirements.every((requirement) => Boolean(requirement && typeof requirement === 'object'
+      && typeof requirement.docType === 'string'
+      && typeof requirement.label === 'string'
+      && typeof requirement.required === 'boolean'))));
+}
 
 export default function AdminControlListEditor() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -79,6 +97,7 @@ export default function AdminControlListEditor() {
   const [proposalRevision, setProposalRevision] = useState<number>();
   const [currentControls, setCurrentControls] = useState<EventControl[]>([]);
   const [currentProposal, setCurrentProposal] = useState<ControlListProposal | null>(null);
+  const [controlsLoadState, setControlsLoadState] = useState<SnapshotLoadState>('loading');
   const [proposalLoadState, setProposalLoadState] = useState<'loading' | 'missing' | 'loaded' | 'error'>('loading');
   const [generating, setGenerating] = useState(false);
   const [committing, setCommitting] = useState(false);
@@ -124,23 +143,40 @@ export default function AdminControlListEditor() {
     if (!eventId || !event?.currentVersionId) {
       setCurrentControls([]);
       setCurrentProposal(null);
+      setControlsLoadState('loading');
       setProposalLoadState('loading');
       return undefined;
     }
     const eventReference = doc(db, COLLECTIONS.EVENTS, eventId);
     setControlsError('');
     setProposalError('');
+    setControlsLoadState('loading');
     setProposalLoadState('loading');
     const unsubscribeControls = onSnapshot(collection(eventReference, COLLECTIONS.EVENT_CONTROLS), (snapshot) => {
       setCurrentControls(snapshot.docs
         .map((item) => ({ ...(item.data() as Partial<EventControl>), controlId: item.id }) as EventControl)
         .filter((control) => control.versionId === event.currentVersionId));
+      setControlsLoadState('loaded');
       setControlsError('');
-    }, () => setControlsError('The current control list could not be loaded.'));
+    }, () => {
+      setCurrentControls([]);
+      setControlsLoadState('error');
+      setControlsError('The current control list could not be loaded.');
+    });
     const unsubscribeProposal = onSnapshot(doc(eventReference, COLLECTIONS.CONTROL_LIST_PROPOSALS, event.currentVersionId), (snapshot) => {
-      setCurrentProposal(snapshot.exists() ? snapshot.data() as ControlListProposal : null);
-      setProposalLoadState(snapshot.exists() ? 'loaded' : 'missing');
-      setProposalError('');
+      if (!snapshot.exists()) {
+        setCurrentProposal(null);
+        setProposalLoadState('missing');
+        setProposalError('');
+      } else if (isControlListProposalShape(snapshot.data())) {
+        setCurrentProposal(snapshot.data() as ControlListProposal);
+        setProposalLoadState('loaded');
+        setProposalError('');
+      } else {
+        setCurrentProposal(null);
+        setProposalLoadState('error');
+        setProposalError('The saved control-list draft is malformed and is locked until an Admin repairs it.');
+      }
     }, () => {
       // A missing or temporarily unreadable draft should not hide the event
       // itself. Generation is server-owned and remains available as a
@@ -190,7 +226,8 @@ export default function AdminControlListEditor() {
           && (control.stage2Requirement?.label ?? null) === (item.stage2Requirement?.label ?? null));
       }),
   );
-  const confirmed = Boolean(hasPublishedFlag && snapshotMatchesControls && proposalMatchesControls && proposalLoadState === 'loaded');
+  const integrityReady = controlsLoadState !== 'loading' && proposalLoadState !== 'loading';
+  const confirmed = Boolean(integrityReady && hasPublishedFlag && snapshotMatchesControls && proposalMatchesControls && proposalLoadState === 'loaded');
   // A current control, snapshot, confirmed proposal, or event flag is a
   // published artifact. If any of those disagree, lock editing and explain
   // the integrity issue instead of presenting an action that must fail.
@@ -204,15 +241,15 @@ export default function AdminControlListEditor() {
     proposalMatchesControls,
     proposalLoadState,
     hasPublishedArtifacts,
-    controlsUnreadable: Boolean(controlsError),
+    controlsUnreadable: Boolean(controlsError) || controlsLoadState === 'error',
   });
   const legacyConfirmed = integrityState === 'legacy-confirmed';
   const inconsistentPublished = integrityState === 'unreadable' || integrityState === 'inconsistent';
 
-  const dirty = useMemo(() => items.length > 0 && !confirmed && !legacyConfirmed, [confirmed, items, legacyConfirmed]);
+  const dirty = useMemo(() => items.length > 0 && integrityReady && !confirmed && !legacyConfirmed, [confirmed, integrityReady, items, legacyConfirmed]);
 
   const generate = useCallback(async (force = false) => {
-    if (!eventId || confirmed || legacyConfirmed || inconsistentPublished || hasPublishedArtifacts) return;
+    if (!eventId || !integrityReady || confirmed || legacyConfirmed || inconsistentPublished || hasPublishedArtifacts) return;
     setGenerating(true);
     try {
       const command = httpsCallable<{ eventId: string; force?: boolean }, ProposedResponse>(
@@ -240,16 +277,16 @@ export default function AdminControlListEditor() {
     } finally {
       setGenerating(false);
     }
-  }, [confirmed, eventId, hasPublishedArtifacts, inconsistentPublished, legacyConfirmed]);
+  }, [confirmed, eventId, hasPublishedArtifacts, inconsistentPublished, integrityReady, legacyConfirmed]);
 
   // Entering the page after final approval restores the persisted draft (or
   // the committed list) automatically, so navigation never loses the
   // proposal and the Admin does not have to click Generate again.
   useEffect(() => {
-    if (!eventId || !event || event.status !== 'Approved' || confirmed || legacyConfirmed || inconsistentPublished || hasPublishedArtifacts || autoLoadedEventRef.current === eventId) return;
+    if (!eventId || !event || !integrityReady || event.status !== 'Approved' || confirmed || legacyConfirmed || inconsistentPublished || hasPublishedArtifacts || autoLoadedEventRef.current === eventId) return;
     autoLoadedEventRef.current = eventId;
     void generate(false);
-  }, [confirmed, event, eventId, generate, hasPublishedArtifacts, inconsistentPublished, legacyConfirmed]);
+  }, [confirmed, event, eventId, generate, hasPublishedArtifacts, inconsistentPublished, integrityReady, legacyConfirmed]);
 
   const commit = async () => {
     if (!eventId) return;
@@ -352,6 +389,7 @@ export default function AdminControlListEditor() {
           {integrityState === 'draft' && <span className="text-xs font-semibold text-ink-500">Control list: draft</span>}
           {integrityState === 'unreadable' && <span className="text-xs font-semibold text-status-rejected">Control list: unreadable</span>}
           {integrityState === 'inconsistent' && <span className="text-xs font-semibold text-status-rejected">Control list: inconsistent</span>}
+          {!integrityReady && <span className="text-xs font-semibold text-ink-400">Checking control-list integrity…</span>}
         </div>
       </div>
 
@@ -363,7 +401,13 @@ export default function AdminControlListEditor() {
 
       {activeTab !== 'controls' ? <AdminStage2Review eventIdOverride={eventId} embedded initialTab={activeTab === 'stage2' ? 'stage2' : 'stage1'} /> : <>
 
-      {!canEdit && (
+      {!integrityReady && (
+        <div className="mb-5 rounded-md border border-ink-200 bg-ink-50 p-3 text-sm text-ink-600" role="status" data-testid="control-list-integrity-loading">
+          Checking the current-version control records before showing edit or publication actions…
+        </div>
+      )}
+
+      {!canEdit && integrityReady && (
         <div className="mb-5 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
           The event is in {friendlyAdminStatus(event.status)} status. The control list can only be generated / edited for events in <strong>Under Review</strong> or <strong>Approved</strong>.
         </div>
@@ -388,7 +432,7 @@ export default function AdminControlListEditor() {
         <div className="mb-5 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800" role="status">{proposalError}</div>
       )}
 
-      {canEdit && !confirmed && !legacyConfirmed && !inconsistentPublished && (
+      {canEdit && integrityReady && !confirmed && !legacyConfirmed && !inconsistentPublished && (
         <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <button
@@ -450,7 +494,9 @@ export default function AdminControlListEditor() {
         </p>
       )}
 
-      {confirmed || legacyConfirmed ? (
+      {!integrityReady ? (
+        <div className="card"><div className="card-body text-sm text-ink-500">Loading the current control list…</div></div>
+      ) : confirmed || legacyConfirmed ? (
         <ConfirmedControlCards controls={currentControls} />
       ) : items.length === 0 ? (
         <div className="card">

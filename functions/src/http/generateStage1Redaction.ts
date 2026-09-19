@@ -6,7 +6,7 @@ import { COLLECTIONS, EventControl, EventRecord, Stage1Doc, Stage1RedactionDraft
 import { DEFAULT_MINIMAX_BASE_URL, DEFAULT_MINIMAX_MODEL } from '../config/minimax';
 import { FUNCTION_REGION } from '../config/runtime';
 import { isActiveControlGeneration } from '../utils/controlLifecycle';
-import { decodeStage1DataUrl, renderBlackRedaction, sourceHashForDeclaration, validateStage1Masks } from '../utils/stage1Redaction';
+import { decodeStage1Source, renderBlackRedaction, sourceHashForDeclaration, validateStage1Masks } from '../utils/stage1Redaction';
 
 interface GenerateStage1RedactionRequest { eventId?: string; controlId?: string; docId?: string; regenerate?: boolean }
 
@@ -34,7 +34,7 @@ export const generateStage1Redaction = onCall<GenerateStage1RedactionRequest>({ 
   const redactionRef = docRef.collection(COLLECTIONS.STAGE1_REDACTIONS).doc(stage1Doc.revisionId ?? `${docId}-r${revision}`);
   const currentDraft = await redactionRef.get();
   if (currentDraft.exists && request.data?.regenerate !== true) return currentDraft.data() as Stage1RedactionDraft;
-  const decoded = decodeStage1DataUrl(stage1Doc.filePath);
+  const decoded = await decodeStage1Source(stage1Doc.filePath);
   const now = Date.now();
   if (!decoded) {
     const draft: Stage1RedactionDraft = {

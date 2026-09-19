@@ -3,7 +3,7 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { COLLECTIONS, EventControl, EventRecord, Stage1Doc, Stage1RedactionDraft, UserProfile } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
 import { isActiveControlGeneration } from '../utils/controlLifecycle';
-import { decodeStage1DataUrl, renderBlackRedaction, validateStage1Masks } from '../utils/stage1Redaction';
+import { decodeStage1Source, renderBlackRedaction, validateStage1Masks } from '../utils/stage1Redaction';
 
 interface UpdateStage1RedactionRequest { eventId?: string; controlId?: string; docId?: string; masks?: unknown; reviewedPages?: unknown; }
 
@@ -36,7 +36,7 @@ export const updateStage1Redaction = onCall<UpdateStage1RedactionRequest>({ regi
     || request.data.reviewedPages.some((page) => !Number.isInteger(page) || Number(page) < 1 || Number(page) > draft.pageCount)) {
     throw new HttpsError('invalid-argument', `Review every page before saving (${draft.pageCount} page${draft.pageCount === 1 ? '' : 's'}).`);
   }
-  const decoded = decodeStage1DataUrl(stage1Doc.filePath);
+  const decoded = await decodeStage1Source(stage1Doc.filePath);
   let redactedFilePath = draft.redactedFilePath;
   if (decoded) {
     if (decoded.sha256 !== draft.sourceHash) throw new HttpsError('aborted', 'The source document changed. Generate a new redaction draft.');

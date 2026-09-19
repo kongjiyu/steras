@@ -115,12 +115,12 @@ const authorityFinalisation_1 = require("../engines/authorityFinalisation");
         (0, vitest_1.expect)(() => (0, recordOfficerProposal_1.validateOfficerProposalRequest)({ eventId: 'event-1', decision: 'Rejected', reason: 'Evidence is not sufficient.' })).toThrow(https_1.HttpsError);
         (0, vitest_1.expect)(() => (0, recordOfficerProposal_1.validateOfficerProposalRequest)({ eventId: 'event-1', decision: 'Rejected', reason: 'Evidence is not sufficient.', suggestion: 'Fix it.' })).toThrow(https_1.HttpsError);
     });
-    (0, vitest_1.it)('retains the stronger rationale rule for provisional or insufficient assessments on rejection', () => {
-        const provisional = 'a'.repeat(79);
-        const valid = 'a'.repeat(80);
-        (0, vitest_1.expect)(() => (0, recordOfficerProposal_1.validateOfficerRejectionRationale)('Rejected', 'provisional', false, provisional)).toThrow(https_1.HttpsError);
+    (0, vitest_1.it)('uses the unified ten-character rationale rule for every rejection amendment', () => {
+        const short = 'a'.repeat(9);
+        const valid = 'a'.repeat(10);
+        (0, vitest_1.expect)(() => (0, recordOfficerProposal_1.validateOfficerRejectionRationale)('Rejected', 'provisional', false, short)).toThrow(https_1.HttpsError);
         (0, vitest_1.expect)(() => (0, recordOfficerProposal_1.validateOfficerRejectionRationale)('Rejected', 'insufficient_data', false, valid)).not.toThrow();
-        (0, vitest_1.expect)(() => (0, recordOfficerProposal_1.validateOfficerRejectionRationale)('Rejected', 'provisional', true, provisional)).not.toThrow();
+        (0, vitest_1.expect)(() => (0, recordOfficerProposal_1.validateOfficerRejectionRationale)('Rejected', 'provisional', true, valid)).not.toThrow();
     });
     (0, vitest_1.it)('rejects event IDs that could escape the event document path', () => {
         (0, vitest_1.expect)(() => (0, authorityDecision_1.validateDecisionRequest)({ eventId: 'events/nested', decision: 'Rejected', rationale: 'Evidence is not sufficient.', suggestion: 'Provide verified evidence and submit the application again.' })).toThrow(https_1.HttpsError);

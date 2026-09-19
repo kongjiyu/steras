@@ -13,7 +13,10 @@ export interface AuthorityQueueRow {
 
 export function authorityQueueAction(row: Pick<AuthorityQueueRow, 'event' | 'assignment'> & { stage1PendingCount?: number }): AuthorityQueueRow['action'] {
   if (row.event.status === 'Approved' && (row.stage1PendingCount ?? 0) > 0) return 'documentation';
-  if (row.event.reviewStage !== 'authority') return 'view';
+  const amendmentWindow = row.event.status === 'UnderReview'
+    && (row.event.reviewStage === 'authority' || row.event.reviewStage === 'second')
+    && !row.event.secondReview;
+  if (!amendmentWindow) return 'view';
   if (row.assignment?.status === 'completed' && row.assignment.decision) return 'amend';
   return 'review';
 }

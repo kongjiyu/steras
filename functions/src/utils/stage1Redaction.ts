@@ -18,6 +18,21 @@ export function decodeStage1DataUrl(value: string | undefined): DecodedStage1Fil
   return { mimeType: match[1], bytes, sha256: createHash('sha256').update(bytes).digest('hex') };
 }
 
+/** Resolve legacy inline uploads and seeded Firebase Storage download URLs
+ * into the same byte contract used by the redaction renderer. External URLs
+ * are intentionally rejected so an Admin redaction request cannot fetch an
+ * arbitrary remote resource. */
+export async function decodeStage1Source(value: string | undefined): Promise<DecodedStage1File | null> {
+  const inline = decodeStage1DataUrl(value);
+  if (inline || !value?.startsWith('https://firebasestorage.googleapis.com/')) return inline;
+  const response = await fetch(value);
+  if (!response.ok) throw new Error(`Unable to read the Stage 1 source file (${response.status}).`);
+  const contentType = response.headers.get('content-type')?.split(';')[0]?.trim() || 'application/octet-stream';
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.length === 0) throw new Error('The Stage 1 source file is empty.');
+  return { mimeType: contentType, bytes, sha256: createHash('sha256').update(bytes).digest('hex') };
+}
+
 export function validateStage1Masks(value: unknown, pageCount: number): Stage1RedactionMask[] {
   if (!Array.isArray(value)) throw new Error('Redaction masks must be an array.');
   return value.map((item, index) => {

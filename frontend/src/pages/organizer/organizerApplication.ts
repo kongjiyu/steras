@@ -1,4 +1,5 @@
 import { EventDetails, EventRecord, EventRiskProfile, EventStatus, EventType, M1_DOCUMENT_SCHEMA_VERSION, M1_EVIDENCE_MANIFEST_SCHEMA_VERSION, M1DocumentExtraction, M1DraftDocument, M1EventCategory, M1EvidenceRequirementResponse, M1ExtractedField, M1TemplateSelection, OrganizerAssessmentSummary, Venue } from '@shared/types';
+import { APPLICATION_DISPLAY_STATE_LABELS, ApplicationDisplayState } from '@shared/applicationState';
 import { isValidM1TemplateSelection, m1CategoryForEventType, m1VenueSettingMatchesEnvironment } from '@shared/m1TemplateContract';
 import { isM1EvidenceForcedRequired, m1EvidenceRequirementsFor } from '@shared/m1EvidenceContract';
 import { inferMalaysiaStateFromAddress, MALAYSIA_STATES } from '@shared/malaysiaStates';
@@ -6,18 +7,22 @@ import { inferMalaysiaStateFromAddress, MALAYSIA_STATES } from '@shared/malaysia
 export { inferMalaysiaStateFromAddress, MALAYSIA_STATES, normalizeMalaysiaState } from '@shared/malaysiaStates';
 
 export type OrganizerApplicationStatus = EventStatus;
-export type OrganizerStatusFilter = OrganizerApplicationStatus | 'all';
+export type OrganizerStatusFilter = ApplicationDisplayState | 'all';
 
 export const ORGANIZER_STATUS_FILTERS: OrganizerStatusFilter[] = [
   'all',
   'Draft',
   'Pending',
-  'UnderReview',
+  'Initial Review',
+  'Manual Review Required',
+  'Authority Selection',
+  'Under Review',
+  'Final Review',
   'Approved',
+  'Documentation Required',
   'Rejected',
   'Cancelled',
   'Withdrawn',
-  'Manual Review Required',
 ];
 
 export function isMeaningfulNotApplicableReason(reason: string | undefined): boolean {
@@ -91,6 +96,7 @@ export function bindCanonicalVenue(details: EventDetails, venue: Venue): EventDe
 }
 
 export function applicationStatusLabel(status: string): string {
+  if (status in APPLICATION_DISPLAY_STATE_LABELS) return APPLICATION_DISPLAY_STATE_LABELS[status as ApplicationDisplayState];
   if (status === 'UnderReview') return 'Under Review';
   return status.replace(/([a-z])([A-Z])/g, '$1 $2');
 }

@@ -32,6 +32,7 @@ const EventDetail = lazy(() => import('./pages/organizer/EventDetail'));
 const AuthorityDashboard = lazy(() => import('./pages/authority/AuthorityDashboard'));
 const ReviewQueue = lazy(() => import('./pages/authority/ReviewQueue'));
 const AuthorityEventReview = lazy(() => import('./pages/authority/AuthorityEventReview'));
+const AuthorityControlDocumentation = lazy(() => import('./pages/authority/AuthorityControlDocumentation'));
 const RiskAssessments = lazy(() => import('./pages/authority/RiskAssessments'));
 const ResourceRecommendations = lazy(() => import('./pages/authority/ResourceRecommendations'));
 
@@ -120,6 +121,7 @@ export default function App() {
         <Route path="/authority/users" element={<Navigate to="/authority" replace />} />
         <Route path="/authority/settings" element={<Navigate to="/authority" replace />} />
         <Route path="/authority/events/:eventId" element={<AuthorityEventReview />} />
+        <Route path="/authority/events/:eventId/controls" element={<AuthorityControlDocumentation />} />
       </Route>
 
       {/* Admin routes (auth + role=admin) */}

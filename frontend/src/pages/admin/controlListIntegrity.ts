@@ -10,8 +10,8 @@ export interface ControlListIntegrityInput {
 }
 export function resolveControlListIntegrity(input: ControlListIntegrityInput): ControlListIntegrity {
   if (input.hasPublishedFlag && input.snapshotMatchesControls && input.proposalMatchesControls && input.proposalLoadState === 'loaded') return 'confirmed';
-  if (input.hasPublishedFlag && input.snapshotMatchesControls && input.proposalLoadState === 'missing') return 'legacy-confirmed';
-  if (input.hasPublishedArtifacts && (input.proposalLoadState === 'error' || input.controlsUnreadable)) return 'unreadable';
+  if ((input.hasPublishedArtifacts || input.hasPublishedFlag) && (input.proposalLoadState === 'error' || input.controlsUnreadable)) return 'unreadable';
+  if (input.snapshotMatchesControls && input.proposalLoadState === 'missing' && (input.hasPublishedFlag || input.hasPublishedArtifacts)) return 'legacy-confirmed';
   if (input.hasPublishedArtifacts && !input.proposalMatchesControls) return 'inconsistent';
   return 'draft';
 }

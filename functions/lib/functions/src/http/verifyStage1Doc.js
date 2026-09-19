@@ -137,8 +137,10 @@ async function verifyStage1DocForUser(uid, data, now = Date.now()) {
             }
             throw new https_1.HttpsError('failed-precondition', `This Stage 1 document is already ${doc.status}.`);
         }
-        // pending_verification and use_previous declarations both require an
-        // explicit current-authority review.
+        if (doc.status === 'use_previous') {
+            throw new https_1.HttpsError('failed-precondition', 'Use Previous receipt declarations are already satisfied and do not require Authority review.');
+        }
+        // Only pending_verification uploads require an explicit current-authority review.
         // Read all stage1_docs for this control to recompute the aggregate label.
         const allDocsSnap = await tx.get(eventRef.collection(types_1.COLLECTIONS.EVENT_CONTROLS).doc(controlId).collection(types_1.COLLECTIONS.STAGE1_DOCS));
         const revisionsSnap = await tx.get(eventRef.collection(types_1.COLLECTIONS.EVENT_CONTROLS).doc(controlId).collection(types_1.COLLECTIONS.STAGE1_DOCS).doc(docId).collection(types_1.COLLECTIONS.STAGE1_REVISIONS));

@@ -162,7 +162,7 @@ export const submitIncident = onCall({ region: FUNCTION_REGION, timeoutSeconds: 
 export const listIncidents = onCall({ region: FUNCTION_REGION }, async (request) => {
   const { uid, profile } = await requireProfile(request.auth?.uid);
   const db = firestore();
-  let query: FirebaseFirestore.Query = db.collection(COLLECTIONS.INCIDENTS).where('schemaVersion', '==', M4_SCHEMA_VERSION);
+  const query: FirebaseFirestore.Query = db.collection(COLLECTIONS.INCIDENTS).where('schemaVersion', '==', M4_SCHEMA_VERSION);
   let records: M4IncidentRecord[] = [];
   if (profile.role === 'organizer') {
     records = (await query.where('organizerId', '==', uid).limit(100).get()).docs.map((doc) => doc.data() as M4IncidentRecord);

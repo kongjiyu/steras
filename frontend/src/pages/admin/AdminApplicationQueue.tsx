@@ -4,26 +4,18 @@ import { AlertCircle, CheckCircle2, ChevronRight, ClipboardList, Eye, Filter, Se
 import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
 import { db, isFirebaseConfigured } from '../../config/firebase';
 import { COLLECTIONS, EventRecord } from '@shared/types';
-import { resolveApplicationDisplayState } from '@shared/applicationState';
+import { APPLICATION_DISPLAY_STATE_LABELS, ApplicationDisplayState, resolveApplicationDisplayState } from '@shared/applicationState';
 import { WorkspaceTopBar } from '../../components/layout/Sidebar';
 import { useAuth } from '../../contexts/AuthContext';
 import { ApplicationDisplayBadge } from '../../components/ui/StatusBadge';
 import {
   ADMIN_VISIBLE_EVENT_STATUSES,
-  adminStatusFromQuery,
-  type AdminVisibleEventStatus,
 } from './adminApplicationVisibility';
 import { adminWorkflowState } from './adminWorkflow';
 
-const STATUS_FILTERS: Array<{ value: AdminVisibleEventStatus | 'all'; label: string }> = [
-  { value: 'all', label: 'All' },
-  { value: 'Pending', label: 'Pending' },
-  { value: 'UnderReview', label: 'Under Review' },
-  { value: 'Manual Review Required', label: 'Manual Review Required' },
-  { value: 'Approved', label: 'Approved' },
-  { value: 'Rejected', label: 'Rejected' },
-  { value: 'Cancelled', label: 'Cancelled' },
-  { value: 'Withdrawn', label: 'Withdrawn' },
+const WORKFLOW_FILTERS: Array<{ value: ApplicationDisplayState | 'all'; label: string }> = [
+  { value: 'all', label: 'All workflow states' },
+  ...Object.entries(APPLICATION_DISPLAY_STATE_LABELS).map(([value, label]) => ({ value: value as ApplicationDisplayState, label })),
 ];
 
 export type AdminQueueAction = {
@@ -68,7 +60,10 @@ export default function AdminApplicationQueue() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
-  const [status, setStatusFilter] = useState<AdminVisibleEventStatus | 'all'>(adminStatusFromQuery(params.get('status')));
+  const requestedWorkflow = params.get('state') as ApplicationDisplayState | null;
+  const [workflowFilter, setWorkflowFilter] = useState<ApplicationDisplayState | 'all'>(
+    requestedWorkflow && requestedWorkflow in APPLICATION_DISPLAY_STATE_LABELS ? requestedWorkflow : 'all',
+  );
   const requestedView = params.get('view') as QueueView | null;
   const [view, setView] = useState<QueueView>(requestedView && ['action', 'all', 'completed'].includes(requestedView) ? requestedView : 'all');
 
@@ -90,15 +85,16 @@ export default function AdminApplicationQueue() {
     return rows.filter(({ event, workflow }) => {
       if (view === 'action' && !workflow.needsAction) return false;
       if (view === 'completed' && !workflow.complete) return false;
-      if (status !== 'all' && event.status !== status) return false;
+      const displayState = resolveApplicationDisplayState(event);
+      if (workflowFilter !== 'all' && displayState !== workflowFilter) return false;
       return !queryText || [event.eventId, event.eventDetails.name, event.eventDetails.venueName, event.eventDetails.organizerName, event.eventDetails.type].some((value) => value.toLowerCase().includes(queryText));
     }).sort((a, b) => rank[a.workflow.priority] - rank[b.workflow.priority]);
-  }, [rows, search, status, view]);
+  }, [rows, search, view, workflowFilter]);
   const updateView = (next: QueueView) => { setView(next); params.set('view', next); setParams(params, { replace: true }); };
-  const updateStatus = (next: AdminVisibleEventStatus | 'all') => {
-    setStatusFilter(next);
-    if (next === 'all') params.delete('status');
-    else params.set('status', next);
+  const updateWorkflow = (next: ApplicationDisplayState | 'all') => {
+    setWorkflowFilter(next);
+    if (next === 'all') params.delete('state');
+    else params.set('state', next);
     setParams(params, { replace: true });
   };
 
@@ -111,11 +107,11 @@ export default function AdminApplicationQueue() {
       </nav>
       <section className="mb-5 flex flex-col gap-3 border-b border-[#ded4c1] pb-4 md:flex-row">
         <label className="relative min-w-0 flex-1"><span className="sr-only">Search applications</span><Search className="pointer-events-none absolute left-3 top-3.5 text-ink-400" size={17}/><input type="search" className="input min-h-11 !pl-10" placeholder="Search event, application ID, venue, organiser, or type" value={search} onChange={(event) => setSearch(event.target.value)}/></label>
-        <label className="flex items-center gap-2 text-xs font-semibold text-ink-600"><Filter size={14}/><span>Status</span><select className="input min-h-11 md:w-44" value={status} onChange={(event) => updateStatus(event.target.value as AdminVisibleEventStatus | 'all')}><option value="all">All statuses</option>{STATUS_FILTERS.slice(1).map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
+        <label className="flex items-center gap-2 text-xs font-semibold text-ink-600"><Filter size={14}/><span>Workflow</span><select className="input min-h-11 md:w-56" value={workflowFilter} onChange={(event) => updateWorkflow(event.target.value as ApplicationDisplayState | 'all')}>{WORKFLOW_FILTERS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
       </section>
       <section className="overflow-x-auto rounded-lg border border-[#ded5c5] bg-white shadow-card">
         <header className="admin-queue-header sticky top-0 z-10 hidden min-w-[1120px] gap-3 border-b border-[#e8e0cf] bg-cream-50 px-4 py-2.5 text-[11px] font-bold uppercase tracking-[0.06em] text-ink-500 md:grid" style={{ gridTemplateColumns: QUEUE_GRID }}><span>Application</span><span>Organiser · Venue</span><span>Priority</span><span>Review stage</span><span>Status</span><span>Event date</span><span className="text-center">Next action</span></header>
-        {loading ? <p className="p-5 text-sm text-ink-500">Loading application queue…</p> : filtered.length === 0 ? <div className="flex flex-col items-center gap-2 p-10 text-center">{view === 'completed' ? <CheckCircle2 size={28} className="text-ink-400"/> : <ClipboardList size={28} className="text-ink-400"/>}<p className="text-sm text-ink-500">No applications match this view.</p></div> : <ul className="divide-y divide-[#e8e0cf] md:min-w-[1120px]">{filtered.map(({ event, workflow }) => { const action = getAdminQueueAction(event); const displayState = resolveApplicationDisplayState({ status: event.status, reviewStage: event.reviewStage, currentVersionId: event.currentVersionId, currentAssessmentId: event.currentAssessmentId, currentResourceId: event.currentResourceId, initialReview: event.initialReview, assignedOfficerUids: event.assignedOfficerUids }); return <li key={event.eventId}><div className="admin-queue-row block px-4 py-4 transition hover:bg-cream-50 md:grid md:items-center md:gap-3 md:py-3" style={{ gridTemplateColumns: QUEUE_GRID }}><Link to={`/admin/applications/${event.eventId}`} className="admin-queue-column admin-queue-column--application min-w-0"><p className="truncate text-sm font-semibold text-ink-900">{event.eventDetails.name}</p><p className="truncate text-xs text-ink-500">{event.eventDetails.type} · {event.eventDetails.expectedAttendance.toLocaleString()} attendees</p></Link><div className="admin-queue-column admin-queue-column--organizer hidden min-w-0 md:block"><p className="truncate text-sm text-ink-800">{event.eventDetails.organizerName}</p><p className="truncate text-xs text-ink-500">{event.eventDetails.venueName}</p></div><span className={'admin-queue-column admin-queue-column--priority hidden w-fit rounded-full border px-2 py-1 text-xs font-semibold md:inline ' + PRIORITY_TONE[workflow.priority]}>{workflow.priority === 'High' && <AlertCircle className="mr-1 inline" size={12}/>} {workflow.priority}</span><span className="admin-queue-column admin-queue-column--stage hidden text-xs font-semibold text-ink-700 md:inline">{workflow.stage}</span><span className="admin-queue-column admin-queue-column--status hidden md:inline-flex"><ApplicationDisplayBadge state={displayState}/></span><span className="admin-queue-column admin-queue-column--date hidden text-xs text-ink-600 md:inline">{formatDate(event.eventDetails.startDatetime)}</span><Link to={action.to} className={`admin-queue-column admin-queue-column--action admin-queue-action admin-queue-action--${action.variant}`} aria-label={`${action.label} ${event.eventDetails.name}`} data-testid={`queue-action-${event.eventId}`}><span className="admin-queue-action__label-group">{action.label === 'View' ? <Eye size={14} aria-hidden="true"/> : <ClipboardList size={14} aria-hidden="true"/>}<span>{action.label}</span></span><ChevronRight className="admin-queue-action__chevron" size={14} aria-hidden="true"/></Link><div className="admin-queue-mobile-meta mt-3 flex items-center gap-2 md:hidden"><span className={'rounded-full border px-2 py-1 text-xs font-semibold ' + PRIORITY_TONE[workflow.priority]}>{workflow.priority}</span><span className="text-xs font-semibold text-ink-700">{workflow.stage}</span><span className="ml-auto"><ApplicationDisplayBadge state={displayState}/></span></div><p className="admin-queue-mobile-details mt-2 truncate text-xs text-ink-500 md:hidden">{event.eventDetails.organizerName} · {event.eventDetails.venueName} · {formatDate(event.eventDetails.startDatetime)}</p></div></li>; })}</ul>}
+        {loading ? <p className="p-5 text-sm text-ink-500">Loading application queue…</p> : filtered.length === 0 ? <div className="flex flex-col items-center gap-2 p-10 text-center">{view === 'completed' ? <CheckCircle2 size={28} className="text-ink-400"/> : <ClipboardList size={28} className="text-ink-400"/>}<p className="text-sm text-ink-500">No applications match this view.</p></div> : <ul className="divide-y divide-[#e8e0cf] md:min-w-[1120px]">{filtered.map(({ event, workflow }) => { const action = getAdminQueueAction(event); const displayState = resolveApplicationDisplayState(event); return <li key={event.eventId}><div className="admin-queue-row block px-4 py-4 transition hover:bg-cream-50 md:grid md:items-center md:gap-3 md:py-3" style={{ gridTemplateColumns: QUEUE_GRID }}><Link to={`/admin/applications/${event.eventId}`} className="admin-queue-column admin-queue-column--application min-w-0"><p className="truncate text-sm font-semibold text-ink-900">{event.eventDetails.name}</p><p className="truncate text-xs text-ink-500">{event.eventDetails.type} · {event.eventDetails.expectedAttendance.toLocaleString()} attendees</p></Link><div className="admin-queue-column admin-queue-column--organizer hidden min-w-0 md:block"><p className="truncate text-sm text-ink-800">{event.eventDetails.organizerName}</p><p className="truncate text-xs text-ink-500">{event.eventDetails.venueName}</p></div><span className={'admin-queue-column admin-queue-column--priority hidden w-fit rounded-full border px-2 py-1 text-xs font-semibold md:inline ' + PRIORITY_TONE[workflow.priority]}>{workflow.priority === 'High' && <AlertCircle className="mr-1 inline" size={12}/>} {workflow.priority}</span><span className="admin-queue-column admin-queue-column--stage hidden text-xs font-semibold text-ink-700 md:inline">{workflow.stage}</span><span className="admin-queue-column admin-queue-column--status hidden md:inline-flex"><ApplicationDisplayBadge state={displayState}/></span><span className="admin-queue-column admin-queue-column--date hidden text-xs text-ink-600 md:inline">{formatDate(event.eventDetails.startDatetime)}</span><Link to={action.to} className={`admin-queue-column admin-queue-column--action admin-queue-action admin-queue-action--${action.variant}`} aria-label={`${action.label} ${event.eventDetails.name}`} data-testid={`queue-action-${event.eventId}`}><span className="admin-queue-action__label-group">{action.label === 'View' ? <Eye size={14} aria-hidden="true"/> : <ClipboardList size={14} aria-hidden="true"/>}<span>{action.label}</span></span><ChevronRight className="admin-queue-action__chevron" size={14} aria-hidden="true"/></Link><div className="admin-queue-mobile-meta mt-3 flex items-center gap-2 md:hidden"><span className={'rounded-full border px-2 py-1 text-xs font-semibold ' + PRIORITY_TONE[workflow.priority]}>{workflow.priority}</span><span className="text-xs font-semibold text-ink-700">{workflow.stage}</span><span className="ml-auto"><ApplicationDisplayBadge state={displayState}/></span></div><p className="admin-queue-mobile-details mt-2 truncate text-xs text-ink-500 md:hidden">{event.eventDetails.organizerName} · {event.eventDetails.venueName} · {formatDate(event.eventDetails.startDatetime)}</p></div></li>; })}</ul>}
       </section>
       <p className="mt-4 text-xs text-ink-500">Showing {filtered.length} of {events.length} applications.</p>
     </main>
