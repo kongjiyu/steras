@@ -25,6 +25,7 @@ const resourceContract_1 = require("../engines/resourceContract");
 const notifications_1 = require("../utils/notifications");
 const applicationState_1 = require("../../../shared/applicationState");
 const resourceCalculator_1 = require("../engines/resourceCalculator");
+const m3FixedWorkflowPreset_1 = require("../utils/m3FixedWorkflowPreset");
 const REASON_MIN = 10;
 const REASON_MAX = 1_000;
 const SUGGESTION_MAX = 1_000;
@@ -34,7 +35,10 @@ exports.makeInitialReviewDecision = (0, https_1.onCall)({ region: runtime_1.FUNC
     return makeInitialReviewDecisionForUser(request.auth.uid, request.data);
 });
 async function makeInitialReviewDecisionForUser(uid, data, now = Date.now()) {
-    const { eventId, decision, reason, suggestion, attachOfficerFeedback, rejectionReasonCategory } = validateInitialReviewRequest(data);
+    const validatedRequest = validateInitialReviewRequest(data);
+    const eventId = validatedRequest.eventId;
+    const attachOfficerFeedback = validatedRequest.attachOfficerFeedback;
+    let { decision, reason, suggestion, rejectionReasonCategory } = validatedRequest;
     if (Object.prototype.hasOwnProperty.call(data, 'manualAssessment')) {
         throw new https_1.HttpsError('failed-precondition', 'Manual Review Required applications must be completed in the Admin manual assessment queue before initial review.');
     }
@@ -75,6 +79,11 @@ async function makeInitialReviewDecisionForUser(uid, data, now = Date.now()) {
     ]);
     const assessment = assessmentSnap.data();
     const resource = resourceSnap?.data();
+    const fixedWorkflow = (0, m3FixedWorkflowPreset_1.fixedPresetForEvent)(event, (0, m3FixedWorkflowPreset_1.riskLevelFromAssessment)(assessment));
+    decision = fixedWorkflow.preset.initialDecision;
+    reason = fixedWorkflow.preset.reason;
+    suggestion = fixedWorkflow.preset.suggestion;
+    rejectionReasonCategory = fixedWorkflow.preset.rejectionReasonCategory;
     const manualOfficial = isManualOfficialAssessment(assessment, eventId, versionId, assessmentId);
     const provisionalReady = isReviewableProvisionalAssessment(assessment, eventId, versionId, assessmentId);
     // Feedback is read before the decision transaction so the admin can
@@ -166,6 +175,8 @@ async function makeInitialReviewDecisionForUser(uid, data, now = Date.now()) {
             status: nextStatus,
             reviewStage: decision === 'Approved' ? 'initial' : 'closed',
             initialReview,
+            requiredAuthorities: fixedWorkflow.preset.requiredAuthorities,
+            fixedWorkflowPreset: currentEvent.fixedWorkflowPreset ?? fixedWorkflow.selection,
             updatedAt: now,
         };
         if (decision === 'Rejected') {

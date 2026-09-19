@@ -30,6 +30,8 @@ const https_1 = require("firebase-functions/v2/https");
 const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
 const notifications_1 = require("../utils/notifications");
+const m3FixedWorkflowPreset_1 = require("../utils/m3FixedWorkflowPreset");
+const m3FixedEvidence_1 = require("../utils/m3FixedEvidence");
 function buildControlListSnapshot(eventId, items, controlItemVersion) {
     return items.map((item) => ({
         controlId: `${eventId}-ctrl-${item.authority.toLowerCase()}-v${controlItemVersion}`,
@@ -62,7 +64,7 @@ exports.editEventControlList = (0, https_1.onCall)({ region: runtime_1.FUNCTION_
     const eventId = (request.data?.eventId ?? '').trim();
     if (!eventId)
         throw new https_1.HttpsError('invalid-argument', 'eventId is required.');
-    const items = request.data?.items;
+    let items = request.data?.items;
     if (!Array.isArray(items) || items.length === 0) {
         throw new https_1.HttpsError('invalid-argument', 'items must be a non-empty array.');
     }
@@ -100,6 +102,23 @@ exports.editEventControlList = (0, https_1.onCall)({ region: runtime_1.FUNCTION_
     if (event.status !== 'Approved') {
         throw new https_1.HttpsError('failed-precondition', `Control list can only be committed after Admin final approval (current: ${event.status}).`);
     }
+    const presetAssessmentSnap = event.currentAssessmentId
+        ? await eventRef.collection(types_1.COLLECTIONS.ASSESSMENTS).doc(event.currentAssessmentId).get()
+        : null;
+    const fixedWorkflow = (0, m3FixedWorkflowPreset_1.fixedPresetForEvent)(event, (0, m3FixedWorkflowPreset_1.riskLevelFromAssessment)(presetAssessmentSnap?.data()));
+    const fixedByAuthority = new Map(fixedWorkflow.preset.controls.map((item) => [item.authority, item]));
+    // The production workflow is intentionally deterministic. Preserve the
+    // request shape for compatibility, but commit the selected template's
+    // requirements so an ad-hoc client cannot change the contract.
+    const requestedItems = items;
+    const normalizedItems = (event.requiredAuthorities ?? []).map((authority) => fixedByAuthority.get(authority)
+        ?? requestedItems.find((item) => item.authority === authority));
+    if (normalizedItems.some((item) => !item)) {
+        throw new https_1.HttpsError('failed-precondition', 'The fixed workflow template does not contain every required authority. Reload and try again.');
+    }
+    items = normalizedItems;
+    seenAuths.clear();
+    items.forEach((item) => seenAuths.add(item.authority));
     // The list's authorities must match the event's requiredAuthorities.
     const required = new Set(event.requiredAuthorities ?? []);
     for (const item of items) {
@@ -138,6 +157,9 @@ exports.editEventControlList = (0, https_1.onCall)({ region: runtime_1.FUNCTION_
         const proposalRef = eventRef.collection(types_1.COLLECTIONS.CONTROL_LIST_PROPOSALS).doc(versionId);
         const proposalSnap = await tx.get(proposalRef);
         const assignmentsSnap = await tx.get(eventRef.collection(types_1.COLLECTIONS.ASSIGNMENTS));
+        const assessmentSnap = ev.currentAssessmentId
+            ? await tx.get(eventRef.collection(types_1.COLLECTIONS.ASSESSMENTS).doc(ev.currentAssessmentId))
+            : null;
         const currentAssignments = assignmentsSnap.docs.map((snapshot) => snapshot.data());
         const proposal = proposalSnap.data();
         if (proposalSnap.exists) {
@@ -205,6 +227,7 @@ exports.editEventControlList = (0, https_1.onCall)({ region: runtime_1.FUNCTION_
         tx.update(eventRef, {
             controlListGenerated: true,
             controlListSnapshot: newSnapshot,
+            fixedWorkflowPreset: ev.fixedWorkflowPreset ?? (0, m3FixedWorkflowPreset_1.fixedPresetForEvent)(ev, (0, m3FixedWorkflowPreset_1.riskLevelFromAssessment)(assessmentSnap?.data())).selection,
             updatedAt: now,
         });
         if (proposalSnap.exists && proposal) {
@@ -222,6 +245,26 @@ exports.editEventControlList = (0, https_1.onCall)({ region: runtime_1.FUNCTION_
             ...(proposal ? { proposalId: proposal.proposalId, proposalRevision: proposal.revision } : {}),
         };
     }).then(async (result) => {
+        try {
+            const fixedControls = items.map((item) => ({
+                controlId: `${eventId}-ctrl-${item.authority.toLowerCase()}-v${controlItemVersion}`,
+                eventId,
+                versionId,
+                controlName: item.controlName,
+                authority: item.authority,
+                stageRequirement: item.stageRequirement,
+                stage1Requirements: item.stage1Requirements ?? [],
+                stage2Requirement: item.stage2Requirement ?? null,
+                controlItemVersion,
+                label: 'pending',
+                createdAt: now,
+                updatedAt: now,
+            }));
+            await (0, m3FixedEvidence_1.seedFixedEvidenceCopies)(db, eventId, versionId, fixedControls, { uid: event.organizerId });
+        }
+        catch (err) {
+            console.warn('[editEventControlList] fixed evidence copy unavailable; organizer upload remains enabled.', err);
+        }
         // Notify the organiser that the control list is ready.
         if (event.organizerId) {
             try {

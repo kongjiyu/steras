@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getAdminQueueAction } from './AdminApplicationQueue';
+import { getAdminQueueAction, matchesPersistedStatusFilter } from './AdminApplicationQueue';
 
 const event = (overrides: Record<string, unknown> = {}) => ({
   eventId: 'event-1', status: 'Pending' as const, reviewStage: null, initialReview: undefined, assignedOfficerUids: [], ...overrides,
@@ -20,5 +20,14 @@ describe('admin queue actions', () => {
   it('uses read-only View for authority-in-progress and terminal cases', () => {
     expect(getAdminQueueAction(event({ status: 'UnderReview', reviewStage: 'authority', assignedOfficerUids: ['officer'] }))).toMatchObject({ label: 'View', variant: 'secondary' });
     expect(getAdminQueueAction(event({ status: 'Approved', reviewStage: 'closed' }))).toMatchObject({ label: 'View', variant: 'secondary' });
+  });
+});
+
+describe('admin queue URL compatibility', () => {
+  it('honours persisted-status dashboard links while retaining unknown filters as no-ops', () => {
+    expect(matchesPersistedStatusFilter(event({ status: 'Pending' }), 'Pending')).toBe(true);
+    expect(matchesPersistedStatusFilter(event({ status: 'Approved' }), 'Pending')).toBe(false);
+    expect(matchesPersistedStatusFilter(event({ status: 'Approved' }), 'not-a-status')).toBe(true);
+    expect(matchesPersistedStatusFilter(event({ status: 'Approved' }), null)).toBe(true);
   });
 });

@@ -32,6 +32,7 @@ const https_1 = require("firebase-functions/v2/https");
 const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
 const notifications_1 = require("../utils/notifications");
+const m3FixedWorkflowPreset_1 = require("../utils/m3FixedWorkflowPreset");
 const ADMIN_NOTE_MAX = 1000;
 const REASON_MIN = 10;
 const REASON_MAX = 1000;
@@ -47,14 +48,14 @@ exports.makeSecondReviewDecision = (0, https_1.onCall)({ region: runtime_1.FUNCT
     if (requestedFinalDecision && requestedConfirmedDecision && requestedFinalDecision !== requestedConfirmedDecision) {
         throw new https_1.HttpsError('invalid-argument', 'finalDecision and confirmedDecision must match when both are provided.');
     }
-    const finalDecision = requestedFinalDecision ?? requestedConfirmedDecision;
+    let finalDecision = requestedFinalDecision ?? requestedConfirmedDecision;
     if (!isDecision(finalDecision)) {
         throw new https_1.HttpsError('invalid-argument', 'finalDecision is required.');
     }
-    const reason = (request.data?.reason ?? '').trim();
-    const suggestion = (request.data?.suggestion ?? '').trim();
+    let reason = (request.data?.reason ?? '').trim();
+    let suggestion = (request.data?.suggestion ?? '').trim();
     const adminNote = (request.data?.adminNote ?? '').trim();
-    const rejectionReasonCategory = request.data?.rejectionReasonCategory;
+    let rejectionReasonCategory = request.data?.rejectionReasonCategory;
     if (reason.length > REASON_MAX || (reason.length > 0 && reason.length < REASON_MIN)) {
         throw new https_1.HttpsError('invalid-argument', `reason must be ${REASON_MIN}-${REASON_MAX} characters when provided.`);
     }
@@ -81,6 +82,14 @@ exports.makeSecondReviewDecision = (0, https_1.onCall)({ region: runtime_1.FUNCT
     if (!eventSnap.exists)
         throw new https_1.HttpsError('not-found', `Event ${eventId} not found.`);
     const event = eventSnap.data();
+    const assessmentSnap = event.currentAssessmentId
+        ? await eventRef.collection(types_1.COLLECTIONS.ASSESSMENTS).doc(event.currentAssessmentId).get()
+        : null;
+    const fixedWorkflow = (0, m3FixedWorkflowPreset_1.fixedPresetForEvent)(event, (0, m3FixedWorkflowPreset_1.riskLevelFromAssessment)(assessmentSnap?.data()));
+    finalDecision = fixedWorkflow.preset.finalDecision;
+    reason = fixedWorkflow.preset.reason;
+    suggestion = fixedWorkflow.preset.suggestion;
+    rejectionReasonCategory = fixedWorkflow.preset.rejectionReasonCategory;
     const versionId = event.currentVersionId;
     if (!versionId)
         throw new https_1.HttpsError('failed-precondition', 'The application has no submitted version.');
@@ -176,6 +185,7 @@ exports.makeSecondReviewDecision = (0, https_1.onCall)({ region: runtime_1.FUNCT
                     decidedAt: assignment.decidedAt ?? null,
                 })),
             },
+            fixedWorkflowPreset: currentEvent.fixedWorkflowPreset ?? fixedWorkflow.selection,
             updatedAt: now,
         });
         // Audit.

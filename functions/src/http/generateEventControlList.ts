@@ -29,6 +29,11 @@ import {
 import { FUNCTION_REGION } from '../config/runtime';
 import { MINIMAX_API_KEY } from '../config/secrets';
 import { proposeControlItemsForEventWithMetadata } from './proposeEventControlList';
+import {
+  fixedPresetForEvent,
+  riskLevelFromAssessment,
+  type FixedWorkflowPresetSelection,
+} from '../utils/m3FixedWorkflowPreset';
 
 interface GenerateEventControlListRequest {
   eventId?: string;
@@ -78,6 +83,12 @@ export const generateEventControlList = onCall<GenerateEventControlListRequest>(
   if (event.status !== 'Approved') {
     throw new HttpsError('failed-precondition', `Control list can only be generated after Admin final approval (current: ${event.status}).`);
   }
+
+  // Lock the fixture-derived workflow before returning any draft or cached
+  // proposal.  This makes Generate itself the first-operation boundary: a
+  // later retry cannot silently re-match the event to a different template
+  // after its risk assessment changes.
+  await ensureFixedWorkflowSelection(db, eventRef, event, versionId);
 
   const proposalRef = eventRef.collection(COLLECTIONS.CONTROL_LIST_PROPOSALS).doc(versionId);
   const existingProposalSnap = await proposalRef.get();
@@ -200,3 +211,30 @@ export const generateEventControlList = onCall<GenerateEventControlListRequest>(
     proposalRevision: persisted.record.revision,
   } satisfies GenerateEventControlListResponse;
 });
+
+async function ensureFixedWorkflowSelection(
+  db: FirebaseFirestore.Firestore,
+  eventRef: FirebaseFirestore.DocumentReference,
+  event: EventRecord,
+  versionId: string,
+): Promise<FixedWorkflowPresetSelection> {
+  if (event.fixedWorkflowPreset?.version === 'm3-fixed-workflow-v1') {
+    return event.fixedWorkflowPreset as FixedWorkflowPresetSelection;
+  }
+  const assessmentSnap = event.currentAssessmentId
+    ? await eventRef.collection(COLLECTIONS.ASSESSMENTS).doc(event.currentAssessmentId).get()
+    : null;
+  const selection: FixedWorkflowPresetSelection = fixedPresetForEvent(event, riskLevelFromAssessment(assessmentSnap?.data())).selection;
+  return db.runTransaction(async (tx) => {
+    const currentSnap = await tx.get(eventRef);
+    const current = currentSnap.data() as EventRecord | undefined;
+    if (!currentSnap.exists || current?.currentVersionId !== versionId || current.status !== 'Approved') {
+      throw new HttpsError('aborted', 'The application changed while the fixed workflow was being selected. Reload and try again.');
+    }
+    if (current.fixedWorkflowPreset?.version === 'm3-fixed-workflow-v1') {
+      return current.fixedWorkflowPreset as FixedWorkflowPresetSelection;
+    }
+    tx.update(eventRef, { fixedWorkflowPreset: selection, updatedAt: Date.now() });
+    return selection;
+  });
+}

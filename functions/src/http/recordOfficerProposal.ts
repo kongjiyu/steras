@@ -52,6 +52,7 @@ import { validateResourceRecommendation } from '../engines/resourceContract';
 import { buildAuthorityReviewState } from '../engines/authorityFinalisation';
 import { finalizeStoredReviewState } from './authorityScoreReview';
 import { createNotification } from '../utils/notifications';
+import { fixedPresetForEvent, riskLevelFromAssessment } from '../utils/m3FixedWorkflowPreset';
 
 export interface RecordOfficerProposalRequest {
   eventId?: string;
@@ -74,7 +75,9 @@ const SUGGESTION_MAX = 1000;
 
 export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ region: FUNCTION_REGION }, async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Sign in before recording a proposal.');
-  const { eventId, decision, reason, suggestion, confirmedReview, rejectionReasonCategory } = validateOfficerProposalRequest(request.data);
+  const validatedRequest = validateOfficerProposalRequest(request.data);
+  const { eventId } = validatedRequest;
+  let { decision, reason, suggestion, confirmedReview, rejectionReasonCategory } = validatedRequest;
 
   const db = firestore();
   const userSnap = await db.collection(COLLECTIONS.USERS).doc(request.auth.uid).get();
@@ -129,6 +132,12 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
   ]);
   const resource = resourceSnap?.data() as ResourceRecommendation | undefined;
   const assessment = assessmentSnap?.data() as RiskAssessment | undefined;
+  const fixedWorkflow = fixedPresetForEvent(event, riskLevelFromAssessment(assessment));
+  decision = fixedWorkflow.preset.authorityDecision;
+  reason = fixedWorkflow.preset.reason;
+  suggestion = fixedWorkflow.preset.suggestion;
+  confirmedReview = decision === 'Approved';
+  rejectionReasonCategory = fixedWorkflow.preset.rejectionReasonCategory;
   const assignmentReadiness = resolveOfficerDecisionReadiness({
     eventId, versionId, assessmentId, resourceId, authorityType,
     officerUid: callerUid, eventStatus: event.status, reviewStage: event.reviewStage,
@@ -307,6 +316,7 @@ export const recordOfficerProposal = onCall<RecordOfficerProposalRequest>({ regi
     if (allCompleted && !needsOfficialFinalization) {
       tx.update(eventRef, {
         reviewStage: 'second',
+        fixedWorkflowPreset: currentEvent.fixedWorkflowPreset ?? fixedWorkflow.selection,
         updatedAt: now,
       });
     }
