@@ -159,7 +159,7 @@ export default function AdminAssignment() {
       await command({ eventId, assignmentMap, dryRun: false, mode: isReplacement ? 'replacement' : 'initial' });
       toast.success(isReplacement ? `Assigned ${missingAuthorities.length} replacement officer(s).` : `Assigned ${Object.keys(selected).length} officer(s).`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Unable to assign officers.');
+      toast.error(getAssignmentErrorMessage(err, 'Unable to assign officers.'));
     } finally {
       setCommitting(false);
     }
@@ -185,7 +185,7 @@ export default function AdminAssignment() {
       const result = await command(payload);
       toast.success(`Unassigned ${result.data.revoked} officer(s).${result.data.reviewStageReset ? ' Event returned to pre-assignment state.' : ''}`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Unable to unassign.');
+      toast.error(getAssignmentErrorMessage(err, 'Unable to unassign.'));
     } finally {
       setUnassigning(null);
       setUnassigningAll(false);
@@ -349,6 +349,15 @@ export default function AdminAssignment() {
       )}
     </div>
   );
+}
+
+export function getAssignmentErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string' && message.trim()) return message;
+  }
+  return fallback;
 }
 
 export function hasCompleteOfficerSelection(

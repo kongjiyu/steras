@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, expect, it, vi } from 'vitest';
-import AdminAssignment, { hasCompleteOfficerSelection } from './AdminAssignment';
+import AdminAssignment, { getAssignmentErrorMessage, hasCompleteOfficerSelection } from './AdminAssignment';
 
 const state = vi.hoisted(() => ({ mode: 'missing' }));
 vi.mock('../../config/firebase', () => ({ db: {}, functions: {}, isFirebaseConfigured: true }));
@@ -37,4 +37,12 @@ it('requires an eligible officer selection for every authority before assignment
   expect(hasCompleteOfficerSelection(['PDRM', 'BOMBA', 'KKM', 'DBKL'], {
     PDRM: 'pdrm-1', BOMBA: 'bomba-1', KKM: 'kkm-1', DBKL: 'dbkl-1',
   })).toBe(true);
+});
+
+it('preserves the callable error so the admin can correct the assignment', () => {
+  expect(getAssignmentErrorMessage({ message: 'The submitted venue state is stale or invalid.' }, 'fallback'))
+    .toBe('The submitted venue state is stale or invalid.');
+  expect(getAssignmentErrorMessage(new Error('The PDRM officer is at workload limit (10). Swap to a backup.'), 'fallback'))
+    .toContain('workload limit');
+  expect(getAssignmentErrorMessage({}, 'fallback')).toBe('fallback');
 });

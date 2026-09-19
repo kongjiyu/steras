@@ -211,20 +211,17 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
     if (ev.status !== 'UnderReview') {
       throw new HttpsError('failed-precondition', 'Only applications released for authority review can be assigned.');
     }
-    if (mode === 'initial' && ev.reviewStage === 'authority') {
+    if (mode === 'initial' && ev.reviewStage !== 'initial') {
       throw new HttpsError('failed-precondition', 'Officers are already assigned for this event version. Unassign first to re-assign.');
     }
 
     const assignmentSnapshots = new Map<AuthorityType, FirebaseFirestore.DocumentSnapshot>();
-    const controlsSnapshot = await tx.get(eventRef.collection(COLLECTIONS.EVENT_CONTROLS));
-    const controlSnapshots = new Map<AuthorityType, FirebaseFirestore.QueryDocumentSnapshot>();
-    for (const snapshot of controlsSnapshot.docs) {
-      const control = snapshot.data() as { versionId?: string; authority?: AuthorityType };
-      if (control.versionId === versionId && control.authority) controlSnapshots.set(control.authority, snapshot);
-    }
     for (const authority of submittedAuthorities) {
       const assignmentId = `${versionId}_${authority}`;
       assignmentSnapshots.set(authority, await tx.get(eventRef.collection(COLLECTIONS.ASSIGNMENTS).doc(assignmentId)));
+    }
+    if (mode === 'initial' && [...assignmentSnapshots.values()].some((snapshot) => snapshot.exists && (snapshot.data() as Assignment)?.status !== 'revoked')) {
+      throw new HttpsError('failed-precondition', 'Officers are already assigned for this event version. Unassign first to re-assign.');
     }
     if (mode === 'replacement') {
       validateReplacementAssignments(versionId, submittedAuthorities, new Map(
@@ -282,14 +279,6 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
           `Officer ${officerUid} is at workload limit (${officer.workloadLimit}). Swap to a backup.`,
         );
       }
-      const controlSnapshot = controlSnapshots.get(auth);
-      if (!controlSnapshot?.exists) {
-        throw new HttpsError('failed-precondition', `The ${auth} control list item is missing for the current version.`);
-      }
-      const control = controlSnapshot.data() as { versionId?: string; authority?: AuthorityType };
-      if (control.versionId !== versionId || control.authority !== auth) {
-        throw new HttpsError('failed-precondition', `The ${auth} control list item is stale or mismatched.`);
-      }
     }
 
     // Now writes — all reads are done.
@@ -308,8 +297,6 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
         status: 'pending',
       };
       tx.set(assignmentRef, assignment);
-      const controlRef = controlSnapshots.get(auth as AuthorityType)!.ref;
-      tx.set(controlRef, { stage1ReviewerUid: officerUid, stage1ReviewerAssignedAt: now, updatedAt: now }, { merge: true });
       tx.update(officerRef, {
         workloadCount: Math.max(0, officer?.workloadCount ?? 0) + 1,
         lastAssignedAt: now,
