@@ -20,6 +20,7 @@ import {
   type EventType,
   type OrganizerAssessmentSummary,
   type OrganizerResourceRecommendation,
+  type PublicEvent,
   type ProvisionalRiskAssessment,
   type ResourceRecommendation,
   type ProposedControlItem,
@@ -629,10 +630,27 @@ async function writeScenario(db: Firestore, scenarioValue: Scenario, venue: Venu
   await batch.commit();
   if (scenarioValue.status === 'Approved') {
     await writeControl(db, scenarioValue, event as EventRecord, identities, organizer, index, terminalAt);
+    const details = (event as EventRecord).eventDetails;
+    const publicEvent: PublicEvent = {
+      eventId,
+      versionId: VERSION_ID,
+      eventName: details.name,
+      venueName: details.venueName,
+      ...(details.venueAddress ? { venueAddress: details.venueAddress } : {}),
+      ...(details.venueState ? { venueState: details.venueState } : {}),
+      ...(details.venueLocation ? { venueLocation: details.venueLocation } : {}),
+      eventType: details.type,
+      ...(details.description ? { description: details.description } : {}),
+      ...(details.expectedAttendance ? { expectedAttendance: details.expectedAttendance } : {}),
+      ...(details.environment ? { environment: details.environment } : {}),
+      startDatetime: details.startDatetime,
+      endDatetime: details.endDatetime,
+      approvedBy: (event as EventRecord).requiredAuthorities,
+      publicStatus: 'approved',
+      lastUpdatedAt: terminalAt,
+    };
+    await db.collection(COLLECTIONS.PUBLIC_EVENTS).doc(eventId).set({ ...publicEvent, presentationData: marker(eventId) });
   }
-  // Presentation fixtures are intentionally private. Final approval and
-  // control evidence are exercised through authenticated surfaces and must
-  // never enter the public event projection.
   await writeIncidents(db, scenarioValue, event, identities, organizer, index);
 }
 
@@ -956,7 +974,14 @@ async function verifyDataset(db: Firestore, only?: string) {
       db.collection(COLLECTIONS.PUBLIC_EVENTS).doc(eventId).get(),
       db.collection(COLLECTIONS.PUBLIC_EVENT_CONTROLS).doc(eventId).get(),
     ]);
-    if (publicEvent.exists || publicControls.exists) failures.push(`${eventId}: managed presentation fixture has a public projection`);
+    if (event.status === 'Approved') {
+      const value = publicEvent.data() as Partial<PublicEvent> | undefined;
+      if (!publicEvent.exists || value?.eventId !== eventId || value.versionId !== VERSION_ID || value.publicStatus !== 'approved') {
+        failures.push(`${eventId}: approved presentation fixture is missing its public event projection`);
+      }
+    } else if (publicEvent.exists || publicControls.exists) {
+      failures.push(`${eventId}: non-approved managed presentation fixture has a public projection`);
+    }
     if (event.eventDetails.organizerEmail !== ORGANIZER_DEMO_EMAIL) failures.push(`${eventId}: unexpected organiser ${event.eventDetails.organizerEmail}`);
     if (event.status === 'Pending') {
       const pendingAssignments = await eventRef.collection(COLLECTIONS.ASSIGNMENTS).get();
@@ -1036,7 +1061,11 @@ async function verifyDataset(db: Firestore, only?: string) {
       }
       const publicProjection = await db.collection(COLLECTIONS.PUBLIC_EVENTS).doc(eventId).get();
       const publicControls = await db.collection(COLLECTIONS.PUBLIC_EVENT_CONTROLS).doc(eventId).get();
-      if (publicProjection.exists || publicControls.exists) failures.push(`${eventId}: managed post-final fixture was published publicly`);
+      const publicValue = publicProjection.data() as Partial<PublicEvent> | undefined;
+      if (!publicProjection.exists || publicValue?.versionId !== VERSION_ID || publicValue.publicStatus !== 'approved') {
+        failures.push(`${eventId}: managed post-final fixture is missing its public event projection`);
+      }
+      if (publicControls.exists) failures.push(`${eventId}: managed post-final fixture exposed unpublished control evidence`);
     }
     if (scenarioValue.slug === 'putrajaya-community-run') {
       const [assignments, decisions, reviews] = await Promise.all([

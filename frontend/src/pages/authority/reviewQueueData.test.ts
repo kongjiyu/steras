@@ -41,9 +41,11 @@ describe('reviewQueueData', () => {
     expect(filterAndSortAuthorityQueue([decided], 'decided', '', 'newest')).toHaveLength(1);
   });
 
-  it('makes second-review rows view-only', () => {
+  it('keeps second-review rows amendable until Admin finalisation', () => {
     const row = { event: event('4', 'Final forum', 'UnderReview', 40, 900, ), assignment: { versionId: 'v1', authorityType: 'PDRM' as const, status: 'completed' as const, decision: 'Approved' as const }, action: 'view' as const };
     row.event.reviewStage = 'second';
+    expect(authorityQueueAction(row)).toBe('amend');
+    row.event.secondReview = { confirmedDecision: 'Approved', reviewerUid: 'admin', decidedAt: 50 };
     expect(authorityQueueAction(row)).toBe('view');
   });
 });

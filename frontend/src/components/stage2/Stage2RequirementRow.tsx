@@ -222,18 +222,6 @@ export default function Stage2RequirementRow(props: Stage2RequirementRowProps) {
               Replace
             </button>
           )}
-          {pending && !reported && !imageUrl && (
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isBusy}
-              className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-ink-300 bg-white px-3 py-1.5 text-xs font-medium text-ink-700 hover:bg-ink-50 disabled:opacity-50"
-              data-testid={`stage2-replace-${authority}`}
-            >
-              <Upload size={14} />
-              Upload
-            </button>
-          )}
         </div>
       </div>
       {!stage1Ready && <p className="mt-2 rounded bg-amber-50 px-2 py-1.5 text-xs text-amber-800">Stage 2 upload unlocks after every required Stage 1 document for this control is Authority-approved.</p>}

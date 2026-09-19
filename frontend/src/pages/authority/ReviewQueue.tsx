@@ -149,7 +149,7 @@ export default function ReviewQueue() {
             {visible.map((row) => {
               const event = row.event;
               return <li key={event.eventId}>
-                <Link to={`/authority/events/${event.eventId}`} className="block rounded-lg border border-ink-100 bg-white p-5 shadow-card transition hover:border-[#b5bd98] hover:shadow-card-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600">
+                <Link to={row.action === 'documentation' ? `/authority/events/${event.eventId}/controls` : `/authority/events/${event.eventId}`} className="block rounded-lg border border-ink-100 bg-white p-5 shadow-card transition hover:border-[#b5bd98] hover:shadow-card-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600">
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
                       <h2 className="truncate font-display text-base font-semibold text-ink-800">{event.eventDetails.name}</h2>

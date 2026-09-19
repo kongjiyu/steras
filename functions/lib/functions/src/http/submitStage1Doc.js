@@ -12,9 +12,9 @@ exports.submitStage1DocForUser = submitStage1DocForUser;
  *      `status: 'pending_verification'`, stashing the bytes as a data
  *      URL in `filePath` (per the project convention: base64 in
  *      Firestore, NOT Firebase Storage).
- *   2. USE PREVIOUS (a no-file declaration). The declaration is still
- *      submitted as a new revision and must be reviewed by the current
- *      Stage 1 authority before it can satisfy the control gate.
+ *   2. USE PREVIOUS (a no-file declaration). Receipt declarations are
+ *      immediately satisfied for Stage 1; the Stage 2 photo remains the
+ *      verification backstop and no Authority task is created.
  *
  * Validation:
  *   - Caller is signed in.
@@ -143,6 +143,9 @@ async function submitStage1DocForUser(uid, data, now = Date.now()) {
         if (!requirement) {
             throw new https_1.HttpsError('failed-precondition', `docId ${docId} is not in the control's Stage 1 requirements template.`);
         }
+        if (usePrevious && requirement.docType !== 'receipt') {
+            throw new https_1.HttpsError('failed-precondition', 'Use Previous is available only for reusable receipt requirements. Submit a new document for this requirement.');
+        }
         const existingDoc = docSnap.exists ? docSnap.data() : null;
         if (existingDoc && existingDoc.status === 'verified') {
             throw new https_1.HttpsError('failed-precondition', 'This Stage 1 document has already been verified. Contact the admin to reopen.');
@@ -168,6 +171,7 @@ async function submitStage1DocForUser(uid, data, now = Date.now()) {
                     revision: priorRevision.revision,
                     revisionId: priorRevision.revisionId,
                     uploadedAt: priorRevision.submittedAt,
+                    status: priorRevision.status,
                     newAggregateLabel: control.label,
                     idempotent: true,
                 };
@@ -188,9 +192,10 @@ async function submitStage1DocForUser(uid, data, now = Date.now()) {
             label: (data.label ?? '').trim() || requirement.label,
             uploadedAt: now,
             uploadedBy: uid,
-            // A declaration has no bytes, but it still enters the same Authority
-            // review queue as an uploaded file.
-            status: 'pending_verification',
+            // A receipt declaration is already satisfied for Stage 1. The Stage 2
+            // photo remains the verification backstop, so no Authority review task
+            // is created for this path.
+            status: usePrevious ? 'use_previous' : 'pending_verification',
             revision: nextRevision,
             revisionId,
             ...(usePrevious ? { usePreviousDeclaration: true } : {}),
@@ -216,6 +221,19 @@ async function submitStage1DocForUser(uid, data, now = Date.now()) {
         const othersFiltered = allDocs.filter((d) => d.docId !== docId);
         const merged = [...othersFiltered, newDoc];
         const newAggregateLabel = (0, controlAggregate_1.aggregateLabel)(merged);
+        const requiredDocIds = control.stage1Requirements
+            .filter((candidate) => candidate.required)
+            .map((candidate) => (0, stage1_1.stage1DocumentId)(controlId, candidate.docType));
+        const isAllVerifiedNow = requiredDocIds.length > 0
+            && requiredDocIds.every((requiredDocId) => {
+                const candidate = merged.find((value) => value.docId === requiredDocId);
+                return candidate?.status === 'verified' || candidate?.status === 'use_previous';
+            });
+        const existingVerified = new Set(event.verifiedControlIds ?? []);
+        if (isAllVerifiedNow)
+            existingVerified.add(controlId);
+        else
+            existingVerified.delete(controlId);
         // Writes. The current projection is convenient for existing clients;
         // every submission is also retained as an immutable revision.
         const revision = {
@@ -245,6 +263,7 @@ async function submitStage1DocForUser(uid, data, now = Date.now()) {
         tx.set(docRef, newDoc);
         tx.delete(publicStage1Ref);
         tx.update(controlRef, { label: newAggregateLabel, controlItemVersion: (control.controlItemVersion ?? 0) + 1, updatedAt: now });
+        tx.update(eventRef, { verifiedControlIds: [...existingVerified], updatedAt: now });
         // Audit log.
         const auditId = `${versionId}_${controlId}_${docId}_submitted_${now}`;
         const auditRef = eventRef.collection(types_1.COLLECTIONS.AUDIT_LOGS).doc(auditId);
@@ -289,13 +308,14 @@ async function submitStage1DocForUser(uid, data, now = Date.now()) {
             revision: nextRevision,
             revisionId,
             uploadedAt: now,
+            status: newDoc.status,
             newAggregateLabel,
             idempotent: false,
         };
     });
     // Notifications — outside the transaction. Notify the assigned officer
     // (if any) and all admin users.
-    if (!result.idempotent) {
+    if (!result.idempotent && !result.usePrevious) {
         await fireSubmitNotifications({
             eventId: result.eventId,
             controlId: result.controlId,
@@ -312,7 +332,7 @@ async function submitStage1DocForUser(uid, data, now = Date.now()) {
         eventId: result.eventId,
         controlId: result.controlId,
         docId: result.docId,
-        status: 'pending_verification',
+        status: result.status,
         revision: result.revision,
         revisionId: result.revisionId,
         uploadedAt: result.uploadedAt,

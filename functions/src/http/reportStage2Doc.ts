@@ -42,7 +42,7 @@ import { stage2DocumentId, stage2PublicControlId } from '@shared/stage2';
 
 const REPORT_CATEGORIES = ['item_not_at_venue', 'wrong_venue', 'low_quality_image', 'other'] as const;
 type ReportCategory = typeof REPORT_CATEGORIES[number];
-const DESCRIPTION_MIN = 20;
+const DESCRIPTION_MIN = 10;
 const DESCRIPTION_MAX = 500;
 
 interface ReportStage2DocRequest {

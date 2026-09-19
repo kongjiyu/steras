@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { Link } from 'react-router-dom';
 import { db, isFirebaseConfigured } from '../../config/firebase';
@@ -34,8 +34,12 @@ export default function MyEvents() {
   const { user } = useAuth();
   const [events, setEvents] = useState<EventRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<OrganizerStatusFilter>(() => new URLSearchParams(window.location.search).get('status') === 'Draft' ? 'Draft' : 'all');
+  const [filter, setFilter] = useState<OrganizerStatusFilter>(() => {
+    const value = new URLSearchParams(window.location.search).get('status');
+    return ORGANIZER_STATUS_FILTERS.includes(value as OrganizerStatusFilter) ? value as OrganizerStatusFilter : 'all';
+  });
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('all');
+  const [search, setSearch] = useState(() => new URLSearchParams(window.location.search).get('q') ?? '');
   const [error, setError] = useState('');
   const [retryKey, setRetryKey] = useState(0);
   const [publicProjections, setPublicProjections] = useState<Map<string, unknown>>(new Map());
@@ -95,7 +99,16 @@ export default function MyEvents() {
       ? 'unavailable' as const
       : organizerPublicationStateFromProjection(publicProjections.get(event.eventId), event.eventId, event.currentVersionId);
 
-  const filtered = filter === 'all' ? events : events.filter((e) => String(e.status) === filter);
+  const filtered = useMemo(() => {
+    const queryText = search.trim().toLocaleLowerCase();
+    return events.filter((event) => {
+      const displayState = resolveApplicationDisplayState(event);
+      const matchesState = filter === 'all' || displayState === filter;
+      const searchable = [event.eventId, event.eventDetails.name, event.eventDetails.venueName, event.eventDetails.type]
+        .filter(Boolean).join(' ').toLocaleLowerCase();
+      return matchesState && (!queryText || searchable.includes(queryText));
+    });
+  }, [events, filter, search]);
   const timeFiltered = timeFilter === 'all' ? filtered : filtered.filter(event => eventTimeGroup(event) === timeFilter);
   const groupOrder: Record<Exclude<TimeFilter, 'all'>, number> = { current: 0, upcoming: 1, past: 2 };
   const ordered = [...timeFiltered].sort((left, right) => {
@@ -120,7 +133,12 @@ export default function MyEvents() {
         {ORGANIZER_STATUS_FILTERS.map((f) => (
           <button
             key={f}
-            onClick={() => setFilter(f)}
+            onClick={() => {
+              setFilter(f);
+              const params = new URLSearchParams(window.location.search);
+              if (f === 'all') params.delete('status'); else params.set('status', f);
+              window.history.replaceState(null, '', `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`);
+            }}
             aria-pressed={filter === f}
             className={
               'min-h-10 shrink-0 rounded-md px-3 py-2 text-sm font-semibold ' +
@@ -130,6 +148,26 @@ export default function MyEvents() {
             {f === 'all' ? 'All' : applicationStatusLabel(f)}
           </button>
         ))}
+      </div>
+
+      <div className="mb-6">
+        <label className="relative block">
+          <span className="sr-only">Search events</span>
+          <input
+            type="search"
+            className="input min-h-11 w-full"
+            placeholder="Search event, application ID, venue, or type"
+            value={search}
+            onChange={(event) => {
+              const value = event.target.value;
+              setSearch(value);
+              const params = new URLSearchParams(window.location.search);
+              if (value.trim()) params.set('q', value); else params.delete('q');
+              window.history.replaceState(null, '', `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`);
+            }}
+            aria-label="Search events"
+          />
+        </label>
       </div>
 
       <div className="sticky top-20 z-10 mb-6 flex gap-1 overflow-x-auto rounded-lg border border-[#ded5c5] bg-[#fffdf8]/95 p-1 shadow-sm backdrop-blur" aria-label="Filter events by time">

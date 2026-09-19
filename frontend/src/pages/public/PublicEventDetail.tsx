@@ -394,7 +394,7 @@ function ControlCard({ ctrl, doc: stage2Doc, currentUid, signedInAsAnotherRole, 
               className="inline-flex min-h-9 items-center gap-1.5 rounded-md bg-status-approved px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
               data-testid={`public-stage2-confirm-${ctrl.authority}`}
             >
-              {iConfirmed ? <><CheckCircle2 size={14} /> Undo confirmation</> : <><ThumbsUp size={14} /> {confirming ? 'Confirming…' : 'I confirm'}</>}
+              {iConfirmed ? <><CheckCircle2 size={14} /> Undo confirmation ({confirmCount})</> : <><ThumbsUp size={14} /> {confirming ? 'Confirming…' : `I confirm (${confirmCount})`}</>}
             </button>
             <button
               type="button"
@@ -428,8 +428,8 @@ function ReportModal({ ctrl, eventId, onClose, onSubmitted, onError }: ReportMod
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (description.trim().length < 20) {
-      onError('Please describe the issue in at least 20 characters.');
+    if (description.trim().length < 10) {
+      onError('Please describe the issue in at least 10 characters.');
       return;
     }
     setSubmitting(true);
@@ -475,7 +475,7 @@ function ReportModal({ ctrl, eventId, onClose, onSubmitted, onError }: ReportMod
             </select>
           </label>
           <label className="block">
-            <span className="text-sm font-semibold text-[#303528]">Description (20–500 chars)</span>
+            <span className="text-sm font-semibold text-[#303528]">Description (10–500 chars)</span>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}

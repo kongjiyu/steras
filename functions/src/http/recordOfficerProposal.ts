@@ -426,17 +426,22 @@ function historySuffix(value: unknown): string {
   return Buffer.from(JSON.stringify(value)).toString('base64url').slice(0, 16);
 }
 
-/** Apply the longer rationale rule only to adverse officer proposals while
- * the assessment is provisional or lacks sufficient data. */
+/** Keep the officer-facing amendment contract consistent across review stages.
+ * The UI and callable both require a concise rationale (10+ chars) for a
+ * rejection; readiness-specific long-form requirements made the amendment
+ * action appear disabled even though the officer had supplied the required
+ * fields. */
 export function validateOfficerRejectionRationale(
   decision: DecisionValue,
   readiness: AssessmentReadiness | undefined,
   finalizedAdminManual: boolean,
   reason: string,
 ): void {
-  if (decision === 'Rejected' && !finalizedAdminManual
-    && (readiness === 'provisional' || readiness === 'insufficient_data') && reason.trim().length < 80) {
-    throw new HttpsError('invalid-argument', `When the assessment is ${readiness}, the proposal reason must be at least 80 characters.`);
+  void readiness;
+  void finalizedAdminManual;
+  if (decision !== 'Rejected') return;
+  if (reason.trim().length < REASON_MIN) {
+    throw new HttpsError('invalid-argument', `reason must be at least ${REASON_MIN} characters when rejecting.`);
   }
 }
 

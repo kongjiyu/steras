@@ -63,6 +63,7 @@ import { db, functions } from '../../config/firebase';
 import EmptyState from '../../components/ui/EmptyState';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { displayIdentityName, useDisplayIdentities, type DisplayIdentityMap } from '../../hooks/useDisplayIdentities';
+import Stage1RedactionPreview from '../../components/stage1/Stage1RedactionPreview';
 
 interface PublishResponse {
   published: true;
@@ -514,7 +515,7 @@ export default function AdminStage2Review({ eventIdOverride, embedded = false, i
                         </p>
                       )}
                       <div className="flex flex-wrap items-center gap-2">
-                        {!reported && !published && (
+                        {!reported && !published && !rejected && (
                           <button
                             type="button"
                             onClick={() => handlePublish(ctrl)}
@@ -538,7 +539,7 @@ export default function AdminStage2Review({ eventIdOverride, embedded = false, i
                             {busyKey === unpublishKey ? 'Unpublishing…' : 'Unpublish'}
                           </button>
                         )}
-                        {!reported && !published && (
+                        {!reported && !published && !rejected && (
                           <button
                             type="button"
                             onClick={() => setRejectingControl(ctrl)}
@@ -649,7 +650,7 @@ function AdminStage1Documentation(props: AdminStage1DocumentationProps) {
                   {stage1Doc.filePath && <a href={stage1Doc.filePath} target="_blank" rel="noreferrer" className="mt-3 inline-flex min-h-10 items-center gap-2 text-sm font-semibold text-brand-700 hover:underline"><FileText size={15} /> View private source</a>}
                   {stage1Doc.usePreviousDeclaration && <p className="mt-3 rounded-md bg-blue-50 p-3 text-xs text-brand-800">Organizer submitted a Use Previous declaration. No file is available to publish.</p>}
                   {revisions.length > 0 && <details className="mt-3 rounded-md border border-ink-200 bg-ink-50/40 p-3 text-xs"><summary className="cursor-pointer font-semibold text-ink-700">Revision history ({revisions.length})</summary><ol className="mt-2 space-y-2 border-t border-ink-100 pt-2">{revisions.map((revision) => <li key={revision.revisionId} className="flex flex-wrap items-center justify-between gap-2"><span>Revision {revision.revision} · {revision.status}</span><span className="text-ink-500">{revision.submittedAt ? new Date(revision.submittedAt).toLocaleString() : '—'}</span>{revision.rejectionReason && <span className="w-full whitespace-pre-line text-status-rejected">{revision.rejectionReason}</span>}</li>)}</ol></details>}
-                  {stage1Doc.status === 'verified' && <div className="mt-3 flex flex-wrap items-center gap-2">
+                  {(stage1Doc.status === 'verified' || stage1Doc.status === 'use_previous') && <div className="mt-3 flex flex-wrap items-center gap-2">
                     {!draft && stage1Doc.filePath && <button type="button" className="btn-secondary !min-h-9 !px-3 !py-1.5 text-xs" onClick={() => onGenerate(control, stage1Doc)} disabled={isBusy}><ShieldCheck size={14} /> {isBusy ? 'Generating…' : 'Generate redacted copy'}</button>}
                     {draft && <span className={`badge ${draft.status === 'published' ? 'bg-green-100 text-status-approved' : draft.status === 'manual_required' ? 'bg-gold-100 text-gold-700' : 'bg-blue-100 text-brand-700'}`}>{draft.status === 'manual_required' ? 'Manual review required' : draft.status}</span>}
                     {draft && draft.status !== 'published' && <button type="button" className="btn-secondary !min-h-9 !px-3 !py-1.5 text-xs" onClick={() => onOpenEditor(control, stage1Doc)}><Pencil size={14} /> Edit redaction</button>}
@@ -657,12 +658,11 @@ function AdminStage1Documentation(props: AdminStage1DocumentationProps) {
                     {draft?.status === 'ready' && <button type="button" className="btn-success !min-h-9 !px-3 !py-1.5 text-xs" onClick={() => onPublish(control, stage1Doc, true)} disabled={isBusy}>Publish to public</button>}
                     {draft?.status === 'published' && <button type="button" className="btn-secondary !min-h-9 !px-3 !py-1.5 text-xs" onClick={() => onPublish(control, stage1Doc, false)} disabled={isBusy}>Unpublish</button>}
                   </div>}
-                  {draft?.status === 'manual_required' && <p className="mt-2 text-xs leading-5 text-gold-700">{draft.aiFailureReason ?? 'AI redaction was unavailable.'} Add black boxes manually and review every page before saving.</p>}
+                  {draft?.status === 'manual_required' && <p className="mt-2 text-xs leading-5 text-gold-700">{draft.aiFailureReason ?? 'AI redaction was unavailable.'} Draw opaque masks on the document preview and review every page before saving.</p>}
                   {draft?.status === 'published' && draft.redactedFilePath && <a href={draft.redactedFilePath} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-2 text-xs font-semibold text-brand-700 hover:underline"><Download size={13} /> View published redacted copy</a>}
                   {editing && draft && <div className="mt-4 rounded-md border border-brand-200 bg-brand-50/40 p-3" data-testid="stage1-redaction-editor">
-                    <div className="flex items-center justify-between gap-2"><h4 className="text-sm font-semibold text-ink-800">Manual black-box review</h4><button type="button" className="text-xs font-semibold text-ink-600" onClick={onCancelEditor}>Cancel</button></div>
-                    <div className="mt-3 space-y-2">{maskDraft.map((mask, index) => <div key={`${mask.page}-${index}`} className="grid gap-2 sm:grid-cols-6"><input aria-label={`Mask ${index + 1} page`} className="input" type="number" min={1} value={mask.page} onChange={(event) => onMasksChange(maskDraft.map((item, itemIndex) => itemIndex === index ? { ...item, page: Math.max(1, Number(event.target.value) || 1) } : item))} /><input aria-label={`Mask ${index + 1} x`} className="input" type="number" min={0} max={1} step={0.01} value={mask.x} onChange={(event) => onMasksChange(maskDraft.map((item, itemIndex) => itemIndex === index ? { ...item, x: Number(event.target.value) || 0 } : item))} /><input aria-label={`Mask ${index + 1} y`} className="input" type="number" min={0} max={1} step={0.01} value={mask.y} onChange={(event) => onMasksChange(maskDraft.map((item, itemIndex) => itemIndex === index ? { ...item, y: Number(event.target.value) || 0 } : item))} /><input aria-label={`Mask ${index + 1} width`} className="input" type="number" min={0.01} max={1} step={0.01} value={mask.width} onChange={(event) => onMasksChange(maskDraft.map((item, itemIndex) => itemIndex === index ? { ...item, width: Number(event.target.value) || 0.01 } : item))} /><input aria-label={`Mask ${index + 1} height`} className="input" type="number" min={0.01} max={1} step={0.01} value={mask.height} onChange={(event) => onMasksChange(maskDraft.map((item, itemIndex) => itemIndex === index ? { ...item, height: Number(event.target.value) || 0.01 } : item))} /><button type="button" className="btn-secondary !min-h-9 !px-2 text-xs" onClick={() => onMasksChange(maskDraft.filter((_, itemIndex) => itemIndex !== index))}>Remove</button></div>)}</div>
-                    <button type="button" className="btn-secondary mt-3 !min-h-9 !px-3 !py-1.5 text-xs" onClick={() => onMasksChange([...maskDraft, { page: 1, x: 0, y: 0, width: 0.2, height: 0.1, category: 'other', source: 'admin' }])}>Add black box</button>
+                    <div className="flex items-center justify-between gap-2"><h4 className="text-sm font-semibold text-ink-800">Visual redaction review</h4><button type="button" className="text-xs font-semibold text-ink-600" onClick={onCancelEditor}>Cancel</button></div>
+                    <div className="mt-3"><Stage1RedactionPreview source={draft.sourceFilePath ?? stage1Doc.filePath} mimeType={stage1MimeType(stage1Doc.filePath)} pageCount={Math.max(1, draft.pageCount)} masks={maskDraft} onMasksChange={onMasksChange} /></div>
                     <div className="mt-3 flex flex-wrap gap-2">{Array.from({ length: Math.max(1, draft.pageCount) }, (_, pageIndex) => pageIndex + 1).map((page) => <label key={page} className="inline-flex items-center gap-1 text-xs"><input type="checkbox" checked={reviewedPages.includes(page)} onChange={(event) => onReviewedPagesChange(event.target.checked ? [...new Set([...reviewedPages, page])] : reviewedPages.filter((value) => value !== page))} /> Page {page} reviewed</label>)}</div>
                     <button type="button" className="btn-primary mt-3" onClick={() => onSave(control, stage1Doc)} disabled={redactionBusy === `stage1-save:${key}`}>{redactionBusy === `stage1-save:${key}` ? 'Saving…' : 'Save redaction review'}</button>
                   </div>}
@@ -758,4 +758,10 @@ function errorMessage(error: unknown): string {
     if (typeof value.message === 'string' && value.message.trim()) return value.message;
   }
   return 'The documentation action could not be completed.';
+}
+
+function stage1MimeType(path: string | undefined): string | undefined {
+  if (!path) return undefined;
+  const match = path.match(/^data:([^;]+);base64,/i);
+  return match?.[1] ?? (path.toLowerCase().includes('.pdf') ? 'application/pdf' : undefined);
 }

@@ -18,6 +18,10 @@ describe('resolveControlListIntegrity', () => {
     expect(resolveControlListIntegrity({ ...base, proposalLoadState: 'error' })).toBe('unreadable');
   });
 
+  it('locks a published record when the controls subscription itself fails', () => {
+    expect(resolveControlListIntegrity({ ...base, hasPublishedArtifacts: false, controlsUnreadable: true })).toBe('unreadable');
+  });
+
   it('accepts a complete current confirmed record', () => {
     expect(resolveControlListIntegrity({ ...base, proposalMatchesControls: true, proposalLoadState: 'loaded' })).toBe('confirmed');
   });

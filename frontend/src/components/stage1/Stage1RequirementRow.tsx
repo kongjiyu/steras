@@ -6,8 +6,8 @@
  * | verified | rejected | use_previous) and the appropriate action
  * buttons (Upload | Use Previous | Replace | Resubmit | View).
  *
- * "Use Previous" is a no-file declaration. It still enters the current
- * Authority review queue and only satisfies the Stage 1 gate after approval.
+ * "Use Previous" is a receipt-only no-file declaration. It satisfies the
+ * Stage 1 gate immediately; the Stage 2 photo remains the backstop.
  *
  * Reused later (Workstream 5 publish) by the admin and officer UIs when
  * they need to show the same per-row state.
@@ -82,7 +82,10 @@ export default function Stage1RequirementRow(props: Stage1RequirementRowProps) {
   const dialog = useAppDialog();
 
   const status: Stage1Doc['status'] = doc?.status ?? 'pending_submission';
-  const canUsePrevious = true;
+  // Only reusable/purchasable receipt evidence can be carried forward. A
+  // license, acknowledgement, application, or insurance document belongs to
+  // the new event and must be submitted again.
+  const canUsePrevious = requirement.docType === 'receipt';
   const isEffectivelyBusy = busy || submitting;
 
   async function handleFileSelected(e: ChangeEvent<HTMLInputElement>) {
@@ -123,7 +126,7 @@ export default function Stage1RequirementRow(props: Stage1RequirementRowProps) {
 
   async function handleUsePrevious() {
     if (!canUsePrevious) return;
-    if (!await dialog.confirm({ title: 'Use a previous document declaration?', description: 'STERAS will record that the existing document remains valid. The assigned Authority must still review and approve the declaration. No file will be published from this path.', confirmLabel: 'Submit declaration', cancelLabel: 'Upload a file' })) {
+    if (!await dialog.confirm({ title: 'Use a previous receipt declaration?', description: 'STERAS will record that this reusable receipt-backed item is still available. No new Authority review is required; the Stage 2 photo remains the verification backstop.', confirmLabel: 'Submit declaration', cancelLabel: 'Upload a file' })) {
       return;
     }
     setSubmitting(true);
@@ -158,7 +161,7 @@ export default function Stage1RequirementRow(props: Stage1RequirementRowProps) {
               {DOC_TYPE_LABEL[requirement.docType] ?? requirement.docType}
             </span>
             <span className="text-sm font-medium text-ink-800">{requirement.label}</span>
-            {requirement.required && (
+            {requirement.required && !['verified', 'use_previous'].includes(status) && (
               <span className="badge bg-amber-100 text-amber-800 text-xs">Required</span>
             )}
           </div>

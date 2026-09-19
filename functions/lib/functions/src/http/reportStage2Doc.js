@@ -36,7 +36,7 @@ const notifications_1 = require("../utils/notifications");
 const eventWindow_1 = require("../utils/eventWindow");
 const stage2_1 = require("../../../shared/stage2");
 const REPORT_CATEGORIES = ['item_not_at_venue', 'wrong_venue', 'low_quality_image', 'other'];
-const DESCRIPTION_MIN = 20;
+const DESCRIPTION_MIN = 10;
 const DESCRIPTION_MAX = 500;
 exports.reportStage2Doc = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
     if (!request.auth)
