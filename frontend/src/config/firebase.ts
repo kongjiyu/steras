@@ -7,14 +7,40 @@ import { connectFunctionsEmulator, getFunctions, httpsCallable, type Functions }
 
 // Public Firebase config — these values are safe to expose in client code.
 // Real security is enforced by Firestore Security Rules, not API key hiding.
+//
+// Hosting builds are produced outside a developer's ignored `.env` file.  A
+// missing Vite env therefore used to silently ship the mock/no-Firebase UI to
+// production.  Keep local development opt-in, but give production builds the
+// public config for the deployed Firebase project so the real Auth/Firestore
+// clients are always initialised on Hosting.
+const productionDefaults = import.meta.env.PROD ? {
+  apiKey: 'AIzaSyCoKbltXePjVayfI0mfnl9-_srZFtTkq3w',
+  authDomain: 'linkos-496505.firebaseapp.com',
+  projectId: 'linkos-496505',
+  storageBucket: 'linkos-496505.firebasestorage.app',
+  messagingSenderId: '888155096271',
+  appId: '1:888155096271:web:687a99397e5443827aa3ba',
+  measurementId: '',
+  functionsRegion: 'asia-southeast1',
+} : {
+  apiKey: undefined,
+  authDomain: undefined,
+  projectId: undefined,
+  storageBucket: undefined,
+  messagingSenderId: undefined,
+  appId: undefined,
+  measurementId: undefined,
+  functionsRegion: 'asia-southeast1',
+};
+
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || productionDefaults.apiKey,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || productionDefaults.authDomain,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || productionDefaults.projectId,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || productionDefaults.storageBucket,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || productionDefaults.messagingSenderId,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || productionDefaults.appId,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || productionDefaults.measurementId,
 };
 
 // Validate that required env vars are present.
@@ -46,7 +72,7 @@ if (isFirebaseConfigured) {
   authInst = getAuth(app);
   dbInst = getFirestore(app);
   storageInst = getStorage(app);
-  functionsInst = getFunctions(app, import.meta.env.VITE_FIREBASE_FUNCTIONS_REGION ?? 'asia-southeast1');
+  functionsInst = getFunctions(app, import.meta.env.VITE_FIREBASE_FUNCTIONS_REGION || productionDefaults.functionsRegion);
 
   // Connect to local emulators if enabled.
   // Never compile emulator endpoints into a production bundle, even when a

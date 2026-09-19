@@ -29,6 +29,7 @@ const firebase_admin_1 = require("firebase-admin");
 const https_1 = require("firebase-functions/v2/https");
 const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
+const m3FixedWorkflowPreset_1 = require("../utils/m3FixedWorkflowPreset");
 exports.assignAuthorityOfficers = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
     if (!request.auth)
         throw new https_1.HttpsError('unauthenticated', 'Sign in before assigning officers.');
@@ -159,6 +160,9 @@ exports.assignAuthorityOfficers = (0, https_1.onCall)({ region: runtime_1.FUNCTI
         const evSnap = await tx.get(eventRef);
         const currentVersionSnap = await tx.get(versionRef);
         const ev = evSnap.data();
+        const assessmentSnap = ev?.currentAssessmentId
+            ? await tx.get(eventRef.collection(types_1.COLLECTIONS.ASSESSMENTS).doc(ev.currentAssessmentId))
+            : null;
         const txVenueSnap = venueRef ? await tx.get(venueRef) : undefined;
         if (!evSnap.exists || !ev || !currentVersionSnap.exists || ev.currentVersionId !== versionId
             || ev.eventDetails?.venueId?.trim() !== submittedVenueId) {
@@ -284,6 +288,7 @@ exports.assignAuthorityOfficers = (0, https_1.onCall)({ region: runtime_1.FUNCTI
             reviewStage: 'authority',
             assignedOfficerUids: [...new Set(Object.values(activeByAuthority).filter(Boolean))],
             assignedOfficerByAuthority: activeByAuthority,
+            fixedWorkflowPreset: ev.fixedWorkflowPreset ?? (0, m3FixedWorkflowPreset_1.fixedPresetForEvent)(ev, (0, m3FixedWorkflowPreset_1.riskLevelFromAssessment)(assessmentSnap?.data())).selection,
             updatedAt: now,
         });
         return { checklist, assigned: officerWrites, mode, authorities: submittedAuthorities };

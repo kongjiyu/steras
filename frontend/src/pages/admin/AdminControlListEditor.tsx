@@ -95,6 +95,7 @@ export default function AdminControlListEditor() {
   const [proposalError, setProposalError] = useState('');
   const [items, setItems] = useState<ProposedControlItem[]>([]);
   const [proposalSource, setProposalSource] = useState<'cache' | 'minimax' | 'deterministic_fallback' | null>(null);
+  const [proposalPromptVersion, setProposalPromptVersion] = useState<string>();
   const [proposalCached, setProposalCached] = useState(false);
   const [proposalId, setProposalId] = useState<string>();
   const [proposalRevision, setProposalRevision] = useState<number>();
@@ -256,6 +257,15 @@ export default function AdminControlListEditor() {
   });
   const legacyConfirmed = integrityState === 'legacy-confirmed';
   const inconsistentPublished = integrityState === 'unreadable' || integrityState === 'inconsistent';
+  // The deterministic template is authoritative as soon as either the event
+  // has persisted its selection or the generated draft advertises the fixed
+  // prompt version.  The latter closes the small window between Generate and
+  // the subsequent live event snapshot: an admin must not be able to edit a
+  // fixed draft during that window.
+  const fixedWorkflow = Boolean(
+    event?.fixedWorkflowPreset?.presetId
+      || proposalPromptVersion === 'm3-fixed-workflow-v1',
+  );
 
   const dirty = useMemo(() => items.length > 0 && integrityReady && !confirmed && !legacyConfirmed, [confirmed, integrityReady, items, legacyConfirmed]);
 
@@ -270,6 +280,7 @@ export default function AdminControlListEditor() {
       const result = await command({ eventId, ...(force ? { force: true } : {}) });
       setItems(result.data.items);
       setProposalSource(result.data.source);
+      setProposalPromptVersion(result.data.promptVersion);
       setProposalCached(result.data.cached);
       setProposalId(result.data.proposalId);
       setProposalRevision(result.data.proposalRevision);
@@ -472,7 +483,8 @@ export default function AdminControlListEditor() {
                 type="button"
                 className="btn-secondary"
                 onClick={() => setEditing((value) => !value)}
-                disabled={generating || committing || !canEdit}
+                disabled={generating || committing || !canEdit || fixedWorkflow}
+                title={fixedWorkflow ? 'This application uses the fixed Module 3 workflow template.' : undefined}
                 data-testid="edit-proposal-button"
               >
                 <Pencil size={14} />{editing ? 'Finish editing' : 'Edit proposal'}
@@ -496,13 +508,20 @@ export default function AdminControlListEditor() {
 
       {proposalSource && (
         <p className="mb-3 text-xs text-ink-500">
-          Source: {proposalSource === 'cache'
+          Source: {proposalPromptVersion === 'm3-fixed-workflow-v1'
+            ? 'fixed Module 3 workflow template'
+            : proposalSource === 'cache'
             ? 'cached snapshot'
             : proposalSource === 'minimax'
               ? 'MiniMax proposal'
               : 'deterministic fallback'}
           {proposalCached && ' (cached)'}
         </p>
+      )}
+      {fixedWorkflow && !confirmed && !legacyConfirmed && (
+        <div className="mb-4 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900" role="status" data-testid="fixed-workflow-template-note">
+          Fixed Module 3 workflow template: the required authorities and evidence slots are locked for this application version.
+        </div>
       )}
 
       {!integrityReady ? (
@@ -526,7 +545,7 @@ export default function AdminControlListEditor() {
                     type="text"
                     value={item.controlName}
                     onChange={(e) => updateItem(i, { controlName: e.target.value })}
-                    disabled={!canEdit || !editing}
+                    disabled={!canEdit || !editing || fixedWorkflow}
                     className="input !h-9 !w-72"
                     aria-label={`Control name for ${item.authority}`}
                     data-testid={`control-name-${item.authority}`}
@@ -539,7 +558,7 @@ export default function AdminControlListEditor() {
                     type="button"
                     className="btn-secondary !px-2 !py-1 text-xs"
                     onClick={() => removeItem(i)}
-                    disabled={!canEdit || !editing}
+                    disabled={!canEdit || !editing || fixedWorkflow}
                     aria-label={`Remove ${item.authority}`}
                     data-testid={`remove-${item.authority}`}
                   >
@@ -556,7 +575,7 @@ export default function AdminControlListEditor() {
                         <select
                           value={r.docType}
                           onChange={(e) => updateStage1Req(i, ri, { docType: e.target.value as ProposedControlItem['stage1Requirements'][number]['docType'] })}
-                          disabled={!canEdit || !editing}
+                          disabled={!canEdit || !editing || fixedWorkflow}
                           className="input !h-8 !w-32 !text-xs"
                           aria-label={`Stage 1 doc type for ${item.authority} #${ri + 1}`}
                         >
@@ -568,7 +587,7 @@ export default function AdminControlListEditor() {
                           type="text"
                           value={r.label}
                           onChange={(e) => updateStage1Req(i, ri, { label: e.target.value })}
-                          disabled={!canEdit || !editing}
+                          disabled={!canEdit || !editing || fixedWorkflow}
                           className="input !h-8 flex-1 !text-xs"
                           aria-label={`Stage 1 label for ${item.authority} #${ri + 1}`}
                         />
@@ -577,7 +596,7 @@ export default function AdminControlListEditor() {
                             type="checkbox"
                             checked={r.required}
                             onChange={(e) => updateStage1Req(i, ri, { required: e.target.checked })}
-                            disabled={!canEdit || !editing}
+                            disabled={!canEdit || !editing || fixedWorkflow}
                             className="h-3.5 w-3.5 accent-brand-600"
                           />
                           required
@@ -586,7 +605,7 @@ export default function AdminControlListEditor() {
                           type="button"
                           className="btn-secondary !px-2 !py-1 text-xs"
                           onClick={() => removeStage1Req(i, ri)}
-                          disabled={!canEdit || !editing}
+                          disabled={!canEdit || !editing || fixedWorkflow}
                           aria-label={`Remove Stage 1 requirement #${ri + 1} from ${item.authority}`}
                         >
                           <Trash2 size={12} />
@@ -598,7 +617,7 @@ export default function AdminControlListEditor() {
                     type="button"
                     className="btn-secondary mt-2 !px-2 !py-1 text-xs"
                     onClick={() => addStage1Req(i)}
-                    disabled={!canEdit || !editing}
+                    disabled={!canEdit || !editing || fixedWorkflow}
                   >
                     + Add Stage 1 requirement
                   </button>
@@ -609,7 +628,7 @@ export default function AdminControlListEditor() {
                     type="text"
                     value={item.stage2Requirement?.label ?? ''}
                     onChange={(e) => updateItem(i, { stage2Requirement: { kind: 'image', label: e.target.value } })}
-                    disabled={!canEdit || !editing}
+                    disabled={!canEdit || !editing || fixedWorkflow}
                     className="input !h-8 !text-xs"
                     placeholder="Photo of authority at venue"
                     aria-label={`Stage 2 label for ${item.authority}`}
@@ -618,7 +637,7 @@ export default function AdminControlListEditor() {
               </div>
             </section>
           ))}
-          {availableToAdd.length > 0 && canEdit && (
+          {availableToAdd.length > 0 && canEdit && !fixedWorkflow && (
             <div className="card">
               <div className="card-body flex flex-wrap items-center gap-2">
                 <span className="text-sm text-ink-500">Add another authority:</span>

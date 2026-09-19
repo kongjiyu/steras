@@ -46,13 +46,16 @@ const resourceContract_1 = require("../engines/resourceContract");
 const authorityFinalisation_1 = require("../engines/authorityFinalisation");
 const authorityScoreReview_1 = require("./authorityScoreReview");
 const notifications_1 = require("../utils/notifications");
+const m3FixedWorkflowPreset_1 = require("../utils/m3FixedWorkflowPreset");
 const REASON_MIN = 10;
 const REASON_MAX = 1000;
 const SUGGESTION_MAX = 1000;
 exports.recordOfficerProposal = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
     if (!request.auth)
         throw new https_1.HttpsError('unauthenticated', 'Sign in before recording a proposal.');
-    const { eventId, decision, reason, suggestion, confirmedReview, rejectionReasonCategory } = validateOfficerProposalRequest(request.data);
+    const validatedRequest = validateOfficerProposalRequest(request.data);
+    const { eventId } = validatedRequest;
+    let { decision, reason, suggestion, confirmedReview, rejectionReasonCategory } = validatedRequest;
     const db = (0, firebase_admin_1.firestore)();
     const userSnap = await db.collection(types_1.COLLECTIONS.USERS).doc(request.auth.uid).get();
     const profile = userSnap.data();
@@ -106,6 +109,12 @@ exports.recordOfficerProposal = (0, https_1.onCall)({ region: runtime_1.FUNCTION
     ]);
     const resource = resourceSnap?.data();
     const assessment = assessmentSnap?.data();
+    const fixedWorkflow = (0, m3FixedWorkflowPreset_1.fixedPresetForEvent)(event, (0, m3FixedWorkflowPreset_1.riskLevelFromAssessment)(assessment));
+    decision = fixedWorkflow.preset.authorityDecision;
+    reason = fixedWorkflow.preset.reason;
+    suggestion = fixedWorkflow.preset.suggestion;
+    confirmedReview = decision === 'Approved';
+    rejectionReasonCategory = fixedWorkflow.preset.rejectionReasonCategory;
     const assignmentReadiness = (0, applicationState_1.resolveOfficerDecisionReadiness)({
         eventId, versionId, assessmentId, resourceId, authorityType,
         officerUid: callerUid, eventStatus: event.status, reviewStage: event.reviewStage,
@@ -258,6 +267,7 @@ exports.recordOfficerProposal = (0, https_1.onCall)({ region: runtime_1.FUNCTION
         if (allCompleted && !needsOfficialFinalization) {
             tx.update(eventRef, {
                 reviewStage: 'second',
+                fixedWorkflowPreset: currentEvent.fixedWorkflowPreset ?? fixedWorkflow.selection,
                 updatedAt: now,
             });
         }

@@ -3,7 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { AlertCircle, CheckCircle2, ChevronRight, ClipboardList, Eye, Filter, Search, ShieldCheck } from 'lucide-react';
 import { collection, getDocs, orderBy, query, where } from 'firebase/firestore';
 import { db, isFirebaseConfigured } from '../../config/firebase';
-import { COLLECTIONS, EventRecord } from '@shared/types';
+import { COLLECTIONS, EventRecord, EventStatus } from '@shared/types';
 import { APPLICATION_DISPLAY_STATE_LABELS, ApplicationDisplayState, resolveApplicationDisplayState } from '@shared/applicationState';
 import { WorkspaceTopBar } from '../../components/layout/Sidebar';
 import { useAuth } from '../../contexts/AuthContext';
@@ -17,6 +17,17 @@ const WORKFLOW_FILTERS: Array<{ value: ApplicationDisplayState | 'all'; label: s
   { value: 'all', label: 'All workflow states' },
   ...Object.entries(APPLICATION_DISPLAY_STATE_LABELS).map(([value, label]) => ({ value: value as ApplicationDisplayState, label })),
 ];
+const EVENT_STATUSES: EventStatus[] = ['Draft', 'Pending', 'UnderReview', 'Approved', 'Rejected', 'Cancelled', 'Withdrawn', 'Manual Review Required'];
+
+/**
+ * Keep dashboard deep links that still use the persisted EventStatus contract
+ * useful while the queue's primary filter remains the human-facing workflow
+ * state.  The status predicate is deliberately exact; callers can combine it
+ * with the derived workflow filter when both query parameters are present.
+ */
+export function matchesPersistedStatusFilter(event: Pick<EventRecord, 'status'>, requestedStatus: string | null): boolean {
+  return !requestedStatus || !EVENT_STATUSES.includes(requestedStatus as EventStatus) || event.status === requestedStatus;
+}
 
 export type AdminQueueAction = {
   label: 'Review' | 'Assign officers' | 'View';
@@ -61,6 +72,7 @@ export default function AdminApplicationQueue() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const requestedWorkflow = params.get('state') as ApplicationDisplayState | null;
+  const requestedStatus = params.get('status');
   const [workflowFilter, setWorkflowFilter] = useState<ApplicationDisplayState | 'all'>(
     requestedWorkflow && requestedWorkflow in APPLICATION_DISPLAY_STATE_LABELS ? requestedWorkflow : 'all',
   );
@@ -83,16 +95,18 @@ export default function AdminApplicationQueue() {
     const queryText = search.trim().toLowerCase();
     const rank = { High: 0, Medium: 1, Normal: 2 };
     return rows.filter(({ event, workflow }) => {
+      if (!matchesPersistedStatusFilter(event, requestedStatus)) return false;
       if (view === 'action' && !workflow.needsAction) return false;
       if (view === 'completed' && !workflow.complete) return false;
       const displayState = resolveApplicationDisplayState(event);
       if (workflowFilter !== 'all' && displayState !== workflowFilter) return false;
       return !queryText || [event.eventId, event.eventDetails.name, event.eventDetails.venueName, event.eventDetails.organizerName, event.eventDetails.type].some((value) => value.toLowerCase().includes(queryText));
     }).sort((a, b) => rank[a.workflow.priority] - rank[b.workflow.priority]);
-  }, [rows, search, view, workflowFilter]);
+  }, [requestedStatus, rows, search, view, workflowFilter]);
   const updateView = (next: QueueView) => { setView(next); params.set('view', next); setParams(params, { replace: true }); };
   const updateWorkflow = (next: ApplicationDisplayState | 'all') => {
     setWorkflowFilter(next);
+    params.delete('status');
     if (next === 'all') params.delete('state');
     else params.set('state', next);
     setParams(params, { replace: true });

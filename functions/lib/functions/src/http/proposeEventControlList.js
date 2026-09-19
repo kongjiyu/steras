@@ -16,7 +16,7 @@ const https_1 = require("firebase-functions/v2/https");
 const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
 const secrets_1 = require("../config/secrets");
-const controlListProposer_1 = require("../engines/controlListProposer");
+const m3FixedWorkflowPreset_1 = require("../utils/m3FixedWorkflowPreset");
 /** Deterministic per-authority Stage 1 requirements used only as the
  * explicitly labelled fallback when the advisory provider is unavailable. */
 const STAGE1_TEMPLATES = {
@@ -104,13 +104,6 @@ async function proposeControlItemsForEventWithMetadata(eventId, versionId) {
         throw new Error('The current official assessment/resource pointers are missing.');
     }
     const required = event.requiredAuthorities ?? [];
-    const fallbackItems = required.map((authority) => ({
-        controlName: CONTROL_NAMES[authority] ?? `${authority} compliance`,
-        authority,
-        stageRequirement: 'stage1_and_stage2',
-        stage1Requirements: STAGE1_TEMPLATES[authority] ?? [],
-        stage2Requirement: { kind: 'image', label: STAGE2_LABEL[authority] ?? `Photo of ${authority} at venue` },
-    }));
     const [assessmentSnap, resourceSnap] = await Promise.all([
         event.currentAssessmentId
             ? (0, firebase_admin_1.firestore)().collection(types_1.COLLECTIONS.EVENTS).doc(eventId).collection(types_1.COLLECTIONS.ASSESSMENTS).doc(event.currentAssessmentId).get()
@@ -128,19 +121,41 @@ async function proposeControlItemsForEventWithMetadata(eventId, versionId) {
         || resource.assessmentId !== event.currentAssessmentId) {
         throw new Error('The control list requires a current official risk assessment and safety resource recommendation.');
     }
-    let apiKey = '';
-    try {
-        apiKey = secrets_1.MINIMAX_API_KEY.value();
+    // Production Module 3 uses a deterministic, fixture-derived contract. The
+    // selected template is persisted by generateEventControlList on its first
+    // write, so later calls cannot silently change requirements.
+    const selected = (0, m3FixedWorkflowPreset_1.fixedPresetForEvent)(event, (0, m3FixedWorkflowPreset_1.riskLevelFromAssessment)(assessment));
+    const controlsByAuthority = new Map(selected.preset.controls.map((item) => [item.authority, item]));
+    const fixedItems = required.map((authority) => controlsByAuthority.get(authority) ?? ({
+        controlName: CONTROL_NAMES[authority] ?? `${authority} compliance`,
+        authority,
+        stageRequirement: 'stage1_and_stage2',
+        stage1Requirements: STAGE1_TEMPLATES[authority] ?? [],
+        stage2Requirement: { kind: 'image', label: STAGE2_LABEL[authority] ?? `Photo of ${authority} at venue` },
+    }));
+    // The direct proposal callable is also a valid first operation. Persist the
+    // selected template here (inside a version fence) so a later Generate or
+    // Commit cannot rematch the event after a risk update.
+    if (event.fixedWorkflowPreset?.version !== m3FixedWorkflowPreset_1.FIXED_WORKFLOW_PRESET_VERSION) {
+        const eventRef = (0, firebase_admin_1.firestore)().collection(types_1.COLLECTIONS.EVENTS).doc(eventId);
+        await (0, firebase_admin_1.firestore)().runTransaction(async (tx) => {
+            const currentSnap = await tx.get(eventRef);
+            const current = currentSnap.data();
+            if (!currentSnap.exists || current?.currentVersionId !== versionId || current.status !== 'Approved') {
+                throw new Error('The application changed while the fixed workflow was being selected. Reload and try again.');
+            }
+            if (current.fixedWorkflowPreset?.version !== m3FixedWorkflowPreset_1.FIXED_WORKFLOW_PRESET_VERSION) {
+                tx.update(eventRef, { fixedWorkflowPreset: selected.selection, updatedAt: Date.now() });
+            }
+        });
     }
-    catch {
-        // Secret values are unavailable in local/unit environments; the
-        // deterministic fallback remains the safe result in that case.
-    }
-    return (0, controlListProposer_1.proposeControlListWithMiniMax)(apiKey, {
-        event,
-        requiredAuthorities: required,
-        assessment,
-        resource,
-    }, fallbackItems);
+    return {
+        items: fixedItems,
+        source: 'deterministic_fallback',
+        model: 'fixed-presentation-template',
+        promptVersion: m3FixedWorkflowPreset_1.FIXED_WORKFLOW_PRESET_VERSION,
+        generatedAt: Date.now(),
+        fallbackReason: `Selected fixed workflow preset ${selected.preset.id}.`,
+    };
 }
 //# sourceMappingURL=proposeEventControlList.js.map

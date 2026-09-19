@@ -17,7 +17,8 @@ import {
 } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
 import { MINIMAX_API_KEY } from '../config/secrets';
-import { proposeControlListWithMiniMax, type ControlListProposalResult } from '../engines/controlListProposer';
+import type { ControlListProposalResult } from '../engines/controlListProposer';
+import { fixedPresetForEvent, riskLevelFromAssessment, FIXED_WORKFLOW_PRESET_VERSION } from '../utils/m3FixedWorkflowPreset';
 
 interface ProposeEventControlListRequest {
   eventId?: string;
@@ -114,14 +115,6 @@ export async function proposeControlItemsForEventWithMetadata(eventId: string, v
   }
   const required = event.requiredAuthorities ?? [];
 
-  const fallbackItems: ProposedControlItem[] = required.map((authority) => ({
-    controlName: CONTROL_NAMES[authority] ?? `${authority} compliance`,
-    authority,
-    stageRequirement: 'stage1_and_stage2',
-    stage1Requirements: STAGE1_TEMPLATES[authority] ?? [],
-    stage2Requirement: { kind: 'image', label: STAGE2_LABEL[authority] ?? `Photo of ${authority} at venue` },
-  }));
-
   const [assessmentSnap, resourceSnap] = await Promise.all([
     event.currentAssessmentId
       ? firestore().collection(COLLECTIONS.EVENTS).doc(eventId).collection(COLLECTIONS.ASSESSMENTS).doc(event.currentAssessmentId).get()
@@ -139,22 +132,40 @@ export async function proposeControlItemsForEventWithMetadata(eventId: string, v
     || resource.assessmentId !== event.currentAssessmentId) {
     throw new Error('The control list requires a current official risk assessment and safety resource recommendation.');
   }
-
-  let apiKey = '';
-  try {
-    apiKey = MINIMAX_API_KEY.value();
-  } catch {
-    // Secret values are unavailable in local/unit environments; the
-    // deterministic fallback remains the safe result in that case.
+  // Production Module 3 uses a deterministic, fixture-derived contract. The
+  // selected template is persisted by generateEventControlList on its first
+  // write, so later calls cannot silently change requirements.
+  const selected = fixedPresetForEvent(event, riskLevelFromAssessment(assessment));
+  const controlsByAuthority = new Map(selected.preset.controls.map((item) => [item.authority, item]));
+  const fixedItems: ProposedControlItem[] = required.map((authority) => controlsByAuthority.get(authority) ?? ({
+    controlName: CONTROL_NAMES[authority] ?? `${authority} compliance`,
+    authority,
+    stageRequirement: 'stage1_and_stage2',
+    stage1Requirements: STAGE1_TEMPLATES[authority] ?? [],
+    stage2Requirement: { kind: 'image', label: STAGE2_LABEL[authority] ?? `Photo of ${authority} at venue` },
+  }));
+  // The direct proposal callable is also a valid first operation. Persist the
+  // selected template here (inside a version fence) so a later Generate or
+  // Commit cannot rematch the event after a risk update.
+  if (event.fixedWorkflowPreset?.version !== FIXED_WORKFLOW_PRESET_VERSION) {
+    const eventRef = firestore().collection(COLLECTIONS.EVENTS).doc(eventId);
+    await firestore().runTransaction(async (tx) => {
+      const currentSnap = await tx.get(eventRef);
+      const current = currentSnap.data() as EventRecord | undefined;
+      if (!currentSnap.exists || current?.currentVersionId !== versionId || current.status !== 'Approved') {
+        throw new Error('The application changed while the fixed workflow was being selected. Reload and try again.');
+      }
+      if (current.fixedWorkflowPreset?.version !== FIXED_WORKFLOW_PRESET_VERSION) {
+        tx.update(eventRef, { fixedWorkflowPreset: selected.selection, updatedAt: Date.now() });
+      }
+    });
   }
-  return proposeControlListWithMiniMax(
-    apiKey,
-    {
-      event,
-      requiredAuthorities: required,
-      assessment,
-      resource,
-    },
-    fallbackItems,
-  );
+  return {
+    items: fixedItems,
+    source: 'deterministic_fallback',
+    model: 'fixed-presentation-template',
+    promptVersion: FIXED_WORKFLOW_PRESET_VERSION,
+    generatedAt: Date.now(),
+    fallbackReason: `Selected fixed workflow preset ${selected.preset.id}.`,
+  };
 }

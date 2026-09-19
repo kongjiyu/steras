@@ -33,6 +33,7 @@ import {
   Venue,
 } from '@shared/types';
 import { FUNCTION_REGION } from '../config/runtime';
+import { fixedPresetForEvent, riskLevelFromAssessment } from '../utils/m3FixedWorkflowPreset';
 
 interface AssignAuthorityOfficersRequest {
   eventId?: string;
@@ -191,6 +192,9 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
     const evSnap = await tx.get(eventRef);
     const currentVersionSnap = await tx.get(versionRef);
     const ev = evSnap.data() as EventRecord;
+    const assessmentSnap = ev?.currentAssessmentId
+      ? await tx.get(eventRef.collection(COLLECTIONS.ASSESSMENTS).doc(ev.currentAssessmentId))
+      : null;
     const txVenueSnap = venueRef ? await tx.get(venueRef) : undefined;
     if (!evSnap.exists || !ev || !currentVersionSnap.exists || ev.currentVersionId !== versionId
       || ev.eventDetails?.venueId?.trim() !== submittedVenueId) {
@@ -336,6 +340,7 @@ export const assignAuthorityOfficers = onCall<AssignAuthorityOfficersRequest>({ 
       reviewStage: 'authority',
       assignedOfficerUids: [...new Set(Object.values(activeByAuthority).filter(Boolean))],
       assignedOfficerByAuthority: activeByAuthority,
+      fixedWorkflowPreset: ev.fixedWorkflowPreset ?? fixedPresetForEvent(ev, riskLevelFromAssessment(assessmentSnap?.data())).selection,
       updatedAt: now,
     });
 

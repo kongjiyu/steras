@@ -369,6 +369,16 @@ export interface EventRecord {
   submittedAt?: number;
   authorityReviewCompletedAt?: number;
   authorityReviewCompletedVersionId?: string;
+  /** Server-selected deterministic workflow template. Written once when a
+   * production activity first enters the fixed Module 3 workflow. */
+  fixedWorkflowPreset?: {
+    version: string;
+    presetId: string;
+    templateStatus: EventStatus;
+    matchedEventType: EventType;
+    matchedRiskLevel: RiskLevel;
+    selectedAt: number;
+  };
 }
 
 export interface M1ApplicationRevisionSource {

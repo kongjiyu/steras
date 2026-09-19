@@ -25,6 +25,7 @@ const types_1 = require("../../../shared/types");
 const runtime_1 = require("../config/runtime");
 const secrets_1 = require("../config/secrets");
 const proposeEventControlList_1 = require("./proposeEventControlList");
+const m3FixedWorkflowPreset_1 = require("../utils/m3FixedWorkflowPreset");
 exports.generateEventControlList = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION, secrets: [secrets_1.MINIMAX_API_KEY] }, async (request) => {
     if (!request.auth)
         throw new https_1.HttpsError('unauthenticated', 'Sign in before generating the control list.');
@@ -52,6 +53,11 @@ exports.generateEventControlList = (0, https_1.onCall)({ region: runtime_1.FUNCT
     if (event.status !== 'Approved') {
         throw new https_1.HttpsError('failed-precondition', `Control list can only be generated after Admin final approval (current: ${event.status}).`);
     }
+    // Lock the fixture-derived workflow before returning any draft or cached
+    // proposal.  This makes Generate itself the first-operation boundary: a
+    // later retry cannot silently re-match the event to a different template
+    // after its risk assessment changes.
+    await ensureFixedWorkflowSelection(db, eventRef, event, versionId);
     const proposalRef = eventRef.collection(types_1.COLLECTIONS.CONTROL_LIST_PROPOSALS).doc(versionId);
     const existingProposalSnap = await proposalRef.get();
     const existingProposal = existingProposalSnap.data();
@@ -169,4 +175,25 @@ exports.generateEventControlList = (0, https_1.onCall)({ region: runtime_1.FUNCT
         proposalRevision: persisted.record.revision,
     };
 });
+async function ensureFixedWorkflowSelection(db, eventRef, event, versionId) {
+    if (event.fixedWorkflowPreset?.version === 'm3-fixed-workflow-v1') {
+        return event.fixedWorkflowPreset;
+    }
+    const assessmentSnap = event.currentAssessmentId
+        ? await eventRef.collection(types_1.COLLECTIONS.ASSESSMENTS).doc(event.currentAssessmentId).get()
+        : null;
+    const selection = (0, m3FixedWorkflowPreset_1.fixedPresetForEvent)(event, (0, m3FixedWorkflowPreset_1.riskLevelFromAssessment)(assessmentSnap?.data())).selection;
+    return db.runTransaction(async (tx) => {
+        const currentSnap = await tx.get(eventRef);
+        const current = currentSnap.data();
+        if (!currentSnap.exists || current?.currentVersionId !== versionId || current.status !== 'Approved') {
+            throw new https_1.HttpsError('aborted', 'The application changed while the fixed workflow was being selected. Reload and try again.');
+        }
+        if (current.fixedWorkflowPreset?.version === 'm3-fixed-workflow-v1') {
+            return current.fixedWorkflowPreset;
+        }
+        tx.update(eventRef, { fixedWorkflowPreset: selection, updatedAt: Date.now() });
+        return selection;
+    });
+}
 //# sourceMappingURL=generateEventControlList.js.map

@@ -31,6 +31,7 @@ import { validateResourceRecommendation } from '../engines/resourceContract';
 import { resolveAuthUid } from '../utils/notifications';
 import { resolveInitialReviewReadiness } from '@shared/applicationState';
 import { validateAssessmentResultAgainstProposal, validateManualOfficialAssessmentResult, validateProvisionalAssessmentResult } from '../engines/resourceCalculator';
+import { fixedPresetForEvent, riskLevelFromAssessment } from '../utils/m3FixedWorkflowPreset';
 
 type InitialDecision = 'Approved' | 'Rejected';
 
@@ -55,7 +56,10 @@ export const makeInitialReviewDecision = onCall<InitialReviewRequest>({ region: 
 });
 
 export async function makeInitialReviewDecisionForUser(uid: string, data: InitialReviewRequest, now = Date.now()) {
-  const { eventId, decision, reason, suggestion, attachOfficerFeedback, rejectionReasonCategory } = validateInitialReviewRequest(data);
+  const validatedRequest = validateInitialReviewRequest(data);
+  const eventId = validatedRequest.eventId;
+  const attachOfficerFeedback = validatedRequest.attachOfficerFeedback;
+  let { decision, reason, suggestion, rejectionReasonCategory } = validatedRequest;
   if (Object.prototype.hasOwnProperty.call(data, 'manualAssessment')) {
     throw new HttpsError(
       'failed-precondition',
@@ -100,6 +104,18 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
   ]);
   const assessment = assessmentSnap.data() as RiskAssessment | undefined;
   const resource = resourceSnap?.data() as ResourceRecommendation | undefined;
+  // Manual-review applications are an explicit Admin safety override path;
+  // preserve the Admin's terminal decision there.  Normal production
+  // applications use the locked fixture-derived workflow contract.
+  const fixedWorkflow = event.status === 'Manual Review Required'
+    ? undefined
+    : fixedPresetForEvent(event, riskLevelFromAssessment(assessment));
+  if (fixedWorkflow) {
+    decision = fixedWorkflow.preset.initialDecision as InitialDecision;
+    reason = fixedWorkflow.preset.reason;
+    suggestion = fixedWorkflow.preset.suggestion;
+    rejectionReasonCategory = fixedWorkflow.preset.rejectionReasonCategory;
+  }
   const manualOfficial = isManualOfficialAssessment(assessment, eventId, versionId, assessmentId);
   const provisionalReady = isReviewableProvisionalAssessment(assessment, eventId, versionId, assessmentId);
 
@@ -196,6 +212,8 @@ export async function makeInitialReviewDecisionForUser(uid: string, data: Initia
       status: nextStatus,
       reviewStage: decision === 'Approved' ? 'initial' : 'closed',
       initialReview,
+      ...(fixedWorkflow ? { requiredAuthorities: fixedWorkflow.preset.requiredAuthorities } : {}),
+      ...(fixedWorkflow && !currentEvent.fixedWorkflowPreset ? { fixedWorkflowPreset: fixedWorkflow.selection } : {}),
       updatedAt: now,
     };
     if (decision === 'Rejected') {
