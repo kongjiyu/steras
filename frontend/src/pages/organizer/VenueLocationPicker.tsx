@@ -2,7 +2,7 @@ import { importLibrary, setOptions } from '@googlemaps/js-api-loader';
 import { MapPinned } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { VenueLocation } from '@shared/types';
-import { inferMalaysiaStateFromAddress, normalizeMalaysiaState } from './organizerApplication';
+import { inferMalaysiaStateFromAddress, isValidVenueLocation, normalizeMalaysiaState } from './organizerApplication';
 
 const MALAYSIA_CENTER = { lat: 4.2105, lng: 101.9758 };
 let mapsLoaderKey = '';
@@ -63,7 +63,7 @@ export default function VenueLocationPicker({ apiKey, location, onSelect }: {
   const mapRef = useRef<google.maps.Map>();
   const markerRef = useRef<google.maps.marker.AdvancedMarkerElement>();
   const onSelectRef = useRef(onSelect);
-  const initialLocation = useRef(location).current;
+  const initialLocation = useRef(isValidVenueLocation(location) ? location : undefined).current;
   const [status, setStatus] = useState('Loading Google Maps…');
   const [error, setError] = useState('');
   onSelectRef.current = onSelect;
@@ -195,7 +195,7 @@ export default function VenueLocationPicker({ apiKey, location, onSelect }: {
   }, [apiKey, initialLocation]);
 
   useEffect(() => {
-    if (!location || !mapRef.current || !markerRef.current) return;
+    if (!isValidVenueLocation(location) || !mapRef.current || !markerRef.current) return;
     markerRef.current.position = location;
   }, [location]);
 
@@ -211,7 +211,8 @@ export default function VenueLocationPicker({ apiKey, location, onSelect }: {
       {status && <p role="status" className="mt-3 text-sm text-brand-800">{status}</p>}
     </div>
     <div ref={mapHost} className="h-72 w-full border-t border-brand-200 sm:h-96" aria-label="Interactive Google Map for selecting the venue" />
-    {location && <div className="grid gap-2 border-t border-brand-200 bg-[#fffdf8] px-4 py-3 text-xs text-ink-600 sm:grid-cols-2 sm:px-5">
+    {location && !isValidVenueLocation(location) && <p role="alert" className="border-t border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 sm:px-5">The saved coordinates are outside the valid latitude or longitude range. Search for the venue or click the map to replace them.</p>}
+    {isValidVenueLocation(location) && location && <div className="grid gap-2 border-t border-brand-200 bg-[#fffdf8] px-4 py-3 text-xs text-ink-600 sm:grid-cols-2 sm:px-5">
       <span><strong className="text-ink-800">Latitude:</strong> {location.lat.toFixed(6)}</span>
       <span><strong className="text-ink-800">Longitude:</strong> {location.lng.toFixed(6)}</span>
     </div>}

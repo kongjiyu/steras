@@ -30,6 +30,12 @@ export function isMeaningfulNotApplicableReason(reason: string | undefined): boo
   return normalized.length >= 20 && normalized.split(' ').filter(Boolean).length >= 3;
 }
 
+export function isValidVenueLocation(location: EventDetails['venueLocation']): boolean {
+  return Boolean(location
+    && validCoordinate(location.lat, -90, 90)
+    && validCoordinate(location.lng, -180, 180));
+}
+
 export function isEditableApplicationStatus(status: unknown): status is 'Draft' {
   return status === 'Draft';
 }
@@ -239,9 +245,7 @@ export function validateEventApplication(
     errors.push('Expected attendance cannot exceed venue capacity.');
   }
 
-  if (!details.venueLocation
-    || !validCoordinate(details.venueLocation.lat, -90, 90)
-    || !validCoordinate(details.venueLocation.lng, -180, 180)) {
+  if (!isValidVenueLocation(details.venueLocation)) {
     errors.push('Valid venue coordinates are required.');
   }
   if (!Number.isFinite(details.startDatetime) || details.startDatetime <= now) {
@@ -379,7 +383,6 @@ export function validateM1EvidenceChecklist(
   if (!manifest || manifest.length !== definitions.length) return ['Complete every supporting-evidence checklist item.'];
   const responses = new Map(manifest.map((response) => [response.requirementId, response]));
   const supportingPaths = new Set(documents.filter((document) => document.role === 'supporting_evidence').map((document) => document.path));
-  const referencedPaths = new Set(manifest.flatMap((response) => response.documentPath ? [response.documentPath] : []));
   const errors: string[] = [];
   for (const definition of definitions) {
     const response = responses.get(definition.id);
@@ -392,8 +395,16 @@ export function validateM1EvidenceChecklist(
       errors.push(`${definition.id}: give a specific reason using at least 20 characters and 3 words.`);
     }
   }
-  if ([...supportingPaths].some((path) => !referencedPaths.has(path))) errors.push('Every uploaded supporting-evidence file must be linked to a checklist item.');
+  if (unlinkedSupportingEvidence(documents, manifest).length > 0) errors.push('Every uploaded supporting-evidence file must be linked to a checklist item.');
   return errors;
+}
+
+export function unlinkedSupportingEvidence(
+  documents: M1DraftDocument[],
+  manifest: M1EvidenceRequirementResponse[],
+): M1DraftDocument[] {
+  const referencedPaths = new Set(manifest.flatMap((response) => response.documentPath ? [response.documentPath] : []));
+  return documents.filter((document) => document.role === 'supporting_evidence' && !referencedPaths.has(document.path));
 }
 
 export function applyM1ExtractedFields(details: EventDetails, fields: M1ExtractedField[]): EventDetails {
