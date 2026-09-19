@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { EventDetails, M1DocumentExtraction, M1_EXTRACTION_SCHEMA_VERSION, Venue } from '@shared/types';
-import { alignEventDetailsWithTemplate, applyM1ExtractedFields, bindCanonicalVenue, createM1DraftRecord, extractionMatchesDraftDocuments, findUniqueRegistryVenueMatch, inferMalaysiaStateFromAddress, isEditableApplicationStatus, isMeaningfulNotApplicableReason, isSelectableRegistryVenue, normalizeMalaysiaState, organizerAdminDecisionLabel, organizerPublicationLabel, organizerPublicationStateFromProjection, reconcileM1EvidenceManifest, validateEventApplication, validateM1EvidenceChecklist, validateTemplateCompatibility } from './organizerApplication';
+import { EventDetails, M1DocumentExtraction, M1_DOCUMENT_SCHEMA_VERSION, M1_EXTRACTION_SCHEMA_VERSION, Venue } from '@shared/types';
+import { alignEventDetailsWithTemplate, applyM1ExtractedFields, bindCanonicalVenue, createM1DraftRecord, extractionMatchesDraftDocuments, findUniqueRegistryVenueMatch, inferMalaysiaStateFromAddress, isEditableApplicationStatus, isMeaningfulNotApplicableReason, isSelectableRegistryVenue, isValidVenueLocation, normalizeMalaysiaState, organizerAdminDecisionLabel, organizerPublicationLabel, organizerPublicationStateFromProjection, reconcileM1EvidenceManifest, unlinkedSupportingEvidence, validateEventApplication, validateM1EvidenceChecklist, validateTemplateCompatibility } from './organizerApplication';
 import { createTemplateSelection } from '../../features/m1/templateRegistry';
 
 const future = Date.now() + 7 * 24 * 60 * 60 * 1000;
@@ -132,6 +132,12 @@ describe('organizer application lifecycle helpers', () => {
       'Expected attendance cannot exceed venue capacity.',
       'Submit between 1 and 20 unique supporting evidence files.',
     ]));
+  });
+
+  it('rejects out-of-range venue coordinates and recognises valid Malaysian coordinates', () => {
+    expect(isValidVenueLocation({ lat: 3.1578, lng: 101.7117 })).toBe(true);
+    expect(isValidVenueLocation({ lat: 500, lng: 159 })).toBe(false);
+    expect(validateEventApplication(validDetails({ venueLocation: { lat: 500, lng: 159 } }), [], templateSelection)).toContain('Valid venue coordinates are required.');
   });
 
   it('requires a template recommendation before submission', () => {
@@ -291,6 +297,21 @@ describe('organizer application lifecycle helpers', () => {
     const manifest = reconcileM1EvidenceManifest(templateSelection, details, []);
     expect(manifest.find((item) => item.requirementId === 'T10-DOC-01')).toEqual({ requirementId: 'T10-DOC-01', applicability: 'required' });
     expect(validateM1EvidenceChecklist(details, templateSelection, [], manifest)).toContain('Attach a supporting-evidence file to DOC-A01.');
+  });
+
+  it('identifies the exact unlinked upload even when evidence filenames are duplicated', () => {
+    const documents = ['linked', 'orphan'].map((name) => ({
+      path: `event_documents/event-1/v1/${name}.pdf`, role: 'supporting_evidence' as const,
+      originalName: 'organizer identification card.pdf', mimeType: 'application/pdf', sizeBytes: 100,
+      uploadedAt: 1, schemaVersion: M1_DOCUMENT_SCHEMA_VERSION as '2026-08-28-document-v1',
+    }));
+    const manifest = reconcileM1EvidenceManifest(templateSelection, validDetails(), []).map((response, index) => index === 0
+      ? { ...response, applicability: 'required' as const, documentPath: documents[0].path }
+      : response);
+    expect(unlinkedSupportingEvidence(documents, manifest)).toEqual([documents[1]]);
+    expect(validateM1EvidenceChecklist(validDetails(), templateSelection, documents, manifest)).toContain(
+      'Every uploaded supporting-evidence file must be linked to a checklist item.',
+    );
   });
 
   it('only accepts a specific not-applicable explanation', () => {
