@@ -1104,12 +1104,13 @@ async function main() {
   }
   const selectedScenario = only ? SCENARIOS.find((scenarioValue) => eventIdFor(scenarioValue) === only) : undefined;
   const explicitProductionRepair = process.env.STERAS_ALLOW_PRESENTATION_PRODUCTION_REPAIR === 'true';
+  const productionRepairAllowed = explicitProductionRepair && Boolean(selectedScenario);
   if ((action === 'apply' || action === 'cleanup') && !process.env.FIRESTORE_EMULATOR_HOST
-    && !(explicitProductionRepair && selectedScenario?.postFinalStage)) {
-    throw new Error('Production fixture apply/cleanup is disabled. Use FIRESTORE_EMULATOR_HOST, or explicitly set STERAS_ALLOW_PRESENTATION_PRODUCTION_REPAIR=true with --only a managed post-final fixture.');
+    && !productionRepairAllowed) {
+    throw new Error('Production fixture apply/cleanup is disabled. Use FIRESTORE_EMULATOR_HOST, or explicitly set STERAS_ALLOW_PRESENTATION_PRODUCTION_REPAIR=true with --only one managed fixture.');
   }
-  if (explicitProductionRepair && selectedScenario?.postFinalStage && !process.env.FIRESTORE_EMULATOR_HOST) {
-    console.warn(`[presentation-portfolio] Explicitly repairing managed post-final fixture ${only}; non-managed records remain protected.`);
+  if (productionRepairAllowed && !process.env.FIRESTORE_EMULATOR_HOST) {
+    console.warn(`[presentation-portfolio] Explicitly repairing managed fixture ${only}; non-managed records remain protected.`);
   }
   initializeApp({ credential: applicationDefault(), projectId, storageBucket: `${projectId}.firebasestorage.app` });
   const db = getFirestore();
