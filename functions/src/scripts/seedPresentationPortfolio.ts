@@ -108,6 +108,14 @@ const SCENARIOS: Scenario[] = [
   scenario('craft-market', 'Malaysia Craft & Design Market', 'fair', 'Approved', 'medium', '2026-06-28', '2026-10-03', 4800, [], 'stage1_submitted'),
   scenario('community-harmony', 'Community Harmony Gathering', 'religious', 'Approved', 'medium', '2026-07-17', '2026-10-10', 5400, []),
   scenario('innovation-summit', 'Tourism Innovation Summit', 'conference', 'Rejected', 'low', '2026-08-06', '2026-10-17', 1600, []),
+  // Admin initial-review workbench fixtures. Pending scenarios deliberately
+  // use the Kuala Lumpur DBKL venue selected by venueFor() so the Admin can
+  // exercise the full assignment/review flow without mixing jurisdictions.
+  scenario('kl-community-safety-fair', 'Kuala Lumpur Community Safety Fair', 'fair', 'Pending', 'low', '2026-08-01', '2026-11-14', 1800, []),
+  scenario('kl-night-market-culture', 'Kuala Lumpur Night Market & Culture Week', 'fair', 'Pending', 'medium', '2026-08-03', '2026-11-21', 4500, []),
+  scenario('kl-tourism-conference', 'Kuala Lumpur Sustainable Tourism Conference', 'conference', 'Pending', 'low', '2026-08-07', '2026-11-28', 1400, []),
+  scenario('kl-heritage-cycle-day', 'Kuala Lumpur Heritage Cycle Day', 'sports', 'Pending', 'medium', '2026-08-10', '2026-12-05', 3200, []),
+  scenario('kl-waterfront-music-night', 'Kuala Lumpur Waterfront Music Night', 'concert', 'Pending', 'high', '2026-08-12', '2026-12-12', 6500, []),
   reportableScenario('participant-live-cultural', 'Participant Demo · KL Cultural Day', 'cultural', 'medium', -2 * HOUR, 5200, ['high', 'medium'], ['crowd', 'missing_person']),
   reportableScenario('participant-live-sports', 'Participant Demo · Putrajaya Sports Fiesta', 'sports', 'medium', -5 * HOUR, 3400, ['low', 'medium'], ['lost_found', 'medical_safety']),
   reportableScenario('participant-recent-expo', 'Participant Demo · Tourism Product Expo', 'exhibition', 'low', -1 * DAY, 2600, ['medium', 'low'], ['security', 'property_damage']),
