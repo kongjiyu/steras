@@ -179,13 +179,16 @@ exports.assignAuthorityOfficers = (0, https_1.onCall)({ region: runtime_1.FUNCTI
         if (ev.status !== 'UnderReview') {
             throw new https_1.HttpsError('failed-precondition', 'Only applications released for authority review can be assigned.');
         }
-        if (mode === 'initial' && ev.reviewStage === 'authority') {
+        if (mode === 'initial' && ev.reviewStage !== 'initial') {
             throw new https_1.HttpsError('failed-precondition', 'Officers are already assigned for this event version. Unassign first to re-assign.');
         }
         const assignmentSnapshots = new Map();
         for (const authority of submittedAuthorities) {
             const assignmentId = `${versionId}_${authority}`;
             assignmentSnapshots.set(authority, await tx.get(eventRef.collection(types_1.COLLECTIONS.ASSIGNMENTS).doc(assignmentId)));
+        }
+        if (mode === 'initial' && [...assignmentSnapshots.values()].some((snapshot) => snapshot.exists && snapshot.data()?.status !== 'revoked')) {
+            throw new https_1.HttpsError('failed-precondition', 'Officers are already assigned for this event version. Unassign first to re-assign.');
         }
         if (mode === 'replacement') {
             validateReplacementAssignments(versionId, submittedAuthorities, new Map([...assignmentSnapshots].map(([authority, snapshot]) => [authority, snapshot.data()])));
