@@ -144,6 +144,22 @@ export async function proposeControlItemsForEventWithMetadata(eventId: string, v
     stage1Requirements: STAGE1_TEMPLATES[authority] ?? [],
     stage2Requirement: { kind: 'image', label: STAGE2_LABEL[authority] ?? `Photo of ${authority} at venue` },
   }));
+  // The direct proposal callable is also a valid first operation. Persist the
+  // selected template here (inside a version fence) so a later Generate or
+  // Commit cannot rematch the event after a risk update.
+  if (event.fixedWorkflowPreset?.version !== FIXED_WORKFLOW_PRESET_VERSION) {
+    const eventRef = firestore().collection(COLLECTIONS.EVENTS).doc(eventId);
+    await firestore().runTransaction(async (tx) => {
+      const currentSnap = await tx.get(eventRef);
+      const current = currentSnap.data() as EventRecord | undefined;
+      if (!currentSnap.exists || current?.currentVersionId !== versionId || current.status !== 'Approved') {
+        throw new Error('The application changed while the fixed workflow was being selected. Reload and try again.');
+      }
+      if (current.fixedWorkflowPreset?.version !== FIXED_WORKFLOW_PRESET_VERSION) {
+        tx.update(eventRef, { fixedWorkflowPreset: selected.selection, updatedAt: Date.now() });
+      }
+    });
+  }
   return {
     items: fixedItems,
     source: 'deterministic_fallback',
