@@ -254,19 +254,37 @@ describe('live incident workspace resilience', () => {
     expect(screen.getByRole('tab', { name: 'Action required (1)' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Resolution review (1)' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'In progress (1)' })).toBeInTheDocument();
-    expect(screen.getByText('Action needed')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Action needed/ }).textContent).not.toContain('Action required');
+    const selectedAction = screen.getByRole('button', { name: /Action needed/ });
+    expect(selectedAction).toHaveAttribute('aria-current', 'true');
+    expect(selectedAction).toHaveTextContent('Action needed');
+    expect(selectedAction).not.toHaveTextContent('Selected incident');
+    expect(selectedAction.textContent).not.toContain('Action required');
     expect(screen.queryByText('Resolution ready')).not.toBeInTheDocument();
     expect(screen.queryByText('Closed case')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('tab', { name: 'Resolution review (1)' }));
-    expect(await screen.findByText('Resolution ready')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Resolution ready/ }).textContent).not.toContain('Review for resolution');
+    const resolutionReady = await screen.findByRole('button', { name: /Resolution ready/ });
+    expect(resolutionReady).toHaveTextContent('Resolution ready');
+    expect(resolutionReady.textContent).not.toContain('Review for resolution');
     expect(screen.queryByText('Action needed')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('tab', { name: 'In progress (1)' }));
-    expect(await screen.findByText('Team responding')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Team responding/ }).textContent).toContain('In progress');
+    const teamResponding = await screen.findByRole('button', { name: /Team responding/ });
+    expect(teamResponding).toHaveTextContent('Team responding');
+    expect(teamResponding.textContent).toContain('In progress');
+  });
+
+  it('keeps the selected authority incident name visible', async () => {
+    mocks.role = 'authority';
+    mocks.list.mockResolvedValue({ data: { incidents: [
+      { ...incident('authority_investigation', 'Authority case'), severity: 'high' as const },
+    ], reportableEvents: [] } });
+    renderIncidents('/authority/incidents');
+
+    const selectedIncident = await screen.findByRole('button', { name: /Authority case/ });
+    expect(selectedIncident).toHaveAttribute('aria-current', 'true');
+    expect(selectedIncident).toHaveTextContent('Authority case');
+    expect(selectedIncident).not.toHaveTextContent('Selected incident');
   });
 
   it('opens a searchable full organizer incident list with status tabs', async () => {
