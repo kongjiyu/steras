@@ -79,11 +79,18 @@ async function makeInitialReviewDecisionForUser(uid, data, now = Date.now()) {
     ]);
     const assessment = assessmentSnap.data();
     const resource = resourceSnap?.data();
-    const fixedWorkflow = (0, m3FixedWorkflowPreset_1.fixedPresetForEvent)(event, (0, m3FixedWorkflowPreset_1.riskLevelFromAssessment)(assessment));
-    decision = fixedWorkflow.preset.initialDecision;
-    reason = fixedWorkflow.preset.reason;
-    suggestion = fixedWorkflow.preset.suggestion;
-    rejectionReasonCategory = fixedWorkflow.preset.rejectionReasonCategory;
+    // Manual-review applications are an explicit Admin safety override path;
+    // preserve the Admin's terminal decision there.  Normal production
+    // applications use the locked fixture-derived workflow contract.
+    const fixedWorkflow = event.status === 'Manual Review Required'
+        ? undefined
+        : (0, m3FixedWorkflowPreset_1.fixedPresetForEvent)(event, (0, m3FixedWorkflowPreset_1.riskLevelFromAssessment)(assessment));
+    if (fixedWorkflow) {
+        decision = fixedWorkflow.preset.initialDecision;
+        reason = fixedWorkflow.preset.reason;
+        suggestion = fixedWorkflow.preset.suggestion;
+        rejectionReasonCategory = fixedWorkflow.preset.rejectionReasonCategory;
+    }
     const manualOfficial = isManualOfficialAssessment(assessment, eventId, versionId, assessmentId);
     const provisionalReady = isReviewableProvisionalAssessment(assessment, eventId, versionId, assessmentId);
     // Feedback is read before the decision transaction so the admin can
@@ -175,8 +182,8 @@ async function makeInitialReviewDecisionForUser(uid, data, now = Date.now()) {
             status: nextStatus,
             reviewStage: decision === 'Approved' ? 'initial' : 'closed',
             initialReview,
-            requiredAuthorities: fixedWorkflow.preset.requiredAuthorities,
-            fixedWorkflowPreset: currentEvent.fixedWorkflowPreset ?? fixedWorkflow.selection,
+            ...(fixedWorkflow ? { requiredAuthorities: fixedWorkflow.preset.requiredAuthorities } : {}),
+            ...(fixedWorkflow && !currentEvent.fixedWorkflowPreset ? { fixedWorkflowPreset: fixedWorkflow.selection } : {}),
             updatedAt: now,
         };
         if (decision === 'Rejected') {
