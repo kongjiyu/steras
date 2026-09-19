@@ -36,7 +36,7 @@ import EmptyState from '../../components/ui/EmptyState';
 import StatusBadge from '../../components/ui/StatusBadge';
 import { friendlyAdminStatus } from './adminApplicationPresentation';
 import AdminStage2Review from './AdminStage2Review';
-import { resolveControlListIntegrity, type ControlListIntegrity } from './controlListIntegrity';
+import { isValidControlSnapshot, isValidCurrentControl, resolveControlListIntegrity, type ControlListIntegrity } from './controlListIntegrity';
 
 interface ProposedResponse {
   items: ProposedControlItem[];
@@ -67,12 +67,15 @@ function isControlListProposalShape(value: unknown): value is ControlListProposa
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const proposal = value as Partial<ControlListProposal>;
   if (typeof proposal.eventId !== 'string' || typeof proposal.versionId !== 'string'
-    || typeof proposal.status !== 'string' || !Number.isSafeInteger(proposal.revision)
+    || (proposal.status !== 'draft' && proposal.status !== 'confirmed') || !Number.isSafeInteger(proposal.revision)
     || !Array.isArray(proposal.items)) return false;
   return proposal.items.every((item) => Boolean(item && typeof item === 'object'
     && typeof item.authority === 'string'
     && typeof item.controlName === 'string'
     && (item.stageRequirement === 'stage1_only' || item.stageRequirement === 'stage1_and_stage2')
+    && (item.stage2Requirement == null || (typeof item.stage2Requirement === 'object'
+      && item.stage2Requirement.kind === 'image'
+      && typeof item.stage2Requirement.label === 'string'))
     && Array.isArray(item.stage1Requirements)
     && item.stage1Requirements.every((requirement) => Boolean(requirement && typeof requirement === 'object'
       && typeof requirement.docType === 'string'
@@ -98,6 +101,7 @@ export default function AdminControlListEditor() {
   const [currentControls, setCurrentControls] = useState<EventControl[]>([]);
   const [currentProposal, setCurrentProposal] = useState<ControlListProposal | null>(null);
   const [controlsLoadState, setControlsLoadState] = useState<SnapshotLoadState>('loading');
+  const [malformedControls, setMalformedControls] = useState(false);
   const [proposalLoadState, setProposalLoadState] = useState<'loading' | 'missing' | 'loaded' | 'error'>('loading');
   const [generating, setGenerating] = useState(false);
   const [committing, setCommitting] = useState(false);
@@ -142,6 +146,7 @@ export default function AdminControlListEditor() {
   useEffect(() => {
     if (!eventId || !event?.currentVersionId) {
       setCurrentControls([]);
+      setMalformedControls(false);
       setCurrentProposal(null);
       setControlsLoadState('loading');
       setProposalLoadState('loading');
@@ -153,13 +158,16 @@ export default function AdminControlListEditor() {
     setControlsLoadState('loading');
     setProposalLoadState('loading');
     const unsubscribeControls = onSnapshot(collection(eventReference, COLLECTIONS.EVENT_CONTROLS), (snapshot) => {
-      setCurrentControls(snapshot.docs
-        .map((item) => ({ ...(item.data() as Partial<EventControl>), controlId: item.id }) as EventControl)
-        .filter((control) => control.versionId === event.currentVersionId));
+      const current = snapshot.docs
+        .map((item) => ({ ...item.data(), controlId: item.id } as Record<string, unknown>))
+        .filter((control) => control.versionId === event.currentVersionId);
+      setMalformedControls(current.some((control) => !isValidCurrentControl(control)));
+      setCurrentControls((current as unknown[]).filter(isValidCurrentControl));
       setControlsLoadState('loaded');
       setControlsError('');
     }, () => {
       setCurrentControls([]);
+      setMalformedControls(false);
       setControlsLoadState('error');
       setControlsError('The current control list could not be loaded.');
     });
@@ -183,17 +191,19 @@ export default function AdminControlListEditor() {
       // recoverable empty state.
       setCurrentProposal(null);
       setProposalLoadState('error');
-      setProposalError('The saved control-list draft could not be loaded. You can generate a fresh proposal.');
+        setProposalError('The saved control-list draft could not be read. Editing is locked until the read succeeds.');
     });
     return () => { unsubscribeControls(); unsubscribeProposal(); };
   }, [event?.currentVersionId, eventId]);
 
-  const venueName = event?.eventDetails.venueName ?? '...';
+  const venueName = event?.eventDetails?.venueName ?? 'Venue unavailable';
   const isApproved = event?.status === 'Approved';
   const isUnderReview = event?.status === 'UnderReview';
   const canEdit = isApproved || (isUnderReview && Boolean(event?.authorityReviewCompletedAt));
   const hasPublishedFlag = event?.controlListGenerated === true;
-  const snapshot = Array.isArray(event?.controlListSnapshot) ? event.controlListSnapshot : [];
+  const rawSnapshot: unknown = event?.controlListSnapshot;
+  const malformedSnapshot = rawSnapshot !== undefined && !isValidControlSnapshot(rawSnapshot);
+  const snapshot = isValidControlSnapshot(rawSnapshot) ? rawSnapshot : [];
   const controlsById = new Map(currentControls.map((control) => [control.controlId, control]));
   const snapshotMatchesControls = snapshot.length > 0
     && snapshot.length === currentControls.length
@@ -242,6 +252,7 @@ export default function AdminControlListEditor() {
     proposalLoadState,
     hasPublishedArtifacts,
     controlsUnreadable: Boolean(controlsError) || controlsLoadState === 'error',
+    malformedPublishedRecord: malformedSnapshot || malformedControls,
   });
   const legacyConfirmed = integrityState === 'legacy-confirmed';
   const inconsistentPublished = integrityState === 'unreadable' || integrityState === 'inconsistent';
@@ -367,7 +378,7 @@ export default function AdminControlListEditor() {
   if (!event) return <div className="p-8"><EmptyState title="Event not found" description="It may have been removed or you do not have access." /></div>;
 
   const details = event.eventDetails;
-  const required = event.requiredAuthorities ?? [];
+  const required = Array.isArray(event.requiredAuthorities) ? event.requiredAuthorities : [];
   const availableToAdd = ALL_AUTHORITIES.filter((a) => required.includes(a) && !items.some((it) => it.authority === a));
 
   return (
@@ -378,17 +389,17 @@ export default function AdminControlListEditor() {
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="font-display text-2xl font-bold text-ink-800">Event control list</h1>
-          <p className="mt-1 text-sm text-ink-500">{details.name} · {venueName}</p>
+          <p className="mt-1 text-sm text-ink-500">{details?.name ?? 'Event details unavailable'} · {venueName}</p>
           <p className="mt-1 text-xs text-ink-400">Version: <span className="font-semibold">{event.currentVersionId ?? 'n/a'}</span> · Required: {required.join(', ')}</p>
         </div>
         <div className="flex flex-col items-end gap-1">
           <StatusBadge status={event.status} />
           {event.reviewStage && <span className="text-xs font-semibold text-ink-500">Stage: {event.reviewStage}</span>}
-          {integrityState === 'confirmed' && <span className="text-xs font-semibold text-status-approved">Control list: confirmed</span>}
-          {integrityState === 'legacy-confirmed' && <span className="text-xs font-semibold text-status-approved">Control list: legacy-confirmed</span>}
-          {integrityState === 'draft' && <span className="text-xs font-semibold text-ink-500">Control list: draft</span>}
-          {integrityState === 'unreadable' && <span className="text-xs font-semibold text-status-rejected">Control list: unreadable</span>}
-          {integrityState === 'inconsistent' && <span className="text-xs font-semibold text-status-rejected">Control list: inconsistent</span>}
+          {integrityReady && integrityState === 'confirmed' && <span className="text-xs font-semibold text-status-approved">Control list: confirmed</span>}
+          {integrityReady && integrityState === 'legacy-confirmed' && <span className="text-xs font-semibold text-status-approved">Control list: legacy-confirmed</span>}
+          {integrityReady && integrityState === 'draft' && <span className="text-xs font-semibold text-ink-500">Control list: draft</span>}
+          {integrityReady && integrityState === 'unreadable' && <span className="text-xs font-semibold text-status-rejected">Control list: unreadable</span>}
+          {integrityReady && integrityState === 'inconsistent' && <span className="text-xs font-semibold text-status-rejected">Control list: inconsistent</span>}
           {!integrityReady && <span className="text-xs font-semibold text-ink-400">Checking control-list integrity…</span>}
         </div>
       </div>

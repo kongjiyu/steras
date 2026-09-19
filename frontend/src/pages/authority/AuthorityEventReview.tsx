@@ -51,6 +51,7 @@ import { ApplicationDisplayBadge } from '../../components/ui/StatusBadge';
 import { useAuth } from '../../contexts/AuthContext';
 import { displayIdentityName, useDisplayIdentities, type DisplayIdentityMap } from '../../hooks/useDisplayIdentities';
 import { activeScoreResolutionId } from './authorityReviewPresentation';
+import { canEditAuthorityScores } from './authorityScoreEdit';
 
 export default function AuthorityEventReview() {
   const { profile } = useAuth();
@@ -88,8 +89,6 @@ export default function AuthorityEventReview() {
   const [resourceRationale, setResourceRationale] = useState('');
   const [resourceOverrideKey, setResourceOverrideKey] = useState(() => `resource-override-${crypto.randomUUID()}`);
   const [savingResources, setSavingResources] = useState(false);
-  const [resourceConfirmed, setResourceConfirmed] = useState(false);
-  const [confirmingResources, setConfirmingResources] = useState(false);
   const [editingScores, setEditingScores] = useState(false);
   const [scoreReviewSubmitted, setScoreReviewSubmitted] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -480,26 +479,10 @@ export default function AuthorityEventReview() {
       setSelectedResourceKey(null);
       setResourceRationale('');
       setResourceOverrideKey(`resource-override-${crypto.randomUUID()}`);
-      setResourceConfirmed(false);
     } catch (error) {
       toast.error(callableErrorMessage(error, 'Unable to update resources.'));
     } finally {
       setSavingResources(false);
-    }
-  };
-
-  const confirmResourceRecommendation = async () => {
-    if (!eventId || !resources || !isNamedOfficer || !reviewOpen) return;
-    setConfirmingResources(true);
-    try {
-      const command = httpsCallable<{ eventId: string; rationale: string; overrides: []; resourceConfirmed: true }, { resourceConfirmed: boolean }>(functions, 'reviewAssessmentScores');
-      await command({ eventId, rationale: 'I confirm the current safety-resource recommendation and planning ranges for this application.', overrides: [], resourceConfirmed: true });
-      setResourceConfirmed(true);
-      toast.success('Resource recommendation confirmed.');
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Unable to confirm resources.');
-    } finally {
-      setConfirmingResources(false);
     }
   };
 
@@ -605,12 +588,12 @@ export default function AuthorityEventReview() {
                         advisory={assessment.aiProposal}
                         resultRiskLevel={assessmentRiskLevel(assessment)}
                         official={assessment.status === 'official_ready'}
-                        canEdit={Boolean(!editingScores && isNamedOfficer && reviewOpen && (assessment.status === 'provisional_ready' || assessment.status === 'authority_review') && assessment.aiProposal?.status === 'success')}
-                        editLabel="Review AI scores"
+                        canEdit={canEditAuthorityScores({ assignment: ownAssignment, reviewOpen, assessment, editing: editingScores })}
+                        editLabel="Edit"
                         onEdit={() => setEditingScores(true)}
                         reviewStatus={scoreReviewSubmitted || (profile?.authorityType && 'authorityReviewState' in assessment && assessment.authorityReviewState?.activeReviewHeads[profile.authorityType]) ? 'Scores submitted · revision allowed' : undefined}
                         reviewedCategories={ownScoreReview?.categories.map((category) => ({ categoryId: category.categoryId, likelihood: category.likelihood, severity: category.severity }))}
-                        editor={editingScores && (assessment.status === 'provisional_ready' || assessment.status === 'authority_review') ? <AuthorityScoreReviewForm
+                        editor={editingScores && (assessment.status === 'provisional_ready' || assessment.status === 'authority_review') && canEditAuthorityScores({ assignment: ownAssignment, reviewOpen, assessment, editing: false }) ? <AuthorityScoreReviewForm
                            eventId={eventId!}
                            assessment={assessment}
                            authorityType={profile!.authorityType!}
@@ -642,9 +625,6 @@ export default function AuthorityEventReview() {
               </div>
               {resources && assessment?.status !== 'manual_review_required' && isNamedOfficer && reviewOpen && !editingResources && (
                 <div className="flex flex-wrap gap-2">
-                  <button type="button" className={`btn-secondary !px-3 !py-1.5 ${resourceConfirmed ? 'border-status-approved text-status-approved' : ''}`} onClick={confirmResourceRecommendation} disabled={confirmingResources}>
-                    <ShieldCheck size={14} /> {confirmingResources ? 'Confirming…' : resourceConfirmed ? 'Resources confirmed' : 'Confirm recommendation'}
-                  </button>
                   <button type="button" className="btn-secondary !px-3 !py-1.5" onClick={() => { setEditingResources(true); setResourceDraft(effectiveResources ? toResourceQuantities(effectiveResources) : null); setSelectedResourceKey(null); }} data-testid="resource-recommendation-edit"><Pencil size={14} /> Edit</button>
                 </div>
               )}

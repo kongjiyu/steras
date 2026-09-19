@@ -179,20 +179,16 @@ exports.assignAuthorityOfficers = (0, https_1.onCall)({ region: runtime_1.FUNCTI
         if (ev.status !== 'UnderReview') {
             throw new https_1.HttpsError('failed-precondition', 'Only applications released for authority review can be assigned.');
         }
-        if (mode === 'initial' && ev.reviewStage === 'authority') {
+        if (mode === 'initial' && ev.reviewStage !== 'initial') {
             throw new https_1.HttpsError('failed-precondition', 'Officers are already assigned for this event version. Unassign first to re-assign.');
         }
         const assignmentSnapshots = new Map();
-        const controlsSnapshot = await tx.get(eventRef.collection(types_1.COLLECTIONS.EVENT_CONTROLS));
-        const controlSnapshots = new Map();
-        for (const snapshot of controlsSnapshot.docs) {
-            const control = snapshot.data();
-            if (control.versionId === versionId && control.authority)
-                controlSnapshots.set(control.authority, snapshot);
-        }
         for (const authority of submittedAuthorities) {
             const assignmentId = `${versionId}_${authority}`;
             assignmentSnapshots.set(authority, await tx.get(eventRef.collection(types_1.COLLECTIONS.ASSIGNMENTS).doc(assignmentId)));
+        }
+        if (mode === 'initial' && [...assignmentSnapshots.values()].some((snapshot) => snapshot.exists && snapshot.data()?.status !== 'revoked')) {
+            throw new https_1.HttpsError('failed-precondition', 'Officers are already assigned for this event version. Unassign first to re-assign.');
         }
         if (mode === 'replacement') {
             validateReplacementAssignments(versionId, submittedAuthorities, new Map([...assignmentSnapshots].map(([authority, snapshot]) => [authority, snapshot.data()])));
@@ -234,14 +230,6 @@ exports.assignAuthorityOfficers = (0, https_1.onCall)({ region: runtime_1.FUNCTI
             if (officer.workloadCount >= officer.workloadLimit) {
                 throw new https_1.HttpsError('failed-precondition', `Officer ${officerUid} is at workload limit (${officer.workloadLimit}). Swap to a backup.`);
             }
-            const controlSnapshot = controlSnapshots.get(auth);
-            if (!controlSnapshot?.exists) {
-                throw new https_1.HttpsError('failed-precondition', `The ${auth} control list item is missing for the current version.`);
-            }
-            const control = controlSnapshot.data();
-            if (control.versionId !== versionId || control.authority !== auth) {
-                throw new https_1.HttpsError('failed-precondition', `The ${auth} control list item is stale or mismatched.`);
-            }
         }
         // Now writes — all reads are done.
         let officerWrites = 0;
@@ -259,8 +247,6 @@ exports.assignAuthorityOfficers = (0, https_1.onCall)({ region: runtime_1.FUNCTI
                 status: 'pending',
             };
             tx.set(assignmentRef, assignment);
-            const controlRef = controlSnapshots.get(auth).ref;
-            tx.set(controlRef, { stage1ReviewerUid: officerUid, stage1ReviewerAssignedAt: now, updatedAt: now }, { merge: true });
             tx.update(officerRef, {
                 workloadCount: Math.max(0, officer?.workloadCount ?? 0) + 1,
                 lastAssignedAt: now,

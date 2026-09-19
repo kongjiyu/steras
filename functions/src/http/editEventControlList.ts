@@ -27,6 +27,7 @@ import {
   ControlListProposal,
   EventControl,
   EventRecord,
+  Assignment,
   ProposedControlItem,
   UserProfile,
 } from '@shared/types';
@@ -67,6 +68,26 @@ export function buildControlListSnapshot(
     controlItemVersion,
     label: 'pending' as EventControl['label'],
   }));
+}
+
+/**
+ * Resolve the officer who owns the current authority assignment for a newly
+ * created control item. Assignments are the source of truth here because the
+ * control list is intentionally created after officer assignment.
+ */
+export function resolveDefaultStage1Reviewer(
+  assignments: Assignment[],
+  eventId: string,
+  versionId: string,
+  authority: Assignment['authorityType'],
+): string | undefined {
+  return assignments
+    .filter((assignment) => assignment.eventId === eventId
+      && assignment.versionId === versionId
+      && assignment.authorityType === authority
+      && assignment.status !== 'revoked'
+      && Boolean(assignment.officerUid))
+    .sort((a, b) => (b.assignedAt ?? 0) - (a.assignedAt ?? 0))[0]?.officerUid;
 }
 
 export const editEventControlList = onCall<EditEventControlListRequest>({ region: FUNCTION_REGION }, async (request) => {
@@ -153,6 +174,8 @@ export const editEventControlList = onCall<EditEventControlListRequest>({ region
     const existingControls = await tx.get(eventRef.collection(COLLECTIONS.EVENT_CONTROLS).where('versionId', '==', versionId));
     const proposalRef = eventRef.collection(COLLECTIONS.CONTROL_LIST_PROPOSALS).doc(versionId);
     const proposalSnap = await tx.get(proposalRef);
+    const assignmentsSnap = await tx.get(eventRef.collection(COLLECTIONS.ASSIGNMENTS));
+    const currentAssignments = assignmentsSnap.docs.map((snapshot) => snapshot.data() as Assignment);
     const proposal = proposalSnap.data() as ControlListProposal | undefined;
     if (proposalSnap.exists) {
       if (!proposal || proposal.status !== 'draft' || proposal.eventId !== eventId || proposal.versionId !== versionId) {
@@ -177,6 +200,7 @@ export const editEventControlList = onCall<EditEventControlListRequest>({ region
     for (const item of items) {
       const controlId = `${eventId}-ctrl-${item.authority.toLowerCase()}-v${controlItemVersion}`;
       const ctrlRef = eventRef.collection(COLLECTIONS.EVENT_CONTROLS).doc(controlId);
+      const defaultStage1ReviewerUid = resolveDefaultStage1Reviewer(currentAssignments, eventId, versionId, item.authority);
       const ctrl: EventControl = {
         controlId,
         eventId,
@@ -190,6 +214,10 @@ export const editEventControlList = onCall<EditEventControlListRequest>({ region
         label: 'pending',
         createdAt: now,
         updatedAt: now,
+        ...(defaultStage1ReviewerUid ? {
+          stage1ReviewerUid: defaultStage1ReviewerUid,
+          stage1ReviewerAssignedAt: now,
+        } : {}),
       };
       tx.set(ctrlRef, ctrl);
       controlIds.push(controlId);

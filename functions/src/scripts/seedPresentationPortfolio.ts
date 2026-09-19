@@ -46,6 +46,13 @@ const EXPECTED_PROJECT = 'linkos-496505';
 const DATASET_ID = 'steras-presentation-portfolio-2026-09-v1';
 const MANAGED_BY = 'seed:presentation-portfolio';
 const VERSION_ID = 'v1';
+
+export function hasPublicEvidence(parentExists: boolean, itemCount: number, stage1Count: number): boolean {
+  return parentExists || itemCount > 0 || stage1Count > 0;
+}
+export function shouldPublishPresentationEvent(status: EventStatus, postFinalStage?: PostFinalStage): boolean {
+  return status === 'Approved' && !postFinalStage;
+}
 const PARTICIPANT_DEMO_EMAIL = 'participant.showcase@steras.test';
 const ADMIN_DEMO_EMAIL = 'admin.showcase@steras.test';
 const ORGANIZER_DEMO_EMAIL = 'organizer1@steras.test';
@@ -630,6 +637,8 @@ async function writeScenario(db: Firestore, scenarioValue: Scenario, venue: Venu
   await batch.commit();
   if (scenarioValue.status === 'Approved') {
     await writeControl(db, scenarioValue, event as EventRecord, identities, organizer, index, terminalAt);
+  }
+  if (shouldPublishPresentationEvent(scenarioValue.status, scenarioValue.postFinalStage)) {
     const details = (event as EventRecord).eventDetails;
     const publicEvent: PublicEvent = {
       eventId,
@@ -867,6 +876,21 @@ async function clearDataset(db: Firestore, selectedScenarios: Scenario[]) {
       const snapshot = await reference.get();
       const derivedFromOwnedEvent = ownedEvent && snapshot.data()?.eventId === eventId;
       if (snapshot.exists && snapshot.data()?.presentationData?.datasetId !== DATASET_ID && !derivedFromOwnedEvent) throw new Error(`Refusing to delete unowned ${collectionName}/${eventId}.`);
+      // Firestore allows a missing parent document to retain live children.
+      // A prior fixture reset deleted only the parent, leaving public image
+      // projections visible despite private Stage 2 being pending.
+      if (collectionName === COLLECTIONS.PUBLIC_EVENT_CONTROLS) {
+        const childCollections = await reference.listCollections();
+        for (const childCollection of childCollections) {
+          const children = await childCollection.get();
+          for (const child of children.docs) {
+            if (!ownedEvent || child.data()?.eventId !== eventId) {
+              throw new Error(`Refusing to delete unowned ${child.ref.path}.`);
+            }
+            await db.recursiveDelete(child.ref);
+          }
+        }
+      }
       if (snapshot.exists) await db.recursiveDelete(reference);
     }
     for (const incident of await db.collection(COLLECTIONS.INCIDENTS).where('eventId', '==', eventId).get().then((snapshot) => snapshot.docs)) {
@@ -974,13 +998,13 @@ async function verifyDataset(db: Firestore, only?: string) {
       db.collection(COLLECTIONS.PUBLIC_EVENTS).doc(eventId).get(),
       db.collection(COLLECTIONS.PUBLIC_EVENT_CONTROLS).doc(eventId).get(),
     ]);
-    if (event.status === 'Approved') {
+    if (shouldPublishPresentationEvent(event.status, scenarioValue.postFinalStage)) {
       const value = publicEvent.data() as Partial<PublicEvent> | undefined;
       if (!publicEvent.exists || value?.eventId !== eventId || value.versionId !== VERSION_ID || value.publicStatus !== 'approved') {
         failures.push(`${eventId}: approved presentation fixture is missing its public event projection`);
       }
     } else if (publicEvent.exists || publicControls.exists) {
-      failures.push(`${eventId}: non-approved managed presentation fixture has a public projection`);
+      failures.push(`${eventId}: private managed presentation fixture has a public projection`);
     }
     if (event.eventDetails.organizerEmail !== ORGANIZER_DEMO_EMAIL) failures.push(`${eventId}: unexpected organiser ${event.eventDetails.organizerEmail}`);
     if (event.status === 'Pending') {
@@ -1059,13 +1083,13 @@ async function verifyDataset(db: Firestore, only?: string) {
         if (scenarioValue.postFinalStage === 'stage1_submitted' && stage1.docs.some((document) => document.data()?.status !== 'pending_verification')) failures.push(`${eventId}/${control.id}: Stage 1 evidence should await verification`);
         if (scenarioValue.postFinalStage === 'stage2_submitted' && stage2.docs.some((document) => document.data()?.published === true)) failures.push(`${eventId}/${control.id}: Stage 2 evidence must await Admin publication`);
       }
-      const publicProjection = await db.collection(COLLECTIONS.PUBLIC_EVENTS).doc(eventId).get();
-      const publicControls = await db.collection(COLLECTIONS.PUBLIC_EVENT_CONTROLS).doc(eventId).get();
-      const publicValue = publicProjection.data() as Partial<PublicEvent> | undefined;
-      if (!publicProjection.exists || publicValue?.versionId !== VERSION_ID || publicValue.publicStatus !== 'approved') {
-        failures.push(`${eventId}: managed post-final fixture is missing its public event projection`);
+      const [publicItems, publicStage1] = await Promise.all([
+        publicControls.ref.collection(COLLECTIONS.PUBLIC_EVENT_CONTROL_ITEMS).get(),
+        publicControls.ref.collection(COLLECTIONS.PUBLIC_STAGE1_DOCS).get(),
+      ]);
+      if (hasPublicEvidence(publicControls.exists, publicItems.size, publicStage1.size)) {
+        failures.push(`${eventId}: managed post-final fixture exposed unpublished control evidence`);
       }
-      if (publicControls.exists) failures.push(`${eventId}: managed post-final fixture exposed unpublished control evidence`);
     }
     if (scenarioValue.slug === 'putrajaya-community-run') {
       const [assignments, decisions, reviews] = await Promise.all([

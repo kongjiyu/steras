@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { parsePresentationArgs } from './seedPresentationPortfolio';
+import { hasPublicEvidence, parsePresentationArgs, shouldPublishPresentationEvent } from './seedPresentationPortfolio';
 
 describe('presentation portfolio seed safety', () => {
+  it('keeps managed post-final workflow applications out of the public projection', () => {
+    expect(shouldPublishPresentationEvent('Approved', 'controls')).toBe(false);
+    expect(shouldPublishPresentationEvent('Approved', 'stage1_submitted')).toBe(false);
+    expect(shouldPublishPresentationEvent('Approved', 'stage2_submitted')).toBe(false);
+    expect(shouldPublishPresentationEvent('Approved')).toBe(true);
+    expect(shouldPublishPresentationEvent('Pending')).toBe(false);
+  });
+  it('detects orphaned public images even when the projection parent was deleted', () => {
+    expect(hasPublicEvidence(false, 4, 0)).toBe(true);
+    expect(hasPublicEvidence(false, 0, 1)).toBe(true);
+    expect(hasPublicEvidence(false, 0, 0)).toBe(false);
+  });
   it('requires exactly one explicit action', () => {
     expect(() => parsePresentationArgs(['--project', 'linkos-496505'])).toThrow('Choose exactly one action');
     expect(() => parsePresentationArgs(['--dry-run', '--verify', '--project', 'linkos-496505'])).toThrow('Choose exactly one action');

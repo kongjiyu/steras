@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.editEventControlList = void 0;
 exports.buildControlListSnapshot = buildControlListSnapshot;
+exports.resolveDefaultStage1Reviewer = resolveDefaultStage1Reviewer;
 /**
  * editEventControlList — admin-only callable (M3 Workstream 2).
  *
@@ -40,6 +41,20 @@ function buildControlListSnapshot(eventId, items, controlItemVersion) {
         controlItemVersion,
         label: 'pending',
     }));
+}
+/**
+ * Resolve the officer who owns the current authority assignment for a newly
+ * created control item. Assignments are the source of truth here because the
+ * control list is intentionally created after officer assignment.
+ */
+function resolveDefaultStage1Reviewer(assignments, eventId, versionId, authority) {
+    return assignments
+        .filter((assignment) => assignment.eventId === eventId
+        && assignment.versionId === versionId
+        && assignment.authorityType === authority
+        && assignment.status !== 'revoked'
+        && Boolean(assignment.officerUid))
+        .sort((a, b) => (b.assignedAt ?? 0) - (a.assignedAt ?? 0))[0]?.officerUid;
 }
 exports.editEventControlList = (0, https_1.onCall)({ region: runtime_1.FUNCTION_REGION }, async (request) => {
     if (!request.auth)
@@ -122,6 +137,8 @@ exports.editEventControlList = (0, https_1.onCall)({ region: runtime_1.FUNCTION_
         const existingControls = await tx.get(eventRef.collection(types_1.COLLECTIONS.EVENT_CONTROLS).where('versionId', '==', versionId));
         const proposalRef = eventRef.collection(types_1.COLLECTIONS.CONTROL_LIST_PROPOSALS).doc(versionId);
         const proposalSnap = await tx.get(proposalRef);
+        const assignmentsSnap = await tx.get(eventRef.collection(types_1.COLLECTIONS.ASSIGNMENTS));
+        const currentAssignments = assignmentsSnap.docs.map((snapshot) => snapshot.data());
         const proposal = proposalSnap.data();
         if (proposalSnap.exists) {
             if (!proposal || proposal.status !== 'draft' || proposal.eventId !== eventId || proposal.versionId !== versionId) {
@@ -145,6 +162,7 @@ exports.editEventControlList = (0, https_1.onCall)({ region: runtime_1.FUNCTION_
         for (const item of items) {
             const controlId = `${eventId}-ctrl-${item.authority.toLowerCase()}-v${controlItemVersion}`;
             const ctrlRef = eventRef.collection(types_1.COLLECTIONS.EVENT_CONTROLS).doc(controlId);
+            const defaultStage1ReviewerUid = resolveDefaultStage1Reviewer(currentAssignments, eventId, versionId, item.authority);
             const ctrl = {
                 controlId,
                 eventId,
@@ -158,6 +176,10 @@ exports.editEventControlList = (0, https_1.onCall)({ region: runtime_1.FUNCTION_
                 label: 'pending',
                 createdAt: now,
                 updatedAt: now,
+                ...(defaultStage1ReviewerUid ? {
+                    stage1ReviewerUid: defaultStage1ReviewerUid,
+                    stage1ReviewerAssignedAt: now,
+                } : {}),
             };
             tx.set(ctrlRef, ctrl);
             controlIds.push(controlId);
